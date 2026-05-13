@@ -95,3 +95,4 @@ logs/
 # Database backups
 *.sql
 *.dump
+*.pyc
