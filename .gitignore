@@ -92,6 +92,11 @@ staticfiles/
 *.log
 logs/
 
+# PID files
+.django.pid
+.frontend.pid
+.frontend.log
+
 # Database backups
 *.sql
 *.dump
