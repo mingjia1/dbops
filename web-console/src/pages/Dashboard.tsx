@@ -1,7 +1,7 @@
 import React from 'react'
 import { Layout, Menu, Typography } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { DatabaseOutlined, SettingOutlined, CloudOutlined, BarChartOutlined } from '@ant-design/icons'
+import { DatabaseOutlined, SettingOutlined, CloudOutlined, BarChartOutlined, FileTextOutlined, SafetyOutlined, AuditOutlined } from '@ant-design/icons'
 
 const { Header, Content, Sider } = Layout
 
@@ -14,6 +14,9 @@ const Dashboard: React.FC = () => {
     { key: '/env-check', icon: <SettingOutlined />, label: '环境检测' },
     { key: '/backup', icon: <CloudOutlined />, label: '备份管理' },
     { key: '/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
+    { key: '/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
+    { key: '/approvals', icon: <SafetyOutlined />, label: '审批管理' },
+    { key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
   ]
 
   return (

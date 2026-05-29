@@ -127,4 +127,97 @@ export const monitorApi = {
     api.get(`/monitoring/metrics?instance_id=${instanceId}`),
 }
 
+export interface ParameterTemplate {
+  id: string
+  name: string
+  category: string
+  description: string
+  parameters: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ApprovalRequest {
+  id: string
+  requester: string
+  operation_type: string
+  target_resource: string
+  status: string
+  description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditLog {
+  id: string
+  user: string
+  action: string
+  resource_type: string
+  resource_id: string
+  ip_address: string
+  details: string
+  created_at: string
+}
+
+export const parameterTemplateApi = {
+  list: () =>
+    api.get('/parameter-templates'),
+  
+  get: (id: string) =>
+    api.get(`/parameter-templates/${id}`),
+  
+  create: (data: {
+    name: string
+    category: string
+    description?: string
+    parameters: string
+  }) =>
+    api.post('/parameter-templates', data),
+  
+  update: (id: string, data: {
+    name?: string
+    category?: string
+    description?: string
+    parameters?: string
+  }) =>
+    api.put(`/parameter-templates/${id}`, data),
+  
+  delete: (id: string) =>
+    api.delete(`/parameter-templates/${id}`),
+}
+
+export const approvalApi = {
+  list: (status?: string) =>
+    api.get(`/approvals${status ? `?status=${status}` : ''}`),
+  
+  get: (id: string) =>
+    api.get(`/approvals/${id}`),
+  
+  approve: (id: string, data: { comment?: string }) =>
+    api.post(`/approvals/${id}/approve`, data),
+  
+  reject: (id: string, data: { reason: string }) =>
+    api.post(`/approvals/${id}/reject`, data),
+}
+
+export const auditApi = {
+  list: (filters?: {
+    user?: string
+    action?: string
+    start_date?: string
+    end_date?: string
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.user) params.append('user', filters.user)
+    if (filters?.action) params.append('action', filters.action)
+    if (filters?.start_date) params.append('start_date', filters.start_date)
+    if (filters?.end_date) params.append('end_date', filters.end_date)
+    const queryString = params.toString()
+    return api.get(`/audit-logs${queryString ? `?${queryString}` : ''}`)
+  },
+  
+  get: (id: string) =>
+    api.get(`/audit-logs/${id}`),
+}
+
 export default api
