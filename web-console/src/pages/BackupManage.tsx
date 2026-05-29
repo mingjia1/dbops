@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions } from 'antd'
+import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber } from 'antd'
 import { PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { backupApi } from '@/services/api'
 
@@ -126,11 +126,11 @@ const BackupManage: React.FC = () => {
             <Input placeholder="0 2 * * *" style={{ width: 150 }} />
           </Form.Item>
           <Form.Item name="retention_days" label="保留天数" initialValue={7}>
-            <Input type="number" style={{ width: 100 }} />
+            <InputNumber min={1} max={365} style={{ width: 100 }} />
           </Form.Item>
           <Form.Item>
             <Space>
-              <Button loading={policyLoading} onClick={() => form.submit()}>
+              <Button loading={policyLoading} onClick={() => handleCreatePolicy(form.getFieldsValue())}>
                 创建策略
               </Button>
               <Button

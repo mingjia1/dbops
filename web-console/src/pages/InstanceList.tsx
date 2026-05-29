@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, InputNumber, Switch, message, Tag } from 'antd'
-import { PlusOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { useDispatch, useSelector } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
 import { fetchInstances, createInstance, deleteInstance, detectVersion } from '@/store/instanceSlice'
 import type { RootState } from '@/store'
 
 const InstanceList: React.FC = () => {
   const dispatch = useDispatch()
+  const navigate = useNavigate()
   const { instances, loading } = useSelector((state: RootState) => state.instances as any)
   const [modalVisible, setModalVisible] = useState(false)
   const [form] = Form.useForm()
@@ -73,9 +75,12 @@ const InstanceList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 250,
       render: (_: any, record: any) => (
         <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/instances/${record.id}`)}>
+            详情
+          </Button>
           <Button size="small" icon={<ReloadOutlined />} onClick={() => handleDetectVersion(record.id)}>
             识别版本
           </Button>
