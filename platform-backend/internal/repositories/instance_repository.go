@@ -34,7 +34,7 @@ func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instan
 	if instance.Connection.InstanceID != "" {
 		instance.Connection.ID = uuid.New().String()
 		instance.Connection.InstanceID = instance.ID
-		if err := r.createConnection(ctx, &instance.Connection); err != nil {
+		if err := r.CreateConnection(ctx, &instance.Connection); err != nil {
 			return err
 		}
 	}
@@ -42,7 +42,7 @@ func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instan
 	if instance.Version.InstanceID != "" {
 		instance.Version.ID = uuid.New().String()
 		instance.Version.InstanceID = instance.ID
-		if err := r.createVersion(ctx, &instance.Version); err != nil {
+		if err := r.CreateVersion(ctx, &instance.Version); err != nil {
 			return err
 		}
 	}
@@ -50,7 +50,10 @@ func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instan
 	return nil
 }
 
-func (r *InstanceRepository) createConnection(ctx context.Context, conn *models.InstanceConnection) error {
+func (r *InstanceRepository) CreateConnection(ctx context.Context, conn *models.InstanceConnection) error {
+	if conn.ID == "" {
+		conn.ID = uuid.New().String()
+	}
 	query := `
 		INSERT INTO instance_connections (id, instance_id, host, port, username, password_encrypted, ssl_enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -60,7 +63,10 @@ func (r *InstanceRepository) createConnection(ctx context.Context, conn *models.
 	return err
 }
 
-func (r *InstanceRepository) createVersion(ctx context.Context, version *models.InstanceVersion) error {
+func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.InstanceVersion) error {
+	if version.ID == "" {
+		version.ID = uuid.New().String()
+	}
 	query := `
 		INSERT INTO instance_versions (id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, features, engines)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
