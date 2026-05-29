@@ -1,0 +1,101 @@
+package repositories
+
+import (
+	"context"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
+)
+
+type BackupRepository struct {
+	db *Database
+}
+
+func NewBackupRepository(db *Database) *BackupRepository {
+	return &BackupRepository{db: db}
+}
+
+func (r *BackupRepository) CreatePolicy(ctx context.Context, policy *models.BackupPolicy) error {
+	policy.ID = uuid.New().String()
+	
+	query := `
+		INSERT INTO backup_policies (id, instance_id, backup_type, schedule, retention_days, storage_type, storage_path, enabled, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	
+	_, err := r.db.Pool.Exec(ctx, query,
+		policy.ID, policy.InstanceID, policy.BackupType, policy.Schedule, policy.RetentionDays,
+		policy.StorageType, policy.StoragePath, policy.Enabled, policy.CreatedAt)
+	
+	if err != nil {
+		return fmt.Errorf("failed to create backup policy: %w", err)
+	}
+	
+	return nil
+}
+
+func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*models.BackupPolicy, error) {
+	query := `
+		SELECT id, instance_id, backup_type, schedule, retention_days, storage_type, storage_path, enabled, created_at, updated_at
+		FROM backup_policies WHERE id = $1
+	`
+	
+	policy := &models.BackupPolicy{}
+	err := r.db.Pool.QueryRow(ctx, query, id).Scan(
+		&policy.ID, &policy.InstanceID, &policy.BackupType, &policy.Schedule, &policy.RetentionDays,
+		&policy.StorageType, &policy.StoragePath, &policy.Enabled, &policy.CreatedAt, &policy.UpdatedAt)
+	
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("backup policy not found")
+		}
+		return nil, fmt.Errorf("failed to get backup policy: %w", err)
+	}
+	
+	return policy, nil
+}
+
+func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.BackupRecord) error {
+	record.ID = uuid.New().String()
+	
+	query := `
+		INSERT INTO backup_records (id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`
+	
+	_, err := r.db.Pool.Exec(ctx, query,
+		record.ID, record.PolicyID, record.InstanceID, record.BackupType, record.StartedAt, record.CompletedAt,
+		record.Status, record.FilePath, record.FileSize, record.Checksum, record.CreatedAt)
+	
+	if err != nil {
+		return fmt.Errorf("failed to create backup record: %w", err)
+	}
+	
+	return nil
+}
+
+func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, limit, offset int) ([]models.BackupRecord, error) {
+	query := `
+		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at
+		FROM backup_records WHERE instance_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`
+	
+	rows, err := r.db.Pool.Query(ctx, query, instanceID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list backup records: %w", err)
+	}
+	defer rows.Close()
+	
+	var records []models.BackupRecord
+	for rows.Next() {
+		var record models.BackupRecord
+		if err := rows.Scan(&record.ID, &record.PolicyID, &record.InstanceID, &record.BackupType,
+			&record.StartedAt, &record.CompletedAt, &record.Status, &record.FilePath, &record.FileSize, &record.Checksum, &record.CreatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	
+	return records, nil
+}
