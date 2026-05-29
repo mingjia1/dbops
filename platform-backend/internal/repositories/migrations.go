@@ -185,12 +185,55 @@ var InitialSchema = []string{
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 	
+	`CREATE TABLE IF NOT EXISTS parameter_templates (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(255) UNIQUE NOT NULL,
+		description TEXT,
+		category VARCHAR(64) NOT NULL,
+		is_preset BOOLEAN DEFAULT FALSE,
+		created_by VARCHAR(64),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	
+	`CREATE TABLE IF NOT EXISTS parameter_template_versions (
+		id VARCHAR(64) PRIMARY KEY,
+		template_id VARCHAR(64) NOT NULL REFERENCES parameter_templates(id) ON DELETE CASCADE,
+		version VARCHAR(32) NOT NULL,
+		description TEXT,
+		is_active BOOLEAN DEFAULT TRUE,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	
+	`CREATE TABLE IF NOT EXISTS parameter_template_parameters (
+		id VARCHAR(64) PRIMARY KEY,
+		template_id VARCHAR(64) NOT NULL REFERENCES parameter_templates(id) ON DELETE CASCADE,
+		version_id VARCHAR(64) REFERENCES parameter_template_versions(id) ON DELETE CASCADE,
+		parameter_name VARCHAR(128) NOT NULL,
+		value TEXT NOT NULL,
+		data_type VARCHAR(32) NOT NULL,
+		min_value TEXT,
+		max_value TEXT,
+		unit VARCHAR(32),
+		description TEXT,
+		is_dynamic BOOLEAN DEFAULT TRUE,
+		is_mandatory BOOLEAN DEFAULT FALSE,
+		category VARCHAR(64)
+	)`,
+	
 	`CREATE INDEX IF NOT EXISTS idx_instances_cluster ON instances(cluster_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type)`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_instance ON tasks(instance_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_backup_policies_instance ON backup_policies(instance_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_backup_records_instance ON backup_records(instance_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_alert_records_instance ON alert_records(instance_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_templates_category ON parameter_templates(category)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_templates_is_preset ON parameter_templates(is_preset)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_template_versions_template ON parameter_template_versions(template_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_template_parameters_template ON parameter_template_parameters(template_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_template_parameters_version ON parameter_template_parameters(version_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_template_parameters_name ON parameter_template_parameters(parameter_name)`,
+	`CREATE INDEX IF NOT EXISTS idx_parameter_template_parameters_category ON parameter_template_parameters(category)`,
 }
 
 func RunMigrations(ctx context.Context, conn *pgx.Conn) error {

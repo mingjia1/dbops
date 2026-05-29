@@ -29,7 +29,7 @@ func main() {
 
 	if db != nil {
 		defer db.Close()
-if err := runMigrations(db); err != nil {
+		if err := runMigrations(db); err != nil {
 			logInstance.Warn("Migrations skipped")
 		}
 	}
@@ -50,6 +50,10 @@ if err := runMigrations(db); err != nil {
 
 	monitorService := services.NewMonitorService()
 	monitorController := controllers.NewMonitorController(monitorService)
+
+	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)
+	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo)
+	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	r := gin.Default()
 	r.Use(middleware.CORS())
@@ -102,6 +106,19 @@ if err := runMigrations(db); err != nil {
 			monitoring := protected.Group("/monitoring")
 			{
 				monitoring.GET("/metrics", monitorController.QueryMetrics)
+			}
+
+			paramTemplates := protected.Group("/parameter-templates")
+			{
+				paramTemplates.GET("", paramTemplateController.List)
+				paramTemplates.GET("/presets", paramTemplateController.ListPresets)
+				paramTemplates.POST("", paramTemplateController.Create)
+				paramTemplates.GET("/:id", paramTemplateController.GetByID)
+				paramTemplates.PUT("/:id", paramTemplateController.Update)
+				paramTemplates.DELETE("/:id", paramTemplateController.Delete)
+				paramTemplates.GET("/:id/parameters", paramTemplateController.GetParameters)
+				paramTemplates.POST("/:id/validate", paramTemplateController.Validate)
+				paramTemplates.POST("/recommend", paramTemplateController.Recommend)
 			}
 		}
 	}
