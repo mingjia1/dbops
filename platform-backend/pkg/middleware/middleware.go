@@ -24,7 +24,7 @@ func Logger(logger *zap.Logger) gin.HandlerFunc {
 		logger.Info("Request completed",
 			zap.String("trace_id", traceID),
 			zap.Int("status", ctx.Writer.Status()),
-			zap.Duration("latency", ctx.Writer.Size()),
+			zap.Int("response_size", ctx.Writer.Size()),
 		)
 	}
 }

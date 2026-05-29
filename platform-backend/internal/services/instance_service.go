@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
@@ -79,7 +78,7 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 }
 
 func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models.InstanceVersion, error) {
-	instance, err := s.repo.GetByID(ctx, id)
+	_, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}

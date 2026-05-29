@@ -59,7 +59,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 		return
 	}
 
-	user, err := c.authService.Register(ctx.Request.Context(), req.Username, req.Password, req.Email, req.Role)
+	err := c.authService.Register(ctx.Request.Context(), req.Username, req.Password, req.Email, req.Role)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
@@ -72,11 +72,6 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "User registered successfully",
-		"data": gin.H{
-			"id":       user.ID,
-			"username": user.Username,
-			"role":     user.Role,
-		},
 	})
 }
 

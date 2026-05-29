@@ -29,8 +29,8 @@ func main() {
 
 	if db != nil {
 		defer db.Close()
-		if err := runMigrations(db); err != nil {
-			logInstance.Warn("Migrations skipped", zap.String("error", err.Error()))
+if err := runMigrations(db); err != nil {
+			logInstance.Warn("Migrations skipped")
 		}
 	}
 
