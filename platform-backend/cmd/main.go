@@ -19,16 +19,19 @@ func main() {
 	}
 
 	logInstance := logger.New(cfg.LogLevel)
-	logInstance.Info("Starting MySQL Ops Platform...")
+	logInstance.Info("Starting MySQL Ops Platform API Server")
 
 	db, err := repositories.NewDatabase(cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		logInstance.Warn("Database not available, running in standalone mode")
+		db = nil
 	}
-	defer db.Close()
 
-	if err := runMigrations(db); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+	if db != nil {
+		defer db.Close()
+		if err := runMigrations(db); err != nil {
+			logInstance.Warn("Migrations skipped", zap.String("error", err.Error()))
+		}
 	}
 
 	userRepo := repositories.NewUserRepository(db)
@@ -39,13 +42,26 @@ func main() {
 	instanceService := services.NewInstanceService(instanceRepo)
 	instanceController := controllers.NewInstanceController(instanceService)
 
+	envCheckService := services.NewEnvironmentCheckService()
+	envCheckController := controllers.NewEnvironmentCheckController(envCheckService)
+
+	backupService := services.NewBackupService()
+	backupController := controllers.NewBackupController(backupService)
+
+	monitorService := services.NewMonitorService()
+	monitorController := controllers.NewMonitorController(monitorService)
+
 	r := gin.Default()
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(logInstance))
 	r.Use(middleware.ErrorHandler())
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(200, gin.H{
+			"code":    200,
+			"message": "success",
+			"data":    gin.H{"status": "ok", "service": "mysql-ops-platform"},
+		})
 	})
 
 	api := r.Group("/api/v1")
@@ -56,15 +72,37 @@ func main() {
 			auth.POST("/register", authController.Register)
 		}
 
-		instances := api.Group("/instances")
-		instances.Use(authController.ValidateToken)
+		protected := api.Group("")
+		protected.Use(authController.ValidateToken)
 		{
-			instances.GET("", instanceController.List)
-			instances.POST("", instanceController.Create)
-			instances.GET("/:id", instanceController.GetByID)
-			instances.PUT("/:id", instanceController.Update)
-			instances.DELETE("/:id", instanceController.Delete)
-			instances.POST("/:id/detect-version", instanceController.DetectVersion)
+			instances := protected.Group("/instances")
+			{
+				instances.GET("", instanceController.List)
+				instances.POST("", instanceController.Create)
+				instances.GET("/:id", instanceController.GetByID)
+				instances.PUT("/:id", instanceController.Update)
+				instances.DELETE("/:id", instanceController.Delete)
+				instances.POST("/:id/detect-version", instanceController.DetectVersion)
+			}
+
+			envChecks := protected.Group("/env-checks")
+			{
+				envChecks.POST("", envCheckController.Execute)
+				envChecks.GET("/:id", envCheckController.GetByID)
+				envChecks.GET("/:id/export", envCheckController.Export)
+			}
+
+			backups := protected.Group("/backups")
+			{
+				backups.POST("/policies", backupController.CreatePolicy)
+				backups.POST("", backupController.ExecuteBackup)
+				backups.GET("", backupController.ListBackups)
+			}
+
+			monitoring := protected.Group("/monitoring")
+			{
+				monitoring.GET("/metrics", monitorController.QueryMetrics)
+			}
 		}
 	}
 
