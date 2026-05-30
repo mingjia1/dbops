@@ -503,3 +503,137 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string
 		Timestamp: time.Now(),
 	}, nil
 }
+
+func (e *TaskExecutor) ExecuteMigration(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	migrationType, _ := req.Config["migration_type"].(string)
+	migrationExecutor := NewMigrationExecutor()
+	
+	switch migrationType {
+	case "physical":
+		return migrationExecutor.ExecutePhysicalMigration(ctx, req)
+	case "replication":
+		return migrationExecutor.ExecuteReplicationMigration(ctx, req)
+	case "gtid":
+		return migrationExecutor.ExecuteGTIDMigration(ctx, req)
+	default:
+		return migrationExecutor.ExecutePhysicalMigration(ctx, req)
+	}
+}
+
+func (e *TaskExecutor) ExecuteMigrationSwitch(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	migrationExecutor := NewMigrationExecutor()
+	
+	result, err := migrationExecutor.ExecuteSwitch(ctx, req)
+	if err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Migration switch failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	
+	status := result.Status
+	progress := 100
+	if status == "pending" || status == "lock_failed" {
+		status = "failed"
+		progress = 0
+	}
+	
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    status,
+		Progress:  progress,
+		Message:   fmt.Sprintf("Migration switch %s. Old source: %s, New target: %s", status, result.OldSource, result.NewTarget),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) MonitorMigration(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	migrationExecutor := NewMigrationExecutor()
+	
+	progress := migrationExecutor.MonitorProgress(ctx, req)
+	
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    progress.Status,
+		Progress:  int(progress.Percentage),
+		Message:   fmt.Sprintf("Migration phase: %s, Completed: %.2f%%, Lag: %ds, Throughput: %.2f rows/s",
+			progress.Phase, progress.Percentage, progress.ReplicationLag, progress.Throughput),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) ExecuteUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	upgradeExecutor := NewUpgradeExecutor()
+
+	upgradeType, _ := req.Config["upgrade_type"].(string)
+
+	switch upgradeType {
+	case "in-place":
+		return upgradeExecutor.ExecuteInPlaceUpgrade(ctx, req)
+	case "logical":
+		return upgradeExecutor.ExecuteLogicalMigration(ctx, req)
+	case "rolling":
+		return upgradeExecutor.ExecuteRollingUpgrade(ctx, req)
+	default:
+		return upgradeExecutor.ExecuteInPlaceUpgrade(ctx, req)
+	}
+}
+
+func (e *TaskExecutor) PlanUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	upgradeExecutor := NewUpgradeExecutor()
+	path, err := upgradeExecutor.PlanUpgradePath(ctx, req)
+	if err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Failed to plan upgrade path: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("Upgrade path planned. Steps: %d, Estimated time: %d min, Compatible: %v",
+			len(path.Steps), path.EstimatedTime, path.CompatibilityOK),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) CheckUpgradeCompatibility(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	upgradeExecutor := NewUpgradeExecutor()
+	report, err := upgradeExecutor.CheckCompatibility(ctx, req)
+	if err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Failed to check compatibility: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	status := "compatible"
+	if !report.Compatible {
+		status = "incompatible"
+	}
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    status,
+		Progress:  100,
+		Message:   fmt.Sprintf("Compatibility: %v, Gap: %s, Warnings: %d, Errors: %d",
+			report.Compatible, report.VersionGap, len(report.Warnings), len(report.Errors)),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) RollbackUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	upgradeExecutor := NewUpgradeExecutor()
+	return upgradeExecutor.RollbackUpgrade(ctx, req)
+}
