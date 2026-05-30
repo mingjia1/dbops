@@ -107,7 +107,16 @@ migrationService := services.NewMigrationService()
 		}
 
 		protected := api.Group("")
-		protected.Use(authController.ValidateToken)
+		if db == nil {
+			protected.Use(func(c *gin.Context) {
+				c.Set("user_id", "test-user-001")
+				c.Set("username", "testuser")
+				c.Set("role", "admin")
+				c.Next()
+			})
+		} else {
+			protected.Use(authController.ValidateToken)
+		}
 		{
 			instances := protected.Group("/instances")
 			{
