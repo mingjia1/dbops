@@ -55,6 +55,15 @@ func main() {
 	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo)
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
+	clusterDeployService := services.NewClusterDeployService()
+	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
+
+	healthCheckService := services.NewHealthCheckService(db)
+	healthCheckController := controllers.NewHealthCheckController(healthCheckService)
+
+	failoverService := services.NewFailoverService(db)
+	failoverController := controllers.NewFailoverController(failoverService)
+
 	r := gin.Default()
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(logInstance))
@@ -119,6 +128,25 @@ func main() {
 				paramTemplates.GET("/:id/parameters", paramTemplateController.GetParameters)
 				paramTemplates.POST("/:id/validate", paramTemplateController.Validate)
 				paramTemplates.POST("/recommend", paramTemplateController.Recommend)
+			}
+
+			deployments := protected.Group("/deployments")
+			{
+				deployments.POST("/mha", clusterDeployController.DeployMHA)
+				deployments.POST("/mgr", clusterDeployController.DeployMGR)
+				deployments.POST("/pxc", clusterDeployController.DeployPXC)
+				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
+			}
+
+			ha := protected.Group("/ha")
+			{
+				ha.GET("/health", healthCheckController.ExecuteHealthCheck)
+				ha.GET("/health/failure-state", healthCheckController.GetFailureState)
+				ha.GET("/health/detect", healthCheckController.DetectFailure)
+				ha.POST("/health/batch", healthCheckController.BatchHealthCheck)
+				ha.POST("/failover", failoverController.ExecuteAutoFailover)
+				ha.POST("/manual-switch", failoverController.ExecuteManualFailover)
+				ha.GET("/status", failoverController.GetClusterStatus)
 			}
 		}
 	}
