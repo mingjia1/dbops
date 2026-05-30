@@ -17,6 +17,10 @@ func NewAuditLogRepository(db *Database) *AuditLogRepository {
 }
 
 func (r *AuditLogRepository) Create(ctx context.Context, auditLog *models.AuditLog) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
 	auditLog.ID = uuid.New().String()
 	
 	query := `
@@ -59,6 +63,10 @@ func (r *AuditLogRepository) GetByID(ctx context.Context, id string) (*models.Au
 }
 
 func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]models.AuditLog, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.AuditLog{}, nil
+	}
+	
 	query := `
 		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
 		FROM audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2
