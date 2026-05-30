@@ -64,6 +64,18 @@ func main() {
 	failoverService := services.NewFailoverService(db)
 	failoverController := controllers.NewFailoverController(failoverService)
 
+	taskRepo := repositories.NewTaskRepository(db)
+	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo)
+	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
+
+migrationService := services.NewMigrationService()
+	migrationController := controllers.NewMigrationController(migrationService)
+
+	alertRuleRepo := repositories.NewAlertRuleRepository(db)
+	alertNotificationRepo := repositories.NewAlertNotificationRepository(db)
+	alertService := services.NewAlertService(alertRuleRepo, alertNotificationRepo, monitorService)
+	alertController := controllers.NewAlertController(alertService)
+
 	r := gin.Default()
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(logInstance))
@@ -147,6 +159,47 @@ func main() {
 				ha.POST("/failover", failoverController.ExecuteAutoFailover)
 				ha.POST("/manual-switch", failoverController.ExecuteManualFailover)
 				ha.GET("/status", failoverController.GetClusterStatus)
+			}
+
+			upgrades := protected.Group("/upgrades")
+			{
+				upgrades.POST("/plan", upgradeController.PlanUpgradePath)
+				upgrades.POST("/check", upgradeController.CheckCompatibility)
+				upgrades.POST("/in-place", upgradeController.ExecuteInPlaceUpgrade)
+				upgrades.POST("/logical", upgradeController.ExecuteLogicalMigration)
+				upgrades.POST("/rolling", upgradeController.ExecuteRollingUpgrade)
+				upgrades.POST("/rollback", upgradeController.RollbackUpgrade)
+				upgrades.GET("/:id", upgradeController.GetUpgradeByID)
+				upgrades.GET("/:id/report", upgradeController.GenerateUpgradeReport)
+			}
+
+migrations := protected.Group("/migrations")
+			{
+				migrations.POST("/physical", migrationController.ExecutePhysical)
+				migrations.POST("/replication", migrationController.ExecuteReplication)
+				migrations.POST("/gtid", migrationController.ExecuteGTID)
+				migrations.POST("/orchestrate", migrationController.Orchestrate)
+				migrations.GET("/:id/progress", migrationController.GetProgress)
+				migrations.POST("/:id/verify", migrationController.Verify)
+				migrations.POST("/:id/switch", migrationController.Switch)
+			}
+
+			alerts := protected.Group("/alerts")
+			{
+				alerts.GET("/rules", alertController.ListAlertRules)
+				alerts.POST("/rules", alertController.CreateAlertRule)
+				alerts.GET("/rules/:id", alertController.GetAlertRule)
+				alerts.PUT("/rules/:id", alertController.UpdateAlertRule)
+				alerts.DELETE("/rules/:id", alertController.DeleteAlertRule)
+				alerts.POST("/evaluate", alertController.EvaluateAlert)
+				alerts.POST("/trigger", alertController.TriggerAlert)
+				alerts.GET("/history", alertController.GetAlertHistory)
+				alerts.POST("/notifications", alertController.SendNotification)
+				alerts.GET("/notifications/channels", alertController.ListNotificationChannels)
+				alerts.POST("/notifications/channels", alertController.CreateNotificationChannel)
+				alerts.GET("/notifications/channels/:id", alertController.GetNotificationChannel)
+				alerts.PUT("/notifications/channels/:id", alertController.UpdateNotificationChannel)
+				alerts.DELETE("/notifications/channels/:id", alertController.DeleteNotificationChannel)
 			}
 		}
 	}
