@@ -78,6 +78,10 @@ func (r *ParameterTemplateRepository) GetByName(ctx context.Context, name string
 }
 
 func (r *ParameterTemplateRepository) List(ctx context.Context, limit, offset int) ([]models.ParameterTemplate, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.ParameterTemplate{}, nil
+	}
+	
 	query := `
 		SELECT id, name, description, category, is_preset, created_by, created_at, updated_at
 		FROM parameter_templates ORDER BY created_at DESC LIMIT $1 OFFSET $2
@@ -104,6 +108,10 @@ func (r *ParameterTemplateRepository) List(ctx context.Context, limit, offset in
 }
 
 func (r *ParameterTemplateRepository) ListPresetTemplates(ctx context.Context) ([]models.ParameterTemplate, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.ParameterTemplate{}, nil
+	}
+	
 	query := `
 		SELECT id, name, description, category, is_preset, created_by, created_at, updated_at
 		FROM parameter_templates WHERE is_preset = true ORDER BY category, name

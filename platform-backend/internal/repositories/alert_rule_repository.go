@@ -17,6 +17,10 @@ func NewAlertRuleRepository(db *Database) *AlertRuleRepository {
 }
 
 func (r *AlertRuleRepository) CreateAlertRule(ctx context.Context, rule *models.AlertRule) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
 	rule.ID = uuid.New().String()
 	
 	query := `
@@ -37,6 +41,10 @@ func (r *AlertRuleRepository) CreateAlertRule(ctx context.Context, rule *models.
 }
 
 func (r *AlertRuleRepository) UpdateAlertRule(ctx context.Context, rule *models.AlertRule) error {
+	if r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
 	query := `
 		UPDATE alert_rules SET
 			name = $2, metric = $3, condition = $4, threshold = $5,
@@ -56,21 +64,29 @@ func (r *AlertRuleRepository) UpdateAlertRule(ctx context.Context, rule *models.
 }
 
 func (r *AlertRuleRepository) DeleteAlertRule(ctx context.Context, id string) error {
-	query := `DELETE FROM alert_rules WHERE id = $1`
-	_, err := r.db.Pool.Exec(ctx, query, id)
+	if r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
+	_, err := r.db.Pool.Exec(ctx, "DELETE FROM alert_rules WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete alert rule: %w", err)
 	}
+	
 	return nil
 }
 
 func (r *AlertRuleRepository) GetAlertRuleByID(ctx context.Context, id string) (*models.AlertRule, error) {
+	if r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available in standalone mode")
+	}
+	
 	query := `
 		SELECT id, name, metric, condition, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
 		FROM alert_rules WHERE id = $1
 	`
 	
-	rule := &models.AlertRule{}
+	var rule models.AlertRule
 	err := r.db.Pool.QueryRow(ctx, query, id).Scan(
 		&rule.ID, &rule.Name, &rule.Metric, &rule.Condition, &rule.Threshold,
 		&rule.DurationSeconds, &rule.Severity, &rule.NotificationChannels,
@@ -83,10 +99,14 @@ func (r *AlertRuleRepository) GetAlertRuleByID(ctx context.Context, id string) (
 		return nil, fmt.Errorf("failed to get alert rule: %w", err)
 	}
 	
-	return rule, nil
+	return &rule, nil
 }
 
 func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset int) ([]models.AlertRule, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.AlertRule{}, nil
+	}
+	
 	query := `
 		SELECT id, name, metric, condition, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
 		FROM alert_rules ORDER BY created_at DESC LIMIT $1 OFFSET $2
@@ -114,6 +134,10 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 }
 
 func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models.AlertRule, error) {
+	if r.db.Pool == nil {
+		return []models.AlertRule{}, nil
+	}
+	
 	query := `
 		SELECT id, name, metric, condition, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
 		FROM alert_rules ORDER BY created_at DESC

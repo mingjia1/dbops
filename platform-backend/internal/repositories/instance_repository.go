@@ -17,6 +17,10 @@ func NewInstanceRepository(db *Database) *InstanceRepository {
 }
 
 func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instance) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
 	instance.ID = uuid.New().String()
 	
 	query := `
@@ -98,6 +102,10 @@ func (r *InstanceRepository) GetByID(ctx context.Context, id string) (*models.In
 }
 
 func (r *InstanceRepository) List(ctx context.Context, limit, offset int) ([]models.Instance, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.Instance{}, nil
+	}
+	
 	query := `
 		SELECT id, name, cluster_id, created_at, updated_at
 		FROM instances ORDER BY created_at DESC LIMIT $1 OFFSET $2
@@ -122,6 +130,10 @@ func (r *InstanceRepository) List(ctx context.Context, limit, offset int) ([]mod
 }
 
 func (r *InstanceRepository) Update(ctx context.Context, instance *models.Instance) error {
+	if r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	
 	query := `
 		UPDATE instances SET name = $2, cluster_id = $3, updated_at = $4 WHERE id = $1
 	`
