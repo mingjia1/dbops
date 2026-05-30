@@ -1,11 +1,9 @@
 import React, { useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Steps, Card, Progress, Upload, DatePicker, Divider, Typography, Tabs } from 'antd'
+import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Steps, Card, Progress, DatePicker, Divider, Typography, Tabs } from 'antd'
 import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, HistoryOutlined, DownloadOutlined, FileTextOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
-import type { UploadProps } from 'antd'
 
 const { Title } = Typography
 const { TabPane } = Tabs
-const { RangePicker } = DatePicker
 
 interface UpgradeHistory {
   id: string
@@ -74,13 +72,13 @@ const UpgradeManage: React.FC = () => {
     },
   ]
 
-  const handlePlanUpgradePath = async (values: any) => {
+  const handlePlanUpgradePath = async (_values: any) => {
     message.success('升级路径规划已生成')
     setPlanModalVisible(false)
     planForm.resetFields()
   }
 
-  const handleCheckCompatibility = async (values: any) => {
+  const handleCheckCompatibility = async (_values: any) => {
     message.loading('正在检查兼容性...', 0)
     setTimeout(() => {
       message.destroy()
@@ -106,7 +104,7 @@ const UpgradeManage: React.FC = () => {
     }, 1500)
   }
 
-  const handleInPlaceUpgrade = async (values: any) => {
+  const handleInPlaceUpgrade = async (_values: any) => {
     message.loading('正在启动原地升级...', 0)
     setCurrentStep(0)
     const steps = [
@@ -130,7 +128,7 @@ const UpgradeManage: React.FC = () => {
     setCurrentStep(0)
   }
 
-  const handleLogicalMigration = async (values: any) => {
+  const handleLogicalMigration = async (_values: any) => {
     message.loading('正在启动逻辑迁移...', 0)
     setCurrentStep(0)
     const steps = [
@@ -154,7 +152,7 @@ const UpgradeManage: React.FC = () => {
     setCurrentStep(0)
   }
 
-  const handleRollingUpgrade = async (values: any) => {
+  const handleRollingUpgrade = async (_values: any) => {
     message.loading('正在启动滚动升级...', 0)
     setCurrentStep(0)
     const steps = [
@@ -311,19 +309,6 @@ MySQL 升级报告
       ),
     },
   ]
-
-  const uploadProps: UploadProps = {
-    name: 'file',
-    action: '/api/upload',
-    accept: '.sql,.sql.gz',
-    onChange(info) {
-      if (info.file.status === 'done') {
-        message.success(`${info.file.name} 上传成功`)
-      } else if (info.file.status === 'error') {
-        message.error(`${info.file.name} 上传失败`)
-      }
-    },
-  }
 
   return (
     <div>

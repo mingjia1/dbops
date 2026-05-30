@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -293,7 +294,7 @@ func (s *FailoverService) SelectCandidateMaster(ctx context.Context, slaves []Ma
 }
 
 func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInfo, conn *models.InstanceConnection) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", conn.Username, conn.PasswordEncrypted, conn.Host, conn.Port)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/", conn.Username, conn.PasswordEncrypted, net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port)))
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -321,7 +322,7 @@ func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInf
 
 func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []MasterInfo, username, password string) error {
 	for _, slave := range slaves {
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", username, password, slave.Host, slave.Port)
+		dsn := fmt.Sprintf("%s:%s@tcp(%s)/", username, password, net.JoinHostPort(slave.Host, fmt.Sprintf("%d", slave.Port)))
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
@@ -350,7 +351,7 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 			continue
 		}
 
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", slaveConn.Username, slaveConn.PasswordEncrypted, slave.Host, slave.Port)
+		dsn := fmt.Sprintf("%s:%s@tcp(%s)/", slaveConn.Username, slaveConn.PasswordEncrypted, net.JoinHostPort(slave.Host, fmt.Sprintf("%d", slave.Port)))
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
@@ -384,7 +385,7 @@ type BinlogPosition struct {
 }
 
 func (s *FailoverService) GetMasterBinlogPosition(master *MasterInfo, conn *models.InstanceConnection) (*BinlogPosition, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", conn.Username, conn.PasswordEncrypted, conn.Host, conn.Port)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/", conn.Username, conn.PasswordEncrypted, net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port)))
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

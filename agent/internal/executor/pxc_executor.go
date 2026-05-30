@@ -535,7 +535,6 @@ func identifyActiveNodes(configuredNodes []string, isolatedNodes []string) []str
 	var activeNodes []string
 	for _, node := range configuredNodes {
 		if !isolatedMap[node] {
-			activeNodes = activeNodes
 			activeNodes = append(activeNodes, node)
 		}
 	}

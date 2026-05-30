@@ -221,7 +221,7 @@ func (s *HealthCheckService) checkTCP(ctx context.Context, host string, port int
 	_, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
 		return &HealthCheckResult{
@@ -246,7 +246,7 @@ func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port i
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?timeout=%ds", username, password, host, port, int(timeout.Seconds()))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?timeout=%ds", username, password, net.JoinHostPort(host, fmt.Sprintf("%d", port)), int(timeout.Seconds()))
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -299,7 +299,7 @@ func (s *HealthCheckService) checkReplication(ctx context.Context, host string, 
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?timeout=%ds", username, password, host, port, int(timeout.Seconds()))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?timeout=%ds", username, password, net.JoinHostPort(host, fmt.Sprintf("%d", port)), int(timeout.Seconds()))
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
