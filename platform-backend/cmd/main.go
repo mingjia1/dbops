@@ -10,6 +10,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
 	"github.com/monkeycode/mysql-ops-platform/pkg/logger"
 	"github.com/monkeycode/mysql-ops-platform/pkg/middleware"
+	"github.com/monkeycode/mysql-ops-platform/pkg/storage"
 )
 
 func main() {
@@ -48,7 +49,15 @@ func main() {
 	backupService := services.NewBackupService()
 	backupController := controllers.NewBackupController(backupService)
 
-	monitorService := services.NewMonitorService()
+	clickhouse, err := storage.NewClickHouse(cfg.ClickHouseURL)
+	if err != nil {
+		logInstance.Warn("ClickHouse not available, monitor service running in standalone mode")
+		clickhouse = nil
+	} else {
+		defer clickhouse.Close()
+	}
+
+	monitorService := services.NewMonitorService(clickhouse)
 	monitorController := controllers.NewMonitorController(monitorService)
 
 	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)

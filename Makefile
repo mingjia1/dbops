@@ -1,4 +1,4 @@
-.PHONY: all build run test clean docker-up docker-down install-backend install-agent install-web
+.PHONY: all build run test clean docker-up docker-down docker-logs install-backend install-agent install-web fmt lint db-migrate
 
 all: install-backend install-agent install-web
 
@@ -14,13 +14,13 @@ install-web:
 build: build-backend build-agent build-web
 
 build-backend:
-	cd platform-backend && go build -o bin/platform ./cmd
+	make -C platform-backend build
 
 build-agent:
-	cd agent && go build -o bin/agent ./cmd
+	make -C agent build
 
 build-web:
-	cd web-console && npm run build
+	make -C web-console build
 
 run: run-backend run-agent run-web
 
@@ -36,10 +36,10 @@ run-web:
 test: test-backend test-agent
 
 test-backend:
-	cd platform-backend && go test ./... -v
+	make -C platform-backend test
 
 test-agent:
-	cd agent && go test ./... -v
+	make -C agent test
 
 docker-up:
 	docker-compose -f docker-compose.dev.yml up -d
@@ -51,10 +51,9 @@ docker-logs:
 	docker-compose -f docker-compose.dev.yml logs -f
 
 clean:
-	rm -rf platform-backend/bin
-	rm -rf agent/bin
-	rm -rf web-console/dist
-	rm -rf web-console/node_modules
+	make -C platform-backend clean
+	make -C agent clean
+	make -C web-console clean
 
 fmt:
 	cd platform-backend && go fmt ./...

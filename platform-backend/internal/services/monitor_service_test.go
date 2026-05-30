@@ -9,12 +9,12 @@ import (
 )
 
 func TestNewMonitorService(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	assert.NotNil(t, service)
 }
 
 func TestQueryMetrics(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	
 	req := MetricQueryRequest{
 		InstanceID: "instance-001",
@@ -36,7 +36,7 @@ func TestQueryMetrics(t *testing.T) {
 }
 
 func TestQueryMetrics_WithTimeRange(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	
 	req := MetricQueryRequest{
 		InstanceID: "instance-001",
@@ -53,7 +53,7 @@ func TestQueryMetrics_WithTimeRange(t *testing.T) {
 }
 
 func TestCollectMetrics(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	
 	ctx := context.Background()
 	err := service.CollectMetrics(ctx, "instance-001")
@@ -90,7 +90,7 @@ func TestMetricData_Fields(t *testing.T) {
 }
 
 func TestQueryMetrics_SpecificValues(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	ctx := context.Background()
 	
 	metrics, err := service.QueryMetrics(ctx, MetricQueryRequest{})
@@ -120,7 +120,7 @@ func findMetric(metrics []MetricData, name string) *MetricData {
 }
 
 func TestCollectMetrics_MultipleInstances(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	ctx := context.Background()
 	
 	err := service.CollectMetrics(ctx, "instance-001")
@@ -134,7 +134,7 @@ func TestCollectMetrics_MultipleInstances(t *testing.T) {
 }
 
 func TestQueryMetrics_EmptyMetrics(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	
 	req := MetricQueryRequest{
 		InstanceID: "instance-001",
@@ -149,7 +149,7 @@ func TestQueryMetrics_EmptyMetrics(t *testing.T) {
 }
 
 func TestMetricData_Timestamp(t *testing.T) {
-	service := NewMonitorService()
+	service := NewMonitorService(nil)
 	ctx := context.Background()
 	
 	metrics, err := service.QueryMetrics(ctx, MetricQueryRequest{})
