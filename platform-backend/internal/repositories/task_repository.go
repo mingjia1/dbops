@@ -17,6 +17,9 @@ func NewTaskRepository(db *Database) *TaskRepository {
 }
 
 func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	task.ID = uuid.New().String()
 	task.Status = "pending"
 	
@@ -36,6 +39,9 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 }
 
 func (r *TaskRepository) GetByID(ctx context.Context, id string) (*models.Task, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, nil
+	}
 	query := `
 		SELECT id, task_type, instance_id, status, progress, created_at, started_at, completed_at, error_message
 		FROM tasks WHERE id = $1
@@ -57,6 +63,9 @@ func (r *TaskRepository) GetByID(ctx context.Context, id string) (*models.Task, 
 }
 
 func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status string, progress int) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	query := `
 		UPDATE tasks SET status = $2, progress = $3, updated_at = NOW() WHERE id = $1
 	`
@@ -68,6 +77,9 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status str
 }
 
 func (r *TaskRepository) AddLog(ctx context.Context, taskLog *models.TaskLog) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	taskLog.ID = uuid.New().String()
 	
 	query := `
@@ -86,6 +98,9 @@ func (r *TaskRepository) AddLog(ctx context.Context, taskLog *models.TaskLog) er
 }
 
 func (r *TaskRepository) List(ctx context.Context, instanceID string, limit, offset int) ([]models.Task, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.Task{}, nil
+	}
 	query := `
 		SELECT id, task_type, instance_id, status, progress, created_at, started_at, completed_at, error_message
 		FROM tasks WHERE instance_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3

@@ -15,6 +15,9 @@ func NewUserRepository(db *Database) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	user.ID = uuid.New().String()
 	
 	query := `
@@ -27,6 +30,9 @@ func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 }
 
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, nil
+	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
 		FROM users WHERE username = $1
@@ -41,6 +47,9 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 }
 
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, nil
+	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
 		FROM users WHERE id = $1

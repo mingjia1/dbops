@@ -17,6 +17,9 @@ func NewBackupRepository(db *Database) *BackupRepository {
 }
 
 func (r *BackupRepository) CreatePolicy(ctx context.Context, policy *models.BackupPolicy) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	policy.ID = uuid.New().String()
 	
 	query := `
@@ -36,6 +39,9 @@ func (r *BackupRepository) CreatePolicy(ctx context.Context, policy *models.Back
 }
 
 func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*models.BackupPolicy, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, nil
+	}
 	query := `
 		SELECT id, instance_id, backup_type, schedule, retention_days, storage_type, storage_path, enabled, created_at, updated_at
 		FROM backup_policies WHERE id = $1
@@ -57,6 +63,9 @@ func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*model
 }
 
 func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.BackupRecord) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
 	record.ID = uuid.New().String()
 	
 	query := `
@@ -76,6 +85,9 @@ func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.Back
 }
 
 func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, limit, offset int) ([]models.BackupRecord, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.BackupRecord{}, nil
+	}
 	query := `
 		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at
 		FROM backup_records WHERE instance_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
