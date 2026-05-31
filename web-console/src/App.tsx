@@ -18,20 +18,19 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-<Route path="/dashboard" element={<Dashboard />}>
-        <Route path="/instances" element={<InstanceList />} />
-        <Route path="/instances/:id" element={<InstanceDetail />} />
-        <Route path="/env-check" element={<EnvironmentCheck />} />
-        <Route path="/backup" element={<BackupManage />} />
-        <Route path="/monitor" element={<MonitorDashboard />} />
-        <Route path="/parameter-templates" element={<ParameterTemplateList />} />
-        <Route path="/approvals" element={<ApprovalManage />} />
-        <Route path="/audit-logs" element={<AuditLog />} />
-        <Route path="/upgrade" element={<UpgradeManage />} />
-        <Route path="/alert-rules" element={<AlertRuleList />} />
-        <Route path="/topology" element={<TopologyView />} />
-        <Route path="/migration" element={<MigrationManage />} />
-      </Route>
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/instances" element={<InstanceList />} />
+      <Route path="/instances/:id" element={<InstanceDetail />} />
+      <Route path="/env-check" element={<EnvironmentCheck />} />
+      <Route path="/backup" element={<BackupManage />} />
+      <Route path="/monitor" element={<MonitorDashboard />} />
+      <Route path="/parameter-templates" element={<ParameterTemplateList />} />
+      <Route path="/approvals" element={<ApprovalManage />} />
+      <Route path="/audit-logs" element={<AuditLog />} />
+      <Route path="/upgrade" element={<UpgradeManage />} />
+      <Route path="/alert-rules" element={<AlertRuleList />} />
+      <Route path="/topology" element={<TopologyView />} />
+      <Route path="/migration" element={<MigrationManage />} />
       <Route path="/" element={<Navigate to="/login" replace />} />
     </Routes>
   )
