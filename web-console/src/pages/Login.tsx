@@ -1,10 +1,37 @@
-import React from 'react'
-import { Form, Input, Button, Card } from 'antd'
+import React, { useState } from 'react'
+import { Form, Input, Button, Card, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
 
 const Login: React.FC = () => {
-  const onFinish = (values: any) => {
-    console.log('Login values:', values)
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  const onFinish = async (values: any) => {
+    setLoading(true)
+    try {
+      const response = await axios.post('/api/v1/auth/login', {
+        username: values.username,
+        password: values.password,
+      })
+
+      if (response.data.code === 200) {
+        const { token, user } = response.data.data
+        localStorage.setItem('token', token)
+        localStorage.setItem('user', JSON.stringify(user))
+        
+        message.success('登录成功')
+        navigate('/dashboard')
+      } else {
+        message.error(response.data.message || '登录失败')
+      }
+    } catch (error: any) {
+      console.error('Login error:', error)
+      message.error(error.response?.data?.message || '登录失败，请检查网络连接')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -36,11 +63,15 @@ const Login: React.FC = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button type="primary" htmlType="submit" block>
+            <Button type="primary" htmlType="submit" block loading={loading}>
               登录
             </Button>
           </Form.Item>
         </Form>
+        
+        <div style={{ marginTop: 16, textAlign: 'center', color: '#999', fontSize: 12 }}>
+          <p>Standalone 模式：任意用户名密码均可登录</p>
+        </div>
       </Card>
     </div>
   )

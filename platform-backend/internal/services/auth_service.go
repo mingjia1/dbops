@@ -12,16 +12,25 @@ import (
 
 type AuthService struct {
 	userRepo    *repositories.UserRepository
+	db          interface{}
+	standalone  bool
 	jwtSecret   string
 	tokenExpiry time.Duration
 }
 
 func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string) *AuthService {
+	var db interface{} = userRepo
 	return &AuthService{
 		userRepo:    userRepo,
+		db:          db,
+		standalone:  userRepo == nil,
 		jwtSecret:   jwtSecret,
 		tokenExpiry: 24 * time.Hour,
 	}
+}
+
+func (s *AuthService) IsStandalone() bool {
+	return s.standalone
 }
 
 type LoginRequest struct {
@@ -49,6 +58,42 @@ type Claims struct {
 }
 
 func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginResponse, error) {
+	// Standalone 模式：允许任意用户名密码登录
+	if s.IsStandalone() {
+		expiresAt := time.Now().Add(s.tokenExpiry)
+		claims := &Claims{
+			UserID:   "standalone-user",
+			Username: req.Username,
+			Role:     "admin",
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(expiresAt),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				NotBefore: jwt.NewNumericDate(time.Now()),
+			},
+		}
+
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString([]byte(s.jwtSecret))
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate token: %w", err)
+		}
+
+		return &LoginResponse{
+			Token:     tokenString,
+			ExpiresAt: expiresAt.Unix(),
+			User: UserInfo{
+				ID:       "standalone-user",
+				Username: req.Username,
+				Role:     "admin",
+			},
+		}, nil
+	}
+
+	// 正常模式：从数据库验证用户
+	if s.userRepo == nil {
+		return nil, errors.New("user repository not available")
+	}
+
 	user, err := s.userRepo.GetByUsername(ctx, req.Username)
 	if err != nil {
 		return nil, errors.New("invalid credentials")

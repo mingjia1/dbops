@@ -35,9 +35,12 @@ func main() {
 		}
 	}
 
-	userRepo := repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-	authController := controllers.NewAuthController(authService)
+	var userRepo *repositories.UserRepository
+if db != nil {
+	userRepo = repositories.NewUserRepository(db)
+}
+authService := services.NewAuthService(userRepo, cfg.JWTSecret)
+authController := controllers.NewAuthController(authService)
 
 	instanceRepo := repositories.NewInstanceRepository(db)
 	instanceService := services.NewInstanceService(instanceRepo)
