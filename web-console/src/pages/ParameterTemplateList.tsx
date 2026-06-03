@@ -1,61 +1,61 @@
-import React from 'react'
-import { Card, Table, Button, Space, Tag } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import React, { useEffect, useState } from 'react'
+import { Card, Table, Button, Space, Tag, message, Modal } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-
-interface Template {
-  id: string
-  name: string
-  version: string
-  description: string
-  applyCount: number
-  createdAt: string
-}
+import { parameterTemplateApi, type ParameterTemplate } from '../services/api'
 
 const ParameterTemplateList: React.FC = () => {
-  const columns: ColumnsType<Template> = [
-    {
-      title: '模板名称',
-      dataIndex: 'name',
-      key: 'name',
-    },
+  const [data, setData] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const fetchData = () => {
+    setLoading(true)
+    parameterTemplateApi.list().then((res: any) => {
+      setData(res?.data || [])
+    }).catch(() => {}).finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchData() }, [])
+
+  const handleDelete = (id: string) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除此参数模板吗？',
+      onOk: () => parameterTemplateApi.delete(id).then(() => {
+        message.success('删除成功')
+        fetchData()
+      }).catch(() => {}),
+    })
+  }
+
+  const columns: ColumnsType<ParameterTemplate> = [
+    { title: '模板名称', dataIndex: 'name', key: 'name' },
     {
       title: '版本',
       dataIndex: 'version',
       key: 'version',
-      render: (version) => <Tag color="blue">{version}</Tag>,
+      render: (v) => <Tag color="blue">{v || 'v1.0'}</Tag>,
     },
-    {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
-    },
-    {
-      title: '应用次数',
-      dataIndex: 'applyCount',
-      key: 'applyCount',
-      render: (count) => `${count} 次`,
-    },
+    { title: '描述', dataIndex: 'description', key: 'description' },
     {
       title: '创建时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (t) => t || '-',
     },
     {
       title: '操作',
       key: 'action',
-      render: () => (
+      render: (_, record) => (
         <Space>
-          <Button type="link" size="small">查看</Button>
-          <Button type="link" size="small">编辑</Button>
-          <Button type="link" size="small">应用</Button>
-          <Button type="link" size="small" danger>删除</Button>
+          <Button type="link" size="small" icon={<EyeOutlined />}>查看</Button>
+          <Button type="link" size="small" icon={<EditOutlined />}>编辑</Button>
+          <Button type="link" size="small" icon={<EditOutlined />}>应用</Button>
+          <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>删除</Button>
         </Space>
       ),
     },
   ]
-
-  const data: Template[] = []
 
   return (
     <div style={{ padding: '24px' }}>
@@ -67,7 +67,7 @@ const ParameterTemplateList: React.FC = () => {
           </Button>
         }
       >
-        <Table columns={columns} dataSource={data} rowKey="id" />
+        <Table columns={columns} dataSource={data} rowKey="id" loading={loading} />
       </Card>
     </div>
   )

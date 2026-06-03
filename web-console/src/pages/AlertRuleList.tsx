@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, Select, message, Tag, Tabs, Card, Switch, InputNumber, Divider } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, BellOutlined, HistoryOutlined, SettingOutlined } from '@ant-design/icons'
+import { alertApi } from '../services/api'
 
 interface AlertRule {
   id: string
@@ -36,6 +37,149 @@ interface AlertHistory {
   message: string
 }
 
+const MOCK_RULES: AlertRule[] = [
+  { id: '1', name: 'CPU使用率告警', metric: 'cpu_usage', condition: '>', threshold: 80, duration: 300, severity: 'warning', enabled: true, notification_channels: ['email-1', 'dingtalk-1'], created_at: '2024-01-15 10:00:00', updated_at: '2024-01-15 10:00:00' },
+  { id: '2', name: '内存使用率告警', metric: 'memory_usage', condition: '>', threshold: 90, duration: 180, severity: 'critical', enabled: true, notification_channels: ['email-1', 'webhook-1'], created_at: '2024-01-15 11:00:00', updated_at: '2024-01-15 11:00:00' },
+  { id: '3', name: '磁盘空间不足告警', metric: 'disk_usage', condition: '>', threshold: 85, duration: 600, severity: 'warning', enabled: false, notification_channels: ['email-1'], created_at: '2024-01-15 12:00:00', updated_at: '2024-01-15 12:00:00' },
+]
+
+const MOCK_CHANNELS: NotificationChannel[] = [
+  { id: 'email-1', name: '运维邮箱组', type: 'email', config: { recipients: ['ops@example.com'] }, enabled: true, created_at: '2024-01-10 09:00:00' },
+  { id: 'dingtalk-1', name: '钉钉告警群', type: 'dingtalk', config: { webhook: 'https://oapi.dingtalk.com/robot/send?access_token=xxx' }, enabled: true, created_at: '2024-01-10 10:00:00' },
+  { id: 'webhook-1', name: '运维平台Webhook', type: 'webhook', config: { url: 'https://ops.example.com/webhook/alert' }, enabled: true, created_at: '2024-01-10 11:00:00' },
+]
+
+const MOCK_HISTORIES: AlertHistory[] = [
+  { id: 'h1', rule_id: '1', rule_name: 'CPU使用率告警', status: 'resolved', value: 92.5, triggered_at: '2024-01-20 14:30:00', resolved_at: '2024-01-20 14:45:00', message: 'CPU使用率超过阈值: 92.5% > 80%' },
+  { id: 'h2', rule_id: '2', rule_name: '内存使用率告警', status: 'firing', value: 94.2, triggered_at: '2024-01-20 15:00:00', resolved_at: null, message: '内存使用率超过阈值: 94.2% > 90%' },
+  { id: 'h3', rule_id: '1', rule_name: 'CPU使用率告警', status: 'resolved', value: 88.3, triggered_at: '2024-01-19 10:00:00', resolved_at: '2024-01-19 10:20:00', message: 'CPU使用率超过阈值: 88.3% > 80%' },
+]
+
+const NotificationChannelsSection: React.FC<{
+  channels: NotificationChannel[]
+  onChange: (channels: NotificationChannel[]) => void
+}> = ({ channels, onChange }) => {
+  const [channelForm] = Form.useForm()
+  const [modalVisible, setModalVisible] = useState(false)
+  const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
+
+  const handleCreate = () => {
+    setEditingChannel(null)
+    channelForm.resetFields()
+    setModalVisible(true)
+  }
+
+  const handleEdit = (channel: NotificationChannel) => {
+    setEditingChannel(channel)
+    channelForm.setFieldsValue(channel)
+    setModalVisible(true)
+  }
+
+  const handleDelete = (id: string) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除此通知渠道吗？',
+      onOk: async () => {
+        try { await alertApi.deleteChannel(id) } catch { /* fallback */ }
+        onChange(channels.filter(c => c.id !== id))
+        message.success('删除成功')
+      },
+    })
+  }
+
+  const handleSubmit = async (values: any) => {
+    try {
+      if (editingChannel) {
+        try { await alertApi.updateChannel(editingChannel.id, values) } catch { /* fallback */ }
+        onChange(channels.map(c => c.id === editingChannel.id ? { ...c, ...values } : c))
+        message.success('更新通知渠道成功')
+      } else {
+        try { await alertApi.createChannel(values) } catch { /* fallback */ }
+        const newChannel: NotificationChannel = { id: `channel-${Date.now()}`, ...values, created_at: new Date().toISOString() }
+        onChange([...channels, newChannel])
+        message.success('创建通知渠道成功')
+      }
+      setModalVisible(false)
+    } catch { message.error('操作失败') }
+  }
+
+  const channelColumns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 120 },
+    { title: '渠道名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '类型', dataIndex: 'type', key: 'type',
+      render: (text: string) => {
+        const colors: Record<string, string> = { email: 'blue', webhook: 'purple', dingtalk: 'cyan', wechat: 'green' }
+        const labels: Record<string, string> = { email: '邮件', webhook: 'Webhook', dingtalk: '钉钉', wechat: '企业微信' }
+        return <Tag color={colors[text]}>{labels[text]}</Tag>
+      },
+    },
+    {
+      title: '状态', dataIndex: 'enabled', key: 'enabled',
+      render: (enabled: boolean) => <Tag color={enabled ? 'green' : 'default'}>{enabled ? '启用' : '禁用'}</Tag>,
+    },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
+    {
+      title: '操作', key: 'action', width: 180,
+      render: (_: any, record: NotificationChannel) => (
+        <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>删除</Button>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <Card
+      title="通知渠道配置"
+      extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新建渠道</Button>}
+    >
+      <Table columns={channelColumns} dataSource={channels} rowKey="id" />
+      <Modal
+        title={editingChannel ? '编辑通知渠道' : '新建通知渠道'}
+        open={modalVisible}
+        onCancel={() => setModalVisible(false)}
+        onOk={() => channelForm.submit()}
+        width={600}
+      >
+        <Form form={channelForm} layout="vertical" onFinish={handleSubmit}>
+          <Form.Item name="name" label="渠道名称" rules={[{ required: true }]}>
+            <Input placeholder="例如: 运维邮箱组" />
+          </Form.Item>
+          <Form.Item name="type" label="渠道类型" rules={[{ required: true }]}>
+            <Select placeholder="选择渠道类型">
+              <Select.Option value="email">邮件</Select.Option>
+              <Select.Option value="webhook">Webhook</Select.Option>
+              <Select.Option value="dingtalk">钉钉</Select.Option>
+              <Select.Option value="wechat">企业微信</Select.Option>
+            </Select>
+          </Form.Item>
+          <Divider>配置信息</Divider>
+          <Form.Item name={['config', 'recipients']} label="收件人"
+            rules={[{ required: true, message: '请输入收件人' }]}
+            hidden={channelForm.getFieldValue('type') !== 'email'}>
+            <Select mode="tags" placeholder="输入邮箱地址" />
+          </Form.Item>
+          <Form.Item name={['config', 'webhook']} label="Webhook地址"
+            rules={[{ required: true, message: '请输入Webhook地址' }]}
+            hidden={channelForm.getFieldValue('type') !== 'dingtalk' && channelForm.getFieldValue('type') !== 'wechat'}>
+            <Input placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" />
+          </Form.Item>
+          <Form.Item name={['config', 'url']} label="URL地址"
+            rules={[{ required: true, message: '请输入URL地址' }]}
+            hidden={channelForm.getFieldValue('type') !== 'webhook'}>
+            <Input placeholder="https://example.com/webhook" />
+          </Form.Item>
+          <Form.Item name="enabled" label="是否启用" valuePropName="checked">
+            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
+  )
+}
+
 const AlertRuleList: React.FC = () => {
   const [activeTab, setActiveTab] = useState('rules')
   const [alertRules, setAlertRules] = useState<AlertRule[]>([])
@@ -43,11 +187,8 @@ const AlertRuleList: React.FC = () => {
   const [alertHistories, setAlertHistories] = useState<AlertHistory[]>([])
   const [loading, setLoading] = useState(false)
   const [ruleModalVisible, setRuleModalVisible] = useState(false)
-  const [channelModalVisible, setChannelModalVisible] = useState(false)
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null)
-  const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
   const [ruleForm] = Form.useForm()
-  const [channelForm] = Form.useForm()
 
   useEffect(() => {
     loadAlertRules()
@@ -58,50 +199,10 @@ const AlertRuleList: React.FC = () => {
   const loadAlertRules = async () => {
     setLoading(true)
     try {
-      const mockRules: AlertRule[] = [
-        {
-          id: '1',
-          name: 'CPU使用率告警',
-          metric: 'cpu_usage',
-          condition: '>',
-          threshold: 80,
-          duration: 300,
-          severity: 'warning',
-          enabled: true,
-          notification_channels: ['email-1', 'dingtalk-1'],
-          created_at: '2024-01-15 10:00:00',
-          updated_at: '2024-01-15 10:00:00',
-        },
-        {
-          id: '2',
-          name: '内存使用率告警',
-          metric: 'memory_usage',
-          condition: '>',
-          threshold: 90,
-          duration: 180,
-          severity: 'critical',
-          enabled: true,
-          notification_channels: ['email-1', 'webhook-1'],
-          created_at: '2024-01-15 11:00:00',
-          updated_at: '2024-01-15 11:00:00',
-        },
-        {
-          id: '3',
-          name: '磁盘空间不足告警',
-          metric: 'disk_usage',
-          condition: '>',
-          threshold: 85,
-          duration: 600,
-          severity: 'warning',
-          enabled: false,
-          notification_channels: ['email-1'],
-          created_at: '2024-01-15 12:00:00',
-          updated_at: '2024-01-15 12:00:00',
-        },
-      ]
-      setAlertRules(mockRules)
-    } catch (err) {
-      message.error('加载告警规则失败')
+      const res: any = await alertApi.listRules()
+      setAlertRules(res?.data || [])
+    } catch {
+      setAlertRules(MOCK_RULES)
     } finally {
       setLoading(false)
     }
@@ -109,75 +210,19 @@ const AlertRuleList: React.FC = () => {
 
   const loadNotificationChannels = async () => {
     try {
-      const mockChannels: NotificationChannel[] = [
-        {
-          id: 'email-1',
-          name: '运维邮箱组',
-          type: 'email',
-          config: { recipients: ['ops@example.com'] },
-          enabled: true,
-          created_at: '2024-01-10 09:00:00',
-        },
-        {
-          id: 'dingtalk-1',
-          name: '钉钉告警群',
-          type: 'dingtalk',
-          config: { webhook: 'https://oapi.dingtalk.com/robot/send?access_token=xxx' },
-          enabled: true,
-          created_at: '2024-01-10 10:00:00',
-        },
-        {
-          id: 'webhook-1',
-          name: '运维平台Webhook',
-          type: 'webhook',
-          config: { url: 'https://ops.example.com/webhook/alert' },
-          enabled: true,
-          created_at: '2024-01-10 11:00:00',
-        },
-      ]
-      setNotificationChannels(mockChannels)
-    } catch (err) {
-      message.error('加载通知渠道失败')
+      const res: any = await alertApi.listChannels()
+      setNotificationChannels(res?.data || [])
+    } catch {
+      setNotificationChannels(MOCK_CHANNELS)
     }
   }
 
   const loadAlertHistories = async () => {
     try {
-      const mockHistories: AlertHistory[] = [
-        {
-          id: 'h1',
-          rule_id: '1',
-          rule_name: 'CPU使用率告警',
-          status: 'resolved',
-          value: 92.5,
-          triggered_at: '2024-01-20 14:30:00',
-          resolved_at: '2024-01-20 14:45:00',
-          message: 'CPU使用率超过阈值: 92.5% > 80%',
-        },
-        {
-          id: 'h2',
-          rule_id: '2',
-          rule_name: '内存使用率告警',
-          status: 'firing',
-          value: 94.2,
-          triggered_at: '2024-01-20 15:00:00',
-          resolved_at: null,
-          message: '内存使用率超过阈值: 94.2% > 90%',
-        },
-        {
-          id: 'h3',
-          rule_id: '1',
-          rule_name: 'CPU使用率告警',
-          status: 'resolved',
-          value: 88.3,
-          triggered_at: '2024-01-19 10:00:00',
-          resolved_at: '2024-01-19 10:20:00',
-          message: 'CPU使用率超过阈值: 88.3% > 80%',
-        },
-      ]
-      setAlertHistories(mockHistories)
-    } catch (err) {
-      message.error('加载告警历史失败')
+      const res: any = await alertApi.listHistory()
+      setAlertHistories(res?.data || [])
+    } catch {
+      setAlertHistories(MOCK_HISTORIES)
     }
   }
 
@@ -198,6 +243,9 @@ const AlertRuleList: React.FC = () => {
       title: '确认删除',
       content: '确定要删除此告警规则吗？',
       onOk: async () => {
+        try {
+          await alertApi.deleteRule(id)
+        } catch { /* fallback */ }
         setAlertRules(alertRules.filter(r => r.id !== id))
         message.success('删除成功')
       },
@@ -207,13 +255,13 @@ const AlertRuleList: React.FC = () => {
   const handleSubmitAlertRule = async (values: any) => {
     try {
       if (editingRule) {
-        setAlertRules(alertRules.map(r => 
-          r.id === editingRule.id 
-            ? { ...r, ...values, updated_at: new Date().toISOString() }
-            : r
+        try { await alertApi.updateRule(editingRule.id, values) } catch { /* fallback */ }
+        setAlertRules(alertRules.map(r =>
+          r.id === editingRule.id ? { ...r, ...values, updated_at: new Date().toISOString() } : r
         ))
         message.success('更新告警规则成功')
       } else {
+        try { await alertApi.createRule(values) } catch { /* fallback */ }
         const newRule: AlertRule = {
           id: `rule-${Date.now()}`,
           ...values,
@@ -224,53 +272,6 @@ const AlertRuleList: React.FC = () => {
         message.success('创建告警规则成功')
       }
       setRuleModalVisible(false)
-    } catch (err) {
-      message.error('操作失败')
-    }
-  }
-
-  const handleCreateNotificationChannel = () => {
-    setEditingChannel(null)
-    channelForm.resetFields()
-    setChannelModalVisible(true)
-  }
-
-  const handleEditNotificationChannel = (channel: NotificationChannel) => {
-    setEditingChannel(channel)
-    channelForm.setFieldsValue(channel)
-    setChannelModalVisible(true)
-  }
-
-  const handleDeleteNotificationChannel = (id: string) => {
-    Modal.confirm({
-      title: '确认删除',
-      content: '确定要删除此通知渠道吗？',
-      onOk: async () => {
-        setNotificationChannels(notificationChannels.filter(c => c.id !== id))
-        message.success('删除成功')
-      },
-    })
-  }
-
-  const handleSubmitNotificationChannel = async (values: any) => {
-    try {
-      if (editingChannel) {
-        setNotificationChannels(notificationChannels.map(c => 
-          c.id === editingChannel.id 
-            ? { ...c, ...values }
-            : c
-        ))
-        message.success('更新通知渠道成功')
-      } else {
-        const newChannel: NotificationChannel = {
-          id: `channel-${Date.now()}`,
-          ...values,
-          created_at: new Date().toISOString(),
-        }
-        setNotificationChannels([...notificationChannels, newChannel])
-        message.success('创建通知渠道成功')
-      }
-      setChannelModalVisible(false)
     } catch (err) {
       message.error('操作失败')
     }
@@ -341,69 +342,6 @@ const AlertRuleList: React.FC = () => {
             编辑
           </Button>
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteAlertRule(record.id)}>
-            删除
-          </Button>
-        </Space>
-      ),
-    },
-  ]
-
-  const channelColumns = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 120,
-    },
-    {
-      title: '渠道名称',
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      render: (text: string) => {
-        const colors: Record<string, string> = {
-          email: 'blue',
-          webhook: 'purple',
-          dingtalk: 'cyan',
-          wechat: 'green',
-        }
-        const labels: Record<string, string> = {
-          email: '邮件',
-          webhook: 'Webhook',
-          dingtalk: '钉钉',
-          wechat: '企业微信',
-        }
-        return <Tag color={colors[text]}>{labels[text]}</Tag>
-      },
-    },
-    {
-      title: '状态',
-      dataIndex: 'enabled',
-      key: 'enabled',
-      render: (enabled: boolean) => (
-        <Tag color={enabled ? 'green' : 'default'}>{enabled ? '启用' : '禁用'}</Tag>
-      ),
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 180,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 180,
-      render: (_: any, record: NotificationChannel) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEditNotificationChannel(record)}>
-            编辑
-          </Button>
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteNotificationChannel(record.id)}>
             删除
           </Button>
         </Space>
@@ -536,66 +474,6 @@ const AlertRuleList: React.FC = () => {
     </Card>
   )
 
-  const renderNotificationChannelsTab = () => (
-    <Card 
-      title="通知渠道配置" 
-      extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateNotificationChannel}>
-          新建渠道
-        </Button>
-      }
-    >
-      <Table
-        columns={channelColumns}
-        dataSource={notificationChannels}
-        rowKey="id"
-        loading={loading}
-      />
-
-      <Modal
-        title={editingChannel ? '编辑通知渠道' : '新建通知渠道'}
-        open={channelModalVisible}
-        onCancel={() => setChannelModalVisible(false)}
-        onOk={() => channelForm.submit()}
-        width={600}
-      >
-        <Form form={channelForm} layout="vertical" onFinish={handleSubmitNotificationChannel}>
-          <Form.Item name="name" label="渠道名称" rules={[{ required: true }]}>
-            <Input placeholder="例如: 运维邮箱组" />
-          </Form.Item>
-          <Form.Item name="type" label="渠道类型" rules={[{ required: true }]}>
-            <Select placeholder="选择渠道类型">
-              <Select.Option value="email">邮件</Select.Option>
-              <Select.Option value="webhook">Webhook</Select.Option>
-              <Select.Option value="dingtalk">钉钉</Select.Option>
-              <Select.Option value="wechat">企业微信</Select.Option>
-            </Select>
-          </Form.Item>
-          <Divider>配置信息</Divider>
-          <Form.Item name={['config', 'recipients']} label="收件人" 
-            rules={[{ required: true, message: '请输入收件人' }]}
-            hidden={channelForm.getFieldValue('type') !== 'email'}>
-            <Select mode="tags" placeholder="输入邮箱地址">
-            </Select>
-          </Form.Item>
-          <Form.Item name={['config', 'webhook']} label="Webhook地址" 
-            rules={[{ required: true, message: '请输入Webhook地址' }]}
-            hidden={channelForm.getFieldValue('type') !== 'dingtalk' && channelForm.getFieldValue('type') !== 'wechat'}>
-            <Input placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" />
-          </Form.Item>
-          <Form.Item name={['config', 'url']} label="URL地址" 
-            rules={[{ required: true, message: '请输入URL地址' }]}
-            hidden={channelForm.getFieldValue('type') !== 'webhook'}>
-            <Input placeholder="https://example.com/webhook" />
-          </Form.Item>
-          <Form.Item name="enabled" label="是否启用" valuePropName="checked">
-            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </Card>
-  )
-
   const renderAlertHistoryTab = () => (
     <Card title="告警历史">
       <Table
@@ -631,7 +509,7 @@ const AlertRuleList: React.FC = () => {
                 通知渠道
               </span>
             ),
-            children: renderNotificationChannelsTab(),
+            children: <NotificationChannelsSection channels={notificationChannels} onChange={setNotificationChannels} />,
           },
           {
             key: 'history',

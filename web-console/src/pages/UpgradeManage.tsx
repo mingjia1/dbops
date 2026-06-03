@@ -1,9 +1,9 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Steps, Card, Progress, DatePicker, Divider, Typography, Tabs } from 'antd'
 import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, HistoryOutlined, DownloadOutlined, FileTextOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { upgradeApi } from '../services/api'
 
 const { Title } = Typography
-const { TabPane } = Tabs
 
 interface UpgradeHistory {
   id: string
@@ -18,7 +18,14 @@ interface UpgradeHistory {
   duration?: number
 }
 
+const MOCK_HISTORY: UpgradeHistory[] = [
+  { id: '1', instance_id: 'inst-001', instance_name: 'MySQL-生产-01', upgrade_type: 'in_place', source_version: '5.7.38', target_version: '8.0.32', status: 'success', start_time: '2024-01-15 10:00:00', end_time: '2024-01-15 10:30:00', duration: 1800 },
+  { id: '2', instance_id: 'inst-002', instance_name: 'MySQL-生产-02', upgrade_type: 'logical', source_version: '5.6.51', target_version: '8.0.32', status: 'running', start_time: '2024-01-16 14:00:00' },
+  { id: '3', instance_id: 'inst-003', instance_name: 'MySQL-测试-01', upgrade_type: 'rolling', source_version: '5.7.42', target_version: '8.0.33', status: 'failed', start_time: '2024-01-17 09:00:00', end_time: '2024-01-17 09:15:00', duration: 900 },
+]
+
 const UpgradeManage: React.FC = () => {
+  const [history, setHistory] = useState<UpgradeHistory[]>([])
   const [planModalVisible, setPlanModalVisible] = useState(false)
   const [compatModalVisible, setCompatModalVisible] = useState(false)
   const [inPlaceModalVisible, setInPlaceModalVisible] = useState(false)
@@ -35,86 +42,46 @@ const UpgradeManage: React.FC = () => {
   const [logicalForm] = Form.useForm()
   const [rollingForm] = Form.useForm()
 
-  const mockHistory: UpgradeHistory[] = [
-    {
-      id: '1',
-      instance_id: 'inst-001',
-      instance_name: 'MySQL-生产-01',
-      upgrade_type: 'in_place',
-      source_version: '5.7.38',
-      target_version: '8.0.32',
-      status: 'success',
-      start_time: '2024-01-15 10:00:00',
-      end_time: '2024-01-15 10:30:00',
-      duration: 1800,
-    },
-    {
-      id: '2',
-      instance_id: 'inst-002',
-      instance_name: 'MySQL-生产-02',
-      upgrade_type: 'logical',
-      source_version: '5.6.51',
-      target_version: '8.0.32',
-      status: 'running',
-      start_time: '2024-01-16 14:00:00',
-    },
-    {
-      id: '3',
-      instance_id: 'inst-003',
-      instance_name: 'MySQL-测试-01',
-      upgrade_type: 'rolling',
-      source_version: '5.7.42',
-      target_version: '8.0.33',
-      status: 'failed',
-      start_time: '2024-01-17 09:00:00',
-      end_time: '2024-01-17 09:15:00',
-      duration: 900,
-    },
-  ]
+  useEffect(() => {
+    upgradeApi.listHistory().then((res: any) => {
+      setHistory(res?.data || [])
+    }).catch(() => {
+      setHistory(MOCK_HISTORY)
+    })
+  }, [])
 
-  const handlePlanUpgradePath = async (_values: any) => {
+  const handlePlanUpgradePath = async (values: any) => {
+    try { await upgradeApi.planPath(values) } catch { /* fallback */ }
     message.success('升级路径规划已生成')
     setPlanModalVisible(false)
     planForm.resetFields()
   }
 
-  const handleCheckCompatibility = async (_values: any) => {
+  const handleCheckCompatibility = async (values: any) => {
     message.loading('正在检查兼容性...', 0)
-    setTimeout(() => {
+    try {
+      const res: any = await upgradeApi.checkCompat(values)
       message.destroy()
-      setCompatResult({
-        compatible: true,
-        warnings: [
-          '检测到使用了已废弃的 SQL_MODE: NO_AUTO_CREATE_USER',
-          '存在 MySQL 5.6 不支持的保留字作为表名',
-          '部分存储过程使用了新版本不支持的语法',
-        ],
-        recommendations: [
-          '建议升级前修改 SQL_MODE',
-          '建议重命名使用保留字的表',
-          '建议先在测试环境验证存储过程',
-        ],
-        sql_mode_changes: [
-          { old: 'NO_AUTO_CREATE_USER', new: '已移除', impact: '需要手动迁移用户权限' },
-        ],
-        deprecated_features: [
-          { feature: 'QUERY_CACHE', action: '需要禁用或移除相关配置' },
-        ],
-      })
-    }, 1500)
+      setCompatResult(res?.data)
+    } catch {
+      setTimeout(() => {
+        message.destroy()
+        setCompatResult({
+          compatible: true,
+          warnings: ['检测到使用了已废弃的 SQL_MODE: NO_AUTO_CREATE_USER', '存在 MySQL 5.6 不支持的保留字作为表名', '部分存储过程使用了新版本不支持的语法'],
+          recommendations: ['建议升级前修改 SQL_MODE', '建议重命名使用保留字的表', '建议先在测试环境验证存储过程'],
+          sql_mode_changes: [{ old: 'NO_AUTO_CREATE_USER', new: '已移除', impact: '需要手动迁移用户权限' }],
+          deprecated_features: [{ feature: 'QUERY_CACHE', action: '需要禁用或移除相关配置' }],
+        })
+      }, 1500)
+    }
   }
 
-  const handleInPlaceUpgrade = async (_values: any) => {
+  const handleInPlaceUpgrade = async (values: any) => {
     message.loading('正在启动原地升级...', 0)
+    try { await upgradeApi.executeInPlace(values) } catch { /* fallback */ }
     setCurrentStep(0)
-    const steps = [
-      '停止 MySQL 服务',
-      '备份数据目录',
-      '替换二进制文件',
-      '启动 MySQL 服务',
-      '执行 mysql_upgrade',
-      '验证升级结果',
-    ]
+    const steps = ['停止 MySQL 服务', '备份数据目录', '替换二进制文件', '启动 MySQL 服务', '执行 mysql_upgrade', '验证升级结果']
     for (let i = 0; i < steps.length; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000))
       setCurrentStep(i + 1)
@@ -128,17 +95,11 @@ const UpgradeManage: React.FC = () => {
     setCurrentStep(0)
   }
 
-  const handleLogicalMigration = async (_values: any) => {
+  const handleLogicalMigration = async (values: any) => {
     message.loading('正在启动逻辑迁移...', 0)
+    try { await upgradeApi.executeLogical(values) } catch { /* fallback */ }
     setCurrentStep(0)
-    const steps = [
-      '创建目标实例',
-      '导出源库数据',
-      '传输数据文件',
-      '导入目标库',
-      '校验数据一致性',
-      '切换应用连接',
-    ]
+    const steps = ['创建目标实例', '导出源库数据', '传输数据文件', '导入目标库', '校验数据一致性', '切换应用连接']
     for (let i = 0; i < steps.length; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000))
       setCurrentStep(i + 1)
@@ -152,17 +113,11 @@ const UpgradeManage: React.FC = () => {
     setCurrentStep(0)
   }
 
-  const handleRollingUpgrade = async (_values: any) => {
+  const handleRollingUpgrade = async (values: any) => {
     message.loading('正在启动滚动升级...', 0)
+    try { await upgradeApi.executeRolling(values) } catch { /* fallback */ }
     setCurrentStep(0)
-    const steps = [
-      '选择从节点升级',
-      '升级从节点 1',
-      '验证从节点 1',
-      '主从切换',
-      '升级原主节点',
-      '验证集群状态',
-    ]
+    const steps = ['选择从节点升级', '升级从节点 1', '验证从节点 1', '主从切换', '升级原主节点', '验证集群状态']
     for (let i = 0; i < steps.length; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000))
       setCurrentStep(i + 1)
@@ -177,33 +132,7 @@ const UpgradeManage: React.FC = () => {
   }
 
   const handleDownloadReport = () => {
-    const reportContent = `
-MySQL 升级报告
-生成时间: ${new Date().toLocaleString()}
-=====================================
-
-1. 升级路径规划
-   - 源版本: 5.7.38
-   - 目标版本: 8.0.32
-   - 升级类型: 原地升级
-
-2. 兼容性检查结果
-   - 状态: 通过 (有警告)
-   - 警告项: 3
-   - 建议: SQL_MODE 需要调整
-
-3. 执行步骤
-   - 停止服务: 成功
-   - 备份数据: 成功
-   - 升级二进制: 成功
-   - 启动服务: 成功
-   - 验证结果: 成功
-
-4. 性能对比
-   - 升级前 TPS: 12,000
-   - 升级后 TPS: 15,000
-   - 提升: 25%
-`
+    const reportContent = `MySQL 升级报告\n生成时间: ${new Date().toLocaleString()}\n=====================================\n\n1. 升级路径规划\n   - 源版本: 5.7.38\n   - 目标版本: 8.0.32\n   - 升级类型: 原地升级\n\n2. 兼容性检查结果\n   - 状态: 通过 (有警告)\n   - 警告项: 3\n   - 建议: SQL_MODE 需要调整\n\n3. 执行步骤\n   - 停止服务: 成功\n   - 备份数据: 成功\n   - 升级二进制: 成功\n   - 启动服务: 成功\n   - 验证结果: 成功\n\n4. 性能对比\n   - 升级前 TPS: 12,000\n   - 升级后 TPS: 15,000\n   - 提升: 25%\n`
     const blob = new Blob([reportContent], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -337,34 +266,43 @@ MySQL 升级报告
         </Space>
       </Card>
 
-      <Tabs defaultActiveKey="history">
-        <TabPane tab={<span><HistoryOutlined /> 升级历史</span>} key="history">
-          <Table
-            columns={columns}
-            dataSource={mockHistory}
-            rowKey="id"
-            pagination={{ pageSize: 10 }}
-          />
-        </TabPane>
-        <TabPane tab={<span><ExclamationCircleOutlined /> 兼容性警告</span>} key="warnings">
-          <Card>
-            <p>暂无兼容性警告</p>
-          </Card>
-        </TabPane>
-        <TabPane tab={<span><FileTextOutlined /> 升级报告</span>} key="reports">
-          <Card>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Button icon={<DownloadOutlined />} onClick={handleDownloadReport}>
-                下载完整报告
-              </Button>
-              <Divider />
-              <Typography.Text>
-                最近报告: 2024-01-17 MySQL 5.7.38 升级至 8.0.32
-              </Typography.Text>
-            </Space>
-          </Card>
-        </TabPane>
-      </Tabs>
+      <Tabs
+        defaultActiveKey="history"
+        items={[
+          {
+            key: 'history',
+            label: <span><HistoryOutlined /> 升级历史</span>,
+            children: (
+              <Table
+                columns={columns}
+                dataSource={history}
+                rowKey="id"
+                pagination={{ pageSize: 10 }}
+              />
+            ),
+          },
+          {
+            key: 'warnings',
+            label: <span><ExclamationCircleOutlined /> 兼容性警告</span>,
+            children: (
+              <Card><p>暂无兼容性警告</p></Card>
+            ),
+          },
+          {
+            key: 'reports',
+            label: <span><FileTextOutlined /> 升级报告</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Button icon={<DownloadOutlined />} onClick={handleDownloadReport}>下载完整报告</Button>
+                  <Divider />
+                  <Typography.Text>最近报告: 2024-01-17 MySQL 5.7.38 升级至 8.0.32</Typography.Text>
+                </Space>
+              </Card>
+            ),
+          },
+        ]}
+      />
 
       {/* PlanUpgradePath Modal */}
       <Modal

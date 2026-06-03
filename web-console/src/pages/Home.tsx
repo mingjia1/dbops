@@ -1,224 +1,120 @@
-import React, { useState, useEffect } from 'react'
-import { Row, Col, Card, Statistic, Progress, Table, Tag, Space, Button, Alert } from 'antd'
+import React, { useEffect, useState } from 'react'
+import { Row, Col, Card, Statistic, Tag, Spin } from 'antd'
 import {
-  DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  AlertOutlined, ThunderboltOutlined, PartitionOutlined,
-  CloudUploadOutlined, SyncOutlined,
+  DesktopOutlined, DatabaseOutlined, CloudOutlined, SettingOutlined,
+  CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-import type { ColumnsType } from 'antd/es/table'
+import { hostApi, instanceApi, Host, Instance } from '../services/api'
 import './Home.css'
-
-interface Instance {
-  id: string
-  name: string
-  host: string
-  port: number
-  status: string
-  version: string
-}
-
-interface Backup {
-  task_id: string
-  status: string
-  started_at: string
-  completed_at: string
-  file_path: string
-  file_size: number
-}
-
-interface Alert {
-  id: string
-  rule_name: string
-  level: string
-  message: string
-  created_at: string
-}
 
 const Home: React.FC = () => {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
+  const [hosts, setHosts] = useState<Host[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
-  const [backups, setBackups] = useState<Backup[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
 
   useEffect(() => {
-    fetchData()
+    Promise.all([fetchHosts(), fetchInstances()]).finally(() => setLoading(false))
   }, [])
 
-  const fetchData = async () => {
+  const fetchHosts = async () => {
     try {
-      setLoading(true)
-
-      const instanceRes = await axios.get('/api/v1/instances')
-      setInstances(Array.isArray(instanceRes) ? instanceRes : [])
-
-      const backupRes = await axios.get('/api/v1/backups')
-      setBackups(Array.isArray(backupRes) ? backupRes : [])
-
-      const alertRes = await axios.get('/api/v1/alerts/rules')
-      setAlerts(Array.isArray(alertRes) ? alertRes : [])
-    } catch (error) {
-      console.error('Failed to fetch data:', error)
-    } finally {
-      setLoading(false)
-    }
+      const res: any = await hostApi.list(100, 0)
+      setHosts(res.data || [])
+    } catch { setHosts([]) }
   }
 
-  const backupColumns: ColumnsType<Backup> = [
-    {
-      title: '备份ID',
-      dataIndex: 'task_id',
-      key: 'task_id',
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: string) => (
-        <Tag color={status === 'completed' ? 'success' : status === 'failed' ? 'error' : 'processing'} icon={
-          status === 'completed' ? <CheckCircleOutlined /> :
-          status === 'failed' ? <CloseCircleOutlined /> : <SyncOutlined spin />
-        }>
-          {status === 'completed' ? '完成' : status === 'failed' ? '失败' : '进行中'}
-        </Tag>
-      ),
-    },
-    {
-      title: '开始时间',
-      dataIndex: 'started_at',
-      key: 'started_at',
-      render: (time: string) => new Date(time).toLocaleString(),
-    },
-    {
-      title: '文件大小',
-      dataIndex: 'file_size',
-      key: 'file_size',
-      render: (size: number) => `${(size / 1024 / 1024).toFixed(2)} MB`,
-    },
+  const fetchInstances = async () => {
+    try {
+      const res: any = await instanceApi.list(100, 0)
+      setInstances(res.data || [])
+    } catch { setInstances([]) }
+  }
+
+  const hostOk = hosts.filter(h => h.status === 'success').length
+  const hostFail = hosts.filter(h => h.status === 'failed').length
+  const hostUnknown = hosts.filter(h => h.status !== 'success' && h.status !== 'failed').length
+  const instWithHost = instances.filter(i => i.host_id).length
+
+  const quickActions = [
+    { title: '主机管理', desc: `${hosts.length} 台主机`, icon: <DesktopOutlined />, color: '#1890ff', path: '/dashboard/hosts' },
+    { title: '实例管理', desc: `${instances.length} 个实例`, icon: <DatabaseOutlined />, color: '#52c41a', path: '/dashboard/instances' },
+    { title: '环境检测', desc: '检测部署环境', icon: <SettingOutlined className="home-icon" />, color: '#722ed1', path: '/dashboard/env-check' },
+    { title: '备份管理', desc: '数据备份与恢复', icon: <CloudOutlined />, color: '#fa8c16', path: '/dashboard/backup' },
   ]
 
-  const alertColumns: ColumnsType<Alert> = [
-    {
-      title: '告警规则',
-      dataIndex: 'rule_name',
-      key: 'rule_name',
-    },
-    {
-      title: '级别',
-      dataIndex: 'level',
-      key: 'level',
-      render: (level: string) => (
-        <Tag color={level === 'critical' ? 'red' : level === 'warning' ? 'orange' : 'blue'}>
-          {level === 'critical' ? '严重' : level === 'warning' ? '警告' : '信息'}
-        </Tag>
-      ),
-    },
-    {
-      title: '消息',
-      dataIndex: 'message',
-      key: 'message',
-      ellipsis: true,
-    },
-    {
-      title: '时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (time: string) => new Date(time).toLocaleString(),
-    },
-  ]
-
-  const runningInstances = instances.filter(i => i.status === 'running').length
-  const stoppedInstances = instances.filter(i => i.status === 'stopped').length
-  const criticalAlerts = alerts.filter(a => a.level === 'critical').length
+  if (loading) {
+    return (
+      <div className="home-loading">
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   return (
-    <div className="home-container">
-      <Alert
-        className="home-alert"
-        message="系统状态正常"
-        description="所有服务运行正常，未发现严重问题"
-        type="success"
-        showIcon
-        closable
-      />
-
-      <div className="stats-grid">
-        <div className="stat-card">
-          <Statistic title="总实例数" value={instances.length} prefix={<DatabaseOutlined />} />
-        </div>
-        <div className="stat-card running">
-          <Statistic title="运行中" value={runningInstances} prefix={<CheckCircleOutlined />} />
-        </div>
-        <div className="stat-card stopped">
-          <Statistic title="已停止" value={stoppedInstances} prefix={<CloseCircleOutlined />} />
-        </div>
-        <div className="stat-card critical">
-          <Statistic title="严重告警" value={criticalAlerts} prefix={<AlertOutlined />} />
-        </div>
+    <div className="home-page">
+      <div className="home-welcome">
+        <h2>欢迎使用 MySQL 运维平台</h2>
+        <p>当前系统运行正常，共管理 {hosts.length} 台主机、{instances.length} 个实例</p>
       </div>
 
-      <div className="progress-section">
-        <div className="progress-grid">
-          <div className="progress-item">
-            <Progress
-              type="circle"
-              percent={instances.length > 0 ? Math.round((runningInstances / instances.length) * 100) : 0}
-              format={(percent) => `${percent}% 运行中`}
-              strokeColor="#52c41a"
-            />
-          </div>
-          <div className="progress-item">
-            <Progress
-              type="circle"
-              percent={instances.length > 0 ? Math.round((stoppedInstances / instances.length) * 100) : 0}
-              format={(percent) => `${percent}% 已停止`}
-              strokeColor="#ff4d4f"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="actions-grid">
-        <Button className="action-button" icon={<DatabaseOutlined />} onClick={() => navigate('/instances')}>
-          添加实例
-        </Button>
-        <Button className="action-button" icon={<CloudUploadOutlined />} onClick={() => navigate('/backup')}>
-          创建备份
-        </Button>
-        <Button className="action-button" icon={<ThunderboltOutlined />} onClick={() => navigate('/upgrade')}>
-          版本升级
-        </Button>
-        <Button className="action-button" icon={<PartitionOutlined />} onClick={() => navigate('/migration')}>
-          数据迁移
-        </Button>
-      </div>
-
-      <div className="tables-grid">
-        <div className="table-card">
-          <Card title="最近备份" extra={<Button type="link" onClick={() => navigate('/backup')}>查看全部</Button>}>
-            <Table
-              dataSource={backups.slice(0, 5)}
-              columns={backupColumns}
-              pagination={false}
-              size="small"
-              rowKey="task_id"
-            />
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="home-stat-card" variant="borderless">
+            <Statistic title="主机总数" value={hosts.length} prefix={<DesktopOutlined />} valueStyle={{ color: '#1890ff' }} />
+            <div className="stat-tags">
+              {hostOk > 0 && <Tag icon={<CheckCircleOutlined />} color="success">{hostOk} 可用</Tag>}
+              {hostFail > 0 && <Tag icon={<CloseCircleOutlined />} color="error">{hostFail} 异常</Tag>}
+              {hostUnknown > 0 && <Tag icon={<MinusCircleOutlined />}>{hostUnknown} 未检测</Tag>}
+            </div>
           </Card>
-        </div>
-        <div className="table-card">
-          <Card title="最新告警" extra={<Button type="link" onClick={() => navigate('/alert-rules')}>查看全部</Button>}>
-            <Table
-              dataSource={alerts.slice(0, 5)}
-              columns={alertColumns}
-              pagination={false}
-              size="small"
-              rowKey="id"
-            />
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="home-stat-card" variant="borderless">
+            <Statistic title="实例总数" value={instances.length} prefix={<DatabaseOutlined />} valueStyle={{ color: '#52c41a' }} />
+            <div className="stat-tags">
+              {instWithHost > 0 && <Tag color="blue">{instWithHost} 已关联主机</Tag>}
+            </div>
           </Card>
-        </div>
-      </div>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="home-stat-card" variant="borderless">
+            <Statistic title="运行模式" value="Standalone" prefix={<SettingOutlined className="home-icon" />} valueStyle={{ color: '#722ed1', fontSize: 20 }} />
+            <div className="stat-tags">
+              <Tag>内存存储</Tag>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="home-stat-card" variant="borderless">
+            <Statistic title="系统状态" value="运行中" prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} />
+            <div className="stat-tags">
+              <Tag color="success">所有服务正常</Tag>
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <h3 className="home-section-title">快捷操作</h3>
+      <Row gutter={[16, 16]}>
+        {quickActions.map(action => (
+          <Col xs={12} sm={12} lg={6} key={action.path}>
+            <Card
+              className="home-action-card"
+              variant="borderless"
+              hoverable
+              onClick={() => navigate(action.path)}
+            >
+              <div className="action-card-icon" style={{ background: `${action.color}15`, color: action.color }}>
+                {action.icon}
+              </div>
+              <div className="action-card-title">{action.title}</div>
+              <div className="action-card-desc">{action.desc}</div>
+            </Card>
+          </Col>
+        ))}
+      </Row>
     </div>
   )
 }

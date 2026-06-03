@@ -1,6 +1,8 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import Home from './pages/Home'
 import InstanceList from './pages/InstanceList'
 import InstanceDetail from './pages/InstanceDetail'
 import EnvironmentCheck from './pages/EnvironmentCheck'
@@ -13,25 +15,52 @@ import UpgradeManage from './pages/UpgradeManage'
 import AlertRuleList from './pages/AlertRuleList'
 import TopologyView from './pages/TopologyView'
 import MigrationManage from './pages/MigrationManage'
+import HostList from './pages/HostList'
+import HostDetail from './pages/HostDetail'
+import HostForm from './pages/HostForm'
+import ProtectedRoute from './components/ProtectedRoute'
+import { onLogout } from './services/authEvents'
 
 function App() {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    return onLogout(() => {
+      navigate('/login', { replace: true })
+    })
+  }, [navigate])
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/instances" element={<InstanceList />} />
-      <Route path="/instances/:id" element={<InstanceDetail />} />
-      <Route path="/env-check" element={<EnvironmentCheck />} />
-      <Route path="/backup" element={<BackupManage />} />
-      <Route path="/monitor" element={<MonitorDashboard />} />
-      <Route path="/parameter-templates" element={<ParameterTemplateList />} />
-      <Route path="/approvals" element={<ApprovalManage />} />
-      <Route path="/audit-logs" element={<AuditLog />} />
-      <Route path="/upgrade" element={<UpgradeManage />} />
-      <Route path="/alert-rules" element={<AlertRuleList />} />
-      <Route path="/topology" element={<TopologyView />} />
-      <Route path="/migration" element={<MigrationManage />} />
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/dashboard/home" replace />} />
+        <Route path="home" element={<Home />} />
+        <Route path="hosts" element={<HostList />} />
+        <Route path="hosts/new" element={<HostForm />} />
+        <Route path="hosts/:id" element={<HostDetail />} />
+        <Route path="hosts/:id/edit" element={<HostForm />} />
+        <Route path="instances" element={<InstanceList />} />
+        <Route path="instances/:id" element={<InstanceDetail />} />
+        <Route path="env-check" element={<EnvironmentCheck />} />
+        <Route path="backup" element={<BackupManage />} />
+        <Route path="monitor" element={<MonitorDashboard />} />
+        <Route path="parameter-templates" element={<ParameterTemplateList />} />
+        <Route path="approvals" element={<ApprovalManage />} />
+        <Route path="audit-logs" element={<AuditLog />} />
+        <Route path="upgrade" element={<UpgradeManage />} />
+        <Route path="alert-rules" element={<AlertRuleList />} />
+        <Route path="topology" element={<TopologyView />} />
+        <Route path="migration" element={<MigrationManage />} />
+      </Route>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
 }
