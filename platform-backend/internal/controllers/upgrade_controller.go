@@ -115,6 +115,10 @@ func (c *UpgradeController) RollbackUpgrade(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, result)
 }
 
+func (c *UpgradeController) ListHistory(ctx *gin.Context) {
+	utils.SuccessResponse(ctx, []interface{}{})
+}
+
 func (c *UpgradeController) GetUpgradeByID(ctx *gin.Context) {
 	id := ctx.Param("id")
 

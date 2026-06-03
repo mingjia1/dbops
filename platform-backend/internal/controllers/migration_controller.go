@@ -14,6 +14,15 @@ func NewMigrationController(service *services.MigrationService) *MigrationContro
 	return &MigrationController{service: service}
 }
 
+func (c *MigrationController) List(ctx *gin.Context) {
+	tasks, err := c.service.ListTasks(ctx.Request.Context(), "")
+	if err != nil {
+		utils.SuccessResponse(ctx, []interface{}{})
+		return
+	}
+	utils.SuccessResponse(ctx, tasks)
+}
+
 func (c *MigrationController) ExecutePhysical(ctx *gin.Context) {
 	var req services.CreateMigrationTaskRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

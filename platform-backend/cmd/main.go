@@ -46,6 +46,10 @@ authController := controllers.NewAuthController(authService)
 	instanceService := services.NewInstanceService(instanceRepo)
 	instanceController := controllers.NewInstanceController(instanceService)
 
+	hostRepo := repositories.NewHostRepository(db)
+	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
+	hostController := controllers.NewHostController(hostService)
+
 	envCheckService := services.NewEnvironmentCheckService()
 	envCheckController := controllers.NewEnvironmentCheckController(envCheckService)
 
@@ -58,6 +62,15 @@ authController := controllers.NewAuthController(authService)
 		clickhouse = nil
 	} else {
 		defer clickhouse.Close()
+	}
+
+	redisClient, err := storage.NewRedis(cfg.RedisURL, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		logInstance.Warn("Redis not available, cache layer disabled")
+		redisClient = nil
+	} else {
+		defer redisClient.Close()
+		logInstance.Info("Redis connected successfully")
 	}
 
 	monitorService := services.NewMonitorService(clickhouse)
@@ -87,6 +100,13 @@ migrationService := services.NewMigrationService()
 	alertNotificationRepo := repositories.NewAlertNotificationRepository(db)
 	alertService := services.NewAlertService(alertRuleRepo, alertNotificationRepo, monitorService)
 	alertController := controllers.NewAlertController(alertService)
+
+	approvalRepo := repositories.NewApprovalRequestRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	approvalService := services.NewApprovalService(approvalRepo, auditRepo)
+	auditService := services.NewAuditService(auditRepo, approvalRepo)
+	approvalController := controllers.NewApprovalController(approvalService)
+	auditController := controllers.NewAuditController(auditService)
 
 	r := gin.Default()
 	r.Use(middleware.CORS())
@@ -129,6 +149,17 @@ migrationService := services.NewMigrationService()
 				instances.PUT("/:id", instanceController.Update)
 				instances.DELETE("/:id", instanceController.Delete)
 				instances.POST("/:id/detect-version", instanceController.DetectVersion)
+			}
+
+			hosts := protected.Group("/hosts")
+			{
+				hosts.GET("", hostController.List)
+				hosts.POST("", hostController.Create)
+				hosts.GET("/test/:task_id", hostController.GetTestResult)
+				hosts.GET("/:id", hostController.GetByID)
+				hosts.PUT("/:id", hostController.Update)
+				hosts.DELETE("/:id", hostController.Delete)
+				hosts.POST("/:id/test", hostController.TestConnection)
 			}
 
 			envChecks := protected.Group("/env-checks")
@@ -184,6 +215,7 @@ migrationService := services.NewMigrationService()
 
 			upgrades := protected.Group("/upgrades")
 			{
+				upgrades.GET("", upgradeController.ListHistory)
 				upgrades.POST("/plan", upgradeController.PlanUpgradePath)
 				upgrades.POST("/check", upgradeController.CheckCompatibility)
 				upgrades.POST("/in-place", upgradeController.ExecuteInPlaceUpgrade)
@@ -196,6 +228,7 @@ migrationService := services.NewMigrationService()
 
 migrations := protected.Group("/migrations")
 			{
+				migrations.GET("", migrationController.List)
 				migrations.POST("/physical", migrationController.ExecutePhysical)
 				migrations.POST("/replication", migrationController.ExecuteReplication)
 				migrations.POST("/gtid", migrationController.ExecuteGTID)
@@ -222,6 +255,20 @@ migrations := protected.Group("/migrations")
 				alerts.PUT("/notifications/channels/:id", alertController.UpdateNotificationChannel)
 				alerts.DELETE("/notifications/channels/:id", alertController.DeleteNotificationChannel)
 			}
+
+			approvals := protected.Group("/approvals")
+			{
+				approvals.GET("", approvalController.ListApprovalRequests)
+				approvals.GET("/:id", approvalController.GetApprovalRequestByID)
+				approvals.POST("/:id/approve", approvalController.ApproveRequest)
+				approvals.POST("/:id/reject", approvalController.RejectRequest)
+			}
+
+			auditLogs := protected.Group("/audit-logs")
+			{
+				auditLogs.GET("", auditController.ListAuditLogs)
+				auditLogs.GET("/:id", auditController.GetAuditLogByID)
+			}
 		}
 	}
 
@@ -233,11 +280,11 @@ migrations := protected.Group("/migrations")
 
 func runMigrations(db *repositories.Database) error {
 	ctx := context.Background()
-	conn, err := db.Pool.Acquire(ctx)
+	conn, err := db.Pool.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	defer conn.Close()
 
-	return repositories.RunMigrations(ctx, conn.Conn())
+	return repositories.RunMigrations(ctx, conn)
 }
