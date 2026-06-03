@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"strconv"
+
 	"github.com/gin-gonic/gin"
+
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -34,7 +36,7 @@ func (c *InstanceController) Create(ctx *gin.Context) {
 
 func (c *InstanceController) GetByID(ctx *gin.Context) {
 	id := ctx.Param("id")
-	
+
 	instance, err := c.service.GetByID(ctx.Request.Context(), id)
 	if err != nil {
 		utils.NotFoundResponse(ctx, "Instance not found")
@@ -112,4 +114,16 @@ func (c *InstanceController) DetectVersion(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, version)
+}
+
+func (c *InstanceController) Deploy(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	result, err := c.service.Deploy(ctx.Request.Context(), id)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to deploy instance", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
 }

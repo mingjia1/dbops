@@ -10,6 +10,7 @@ type Host struct {
 	SSHUser           string     `json:"ssh_user" gorm:"type:varchar(64);not null"`
 	SSHAuthMethod     string     `json:"ssh_auth_method" gorm:"type:varchar(16);default:'password'"`
 	SSHCredential     string     `json:"-" gorm:"type:text"`
+	AgentPort         int        `json:"agent_port" gorm:"type:int;default:9090"`
 	OSType            string     `json:"os_type" gorm:"type:varchar(32);default:'linux'"`
 	Description       string     `json:"description" gorm:"type:text"`
 	Tags              string     `json:"tags" gorm:"type:varchar(512)"`

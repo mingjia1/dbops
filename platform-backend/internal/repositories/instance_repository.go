@@ -139,6 +139,34 @@ func (r *InstanceRepository) CreateConnection(ctx context.Context, conn *models.
 	return err
 }
 
+func (r *InstanceRepository) GetConnection(ctx context.Context, instanceID string) (*models.InstanceConnection, error) {
+	if r.db == nil || r.db.Pool == nil {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		for _, conn := range r.conns {
+			if conn.InstanceID == instanceID {
+				return &conn, nil
+			}
+		}
+		return nil, fmt.Errorf("connection not found for instance %s", instanceID)
+	}
+
+	query := `
+		SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled
+		FROM instance_connections WHERE instance_id = ?
+	`
+	conn := &models.InstanceConnection{}
+	err := r.db.Pool.QueryRowContext(ctx, query, instanceID).Scan(
+		&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("connection not found for instance %s", instanceID)
+		}
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	return conn, nil
+}
+
 func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.InstanceVersion) error {
 	if r.db == nil || r.db.Pool == nil {
 		r.mu.Lock()

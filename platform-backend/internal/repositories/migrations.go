@@ -263,6 +263,7 @@ var InitialSchema = []string{
 		ssh_user VARCHAR(64) NOT NULL,
 		ssh_auth_method VARCHAR(16) DEFAULT 'password',
 		ssh_credential TEXT,
+		agent_port INT DEFAULT 9090,
 		os_type VARCHAR(32) DEFAULT 'linux',
 		description TEXT,
 		tags VARCHAR(512),
@@ -272,6 +273,36 @@ var InitialSchema = []string{
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_hosts_status (status),
 		INDEX idx_hosts_address (address)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	`CREATE TABLE IF NOT EXISTS migration_tasks (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(128) NOT NULL,
+		source_instance_id VARCHAR(64) NOT NULL,
+		target_instance_id VARCHAR(64) NOT NULL,
+		strategy VARCHAR(32) NOT NULL,
+		status VARCHAR(32) DEFAULT 'pending',
+		progress INT DEFAULT 0,
+		started_at TIMESTAMP NULL,
+		completed_at TIMESTAMP NULL,
+		config TEXT,
+		error TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_migration_source (source_instance_id),
+		INDEX idx_migration_target (target_instance_id),
+		INDEX idx_migration_status (status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	`CREATE TABLE IF NOT EXISTS cluster_deployments (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_type VARCHAR(32) NOT NULL,
+		name VARCHAR(255) NOT NULL,
+		status VARCHAR(32) DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_cluster_deployments_type (cluster_type),
+		INDEX idx_cluster_deployments_status (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
 	`ALTER TABLE instances ADD CONSTRAINT fk_instances_host FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE SET NULL`,

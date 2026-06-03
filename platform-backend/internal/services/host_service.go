@@ -37,6 +37,7 @@ type CreateHostRequest struct {
 	SSHUser       string `json:"ssh_user" binding:"required"`
 	SSHAuthMethod string `json:"ssh_auth_method"`
 	SSHCredential string `json:"ssh_credential"`
+	AgentPort     int    `json:"agent_port"`
 	OSType        string `json:"os_type"`
 	Description   string `json:"description"`
 	Tags          string `json:"tags"`
@@ -49,6 +50,7 @@ type UpdateHostRequest struct {
 	SSHUser       string `json:"ssh_user"`
 	SSHAuthMethod string `json:"ssh_auth_method"`
 	SSHCredential string `json:"ssh_credential"`
+	AgentPort     int    `json:"agent_port"`
 	OSType        string `json:"os_type"`
 	Description   string `json:"description"`
 	Tags          string `json:"tags"`
@@ -80,6 +82,11 @@ func (s *HostService) Create(ctx context.Context, req CreateHostRequest) (*model
 		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 	}
 
+	agentPort := req.AgentPort
+	if agentPort == 0 {
+		agentPort = 9090
+	}
+
 	host := &models.Host{
 		Name:          req.Name,
 		Address:       req.Address,
@@ -87,6 +94,7 @@ func (s *HostService) Create(ctx context.Context, req CreateHostRequest) (*model
 		SSHUser:       req.SSHUser,
 		SSHAuthMethod: req.SSHAuthMethod,
 		SSHCredential: encrypted,
+		AgentPort:     agentPort,
 		OSType:        req.OSType,
 		Description:   req.Description,
 		Tags:          req.Tags,
@@ -134,6 +142,9 @@ func (s *HostService) Update(ctx context.Context, id string, req UpdateHostReque
 			return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 		}
 		host.SSHCredential = encrypted
+	}
+	if req.AgentPort != 0 {
+		host.AgentPort = req.AgentPort
 	}
 	if req.OSType != "" {
 		host.OSType = req.OSType

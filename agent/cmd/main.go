@@ -96,6 +96,60 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			tasks.POST("/migration", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteMigration(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Migration execution failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/migration-switch", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteMigrationSwitch(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Migration switch execution failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/cluster-switch", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				switchType, _ := req.Config["switch_type"].(string)
+				if switchType == "" {
+					c.JSON(400, gin.H{"code": 400, "message": "switch_type is required"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteDeploy(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Switch execution failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
 			tasks.POST("/metrics", func(c *gin.Context) {
 				instanceID := c.Query("instance_id")
 				metrics, err := metricsCollector.CollectMySQLMetrics(c.Request.Context(), instanceID)

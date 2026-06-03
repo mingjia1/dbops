@@ -66,12 +66,12 @@ func (r *HostRepository) createInDB(ctx context.Context, host *models.Host) erro
 	host.UpdatedAt = now
 
 	query := `
-		INSERT INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, os_type, description, tags, status, last_check_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
-		nullableString(host.SSHCredential), host.OSType, host.Description, host.Tags, host.Status,
+		nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
 		host.LastCheckAt, host.CreatedAt, host.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create host: %w", err)
@@ -100,14 +100,14 @@ func (r *HostRepository) getByIDInMemory(id string) (*models.Host, error) {
 
 func (r *HostRepository) getByIDInDB(ctx context.Context, id string) (*models.Host, error) {
 	query := `
-		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, os_type, description, tags, status, last_check_at, created_at, updated_at
+		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at
 		FROM hosts WHERE id = ?
 	`
 	host := &models.Host{}
 	var lastCheckAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
 		&host.ID, &host.Name, &host.Address, &host.SSHPort, &host.SSHUser, &host.SSHAuthMethod,
-		&host.SSHCredential, &host.OSType, &host.Description, &host.Tags, &host.Status,
+		&host.SSHCredential, &host.AgentPort, &host.OSType, &host.Description, &host.Tags, &host.Status,
 		&lastCheckAt, &host.CreatedAt, &host.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -158,7 +158,7 @@ func (r *HostRepository) listInMemory(limit, offset int) ([]models.Host, error) 
 
 func (r *HostRepository) listInDB(ctx context.Context, limit, offset int) ([]models.Host, error) {
 	query := `
-		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, os_type, description, tags, status, last_check_at, created_at, updated_at
+		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at
 		FROM hosts ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
@@ -173,7 +173,7 @@ func (r *HostRepository) listInDB(ctx context.Context, limit, offset int) ([]mod
 		var lastCheckAt sql.NullTime
 		if err := rows.Scan(
 			&h.ID, &h.Name, &h.Address, &h.SSHPort, &h.SSHUser, &h.SSHAuthMethod,
-			&h.SSHCredential, &h.OSType, &h.Description, &h.Tags, &h.Status,
+			&h.SSHCredential, &h.AgentPort, &h.OSType, &h.Description, &h.Tags, &h.Status,
 			&lastCheckAt, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -236,12 +236,12 @@ func (r *HostRepository) updateInMemory(host *models.Host) error {
 func (r *HostRepository) updateInDB(ctx context.Context, host *models.Host) error {
 	host.UpdatedAt = time.Now()
 	query := `
-		UPDATE hosts SET name = ?, address = ?, ssh_port = ?, ssh_user = ?, ssh_auth_method = ?, ssh_credential = ?, os_type = ?, description = ?, tags = ?, updated_at = ?
+		UPDATE hosts SET name = ?, address = ?, ssh_port = ?, ssh_user = ?, ssh_auth_method = ?, ssh_credential = ?, agent_port = ?, os_type = ?, description = ?, tags = ?, updated_at = ?
 		WHERE id = ?
 	`
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
-		host.SSHCredential, host.OSType, host.Description, host.Tags, host.UpdatedAt, host.ID)
+		host.SSHCredential, host.AgentPort, host.OSType, host.Description, host.Tags, host.UpdatedAt, host.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update host: %w", err)
 	}

@@ -4,16 +4,25 @@ import (
 	"context"
 	"fmt"
 	"time"
+
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
 
 type InstanceService struct {
-	repo *repositories.InstanceRepository
+	repo        *repositories.InstanceRepository
+	hostRepo    *repositories.HostRepository
+	taskRepo    *repositories.TaskRepository
+	agentClient *AgentClient
 }
 
-func NewInstanceService(repo *repositories.InstanceRepository) *InstanceService {
-	return &InstanceService{repo: repo}
+func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient) *InstanceService {
+	return &InstanceService{
+		repo:        repo,
+		hostRepo:    hostRepo,
+		taskRepo:    taskRepo,
+		agentClient: agentClient,
+	}
 }
 
 func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest) (*models.Instance, error) {
@@ -114,14 +123,75 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	return version, nil
 }
 
+func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+
+	task := &models.Task{
+		TaskType:   "deploy",
+		InstanceID: id,
+		Status:     "pending",
+		Progress:   0,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.taskRepo.Create(ctx, task); err != nil {
+		return nil, fmt.Errorf("failed to create task: %w", err)
+	}
+
+	taskRepo := s.taskRepo
+	taskRepo.UpdateStatus(ctx, task.ID, "running", 0)
+
+	var agentHost string
+	var agentPort int
+
+	if instance.HostID != nil && *instance.HostID != "" {
+		host, err := s.hostRepo.GetByID(ctx, *instance.HostID)
+		if err == nil {
+			agentHost = host.Address
+			agentPort = host.AgentPort
+		}
+	}
+	if agentHost == "" {
+		agentHost = conn.Host
+		agentPort = 9090
+	}
+
+	result, err := s.agentClient.DeployInstance(ctx, agentHost, agentPort, instance, task.ID)
+	if err != nil {
+		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
+		return &DeployResult{
+			TaskID:   task.ID,
+			Status:   "failed",
+			Progress: 0,
+			Message:  fmt.Sprintf("Deploy failed: %v", err),
+		}, nil
+	}
+
+	taskRepo.UpdateStatus(ctx, task.ID, result.Status, result.Progress)
+
+	return &DeployResult{
+		TaskID:   task.ID,
+		Status:   result.Status,
+		Progress: result.Progress,
+		Message:  result.Message,
+	}, nil
+}
+
 type CreateInstanceRequest struct {
-	Name      string `json:"name" binding:"required"`
-	ClusterID string `json:"cluster_id"`
-	HostID    string `json:"host_id"`
-	Host      string `json:"host" binding:"required"`
-	Port      int    `json:"port" binding:"required"`
-	Username  string `json:"username" binding:"required"`
-	Password  string `json:"password" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	ClusterID  string `json:"cluster_id"`
+	HostID     string `json:"host_id"`
+	Host       string `json:"host" binding:"required"`
+	Port       int    `json:"port" binding:"required"`
+	Username   string `json:"username" binding:"required"`
+	Password   string `json:"password" binding:"required"`
 	SSLEnabled bool   `json:"ssl_enabled"`
 }
 
@@ -129,4 +199,11 @@ type UpdateInstanceRequest struct {
 	Name      string `json:"name"`
 	ClusterID string `json:"cluster_id"`
 	HostID    string `json:"host_id"`
+}
+
+type DeployResult struct {
+	TaskID   string `json:"task_id"`
+	Status   string `json:"status"`
+	Progress int    `json:"progress"`
+	Message  string `json:"message"`
 }

@@ -108,3 +108,4 @@ agent/config/config.local.yaml
 # 备份目录
 backups/
 data/
+.omo/

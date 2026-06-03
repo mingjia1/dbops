@@ -43,17 +43,18 @@ authService := services.NewAuthService(userRepo, cfg.JWTSecret)
 authController := controllers.NewAuthController(authService)
 
 	instanceRepo := repositories.NewInstanceRepository(db)
-	instanceService := services.NewInstanceService(instanceRepo)
-	instanceController := controllers.NewInstanceController(instanceService)
-
 	hostRepo := repositories.NewHostRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	agentClient := services.NewAgentClient()
+	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient)
+	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
 	hostController := controllers.NewHostController(hostService)
 
-	envCheckService := services.NewEnvironmentCheckService()
+	envCheckService := services.NewEnvironmentCheckService(hostRepo, agentClient)
 	envCheckController := controllers.NewEnvironmentCheckController(envCheckService)
 
-	backupService := services.NewBackupService()
+	backupService := services.NewBackupService(hostRepo, instanceRepo, agentClient)
 	backupController := controllers.NewBackupController(backupService)
 
 	clickhouse, err := storage.NewClickHouse(cfg.ClickHouseURL)
@@ -80,7 +81,8 @@ authController := controllers.NewAuthController(authService)
 	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo)
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
-	clusterDeployService := services.NewClusterDeployService()
+	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
+	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 
 	healthCheckService := services.NewHealthCheckService(db)
@@ -89,11 +91,14 @@ authController := controllers.NewAuthController(authService)
 	failoverService := services.NewFailoverService(db)
 	failoverController := controllers.NewFailoverController(failoverService)
 
-	taskRepo := repositories.NewTaskRepository(db)
 	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo)
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
-migrationService := services.NewMigrationService()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, agentClient)
+
+	switchService := services.NewSwitchService(hostRepo, instanceRepo, agentClient)
+	switchController := controllers.NewSwitchController(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 
 	alertRuleRepo := repositories.NewAlertRuleRepository(db)
@@ -149,6 +154,7 @@ migrationService := services.NewMigrationService()
 				instances.PUT("/:id", instanceController.Update)
 				instances.DELETE("/:id", instanceController.Delete)
 				instances.POST("/:id/detect-version", instanceController.DetectVersion)
+			instances.POST("/:id/deploy", instanceController.Deploy)
 			}
 
 			hosts := protected.Group("/hosts")
@@ -200,6 +206,16 @@ migrationService := services.NewMigrationService()
 				deployments.POST("/mgr", clusterDeployController.DeployMGR)
 				deployments.POST("/pxc", clusterDeployController.DeployPXC)
 				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
+			}
+
+			switches := protected.Group("/switch")
+			{
+				switches.POST("/single-to-mha", switchController.SingleToMHA)
+				switches.POST("/single-to-mgr", switchController.SingleToMGR)
+				switches.POST("/single-to-pxc", switchController.SingleToPXC)
+				switches.POST("/mha-to-mgr", switchController.MHAToMGR)
+				switches.POST("/mgr-to-pxc", switchController.MGRToPXC)
+				switches.POST("/pxc-to-mha", switchController.PXCToMHA)
 			}
 
 			ha := protected.Group("/ha")

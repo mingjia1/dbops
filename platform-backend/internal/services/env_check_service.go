@@ -4,13 +4,20 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
 
 type EnvironmentCheckService struct {
+	hostRepo    *repositories.HostRepository
+	agentClient *AgentClient
 }
 
-func NewEnvironmentCheckService() *EnvironmentCheckService {
-	return &EnvironmentCheckService{}
+func NewEnvironmentCheckService(hostRepo *repositories.HostRepository, agentClient *AgentClient) *EnvironmentCheckService {
+	return &EnvironmentCheckService{
+		hostRepo:    hostRepo,
+		agentClient: agentClient,
+	}
 }
 
 type EnvironmentCheckRequest struct {
@@ -32,27 +39,51 @@ type EnvironmentCheckResult struct {
 }
 
 type CheckResult struct {
-	Category    string `json:"category"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Passed      bool   `json:"passed"`
-	Value       string `json:"value"`
-	Suggestion  string `json:"suggestion"`
+	Category   string `json:"category"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Passed     bool   `json:"passed"`
+	Value      string `json:"value"`
+	Suggestion string `json:"suggestion"`
 }
 
 func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCheckRequest) (*EnvironmentCheckResult, error) {
 	result := &EnvironmentCheckResult{
 		CheckID:   fmt.Sprintf("check-%d", time.Now().Unix()),
-		Status:    "completed",
+		Status:    "running",
 		CreatedAt: time.Now(),
 		Results:   []CheckResult{},
 	}
 
 	for _, host := range req.Hosts {
-		results := s.checkHost(host)
-		result.Results = append(result.Results, results...)
+		agentPort := 9090
+		agentResult := s.checkHost(host)
+		result.Results = append(result.Results, agentResult...)
+
+		healthResult, err := s.agentClient.ExecuteHealthCheck(ctx, host.Host, agentPort, "")
+		if err != nil {
+			result.Results = append(result.Results, CheckResult{
+				Category:   "agent",
+				Name:       "agent_connectivity",
+				Status:     "failed",
+				Passed:     false,
+				Value:      fmt.Sprintf("%s:%d", host.Host, agentPort),
+				Suggestion: "请确保 Agent 已在目标主机上启动 (端口 9090)",
+			})
+			continue
+		}
+
+		result.Results = append(result.Results, CheckResult{
+			Category:   "agent",
+			Name:       "agent_connectivity",
+			Status:     "passed",
+			Passed:     true,
+			Value:      fmt.Sprintf("%s:%d - %s", host.Host, agentPort, healthResult.Status),
+			Suggestion: "",
+		})
 	}
 
+	result.Status = "completed"
 	return result, nil
 }
 
@@ -72,7 +103,7 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 			Status:     "passed",
 			Passed:     true,
 			Value:      "16GB",
-			Suggestion: "",
+			Suggestion: "生产环境建议 ≥ 32GB",
 		},
 		{
 			Category:   "hardware",
@@ -80,7 +111,7 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 			Status:     "passed",
 			Passed:     true,
 			Value:      "100GB",
-			Suggestion: "",
+			Suggestion: "数据目录建议 ≥ 500GB",
 		},
 		{
 			Category:   "os",
@@ -116,4 +147,10 @@ func (s *EnvironmentCheckService) GetByID(ctx context.Context, checkID string) (
 		CreatedAt: time.Now(),
 		Results:   []CheckResult{},
 	}, nil
+}
+
+func (s *EnvironmentCheckService) Export(ctx context.Context, checkID string) (string, error) {
+	report := fmt.Sprintf("# Environment Check Report: %s\n\nStatus: completed\nDate: %s\n",
+		checkID, time.Now().Format("2006-01-02 15:04:05"))
+	return report, nil
 }

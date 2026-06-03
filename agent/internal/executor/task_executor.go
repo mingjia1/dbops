@@ -65,6 +65,14 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 		return e.deploySingleInstance(ctx, req)
 	case "master-slave":
 		return e.deployMasterSlave(ctx, req)
+	case "mha":
+		mhaExecutor := NewMHAExecutor()
+		return mhaExecutor.DeployMHA(ctx, req)
+	case "mgr":
+		mgrExecutor := NewMGRExecutor()
+		return mgrExecutor.DeployMGRSinglePrimary(ctx, req)
+	case "pxc":
+		return e.DeployPXC(ctx, req)
 	default:
 		return e.deploySingleInstance(ctx, req)
 	}
