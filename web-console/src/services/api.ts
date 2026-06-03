@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { message } from 'antd'
+import { triggerLogout } from './authEvents'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -26,9 +27,14 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      window.location.href = '/login'
+      triggerLogout()
+      return Promise.reject(error)
     }
-    message.error(error.response?.data?.message || '请求失败')
+    if (error.response?.status === 404) {
+      return Promise.reject(error)
+    }
+    const errMsg = error.response?.data?.message || error.message || '请求失败'
+    message.error(errMsg)
     return Promise.reject(error)
   }
 )
@@ -37,6 +43,7 @@ export interface Instance {
   id: string
   name: string
   cluster_id: string
+  host_id: string | null
   created_at: string
   updated_at: string
 }
@@ -67,6 +74,9 @@ export const authApi = {
 export const instanceApi = {
   list: (limit = 20, offset = 0) =>
     api.get(`/instances?limit=${limit}&offset=${offset}`),
+
+  listByHost: (hostId: string, limit = 20, offset = 0) =>
+    api.get(`/instances?host_id=${hostId}&limit=${limit}&offset=${offset}`),
   
   get: (id: string) =>
     api.get(`/instances/${id}`),
@@ -78,11 +88,12 @@ export const instanceApi = {
     username: string
     password: string
     cluster_id?: string
+    host_id?: string
     ssl_enabled?: boolean
   }) =>
     api.post('/instances', data),
   
-  update: (id: string, data: { name?: string; cluster_id?: string }) =>
+  update: (id: string, data: { name?: string; cluster_id?: string; host_id?: string }) =>
     api.put(`/instances/${id}`, data),
   
   delete: (id: string) =>
@@ -90,6 +101,75 @@ export const instanceApi = {
   
   detectVersion: (id: string) =>
     api.post(`/instances/${id}/detect-version`),
+}
+
+export interface Host {
+  id: string
+  name: string
+  address: string
+  ssh_port: number
+  ssh_user: string
+  ssh_auth_method: string
+  os_type: string
+  description: string
+  tags: string
+  status: string
+  last_check_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface HostTestResult {
+  task_id: string
+  host_id: string
+  status: 'pending' | 'success' | 'failed'
+  message: string
+  latency_ms: number
+  started_at: string
+  ended_at: string
+}
+
+export const hostApi = {
+  list: (limit = 20, offset = 0) =>
+    api.get(`/hosts?limit=${limit}&offset=${offset}`),
+  
+  get: (id: string) =>
+    api.get(`/hosts/${id}`),
+  
+  create: (data: {
+    name: string
+    address: string
+    ssh_port?: number
+    ssh_user: string
+    ssh_auth_method?: string
+    ssh_credential: string
+    os_type?: string
+    description?: string
+    tags?: string
+  }) =>
+    api.post('/hosts', data),
+  
+  update: (id: string, data: {
+    name?: string
+    address?: string
+    ssh_port?: number
+    ssh_user?: string
+    ssh_auth_method?: string
+    ssh_credential?: string
+    os_type?: string
+    description?: string
+    tags?: string
+  }) =>
+    api.put(`/hosts/${id}`, data),
+  
+  delete: (id: string) =>
+    api.delete(`/hosts/${id}`),
+  
+  testConnection: (id: string) =>
+    api.post(`/hosts/${id}/test`),
+  
+  getTestResult: (taskId: string) =>
+    api.get(`/hosts/test/${taskId}`),
 }
 
 export const envCheckApi = {
@@ -215,9 +295,42 @@ export const auditApi = {
     const queryString = params.toString()
     return api.get(`/audit-logs${queryString ? `?${queryString}` : ''}`)
   },
-  
+
   get: (id: string) =>
     api.get(`/audit-logs/${id}`),
+}
+
+export const alertApi = {
+  listRules: () => api.get('/alerts/rules'),
+  getRule: (id: string) => api.get(`/alerts/rules/${id}`),
+  createRule: (data: any) => api.post('/alerts/rules', data),
+  updateRule: (id: string, data: any) => api.put(`/alerts/rules/${id}`, data),
+  deleteRule: (id: string) => api.delete(`/alerts/rules/${id}`),
+  listChannels: () => api.get('/alerts/notifications/channels'),
+  createChannel: (data: any) => api.post('/alerts/notifications/channels', data),
+  updateChannel: (id: string, data: any) => api.put(`/alerts/notifications/channels/${id}`, data),
+  deleteChannel: (id: string) => api.delete(`/alerts/notifications/channels/${id}`),
+  listHistory: () => api.get('/alerts/history'),
+}
+
+export const upgradeApi = {
+  planPath: (data: any) => api.post('/upgrades/plan', data),
+  checkCompat: (data: any) => api.post('/upgrades/check', data),
+  executeInPlace: (data: any) => api.post('/upgrades/in-place', data),
+  executeLogical: (data: any) => api.post('/upgrades/logical', data),
+  executeRolling: (data: any) => api.post('/upgrades/rolling', data),
+  listHistory: () => api.get('/upgrades'),
+  getReport: (id: string) => api.get(`/upgrades/${id}/report`),
+}
+
+export const migrationApi = {
+  createPhysical: (data: any) => api.post('/migrations/physical', data),
+  createReplication: (data: any) => api.post('/migrations/replication', data),
+  createGTID: (data: any) => api.post('/migrations/gtid', data),
+  verify: (taskId: string) => api.post(`/migrations/${taskId}/verify`),
+  switchover: (taskId: string) => api.post(`/migrations/${taskId}/switch`),
+  list: () => api.get('/migrations'),
+  get: (taskId: string) => api.get(`/migrations/${taskId}`),
 }
 
 export default api

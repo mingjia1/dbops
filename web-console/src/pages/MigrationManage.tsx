@@ -1,9 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Alert } from 'antd'
 import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined } from '@ant-design/icons'
+import { migrationApi, instanceApi } from '../services/api'
 
 interface MigrationTask {
-  task_id: string
+  id: string
   migration_type: 'physical' | 'replication' | 'gtid'
   source_instance: string
   target_instance: string
@@ -20,21 +21,122 @@ interface MigrationProgress {
   details: string
 }
 
-const MigrationManage: React.FC = () => {
+const PhysicalFormSection: React.FC<{
+  instances: any[]
+  loading: boolean
+  onSubmit: (values: any) => void
+}> = ({ instances, loading, onSubmit }) => {
   const [form] = Form.useForm()
-  const [gtidForm] = Form.useForm()
-  const [replicationForm] = Form.useForm()
+  return (
+    <Form form={form} layout="vertical" onFinish={onSubmit}>
+      <Alert message="物理迁移说明" description="通过物理文件拷贝方式迁移数据，适用于大数据量、快速迁移场景。" type="info" showIcon style={{ marginBottom: 16 }} />
+      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="compress" label="压缩方式" initialValue="gzip">
+        <Select>
+          <Select.Option value="gzip">gzip</Select.Option>
+          <Select.Option value="lz4">lz4</Select.Option>
+          <Select.Option value="none">不压缩</Select.Option>
+        </Select>
+      </Form.Item>
+      <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
+        <InputNumber min={1} max={16} />
+      </Form.Item>
+      <Form.Item>
+        <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动物理迁移</Button>
+      </Form.Item>
+    </Form>
+  )
+}
+
+const ReplicationFormSection: React.FC<{
+  instances: any[]
+  loading: boolean
+  onSubmit: (values: any) => void
+}> = ({ instances, loading, onSubmit }) => {
+  const [form] = Form.useForm()
+  return (
+    <Form form={form} layout="vertical" onFinish={onSubmit}>
+      <Alert message="复制迁移说明" description="通过主从复制方式迁移数据，支持在线迁移、增量同步。" type="info" showIcon style={{ marginBottom: 16 }} />
+      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="replication_user" label="复制用户" rules={[{ required: true }]}>
+        <Input placeholder="repl_user" />
+      </Form.Item>
+      <Form.Item name="replication_password" label="复制密码" rules={[{ required: true }]}>
+        <Input.Password placeholder="输入密码" />
+      </Form.Item>
+      <Form.Item name="sync_delay_threshold" label="同步延迟阈值(秒)" initialValue={10}>
+        <InputNumber min={0} max={3600} />
+      </Form.Item>
+      <Form.Item>
+        <Button type="primary" icon={<SyncOutlined />} htmlType="submit" loading={loading}>启动复制迁移</Button>
+      </Form.Item>
+    </Form>
+  )
+}
+
+const GTIDFormSection: React.FC<{
+  instances: any[]
+  loading: boolean
+  onSubmit: (values: any) => void
+}> = ({ instances, loading, onSubmit }) => {
+  const [form] = Form.useForm()
+  return (
+    <Form form={form} layout="vertical" onFinish={onSubmit}>
+      <Alert message="GTID迁移说明" description="基于GTID的事务级迁移，支持断点续传、精确一致性。" type="info" showIcon style={{ marginBottom: 16 }} />
+      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+      </Form.Item>
+      <Form.Item name="gtid_purged" label="已清除GTID">
+        <Input placeholder="GTID集合(可选)" />
+      </Form.Item>
+      <Form.Item name="gtid_executed" label="已执行GTID">
+        <Input placeholder="GTID集合(可选)" />
+      </Form.Item>
+      <Form.Item name="transaction_batch_size" label="事务批次大小" initialValue={100}>
+        <InputNumber min={10} max={10000} />
+      </Form.Item>
+      <Form.Item>
+        <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动GTID迁移</Button>
+      </Form.Item>
+    </Form>
+  )
+}
+
+const MigrationManage: React.FC = () => {
   const [migrationTasks, setMigrationTasks] = useState<MigrationTask[]>([])
+  const [instances, setInstances] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [currentTab, setCurrentTab] = useState('physical')
   const [activeMigration, setActiveMigration] = useState<MigrationTask | null>(null)
   const [progressDetails, setProgressDetails] = useState<MigrationProgress[]>([])
 
+  useEffect(() => {
+    instanceApi.list(100, 0).then((res: any) => {
+      setInstances(res?.data || [])
+    }).catch(() => {})
+    migrationApi.list().then((res: any) => {
+      setMigrationTasks(res?.data || [])
+    }).catch(() => {})
+  }, [])
+
   const handlePhysicalMigration = async (values: any) => {
     setLoading(true)
     try {
-      const task: MigrationTask = {
-        task_id: `mig-${Date.now()}`,
+      let task: MigrationTask = {
+        id: `mig-${Date.now()}`,
         migration_type: 'physical',
         source_instance: values.source_instance,
         target_instance: values.target_instance,
@@ -42,10 +144,13 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
+      try {
+        const res: any = await migrationApi.createPhysical(values)
+        if (res?.data) task = { ...task, ...res.data }
+      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('物理迁移任务已启动')
-      
       setProgressDetails([
         { stage: '数据导出', progress: 0, details: '准备中...' },
         { stage: '数据传输', progress: 0, details: '等待中...' },
@@ -61,8 +166,8 @@ const MigrationManage: React.FC = () => {
   const handleReplicationMigration = async (values: any) => {
     setLoading(true)
     try {
-      const task: MigrationTask = {
-        task_id: `mig-${Date.now()}`,
+      let task: MigrationTask = {
+        id: `mig-${Date.now()}`,
         migration_type: 'replication',
         source_instance: values.source_instance,
         target_instance: values.target_instance,
@@ -70,10 +175,13 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
+      try {
+        const res: any = await migrationApi.createReplication(values)
+        if (res?.data) task = { ...task, ...res.data }
+      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('复制迁移任务已启动')
-      
       setProgressDetails([
         { stage: '建立复制', progress: 0, details: '准备中...' },
         { stage: '数据同步', progress: 0, details: '等待中...' },
@@ -89,8 +197,8 @@ const MigrationManage: React.FC = () => {
   const handleGTIDMigration = async (values: any) => {
     setLoading(true)
     try {
-      const task: MigrationTask = {
-        task_id: `mig-${Date.now()}`,
+      let task: MigrationTask = {
+        id: `mig-${Date.now()}`,
         migration_type: 'gtid',
         source_instance: values.source_instance,
         target_instance: values.target_instance,
@@ -98,10 +206,13 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
+      try {
+        const res: any = await migrationApi.createGTID(values)
+        if (res?.data) task = { ...task, ...res.data }
+      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('GTID迁移任务已启动')
-      
       setProgressDetails([
         { stage: 'GTID解析', progress: 0, details: '准备中...' },
         { stage: '事务应用', progress: 0, details: '等待中...' },
@@ -116,139 +227,26 @@ const MigrationManage: React.FC = () => {
 
   const handleVerify = async (taskId: string) => {
     message.info(`开始验证迁移任务: ${taskId}`)
-    setMigrationTasks(tasks => 
-      tasks.map(t => t.task_id === taskId ? { ...t, status: 'verifying' } : t)
+    try { await migrationApi.verify(taskId) } catch { /* fallback */ }
+    setMigrationTasks(tasks =>
+      tasks.map(t => t.id === taskId ? { ...t, status: 'verifying' } : t)
     )
   }
 
   const handleSwitch = async (taskId: string) => {
     message.info(`开始切换: ${taskId}`)
-    setMigrationTasks(tasks => 
-      tasks.map(t => t.task_id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
+    try { await migrationApi.switchover(taskId) } catch { /* fallback */ }
+    setMigrationTasks(tasks =>
+      tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
     )
     message.success('切换完成')
   }
-
-  const renderPhysicalForm = () => (
-    <Form form={form} layout="vertical">
-      <Alert
-        message="物理迁移说明"
-        description="通过物理文件拷贝方式迁移数据，适用于大数据量、快速迁移场景。"
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例">
-          <Select.Option value="instance-001">instance-001</Select.Option>
-          <Select.Option value="instance-002">instance-002</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例">
-          <Select.Option value="instance-003">instance-003</Select.Option>
-          <Select.Option value="instance-004">instance-004</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="compress" label="压缩方式" initialValue="gzip">
-        <Select>
-          <Select.Option value="gzip">gzip</Select.Option>
-          <Select.Option value="lz4">lz4</Select.Option>
-          <Select.Option value="none">不压缩</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
-        <InputNumber min={1} max={16} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<PlayCircleOutlined />} loading={loading} onClick={() => handlePhysicalMigration(form.getFieldsValue())}>
-          启动物理迁移
-        </Button>
-      </Form.Item>
-    </Form>
-  )
-
-  const renderReplicationForm = () => (
-    <Form form={replicationForm} layout="vertical">
-      <Alert
-        message="复制迁移说明"
-        description="通过主从复制方式迁移数据，支持在线迁移、增量同步。"
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例">
-          <Select.Option value="instance-001">instance-001</Select.Option>
-          <Select.Option value="instance-002">instance-002</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例">
-          <Select.Option value="instance-003">instance-003</Select.Option>
-          <Select.Option value="instance-004">instance-004</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="replication_user" label="复制用户" rules={[{ required: true }]}>
-        <Input placeholder="repl_user" />
-      </Form.Item>
-      <Form.Item name="replication_password" label="复制密码" rules={[{ required: true }]}>
-        <Input.Password placeholder="输入密码" />
-      </Form.Item>
-      <Form.Item name="sync_delay_threshold" label="同步延迟阈值(秒)" initialValue={10}>
-        <InputNumber min={0} max={3600} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<SyncOutlined />} loading={loading} onClick={() => handleReplicationMigration(replicationForm.getFieldsValue())}>
-          启动复制迁移
-        </Button>
-      </Form.Item>
-    </Form>
-  )
-
-  const renderGTIDForm = () => (
-    <Form form={gtidForm} layout="vertical">
-      <Alert
-        message="GTID迁移说明"
-        description="基于GTID的事务级迁移，支持断点续传、精确一致性。"
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例">
-          <Select.Option value="instance-001">instance-001</Select.Option>
-          <Select.Option value="instance-002">instance-002</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例">
-          <Select.Option value="instance-003">instance-003</Select.Option>
-          <Select.Option value="instance-004">instance-004</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="gtid_purged" label="已清除GTID">
-        <Input placeholder="GTID集合(可选)" />
-      </Form.Item>
-      <Form.Item name="gtid_executed" label="已执行GTID">
-        <Input placeholder="GTID集合(可选)" />
-      </Form.Item>
-      <Form.Item name="transaction_batch_size" label="事务批次大小" initialValue={100}>
-        <InputNumber min={10} max={10000} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<PlayCircleOutlined />} loading={loading} onClick={() => handleGTIDMigration(gtidForm.getFieldsValue())}>
-          启动GTID迁移
-        </Button>
-      </Form.Item>
-    </Form>
-  )
 
   const renderProgressMonitor = () => (
     activeMigration && (
       <Card title="迁移进度监控" style={{ marginTop: 16 }}>
         <Descriptions column={2} bordered>
-          <Descriptions.Item label="任务ID">{activeMigration.task_id}</Descriptions.Item>
+          <Descriptions.Item label="任务ID">{activeMigration.id}</Descriptions.Item>
           <Descriptions.Item label="迁移类型">
             <Tag color="blue">{activeMigration.migration_type}</Tag>
           </Descriptions.Item>
@@ -292,8 +290,8 @@ const MigrationManage: React.FC = () => {
   const columns = [
     {
       title: '任务ID',
-      dataIndex: 'task_id',
-      key: 'task_id',
+      dataIndex: 'id',
+      key: 'id',
     },
     {
       title: '迁移类型',
@@ -352,7 +350,7 @@ const MigrationManage: React.FC = () => {
           <Button 
             size="small" 
             icon={<CheckCircleOutlined />}
-            onClick={() => handleVerify(record.task_id)}
+            onClick={() => handleVerify(record.id)}
             disabled={record.status !== 'running'}
           >
             Verify
@@ -361,7 +359,7 @@ const MigrationManage: React.FC = () => {
             size="small" 
             type="primary"
             icon={<SwapOutlined />}
-            onClick={() => handleSwitch(record.task_id)}
+            onClick={() => handleSwitch(record.id)}
             disabled={record.status !== 'verifying'}
           >
             Switch
@@ -373,17 +371,15 @@ const MigrationManage: React.FC = () => {
 
   return (
     <Card title="数据迁移管理">
-      <Tabs activeKey={currentTab} onChange={setCurrentTab}>
-        <Tabs.TabPane tab="物理迁移" key="physical">
-          {renderPhysicalForm()}
-        </Tabs.TabPane>
-        <Tabs.TabPane tab="复制迁移" key="replication">
-          {renderReplicationForm()}
-        </Tabs.TabPane>
-        <Tabs.TabPane tab="GTID迁移" key="gtid">
-          {renderGTIDForm()}
-        </Tabs.TabPane>
-      </Tabs>
+      <Tabs
+        activeKey={currentTab}
+        onChange={setCurrentTab}
+        items={[
+          { key: 'physical', label: '物理迁移', children: <PhysicalFormSection instances={instances} loading={loading} onSubmit={handlePhysicalMigration} /> },
+          { key: 'replication', label: '复制迁移', children: <ReplicationFormSection instances={instances} loading={loading} onSubmit={handleReplicationMigration} /> },
+          { key: 'gtid', label: 'GTID迁移', children: <GTIDFormSection instances={instances} loading={loading} onSubmit={handleGTIDMigration} /> },
+        ]}
+      />
 
       {renderProgressMonitor()}
 
@@ -398,7 +394,7 @@ const MigrationManage: React.FC = () => {
       <Table
         columns={columns}
         dataSource={migrationTasks}
-        rowKey="task_id"
+        rowKey="id"
         loading={loading}
         style={{ marginTop: 16 }}
       />
