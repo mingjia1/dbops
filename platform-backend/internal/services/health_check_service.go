@@ -363,11 +363,11 @@ func (s *HealthCheckService) checkReplication(ctx context.Context, host string, 
 func (s *HealthCheckService) getInstanceConnection(ctx context.Context, instanceID string) (*models.InstanceConnection, error) {
 	query := `
 		SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled
-		FROM instance_connections WHERE instance_id = $1
+		FROM instance_connections WHERE instance_id = ?
 	`
 
 	conn := &models.InstanceConnection{}
-	err := s.db.Pool.QueryRow(ctx, query, instanceID).Scan(
+	err := s.db.Pool.QueryRowContext(ctx, query, instanceID).Scan(
 		&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled)
 
 	if err != nil {

@@ -2,6 +2,9 @@ package repositories
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 )
@@ -18,13 +21,15 @@ func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 	if r.db == nil || r.db.Pool == nil {
 		return nil
 	}
-	user.ID = uuid.New().String()
-	
+	if user.ID == "" {
+		user.ID = uuid.New().String()
+	}
+
 	query := `
 		INSERT INTO users (id, username, password, email, role, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := r.db.Pool.Exec(ctx, query,
+	_, err := r.db.Pool.ExecContext(ctx, query,
 		user.ID, user.Username, user.Password, user.Email, user.Role, user.Status, user.CreatedAt)
 	return err
 }
@@ -35,13 +40,20 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
-		FROM users WHERE username = $1
+		FROM users WHERE username = ?
 	`
 	user := &models.User{}
-	err := r.db.Pool.QueryRow(ctx, query, username).Scan(
-		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt)
+	var updatedAt sql.NullTime
+	err := r.db.Pool.QueryRowContext(ctx, query, username).Scan(
+		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
+	}
+	if updatedAt.Valid {
+		user.UpdatedAt = updatedAt.Time
 	}
 	return user, nil
 }
@@ -52,13 +64,70 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
-		FROM users WHERE id = $1
+		FROM users WHERE id = ?
 	`
 	user := &models.User{}
-	err := r.db.Pool.QueryRow(ctx, query, id).Scan(
-		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt)
+	var updatedAt sql.NullTime
+	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
+		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if updatedAt.Valid {
+		user.UpdatedAt = updatedAt.Time
+	}
+	return user, nil
+}
+
+func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]models.User, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.User{}, nil
+	}
+	query := `
+		SELECT id, username, password, email, role, status, created_at, updated_at
+		FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`
+	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	return user, nil
+	defer rows.Close()
+
+	users := make([]models.User, 0)
+	for rows.Next() {
+		var u models.User
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if updatedAt.Valid {
+			u.UpdatedAt = updatedAt.Time
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+func (r *UserRepository) Update(ctx context.Context, user *models.User) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
+	query := `
+		UPDATE users SET username = ?, password = ?, email = ?, role = ?, status = ?, updated_at = ?
+		WHERE id = ?
+	`
+	_, err := r.db.Pool.ExecContext(ctx, query,
+		user.Username, user.Password, user.Email, user.Role, user.Status, user.UpdatedAt, user.ID)
+	return err
+}
+
+func (r *UserRepository) Delete(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	return err
 }

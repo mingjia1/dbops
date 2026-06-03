@@ -223,11 +223,11 @@ func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string
 		FROM instances i
 		JOIN instance_connections ic ON i.id = ic.instance_id
 		JOIN instance_status ist ON i.id = ist.instance_id
-		WHERE i.cluster_id = $1 AND ist.role = 'master'
+		WHERE i.cluster_id = ? AND ist.role = 'master'
 	`
 
 	master := &MasterInfo{}
-	err := s.db.Pool.QueryRow(ctx, query, clusterID).Scan(
+	err := s.db.Pool.QueryRowContext(ctx, query, clusterID).Scan(
 		&master.InstanceID, &master.Host, &master.Port, &master.Role, &master.IsHealthy)
 
 	if err != nil {
@@ -246,11 +246,11 @@ func (s *FailoverService) GetSlaves(ctx context.Context, clusterID string) ([]Ma
 		FROM instances i
 		JOIN instance_connections ic ON i.id = ic.instance_id
 		JOIN instance_status ist ON i.id = ist.instance_id
-		WHERE i.cluster_id = $1 AND ist.role = 'slave'
+		WHERE i.cluster_id = ? AND ist.role = 'slave'
 		ORDER BY ist.seconds_behind_master ASC
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, clusterID)
+	rows, err := s.db.Pool.QueryContext(ctx, query, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query slaves: %w", err)
 	}
@@ -420,25 +420,25 @@ func (s *FailoverService) SwitchVIP(ctx context.Context, req VIPSwitchRequest) *
 
 func (s *FailoverService) UpdateTopology(ctx context.Context, clusterID, oldMasterID, newMasterID string) error {
 	updateOldMaster := `
-		UPDATE instance_status SET role = 'failed_master' WHERE instance_id = $1
+		UPDATE instance_status SET role = 'failed_master' WHERE instance_id = ?
 	`
-	_, err := s.db.Pool.Exec(ctx, updateOldMaster, oldMasterID)
+	_, err := s.db.Pool.ExecContext(ctx, updateOldMaster, oldMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update old master status: %w", err)
 	}
 
 	updateNewMaster := `
-		UPDATE instance_status SET role = 'master' WHERE instance_id = $1
+		UPDATE instance_status SET role = 'master' WHERE instance_id = ?
 	`
-	_, err = s.db.Pool.Exec(ctx, updateNewMaster, newMasterID)
+	_, err = s.db.Pool.ExecContext(ctx, updateNewMaster, newMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update new master status: %w", err)
 	}
 
 	updateTopology := `
-		UPDATE instance_topology SET master_id = $1 WHERE cluster_id = $2
+		UPDATE instance_topology SET master_id = ? WHERE cluster_id = ?
 	`
-	_, err = s.db.Pool.Exec(ctx, updateTopology, newMasterID, clusterID)
+	_, err = s.db.Pool.ExecContext(ctx, updateTopology, newMasterID, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to update topology: %w", err)
 	}
@@ -449,11 +449,11 @@ func (s *FailoverService) UpdateTopology(ctx context.Context, clusterID, oldMast
 func (s *FailoverService) getInstanceConnection(ctx context.Context, instanceID string) (*models.InstanceConnection, error) {
 	query := `
 		SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled
-		FROM instance_connections WHERE instance_id = $1
+		FROM instance_connections WHERE instance_id = ?
 	`
 
 	conn := &models.InstanceConnection{}
-	err := s.db.Pool.QueryRow(ctx, query, instanceID).Scan(
+	err := s.db.Pool.QueryRowContext(ctx, query, instanceID).Scan(
 		&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled)
 
 	if err != nil {
@@ -466,10 +466,10 @@ func (s *FailoverService) getInstanceConnection(ctx context.Context, instanceID 
 func (s *FailoverService) GetFailoverHistory(ctx context.Context, clusterID string, limit int) ([]FailoverResult, error) {
 	query := `
 		SELECT cluster_id, old_master_id, new_master_id, failover_time, status, success, error_message
-		FROM failover_history WHERE cluster_id = $1 ORDER BY failover_time DESC LIMIT $2
+		FROM failover_history WHERE cluster_id = ? ORDER BY failover_time DESC LIMIT ?
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, clusterID, limit)
+	rows, err := s.db.Pool.QueryContext(ctx, query, clusterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query failover history: %w", err)
 	}

@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 	"github.com/gin-gonic/gin"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
@@ -46,6 +47,7 @@ func (c *InstanceController) GetByID(ctx *gin.Context) {
 func (c *InstanceController) List(ctx *gin.Context) {
 	limitStr := ctx.DefaultQuery("limit", "20")
 	offsetStr := ctx.DefaultQuery("offset", "0")
+	hostID := ctx.Query("host_id")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil {
@@ -57,7 +59,12 @@ func (c *InstanceController) List(ctx *gin.Context) {
 		offset = 0
 	}
 
-	instances, err := c.service.List(ctx.Request.Context(), limit, offset)
+	var instances []models.Instance
+	if hostID != "" {
+		instances, err = c.service.ListByHostID(ctx.Request.Context(), hostID, limit, offset)
+	} else {
+		instances, err = c.service.List(ctx.Request.Context(), limit, offset)
+	}
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to list instances", err)
 		return

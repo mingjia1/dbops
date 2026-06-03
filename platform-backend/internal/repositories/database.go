@@ -2,47 +2,52 @@ package repositories
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type Database struct {
-	Pool *pgxpool.Pool
+	Pool *sql.DB
 }
 
-func NewDatabase(databaseURL string) (*Database, error) {
+func NewDatabase(dsn string) (*Database, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	// Open MySQL connection pool
+	pool, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse database URL: %w", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	poolConfig.MaxConns = 20
-	poolConfig.MinConns = 5
-	poolConfig.HealthCheckPeriod = 1 * time.Minute
-	poolConfig.MaxConnLifetime = 30 * time.Minute
+	pool.SetMaxOpenConns(20)
+	pool.SetMaxIdleConns(5)
+	pool.SetConnMaxLifetime(30 * time.Minute)
+	pool.SetConnMaxIdleTime(5 * time.Minute)
 
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
-	}
-
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.PingContext(ctx); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	return &Database{Pool: pool}, nil
 }
 
-func (db *Database) Close() {
-	db.Pool.Close()
+func (db *Database) Close() error {
+	if db == nil || db.Pool == nil {
+		return nil
+	}
+	return db.Pool.Close()
 }
 
 func (db *Database) HealthCheck(ctx context.Context) error {
+	if db == nil || db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return db.Pool.Ping(ctx)
+	return db.Pool.PingContext(ctx)
 }

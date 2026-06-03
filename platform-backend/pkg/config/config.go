@@ -10,7 +10,10 @@ type Config struct {
 	LogLevel       string
 	DatabaseURL    string
 	RedisURL       string
+	RedisPassword  string
+	RedisDB        int
 	JWTSecret      string
+	EncryptionKey  string
 	ClickHouseURL  string
 }
 
@@ -23,9 +26,12 @@ func Load() (*Config, error) {
 
 	viper.SetDefault("server_port", "8080")
 	viper.SetDefault("log_level", "info")
-	viper.SetDefault("database_url", "postgres://postgres:postgres@localhost:5432/mysql_ops?sslmode=disable")
+	viper.SetDefault("database_url", "root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local")
 	viper.SetDefault("redis_url", "localhost:6379")
+	viper.SetDefault("redis_password", "")
+	viper.SetDefault("redis_db", 0)
 	viper.SetDefault("jwt_secret", "your-secret-key")
+	viper.SetDefault("encryption_key", "mysql-ops-platform-32byte-aes-key!!")
 	viper.SetDefault("clickhouse_url", "clickhouse://default@localhost:9000/default")
 
 	if err := viper.ReadInConfig(); err != nil {
@@ -35,11 +41,14 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		ServerPort:     viper.GetString("server_port"),
-		LogLevel:       viper.GetString("log_level"),
-		DatabaseURL:    viper.GetString("database_url"),
-		RedisURL:       viper.GetString("redis_url"),
-		JWTSecret:      viper.GetString("jwt_secret"),
-		ClickHouseURL:  viper.GetString("clickhouse_url"),
+		ServerPort:    viper.GetString("server_port"),
+		LogLevel:      viper.GetString("log_level"),
+		DatabaseURL:   viper.GetString("database_url"),
+		RedisURL:      viper.GetString("redis_url"),
+		RedisPassword: viper.GetString("redis_password"),
+		RedisDB:       viper.GetInt("redis_db"),
+		JWTSecret:     viper.GetString("jwt_secret"),
+		EncryptionKey: viper.GetString("encryption_key"),
+		ClickHouseURL: viper.GetString("clickhouse_url"),
 	}, nil
 }

@@ -23,6 +23,10 @@ func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest)
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+	if req.HostID != "" {
+		hid := req.HostID
+		instance.HostID = &hid
+	}
 
 	if err := s.repo.Create(ctx, instance); err != nil {
 		return nil, fmt.Errorf("failed to create instance: %w", err)
@@ -52,6 +56,10 @@ func (s *InstanceService) List(ctx context.Context, limit, offset int) ([]models
 	return s.repo.List(ctx, limit, offset)
 }
 
+func (s *InstanceService) ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error) {
+	return s.repo.ListByHostID(ctx, hostID, limit, offset)
+}
+
 func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInstanceRequest) (*models.Instance, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -63,6 +71,10 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 	}
 	if req.ClusterID != "" {
 		instance.ClusterID = req.ClusterID
+	}
+	if req.HostID != "" {
+		hid := req.HostID
+		instance.HostID = &hid
 	}
 	instance.UpdatedAt = time.Now()
 
@@ -105,6 +117,7 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 type CreateInstanceRequest struct {
 	Name      string `json:"name" binding:"required"`
 	ClusterID string `json:"cluster_id"`
+	HostID    string `json:"host_id"`
 	Host      string `json:"host" binding:"required"`
 	Port      int    `json:"port" binding:"required"`
 	Username  string `json:"username" binding:"required"`
@@ -115,4 +128,5 @@ type CreateInstanceRequest struct {
 type UpdateInstanceRequest struct {
 	Name      string `json:"name"`
 	ClusterID string `json:"cluster_id"`
+	HostID    string `json:"host_id"`
 }

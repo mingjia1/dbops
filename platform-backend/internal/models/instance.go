@@ -8,6 +8,7 @@ type Instance struct {
 	ID        string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
 	Name      string    `json:"name" gorm:"type:varchar(255);not null"`
 	ClusterID string    `json:"cluster_id" gorm:"type:varchar(64);index"`
+	HostID    *string   `json:"host_id" gorm:"type:varchar(64);index"`
 	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 	
