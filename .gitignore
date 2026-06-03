@@ -1,0 +1,110 @@
+# ============================================================
+#  MySQL 运维平台 - Git 忽略文件清单
+# ============================================================
+
+# ---------- Node.js / 前端 ----------
+# 依赖目录
+node_modules/
+# 前端构建产物
+web-console/dist/
+# 缓存
+.npm/
+.yarn/
+.pnp.*
+.eslintcache
+.stylelintcache
+.parcel-cache/
+.vite/
+
+# ---------- Go / 后端 ----------
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# 平台/Agent 构建输出
+platform-backend/bin/
+agent/bin/
+# 旧的根目录二进制（历史构建残留）
+platform-backend/platform-backend
+platform-backend/agent
+agent/agent
+# 测试覆盖率
+*.out
+coverage.out
+coverage.html
+# Go 工作区/构建缓存
+*.test
+*.prof
+
+# ---------- 日志与运行时 ----------
+logs/
+*.log
+*.err
+!platform-backend/internal/services/*.go
+!agent/internal/**/*.go
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.swp
+*.bak
+*.pid
+*.seed
+*.pid.lock
+
+# ---------- 环境与本地配置 ----------
+.env
+.env.local
+.env.*.local
+*.local.yaml
+config.local.yaml
+config.local.yml
+config.local.json
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ---------- 操作系统 ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+Thumbs.db
+
+# ---------- 工具特定 ----------
+# Vite
+.vite/
+# TypeScript
+*.tsbuildinfo
+# Yarn
+.yarn-integrity
+# npm
+.npmrc.local
+# 数据库
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------- 项目特定 ----------
+# 平台后端配置
+platform-backend/config/config.local.yaml
+# Agent 配置
+agent/config/config.local.yaml
+# 备份目录
+backups/
+data/
