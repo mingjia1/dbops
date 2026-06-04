@@ -44,8 +44,17 @@ export interface Instance {
   name: string
   cluster_id: string
   host_id: string | null
+  host?: string
+  port?: number
+  username?: string
+  environment?: string
+  ssl_enabled?: boolean
   created_at: string
   updated_at: string
+  connection?: InstanceConnection
+  version?: InstanceVersion
+  status?: InstanceStatus
+  topology?: InstanceTopology
 }
 
 export interface InstanceConnection {
@@ -61,6 +70,23 @@ export interface InstanceVersion {
   full_version: string
   is_lts: boolean
   eol_date: string
+  features?: string
+  engines?: string
+}
+
+export interface InstanceStatus {
+  run_status: string
+  health_status: string
+  role: string
+  replication_status?: string
+  seconds_behind_master?: number
+}
+
+export interface InstanceTopology {
+  cluster_id?: string
+  master_id?: string
+  slave_ids?: string
+  replication_mode?: string
 }
 
 export const authApi = {
@@ -101,6 +127,9 @@ export const instanceApi = {
   
   detectVersion: (id: string) =>
     api.post(`/instances/${id}/detect-version`),
+
+  deploy: (id: string) =>
+    api.post(`/instances/${id}/deploy`),
 }
 
 export interface Host {
@@ -167,14 +196,51 @@ export const hostApi = {
   
   testConnection: (id: string) =>
     api.post(`/hosts/${id}/test`),
-  
+
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),
+
+  scanInstances: (id: string, data?: { ports?: number[]; port_range?: string; probe_mysql?: boolean }) =>
+    api.post(`/hosts/${id}/scan-instances`, data || {}),
+
+  getScanResult: (hostId: string, taskId: string) =>
+    api.get(`/hosts/${hostId}/scan-instances/${taskId}`),
+
+  registerScannedInstance: (hostId: string, data: { port: number; name: string; username: string; password: string; cluster_id?: string }) =>
+    api.post(`/hosts/${hostId}/scan-instances/register`, data),
+}
+
+export interface ScannedInstance {
+  port: number
+  version?: string
+  version_full?: string
+  flavor?: string
+  role?: string
+  datadir?: string
+  socket?: string
+  config_path?: string
+  running: boolean
+  pid?: number
+  memory_mb?: number
+  data_size_mb?: number
+  recommended_name?: string
+  already_managed?: boolean
+  managed_instance_id?: string
+}
+
+export interface HostScanResult {
+  task_id: string
+  host_id: string
+  status: 'pending' | 'running' | 'success' | 'failed'
+  message: string
+  instances: ScannedInstance[]
+  scanned_at?: string
+  error?: string
 }
 
 export const envCheckApi = {
-  execute: (hosts: { host: string; port: number; username: string; password: string }[]) =>
-    api.post('/env-checks', { hosts }),
+  execute: (data: { hosts: { host: string; port: number; username: string; password: string }[] }) =>
+    api.post('/env-checks', data),
   
   get: (checkId: string) =>
     api.get(`/env-checks/${checkId}`),
@@ -194,12 +260,27 @@ export const backupApi = {
     enabled?: boolean
   }) =>
     api.post('/backups/policies', data),
-  
+
+  listPolicies: (instanceId?: string) =>
+    api.get(`/backups/policies${instanceId ? `?instance_id=${instanceId}` : ''}`),
+
+  updatePolicy: (id: string, data: any) =>
+    api.put(`/backups/policies/${id}`, data),
+
+  deletePolicy: (id: string) =>
+    api.delete(`/backups/policies/${id}`),
+
   executeBackup: (instanceId: string, backupType: string) =>
     api.post('/backups', { instance_id: instanceId, backup_type: backupType }),
-  
+
   listBackups: (instanceId: string) =>
     api.get(`/backups?instance_id=${instanceId}`),
+
+  restore: (data: { backup_id: string; target_instance_id: string; target_type?: string; confirm_overwrite?: boolean }) =>
+    api.post('/backups/restore', data),
+
+  delete: (id: string) =>
+    api.delete(`/backups/${id}`),
 }
 
 export const monitorApi = {
@@ -213,6 +294,8 @@ export interface ParameterTemplate {
   category: string
   description: string
   parameters: string
+  is_preset: boolean
+  created_by?: string
   created_at: string
   updated_at: string
 }
@@ -264,6 +347,12 @@ export const parameterTemplateApi = {
   
   delete: (id: string) =>
     api.delete(`/parameter-templates/${id}`),
+
+  recommend: (data: { instance_id?: string; template_id?: string; workload_type?: string }) =>
+    api.post('/parameter-templates/recommend', data),
+
+  apply: (data: { template_id: string; instance_id: string; parameters: string; require_restart?: boolean }) =>
+    api.post('/parameter-templates/apply', data),
 }
 
 export const approvalApi = {
@@ -321,6 +410,7 @@ export const upgradeApi = {
   executeRolling: (data: any) => api.post('/upgrades/rolling', data),
   listHistory: () => api.get('/upgrades'),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`),
+  get: (id: string) => api.get(`/upgrades/${id}`),
 }
 
 export const migrationApi = {
@@ -329,8 +419,33 @@ export const migrationApi = {
   createGTID: (data: any) => api.post('/migrations/gtid', data),
   verify: (taskId: string) => api.post(`/migrations/${taskId}/verify`),
   switchover: (taskId: string) => api.post(`/migrations/${taskId}/switch`),
+  cancel: (taskId: string) => api.post(`/migrations/${taskId}/cancel`),
   list: () => api.get('/migrations'),
   get: (taskId: string) => api.get(`/migrations/${taskId}`),
+}
+
+export const clusterDeployApi = {
+  deployMHA: (data: any) => api.post('/deployments/mha', data),
+  deployMGR: (data: any) => api.post('/deployments/mgr', data),
+  deployPXC: (data: any) => api.post('/deployments/pxc', data),
+  getStatus: (id: string) => api.get(`/deployments/${id}`),
+}
+
+export const haApi = {
+  healthCheck: (data: any) => api.post('/ha/health/batch', data),
+  detectFailure: (instanceId: string) => api.get(`/ha/health/detect?instance_id=${instanceId}`),
+  getFailureState: (instanceId: string) => api.get(`/ha/health/failure-state?instance_id=${instanceId}`),
+  autoFailover: (data: any) => api.post('/ha/failover', data),
+  manualSwitch: (data: any) => api.post('/ha/manual-switch', data),
+  getStatus: (clusterId: string, limit = 10) =>
+    api.get(`/ha/status?cluster_id=${clusterId}&limit=${limit}`),
+}
+
+export const roleSwitchApi = {
+  switch: (data: { cluster_id: string; instance_id: string; target_role: string; old_master_id?: string }) =>
+    api.post('/switch/cluster/role', data),
+  history: (clusterId: string, limit = 20) =>
+    api.get(`/switch/cluster/${clusterId}/role-history?limit=${limit}`),
 }
 
 export default api

@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Steps, Card, Progress, DatePicker, Divider, Typography, Tabs } from 'antd'
-import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, HistoryOutlined, DownloadOutlined, FileTextOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
-import { upgradeApi } from '../services/api'
+import React, { useEffect, useRef, useState } from 'react'
+import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Card, Progress, DatePicker, Divider, Typography, Tabs, Alert, Result, Switch, Statistic, Row, Col } from 'antd'
+import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, HistoryOutlined, DownloadOutlined, FileTextOutlined, ExclamationCircleOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
+import { upgradeApi, instanceApi, type Instance } from '../services/api'
 
-const { Title } = Typography
+const { Title, Paragraph } = Typography
 
 interface UpgradeHistory {
   id: string
@@ -16,25 +16,31 @@ interface UpgradeHistory {
   start_time: string
   end_time?: string
   duration?: number
+  progress?: number
+  stage?: string
+  message?: string
 }
 
 const MOCK_HISTORY: UpgradeHistory[] = [
-  { id: '1', instance_id: 'inst-001', instance_name: 'MySQL-生产-01', upgrade_type: 'in_place', source_version: '5.7.38', target_version: '8.0.32', status: 'success', start_time: '2024-01-15 10:00:00', end_time: '2024-01-15 10:30:00', duration: 1800 },
-  { id: '2', instance_id: 'inst-002', instance_name: 'MySQL-生产-02', upgrade_type: 'logical', source_version: '5.6.51', target_version: '8.0.32', status: 'running', start_time: '2024-01-16 14:00:00' },
-  { id: '3', instance_id: 'inst-003', instance_name: 'MySQL-测试-01', upgrade_type: 'rolling', source_version: '5.7.42', target_version: '8.0.33', status: 'failed', start_time: '2024-01-17 09:00:00', end_time: '2024-01-17 09:15:00', duration: 900 },
+  { id: '1', instance_id: 'inst-001', instance_name: 'MySQL-生产-01', upgrade_type: 'in_place', source_version: '5.7.38', target_version: '8.0.32', status: 'success', start_time: '2024-01-15 10:00:00', end_time: '2024-01-15 10:30:00', duration: 1800, progress: 100 },
+  { id: '2', instance_id: 'inst-002', instance_name: 'MySQL-生产-02', upgrade_type: 'logical', source_version: '5.6.51', target_version: '8.0.32', status: 'running', start_time: '2024-01-16 14:00:00', progress: 45, stage: '数据导入' },
+  { id: '3', instance_id: 'inst-003', instance_name: 'MySQL-测试-01', upgrade_type: 'rolling', source_version: '5.7.42', target_version: '8.0.33', status: 'failed', start_time: '2024-01-17 09:00:00', end_time: '2024-01-17 09:15:00', duration: 900, progress: 30, message: '主从切换失败: 复制延迟过高' },
 ]
 
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
+  const [instances, setInstances] = useState<Instance[]>([])
   const [planModalVisible, setPlanModalVisible] = useState(false)
   const [compatModalVisible, setCompatModalVisible] = useState(false)
   const [inPlaceModalVisible, setInPlaceModalVisible] = useState(false)
   const [logicalModalVisible, setLogicalModalVisible] = useState(false)
   const [rollingModalVisible, setRollingModalVisible] = useState(false)
   const [reportModalVisible, setReportModalVisible] = useState(false)
+  const [progressModalVisible, setProgressModalVisible] = useState(false)
+  const [activeUpgrade, setActiveUpgrade] = useState<UpgradeHistory | null>(null)
   const [compatResult, setCompatResult] = useState<any>(null)
-  const [upgradeProgress, setUpgradeProgress] = useState(0)
-  const [currentStep, setCurrentStep] = useState(0)
+  const [reportContent, setReportContent] = useState<any>(null)
+  const pollRef = useRef<number | null>(null)
 
   const [planForm] = Form.useForm()
   const [compatForm] = Form.useForm()
@@ -42,23 +48,87 @@ const UpgradeManage: React.FC = () => {
   const [logicalForm] = Form.useForm()
   const [rollingForm] = Form.useForm()
 
-  useEffect(() => {
+  const inPlaceBackup = Form.useWatch('skip_backup', inPlaceForm)
+  const logicalVerify = Form.useWatch('verify_data', logicalForm)
+
+  const fetchHistory = () => {
     upgradeApi.listHistory().then((res: any) => {
       setHistory(res?.data || [])
     }).catch(() => {
       setHistory(MOCK_HISTORY)
     })
+  }
+
+  useEffect(() => {
+    fetchHistory()
+    instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
   }, [])
 
+  useEffect(() => () => {
+    if (pollRef.current) window.clearInterval(pollRef.current)
+  }, [])
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  const startProgressPolling = (upgrade: UpgradeHistory) => {
+    setActiveUpgrade(upgrade)
+    setProgressModalVisible(true)
+    setHistory((hs) => {
+      const found = hs.find((h) => h.id === upgrade.id)
+      if (!found) return [upgrade, ...hs]
+      return hs.map((h) => (h.id === upgrade.id ? { ...h, ...upgrade } : h))
+    })
+    stopPolling()
+    let attempts = 0
+    pollRef.current = window.setInterval(async () => {
+      attempts += 1
+      try {
+        const res: any = await upgradeApi.get(upgrade.id)
+        const data = res?.data
+        if (!data) return
+        const next: UpgradeHistory = {
+          ...upgrade,
+          status: data.status || upgrade.status,
+          progress: typeof data.progress === 'number' ? data.progress : upgrade.progress,
+          stage: data.stage,
+          message: data.message,
+          end_time: data.end_time,
+        }
+        setActiveUpgrade(next)
+        setHistory((hs) => hs.map((h) => (h.id === upgrade.id ? { ...h, ...next } : h)))
+        if (next.status === 'success') {
+          message.success('升级完成')
+          stopPolling()
+        } else if (next.status === 'failed') {
+          message.error(`升级失败: ${next.message || '未知原因'}`)
+          stopPolling()
+        } else if (attempts > 600) {
+          stopPolling()
+        }
+      } catch {
+        // ignore
+      }
+    }, 3000)
+  }
+
   const handlePlanUpgradePath = async (values: any) => {
-    try { await upgradeApi.planPath(values) } catch { /* fallback */ }
-    message.success('升级路径规划已生成')
+    try {
+      await upgradeApi.planPath(values)
+      message.success('升级路径规划已生成')
+    } catch {
+      message.warning('后端未实现, 已记录请求')
+    }
     setPlanModalVisible(false)
     planForm.resetFields()
   }
 
   const handleCheckCompatibility = async (values: any) => {
-    message.loading('正在检查兼容性...', 0)
+    message.loading({ content: '正在检查兼容性...', key: 'compat', duration: 0 })
     try {
       const res: any = await upgradeApi.checkCompat(values)
       message.destroy()
@@ -73,67 +143,70 @@ const UpgradeManage: React.FC = () => {
           sql_mode_changes: [{ old: 'NO_AUTO_CREATE_USER', new: '已移除', impact: '需要手动迁移用户权限' }],
           deprecated_features: [{ feature: 'QUERY_CACHE', action: '需要禁用或移除相关配置' }],
         })
-      }, 1500)
+      }, 1000)
     }
   }
 
-  const handleInPlaceUpgrade = async (values: any) => {
-    message.loading('正在启动原地升级...', 0)
-    try { await upgradeApi.executeInPlace(values) } catch { /* fallback */ }
-    setCurrentStep(0)
-    const steps = ['停止 MySQL 服务', '备份数据目录', '替换二进制文件', '启动 MySQL 服务', '执行 mysql_upgrade', '验证升级结果']
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setCurrentStep(i + 1)
-      setUpgradeProgress(Math.round(((i + 1) / steps.length) * 100))
+  const submitUpgrade = async (
+    type: 'in_place' | 'logical' | 'rolling',
+    values: any,
+    apiCall: (data: any) => Promise<any>,
+  ) => {
+    if (type === 'in_place' && values.skip_backup) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Modal.confirm({
+          title: '危险操作确认',
+          content: '跳过备份意味着无法回滚, 一旦升级失败数据将不可恢复。确定要跳过备份吗?',
+          okText: '我了解风险, 仍然继续',
+          okButtonProps: { danger: true },
+          cancelText: '取消',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        })
+      })
+      if (!confirmed) return
     }
-    message.destroy()
-    message.success('原地升级完成')
-    setInPlaceModalVisible(false)
-    inPlaceForm.resetFields()
-    setUpgradeProgress(0)
-    setCurrentStep(0)
-  }
-
-  const handleLogicalMigration = async (values: any) => {
-    message.loading('正在启动逻辑迁移...', 0)
-    try { await upgradeApi.executeLogical(values) } catch { /* fallback */ }
-    setCurrentStep(0)
-    const steps = ['创建目标实例', '导出源库数据', '传输数据文件', '导入目标库', '校验数据一致性', '切换应用连接']
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setCurrentStep(i + 1)
-      setUpgradeProgress(Math.round(((i + 1) / steps.length) * 100))
+    try {
+      const res: any = await apiCall(values)
+      const upgrade: UpgradeHistory = {
+        id: res?.data?.upgrade_id || res?.data?.id || `up-${Date.now()}`,
+        instance_id: values.instance_id || values.source_instance_id || values.cluster_id,
+        instance_name: values.instance_id
+          ? (instances.find((i) => i.id === values.instance_id)?.name || values.instance_id)
+          : values.cluster_id || values.source_instance_id,
+        upgrade_type: type,
+        source_version: values.source_version || '-',
+        target_version: values.target_version,
+        status: 'running',
+        start_time: new Date().toISOString(),
+        progress: 0,
+        stage: '已提交',
+      }
+      message.success(`${type === 'in_place' ? '原地升级' : type === 'logical' ? '逻辑迁移' : '滚动升级'}任务已提交`)
+      startProgressPolling(upgrade)
+      if (type === 'in_place') {
+        setInPlaceModalVisible(false)
+        inPlaceForm.resetFields()
+      } else if (type === 'logical') {
+        setLogicalModalVisible(false)
+        logicalForm.resetFields()
+      } else {
+        setRollingModalVisible(false)
+        rollingForm.resetFields()
+      }
+      fetchHistory()
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || '升级任务提交失败')
     }
-    message.destroy()
-    message.success('逻辑迁移完成')
-    setLogicalModalVisible(false)
-    logicalForm.resetFields()
-    setUpgradeProgress(0)
-    setCurrentStep(0)
-  }
-
-  const handleRollingUpgrade = async (values: any) => {
-    message.loading('正在启动滚动升级...', 0)
-    try { await upgradeApi.executeRolling(values) } catch { /* fallback */ }
-    setCurrentStep(0)
-    const steps = ['选择从节点升级', '升级从节点 1', '验证从节点 1', '主从切换', '升级原主节点', '验证集群状态']
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setCurrentStep(i + 1)
-      setUpgradeProgress(Math.round(((i + 1) / steps.length) * 100))
-    }
-    message.destroy()
-    message.success('滚动升级完成')
-    setRollingModalVisible(false)
-    rollingForm.resetFields()
-    setUpgradeProgress(0)
-    setCurrentStep(0)
   }
 
   const handleDownloadReport = () => {
-    const reportContent = `MySQL 升级报告\n生成时间: ${new Date().toLocaleString()}\n=====================================\n\n1. 升级路径规划\n   - 源版本: 5.7.38\n   - 目标版本: 8.0.32\n   - 升级类型: 原地升级\n\n2. 兼容性检查结果\n   - 状态: 通过 (有警告)\n   - 警告项: 3\n   - 建议: SQL_MODE 需要调整\n\n3. 执行步骤\n   - 停止服务: 成功\n   - 备份数据: 成功\n   - 升级二进制: 成功\n   - 启动服务: 成功\n   - 验证结果: 成功\n\n4. 性能对比\n   - 升级前 TPS: 12,000\n   - 升级后 TPS: 15,000\n   - 提升: 25%\n`
-    const blob = new Blob([reportContent], { type: 'text/plain' })
+    const report = reportContent || {
+      generated_at: new Date().toISOString(),
+      message: '暂无报告数据',
+    }
+    const content = typeof report === 'string' ? report : JSON.stringify(report, null, 2)
+    const blob = new Blob([content], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -143,39 +216,33 @@ const UpgradeManage: React.FC = () => {
     message.success('报告下载成功')
   }
 
-  const renderUpgradeSteps = () => {
-    const steps = [
-      '准备阶段',
-      '备份阶段',
-      '升级阶段',
-      '验证阶段',
-      '完成',
-    ]
-    return (
-      <Steps current={currentStep} size="small">
-        {steps.map((title, index) => (
-          <Steps.Step key={index} title={title} />
-        ))}
-      </Steps>
-    )
+  const handleViewReport = async (record: UpgradeHistory) => {
+    try {
+      const res: any = await upgradeApi.getReport(record.id)
+      setReportContent(res?.data)
+    } catch {
+      setReportContent({
+        upgrade_id: record.id,
+        instance: record.instance_name,
+        source_version: record.source_version,
+        target_version: record.target_version,
+        status: record.status,
+        message: record.message || '后端未提供报告',
+      })
+    }
+    setReportModalVisible(true)
   }
 
+  const instanceOptions = instances.map((i) => ({ value: i.id, label: i.name }))
+
   const columns = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 80,
-    },
-    {
-      title: '实例名称',
-      dataIndex: 'instance_name',
-      key: 'instance_name',
-    },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 120, ellipsis: true },
+    { title: '实例名称', dataIndex: 'instance_name', key: 'instance_name' },
     {
       title: '升级类型',
       dataIndex: 'upgrade_type',
       key: 'upgrade_type',
+      width: 110,
       render: (type: string) => {
         const typeMap: Record<string, { color: string; text: string }> = {
           in_place: { color: 'blue', text: '原地升级' },
@@ -188,6 +255,7 @@ const UpgradeManage: React.FC = () => {
     {
       title: '版本变化',
       key: 'version',
+      width: 180,
       render: (_: any, record: UpgradeHistory) => (
         <span>
           {record.source_version} <SwapOutlined /> {record.target_version}
@@ -198,6 +266,7 @@ const UpgradeManage: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 100,
       render: (status: string) => {
         const statusMap: Record<string, { color: string; text: string }> = {
           pending: { color: 'default', text: '待执行' },
@@ -209,28 +278,59 @@ const UpgradeManage: React.FC = () => {
       },
     },
     {
-      title: '开始时间',
-      dataIndex: 'start_time',
-      key: 'start_time',
-      width: 180,
+      title: '进度',
+      dataIndex: 'progress',
+      key: 'progress',
+      width: 160,
+      render: (p: number, r: UpgradeHistory) => (
+        <Progress
+          percent={p ?? 0}
+          size="small"
+          status={r.status === 'failed' ? 'exception' : r.status === 'success' ? 'success' : 'active'}
+        />
+      ),
     },
+    {
+      title: '当前阶段',
+      dataIndex: 'stage',
+      key: 'stage',
+      render: (s: string) => s || '-',
+    },
+    { title: '开始时间', dataIndex: 'start_time', key: 'start_time', width: 170 },
     {
       title: '持续时间',
       dataIndex: 'duration',
       key: 'duration',
-      render: (duration: number) => (duration ? `${Math.floor(duration / 60)}分${duration % 60}秒` : '-'),
+      width: 100,
+      render: (d: number) => (d ? `${Math.floor(d / 60)}分${d % 60}秒` : '-'),
     },
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 180,
+      fixed: 'right' as const,
       render: (_: any, record: UpgradeHistory) => (
         <Space>
-          <Button size="small" icon={<FileTextOutlined />} onClick={() => setReportModalVisible(true)}>
+          <Button size="small" icon={<FileTextOutlined />} onClick={() => handleViewReport(record)}>
             报告
           </Button>
+          {record.status === 'running' && (
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => startProgressPolling(record)}
+            >
+              查看进度
+            </Button>
+          )}
           {record.status === 'failed' && (
-            <Button size="small" type="primary" ghost icon={<SyncOutlined />}>
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<SyncOutlined />}
+              onClick={() => submitUpgrade('in_place', { instance_id: record.instance_id, target_version: record.target_version }, upgradeApi.executeInPlace)}
+            >
               重试
             </Button>
           )}
@@ -242,6 +342,21 @@ const UpgradeManage: React.FC = () => {
   return (
     <div>
       <Title level={4}>版本升级管理</Title>
+      <Alert
+        type="error"
+        showIcon
+        icon={<WarningOutlined />}
+        style={{ marginBottom: 16 }}
+        message="升级前必做项"
+        description={
+          <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+            <li>已对目标实例完成<b>全量备份</b>并验证可恢复</li>
+            <li>已在测试环境完成兼容性验证 (兼容性检查)</li>
+            <li>已通知相关业务方, 选择业务低峰期执行</li>
+            <li>已准备好回滚方案 (备份恢复 / 复制切换)</li>
+          </ul>
+        }
+      />
 
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
@@ -260,9 +375,6 @@ const UpgradeManage: React.FC = () => {
           <Button icon={<SyncOutlined />} onClick={() => setRollingModalVisible(true)}>
             滚动升级
           </Button>
-          <Button icon={<DownloadOutlined />} onClick={handleDownloadReport}>
-            下载升级报告
-          </Button>
         </Space>
       </Card>
 
@@ -278,6 +390,7 @@ const UpgradeManage: React.FC = () => {
                 dataSource={history}
                 rowKey="id"
                 pagination={{ pageSize: 10 }}
+                scroll={{ x: 1200 }}
               />
             ),
           },
@@ -285,19 +398,32 @@ const UpgradeManage: React.FC = () => {
             key: 'warnings',
             label: <span><ExclamationCircleOutlined /> 兼容性警告</span>,
             children: (
-              <Card><p>暂无兼容性警告</p></Card>
-            ),
-          },
-          {
-            key: 'reports',
-            label: <span><FileTextOutlined /> 升级报告</span>,
-            children: (
               <Card>
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  <Button icon={<DownloadOutlined />} onClick={handleDownloadReport}>下载完整报告</Button>
-                  <Divider />
-                  <Typography.Text>最近报告: 2024-01-17 MySQL 5.7.38 升级至 8.0.32</Typography.Text>
-                </Space>
+                {compatResult ? (
+                  <div>
+                    <Paragraph>
+                      <Tag color="success">兼容性检查通过 (有 {compatResult.warnings?.length || 0} 个警告)</Tag>
+                    </Paragraph>
+                    <Title level={5}>警告项</Title>
+                    <ul>
+                      {compatResult.warnings?.map((w: string, i: number) => (
+                        <li key={i}><Tag color="warning">{w}</Tag></li>
+                      ))}
+                    </ul>
+                    <Title level={5}>建议</Title>
+                    <ul>
+                      {compatResult.recommendations?.map((r: string, i: number) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <Result
+                    status="info"
+                    title="尚无兼容性检查结果"
+                    subTitle='点击"兼容性检查"按钮对目标实例进行检查'
+                  />
+                )}
               </Card>
             ),
           },
@@ -313,8 +439,8 @@ const UpgradeManage: React.FC = () => {
         width={600}
       >
         <Form form={planForm} layout="vertical" onFinish={handlePlanUpgradePath}>
-          <Form.Item name="instance_id" label="实例ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入实例ID" />
+          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="source_version" label="源版本" rules={[{ required: true }]}>
             <Select placeholder="选择源版本">
@@ -372,8 +498,8 @@ const UpgradeManage: React.FC = () => {
         width={800}
       >
         <Form form={compatForm} layout="vertical" onFinish={handleCheckCompatibility}>
-          <Form.Item name="instance_id" label="实例ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入实例ID" />
+          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
             <Select placeholder="选择目标版本">
@@ -397,15 +523,15 @@ const UpgradeManage: React.FC = () => {
             <Divider>检查结果</Divider>
             <Card>
               <p><Tag color="success">兼容性检查通过</Tag></p>
-              <Title level={5}>警告项 ({compatResult.warnings.length})</Title>
+              <Title level={5}>警告项 ({compatResult.warnings?.length || 0})</Title>
               <ul>
-                {compatResult.warnings.map((w: string, i: number) => (
+                {compatResult.warnings?.map((w: string, i: number) => (
                   <li key={i}><Tag color="warning">{w}</Tag></li>
                 ))}
               </ul>
               <Title level={5}>建议</Title>
               <ul>
-                {compatResult.recommendations.map((r: string, i: number) => (
+                {compatResult.recommendations?.map((r: string, i: number) => (
                   <li key={i}>{r}</li>
                 ))}
               </ul>
@@ -418,17 +544,21 @@ const UpgradeManage: React.FC = () => {
       <Modal
         title="原地升级"
         open={inPlaceModalVisible}
-        onCancel={() => {
-          setInPlaceModalVisible(false)
-          setUpgradeProgress(0)
-          setCurrentStep(0)
-        }}
+        onCancel={() => setInPlaceModalVisible(false)}
         onOk={() => inPlaceForm.submit()}
         width={700}
+        okButtonProps={{ danger: true }}
+        okText="启动升级"
       >
-        <Form form={inPlaceForm} layout="vertical" onFinish={handleInPlaceUpgrade}>
-          <Form.Item name="instance_id" label="实例ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入实例ID" />
+        <Alert
+          type="warning"
+          showIcon
+          message="原地升级需要停止 MySQL 服务, 期间实例不可用"
+          style={{ marginBottom: 12 }}
+        />
+        <Form form={inPlaceForm} layout="vertical" onFinish={(v) => submitUpgrade('in_place', v, upgradeApi.executeInPlace)}>
+          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
             <Select placeholder="选择目标版本">
@@ -436,47 +566,42 @@ const UpgradeManage: React.FC = () => {
               <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="backup_path" label="备份路径">
+          <Form.Item name="backup_path" label="备份路径" rules={[{ required: true }]}>
             <Input placeholder="/data/backup/mysql" />
           </Form.Item>
-          <Form.Item name="stop_app_timeout" label="停止应用超时时间(秒)">
-            <InputNumber min={30} max={600} defaultValue={300} style={{ width: '100%' }} />
+          <Form.Item name="stop_app_timeout" label="停止应用超时时间(秒)" initialValue={300}>
+            <InputNumber min={30} max={600} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="skip_backup" label="跳过备份" valuePropName="checked">
-            <Select placeholder="选择">
-              <Select.Option value={false}>否</Select.Option>
-              <Select.Option value={true}>是 (不推荐)</Select.Option>
-            </Select>
+          <Form.Item name="skip_backup" label="跳过备份" valuePropName="checked" initialValue={false}>
+            <Switch checkedChildren="跳过" unCheckedChildren="不跳过" />
           </Form.Item>
+          {inPlaceBackup && (
+            <Alert
+              type="error"
+              showIcon
+              message="警告: 跳过备份意味着无法回滚"
+              description="升级失败将导致数据不可恢复, 提交时会要求二次确认"
+            />
+          )}
         </Form>
-
-        {upgradeProgress > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <Divider>升级进度</Divider>
-            {renderUpgradeSteps()}
-            <Progress percent={upgradeProgress} style={{ marginTop: 16 }} />
-          </div>
-        )}
       </Modal>
 
       {/* Logical Migration Modal */}
       <Modal
         title="逻辑迁移"
         open={logicalModalVisible}
-        onCancel={() => {
-          setLogicalModalVisible(false)
-          setUpgradeProgress(0)
-          setCurrentStep(0)
-        }}
+        onCancel={() => setLogicalModalVisible(false)}
         onOk={() => logicalForm.submit()}
         width={700}
+        okButtonProps={{ danger: true }}
+        okText="启动迁移"
       >
-        <Form form={logicalForm} layout="vertical" onFinish={handleLogicalMigration}>
-          <Form.Item name="source_instance_id" label="源实例ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入源实例ID" />
+        <Form form={logicalForm} layout="vertical" onFinish={(v) => submitUpgrade('logical', v, upgradeApi.executeLogical)}>
+          <Form.Item name="source_instance_id" label="源实例" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择源实例" />
           </Form.Item>
-          <Form.Item name="target_instance_id" label="目标实例ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入目标实例ID" />
+          <Form.Item name="target_instance_id" label="目标实例" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择目标实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
             <Select placeholder="选择目标版本">
@@ -484,50 +609,47 @@ const UpgradeManage: React.FC = () => {
               <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="parallel_threads" label="并行线程数">
-            <InputNumber min={1} max={16} defaultValue={4} style={{ width: '100%' }} />
+          <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
+            <InputNumber min={1} max={16} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="batch_size" label="批次大小">
-            <InputNumber min={100} max={10000} defaultValue={1000} style={{ width: '100%' }} />
+          <Form.Item name="batch_size" label="批次大小" initialValue={1000}>
+            <InputNumber min={100} max={10000} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="databases" label="迁移数据库">
-            <Select mode="tags" placeholder="选择或输入数据库名">
-              <Select.Option value="db1">db1</Select.Option>
-              <Select.Option value="db2">db2</Select.Option>
-            </Select>
+            <Select mode="tags" placeholder="选择或输入数据库名" />
           </Form.Item>
-          <Form.Item name="verify_data" label="数据校验" valuePropName="checked">
-            <Select defaultValue={true}>
-              <Select.Option value={true}>是</Select.Option>
-              <Select.Option value={false}>否</Select.Option>
-            </Select>
+          <Form.Item name="verify_data" label="数据校验" valuePropName="checked" initialValue={true}>
+            <Switch checkedChildren="启用" unCheckedChildren="跳过" />
           </Form.Item>
+          {!logicalVerify && (
+            <Alert
+              type="warning"
+              showIcon
+              message="跳过数据校验可能产生数据不一致"
+            />
+          )}
         </Form>
-
-        {upgradeProgress > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <Divider>迁移进度</Divider>
-            {renderUpgradeSteps()}
-            <Progress percent={upgradeProgress} style={{ marginTop: 16 }} />
-          </div>
-        )}
       </Modal>
 
       {/* Rolling Upgrade Modal */}
       <Modal
         title="滚动升级"
         open={rollingModalVisible}
-        onCancel={() => {
-          setRollingModalVisible(false)
-          setUpgradeProgress(0)
-          setCurrentStep(0)
-        }}
+        onCancel={() => setRollingModalVisible(false)}
         onOk={() => rollingForm.submit()}
         width={700}
+        okButtonProps={{ danger: true }}
+        okText="启动滚动升级"
       >
-        <Form form={rollingForm} layout="vertical" onFinish={handleRollingUpgrade}>
+        <Alert
+          type="info"
+          showIcon
+          message="滚动升级适用于集群, 会先升级从节点再切换主从, 期间业务不中断"
+          style={{ marginBottom: 12 }}
+        />
+        <Form form={rollingForm} layout="vertical" onFinish={(v) => submitUpgrade('rolling', v, upgradeApi.executeRolling)}>
           <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true }]}>
-            <Input placeholder="请输入集群ID" />
+            <Input placeholder="输入集群ID" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
             <Select placeholder="选择目标版本">
@@ -535,34 +657,52 @@ const UpgradeManage: React.FC = () => {
               <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="upgrade_order" label="升级顺序">
-            <Select placeholder="选择升级顺序">
+          <Form.Item name="upgrade_order" label="升级顺序" initialValue="replica_first">
+            <Select>
               <Select.Option value="replica_first">从节点优先</Select.Option>
               <Select.Option value="primary_first">主节点优先</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="wait_replica_sync" label="等待从节点同步" valuePropName="checked">
-            <Select defaultValue={true}>
-              <Select.Option value={true}>是</Select.Option>
-              <Select.Option value={false}>否</Select.Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="health_check_interval" label="健康检查间隔(秒)">
-            <InputNumber min={5} max={60} defaultValue={10} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="auto_failback" label="自动回滚">
-            <Select defaultValue={true}>
-              <Select.Option value={true}>失败时自动回滚</Select.Option>
-              <Select.Option value={false}>手动处理</Select.Option>
-            </Select>
+          <Form.Item name="health_check_interval" label="健康检查间隔(秒)" initialValue={10}>
+            <InputNumber min={5} max={60} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
+      </Modal>
 
-        {upgradeProgress > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <Divider>升级进度</Divider>
-            {renderUpgradeSteps()}
-            <Progress percent={upgradeProgress} style={{ marginTop: 16 }} />
+      {/* Progress Modal */}
+      <Modal
+        title={`升级进度: ${activeUpgrade?.instance_name || ''}`}
+        open={progressModalVisible}
+        onCancel={() => { stopPolling(); setProgressModalVisible(false) }}
+        footer={[
+          <Button key="close" onClick={() => { stopPolling(); setProgressModalVisible(false) }}>关闭</Button>,
+          <Button key="refresh" icon={<ReloadOutlined />} onClick={() => activeUpgrade && startProgressPolling(activeUpgrade)}>手动刷新</Button>,
+        ]}
+        width={600}
+      >
+        {activeUpgrade && (
+          <div>
+            <Row gutter={16} style={{ marginBottom: 16 }}>
+              <Col span={12}><Statistic title="当前阶段" value={activeUpgrade.stage || '准备中'} /></Col>
+              <Col span={12}><Statistic title="状态" value={activeUpgrade.status} /></Col>
+            </Row>
+            <Progress
+              percent={activeUpgrade.progress ?? 0}
+              status={
+                activeUpgrade.status === 'failed' ? 'exception'
+                : activeUpgrade.status === 'success' ? 'success'
+                : 'active'
+              }
+            />
+            {activeUpgrade.message && (
+              <Alert
+                style={{ marginTop: 16 }}
+                type={activeUpgrade.status === 'failed' ? 'error' : 'info'}
+                showIcon
+                message="执行信息"
+                description={activeUpgrade.message}
+              />
+            )}
           </div>
         )}
       </Modal>
@@ -573,9 +713,7 @@ const UpgradeManage: React.FC = () => {
         open={reportModalVisible}
         onCancel={() => setReportModalVisible(false)}
         footer={[
-          <Button key="close" onClick={() => setReportModalVisible(false)}>
-            关闭
-          </Button>,
+          <Button key="close" onClick={() => setReportModalVisible(false)}>关闭</Button>,
           <Button key="download" type="primary" icon={<DownloadOutlined />} onClick={handleDownloadReport}>
             下载报告
           </Button>,
@@ -583,35 +721,9 @@ const UpgradeManage: React.FC = () => {
         width={800}
       >
         <Card>
-          <Typography.Text>
-            <pre style={{ whiteSpace: 'pre-wrap' }}>
-{`
-升级报告详情
-==================
-实例: MySQL-生产-01
-源版本: 5.7.38
-目标版本: 8.0.32
-升级类型: 原地升级
-状态: 成功
-开始时间: 2024-01-15 10:00:00
-结束时间: 2024-01-15 10:30:00
-持续时间: 30分钟
-
-执行步骤:
-1. 停止 MySQL 服务 - 成功
-2. 备份数据目录 - 成功
-3. 替换二进制文件 - 成功
-4. 启动 MySQL 服务 - 成功
-5. 执行 mysql_upgrade - 成功
-6. 验证升级结果 - 成功
-
-性能对比:
-- 升级前 TPS: 12,000
-- 升级后 TPS: 15,000
-- 性能提升: 25%
-`}
-            </pre>
-          </Typography.Text>
+          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>
+            {reportContent ? JSON.stringify(reportContent, null, 2) : '加载中...'}
+          </pre>
         </Card>
       </Modal>
     </div>

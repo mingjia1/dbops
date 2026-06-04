@@ -62,6 +62,7 @@ const NotificationChannelsSection: React.FC<{
   const [channelForm] = Form.useForm()
   const [modalVisible, setModalVisible] = useState(false)
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
+  const channelType = Form.useWatch('type', channelForm)
 
   const handleCreate = () => {
     setEditingChannel(null)
@@ -158,17 +159,17 @@ const NotificationChannelsSection: React.FC<{
           <Divider>配置信息</Divider>
           <Form.Item name={['config', 'recipients']} label="收件人"
             rules={[{ required: true, message: '请输入收件人' }]}
-            hidden={channelForm.getFieldValue('type') !== 'email'}>
+            hidden={channelType !== 'email'}>
             <Select mode="tags" placeholder="输入邮箱地址" />
           </Form.Item>
           <Form.Item name={['config', 'webhook']} label="Webhook地址"
             rules={[{ required: true, message: '请输入Webhook地址' }]}
-            hidden={channelForm.getFieldValue('type') !== 'dingtalk' && channelForm.getFieldValue('type') !== 'wechat'}>
+            hidden={channelType !== 'dingtalk' && channelType !== 'wechat'}>
             <Input placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" />
           </Form.Item>
           <Form.Item name={['config', 'url']} label="URL地址"
             rules={[{ required: true, message: '请输入URL地址' }]}
-            hidden={channelForm.getFieldValue('type') !== 'webhook'}>
+            hidden={channelType !== 'webhook'}>
             <Input placeholder="https://example.com/webhook" />
           </Form.Item>
           <Form.Item name="enabled" label="是否启用" valuePropName="checked">

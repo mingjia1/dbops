@@ -1,18 +1,19 @@
 import React, { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Empty } from 'antd'
+import { PlusOutlined, ReloadOutlined, ScanOutlined, DesktopOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { instanceApi, hostApi, Instance, Host } from '../services/api'
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
-  const presetHost = searchParams.get('preset_host')
+  const navigate = useNavigate()
+  const presetHost = searchParams.get('preset_host') || searchParams.get('host_id') || undefined
 
   const [instances, setInstances] = useState<Instance[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(false)
-  const [hostFilter, setHostFilter] = useState<string | undefined>(presetHost || undefined)
+  const [hostFilter, setHostFilter] = useState<string | undefined>(presetHost)
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
@@ -20,7 +21,10 @@ const InstanceList: React.FC = () => {
   const fetchInstances = async () => {
     setLoading(true)
     try {
-      const res: any = await instanceApi.list()
+      const filterId = hostFilter || presetHost || undefined
+      const res: any = filterId
+        ? await instanceApi.listByHost(filterId)
+        : await instanceApi.list()
       setInstances(res.data || [])
     } catch {
       setInstances([])
@@ -41,13 +45,18 @@ const InstanceList: React.FC = () => {
   useEffect(() => {
     fetchInstances()
     fetchHosts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
+    if (hostFilter || presetHost) {
+      fetchInstances()
+    }
     if (presetHost) {
       form.setFieldsValue({ host_id: presetHost })
     }
-  }, [presetHost, hosts])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostFilter, presetHost, hosts])
 
   const handleDelete = async (id: string) => {
     try {
@@ -81,8 +90,6 @@ const InstanceList: React.FC = () => {
     return h ? h.name : id.substring(0, 8)
   }
 
-  const filtered = hostFilter ? instances.filter((i) => i.host_id === hostFilter) : instances
-
   const columns: ColumnsType<Instance> = [
     { title: '实例名称', dataIndex: 'name', key: 'name' },
     {
@@ -95,7 +102,35 @@ const InstanceList: React.FC = () => {
     {
       title: '状态',
       key: 'status',
-      render: () => <Tag>未检测</Tag>,
+      render: (_, r) => {
+        const role = r.status?.role
+        const health = r.status?.health_status
+        const run = r.status?.run_status
+        if (health === 'healthy' || health === 'ok') {
+          return <Tag color="success">健康{role ? ` (${role})` : ''}</Tag>
+        }
+        if (health === 'unhealthy' || health === 'failed') {
+          return <Tag color="error">异常</Tag>
+        }
+        if (run === 'running') {
+          return <Tag color="processing">运行中{role ? ` (${role})` : ''}</Tag>
+        }
+        if (run === 'stopped') {
+          return <Tag color="default">已停止</Tag>
+        }
+        return <Tag>未检测</Tag>
+      },
+    },
+    {
+      title: '复制延迟',
+      key: 'lag',
+      render: (_, r) => {
+        const lag = r.status?.seconds_behind_master
+        if (lag === undefined || lag === null) return '-'
+        if (lag > 30) return <Tag color="error">{lag}s</Tag>
+        if (lag > 5) return <Tag color="warning">{lag}s</Tag>
+        return <Tag color="success">{lag}s</Tag>
+      },
     },
     {
       title: '创建时间',
@@ -108,10 +143,10 @@ const InstanceList: React.FC = () => {
       key: 'action',
       render: (_, r) => (
         <Space>
-          <Button type="link" size="small" onClick={() => message.info('详情页待接入')}>
+          <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>
             详情
           </Button>
-          <Button type="link" size="small" onClick={() => instanceApi.detectVersion(r.id).then(() => message.success('已触发版本检测'))}>
+          <Button type="link" size="small" onClick={() => instanceApi.detectVersion(r.id).then(() => message.success('已触发版本检测')).catch(() => {})}>
             检测版本
           </Button>
           <Popconfirm
@@ -129,10 +164,61 @@ const InstanceList: React.FC = () => {
     },
   ]
 
+  const handleScanHost = async () => {
+    if (!hostFilter) {
+      message.warning('请先选择一台主机')
+      return
+    }
+    try {
+      const r: any = await hostApi.scanInstances(hostFilter)
+      const taskId = r?.data?.task_id
+      if (!taskId) {
+        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
+        return
+      }
+      message.info('已发起扫描, 正在跳转到主机详情查看结果')
+      navigate(`/dashboard/hosts/${hostFilter}?tab=instances&scan_task=${taskId}`)
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
+      } else {
+        message.error('扫描发起失败')
+      }
+    }
+  }
+
+  const presetHostObj = hosts.find((h) => h.id === presetHost)
+
   return (
     <div style={{ padding: '24px' }}>
+      {presetHostObj && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`已按主机筛选: ${presetHostObj.name}`}
+          description={
+            <Space>
+              <span>主机地址: {presetHostObj.address}:{presetHostObj.ssh_port}</span>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => navigate(`/dashboard/hosts/${presetHostObj.id}`)}
+              >
+                打开主机详情
+              </Button>
+            </Space>
+          }
+          closable
+        />
+      )}
       <Card
-        title="实例管理"
+        title={
+          <Space>
+            <DesktopOutlined />
+            <span>实例管理</span>
+          </Space>
+        }
         extra={
           <Space>
             <Select
@@ -143,6 +229,13 @@ const InstanceList: React.FC = () => {
               onChange={setHostFilter}
               options={hosts.map((h) => ({ value: h.id, label: h.name }))}
             />
+            <Button
+              icon={<ScanOutlined />}
+              onClick={handleScanHost}
+              disabled={!hostFilter}
+            >
+              扫描该主机
+            </Button>
             <Button icon={<ReloadOutlined />} onClick={fetchInstances}>
               刷新
             </Button>
@@ -161,11 +254,61 @@ const InstanceList: React.FC = () => {
       >
         <Table
           columns={columns}
-          dataSource={filtered}
+          dataSource={instances}
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 20 }}
-          locale={{ emptyText: '暂无实例,请先添加主机,然后再添加实例' }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={
+                  <div>
+                    <div style={{ marginBottom: 8 }}>暂无实例</div>
+                    {hostFilter ? (
+                      <Space>
+                        <Button
+                          type="primary"
+                          icon={<ScanOutlined />}
+                          onClick={handleScanHost}
+                        >
+                          自动扫描该主机
+                        </Button>
+                        <Button
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            form.resetFields()
+                            setModalOpen(true)
+                          }}
+                        >
+                          手动添加实例
+                        </Button>
+                      </Space>
+                    ) : (
+                      <Space>
+                        <Button
+                          type="primary"
+                          icon={<DesktopOutlined />}
+                          onClick={() => navigate('/dashboard/hosts/new')}
+                        >
+                          添加主机
+                        </Button>
+                        <Button
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            form.resetFields()
+                            setModalOpen(true)
+                          }}
+                        >
+                          手动添加实例
+                        </Button>
+                      </Space>
+                    )}
+                  </div>
+                }
+              />
+            ),
+          }}
         />
       </Card>
 

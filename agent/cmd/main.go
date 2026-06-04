@@ -150,6 +150,70 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			tasks.POST("/role-query", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteRoleQuery(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Role query failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/role-promote", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteRolePromote(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Role promote failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/role-demote", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteRoleDemote(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Role demote failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/role-replica-rebuild", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteRoleReplicaRebuild(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Role replica rebuild failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
 			tasks.POST("/metrics", func(c *gin.Context) {
 				instanceID := c.Query("instance_id")
 				metrics, err := metricsCollector.CollectMySQLMetrics(c.Request.Context(), instanceID)

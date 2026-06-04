@@ -301,6 +301,55 @@ func (r *InstanceRepository) ListByHostID(ctx context.Context, hostID string, li
 	return r.listByHostIDInDB(ctx, hostID, limit, offset)
 }
 
+func (r *InstanceRepository) ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return r.listByClusterIDInMemory(clusterID)
+	}
+	return r.listByClusterIDInDB(ctx, clusterID)
+}
+
+func (r *InstanceRepository) listByClusterIDInMemory(clusterID string) ([]*models.Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]*models.Instance, 0)
+	for _, inst := range r.memDB {
+		if inst != nil && inst.ClusterID == clusterID {
+			copy := *inst
+			out = append(out, &copy)
+		}
+	}
+	return out, nil
+}
+
+func (r *InstanceRepository) listByClusterIDInDB(ctx context.Context, clusterID string) ([]*models.Instance, error) {
+	query := `
+		SELECT id, name, cluster_id, host_id, created_at, updated_at
+		FROM instances WHERE cluster_id = ? ORDER BY created_at ASC
+	`
+
+	rows, err := r.db.Pool.QueryContext(ctx, query, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list instances by cluster: %w", err)
+	}
+	defer rows.Close()
+
+	instances := make([]*models.Instance, 0)
+	for rows.Next() {
+		instance := &models.Instance{}
+		var hostID sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.Name, &instance.ClusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if hostID.Valid {
+			s := hostID.String
+			instance.HostID = &s
+		}
+		instances = append(instances, instance)
+	}
+	return instances, nil
+}
+
 func (r *InstanceRepository) listByHostIDInMemory(hostID string, limit, offset int) ([]models.Instance, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

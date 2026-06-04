@@ -49,6 +49,7 @@ authController := controllers.NewAuthController(authService)
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient)
 	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
+	hostService.SetInstanceRepo(instanceRepo)
 	hostController := controllers.NewHostController(hostService)
 
 	envCheckService := services.NewEnvironmentCheckService(hostRepo, agentClient)
@@ -97,7 +98,7 @@ authController := controllers.NewAuthController(authService)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, agentClient)
 
-	switchService := services.NewSwitchService(hostRepo, instanceRepo, agentClient)
+	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient)
 	switchController := controllers.NewSwitchController(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 
@@ -166,6 +167,9 @@ authController := controllers.NewAuthController(authService)
 				hosts.PUT("/:id", hostController.Update)
 				hosts.DELETE("/:id", hostController.Delete)
 				hosts.POST("/:id/test", hostController.TestConnection)
+				hosts.POST("/:id/scan-instances", hostController.ScanInstances)
+				hosts.GET("/:id/scan-instances/:task_id", hostController.GetScanResult)
+				hosts.POST("/:id/scan-instances/register", hostController.RegisterScannedInstance)
 			}
 
 			envChecks := protected.Group("/env-checks")
@@ -213,9 +217,8 @@ authController := controllers.NewAuthController(authService)
 				switches.POST("/single-to-mha", switchController.SingleToMHA)
 				switches.POST("/single-to-mgr", switchController.SingleToMGR)
 				switches.POST("/single-to-pxc", switchController.SingleToPXC)
-				switches.POST("/mha-to-mgr", switchController.MHAToMGR)
-				switches.POST("/mgr-to-pxc", switchController.MGRToPXC)
-				switches.POST("/pxc-to-mha", switchController.PXCToMHA)
+				switches.POST("/cluster/role", switchController.SwitchRoleWithinCluster)
+				switches.GET("/cluster/:cluster_id/role-history", switchController.ListRoleSwitchHistory)
 			}
 
 			ha := protected.Group("/ha")

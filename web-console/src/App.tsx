@@ -18,6 +18,9 @@ import MigrationManage from './pages/MigrationManage'
 import HostList from './pages/HostList'
 import HostDetail from './pages/HostDetail'
 import HostForm from './pages/HostForm'
+import ClusterDeploy from './pages/ClusterDeploy'
+import HAManage from './pages/HAManage'
+import RoleSwitch from './pages/RoleSwitch'
 import ProtectedRoute from './components/ProtectedRoute'
 import { onLogout } from './services/authEvents'
 
@@ -49,6 +52,7 @@ function App() {
         <Route path="hosts/:id/edit" element={<HostForm />} />
         <Route path="instances" element={<InstanceList />} />
         <Route path="instances/:id" element={<InstanceDetail />} />
+        <Route path="resources" element={<Navigate to="/dashboard/hosts" replace />} />
         <Route path="env-check" element={<EnvironmentCheck />} />
         <Route path="backup" element={<BackupManage />} />
         <Route path="monitor" element={<MonitorDashboard />} />
@@ -59,6 +63,9 @@ function App() {
         <Route path="alert-rules" element={<AlertRuleList />} />
         <Route path="topology" element={<TopologyView />} />
         <Route path="migration" element={<MigrationManage />} />
+        <Route path="cluster-deploy" element={<ClusterDeploy />} />
+        <Route path="ha" element={<HAManage />} />
+        <Route path="role-switch" element={<RoleSwitch />} />
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>

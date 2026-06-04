@@ -8,6 +8,7 @@ import {
   AlertOutlined, SwapOutlined, PartitionOutlined,
   ApartmentOutlined, FileTextOutlined, SafetyOutlined,
   AuditOutlined, LogoutOutlined, UserOutlined,
+  ClusterOutlined, HeartOutlined, RetweetOutlined,
 } from '@ant-design/icons'
 
 const { Header, Content, Sider } = Layout
@@ -32,11 +33,21 @@ const Dashboard: React.FC = () => {
 
   const menuItems = [
     { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
-    { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
-    { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
+    {
+      key: '/dashboard/resources',
+      icon: <DesktopOutlined />,
+      label: '主机与实例',
+      children: [
+        { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
+        { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
+      ],
+    },
     { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检测' },
     { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
     { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
+    { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
+    { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
+    { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
     { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
     { key: '/dashboard/upgrade', icon: <SwapOutlined />, label: '升级管理' },
     { key: '/dashboard/migration', icon: <PartitionOutlined />, label: '数据迁移' },
@@ -46,7 +57,16 @@ const Dashboard: React.FC = () => {
     { key: '/dashboard/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
   ]
 
-  const selectedKey = menuItems.find(m => location.pathname.startsWith(m.key))?.key || '/dashboard/home'
+  const selectedKey = (() => {
+    for (const m of menuItems) {
+      if ((m as any).children) {
+        const hit = (m as any).children.find((c: any) => location.pathname.startsWith(c.key))
+        if (hit) return hit.key
+      }
+      if (location.pathname.startsWith(m.key)) return m.key
+    }
+    return '/dashboard/home'
+  })()
 
   const userMenu = {
     items: [
@@ -84,13 +104,28 @@ const Dashboard: React.FC = () => {
           <Menu
             mode="inline"
             selectedKeys={[selectedKey]}
-            defaultOpenKeys={[]}
-            items={menuItems.map(item => ({
-              key: item.key,
-              icon: item.icon,
-              label: item.label,
-              onClick: () => navigate(item.key),
-            }))}
+            defaultOpenKeys={['/dashboard/resources']}
+            items={menuItems.map((item: any) => {
+              if (item.children) {
+                return {
+                  key: item.key,
+                  icon: item.icon,
+                  label: item.label,
+                  children: item.children.map((c: any) => ({
+                    key: c.key,
+                    icon: c.icon,
+                    label: c.label,
+                    onClick: () => navigate(c.key),
+                  })),
+                }
+              }
+              return {
+                key: item.key,
+                icon: item.icon,
+                label: item.label,
+                onClick: () => navigate(item.key),
+              }
+            })}
           />
         </Sider>
         <Content className="dashboard-content">

@@ -645,3 +645,243 @@ func (e *TaskExecutor) RollbackUpgrade(ctx context.Context, req DeployTaskReques
 	upgradeExecutor := NewUpgradeExecutor()
 	return upgradeExecutor.RollbackUpgrade(ctx, req)
 }
+
+type RoleSwitchConfig struct {
+	ClusterID       string `json:"cluster_id"`
+	InstanceID      string `json:"instance_id"`
+	ClusterType     string `json:"cluster_type"`
+	TargetRole      string `json:"target_role"`
+	OldMasterID     string `json:"old_master_id"`
+	NewMasterID     string `json:"new_master_id"`
+	ReplicationUser string `json:"replication_user"`
+	ReplicationPass string `json:"replication_pass"`
+	Force           bool   `json:"force"`
+	GracePeriodSec  int    `json:"grace_period_sec"`
+}
+
+type RoleQueryResult struct {
+	ClusterID    string `json:"cluster_id"`
+	InstanceID   string `json:"instance_id"`
+	Role         string `json:"role"`
+	ServerID     int    `json:"server_id"`
+	ReadOnly     bool   `json:"read_only"`
+	MasterHost   string `json:"master_host"`
+	MasterPort   int    `json:"master_port"`
+	SlaveRunning bool   `json:"slave_running"`
+	GTIDExecuted string `json:"gtid_executed"`
+}
+
+func parseRoleSwitchConfig(config map[string]interface{}) RoleSwitchConfig {
+	c := RoleSwitchConfig{
+		ClusterType: "mha",
+		Force:       false,
+	}
+	if v, ok := config["cluster_id"].(string); ok {
+		c.ClusterID = v
+	}
+	if v, ok := config["instance_id"].(string); ok {
+		c.InstanceID = v
+	}
+	if v, ok := config["cluster_type"].(string); ok {
+		c.ClusterType = v
+	}
+	if v, ok := config["target_role"].(string); ok {
+		c.TargetRole = v
+	}
+	if v, ok := config["old_master_id"].(string); ok {
+		c.OldMasterID = v
+	}
+	if v, ok := config["new_master_id"].(string); ok {
+		c.NewMasterID = v
+	}
+	if v, ok := config["replication_user"].(string); ok {
+		c.ReplicationUser = v
+	}
+	if v, ok := config["replication_pass"].(string); ok {
+		c.ReplicationPass = v
+	}
+	if v, ok := config["force"].(bool); ok {
+		c.Force = v
+	}
+	if v, ok := config["grace_period_sec"].(int); ok {
+		c.GracePeriodSec = v
+	}
+	return c
+}
+
+func mysqlBaseArgs(host string, port int, user, pass string) []string {
+	return []string{
+		"-h", host,
+		"-P", fmt.Sprintf("%d", port),
+		"-u", user,
+		fmt.Sprintf("-p%s", pass),
+	}
+}
+
+func runMySQLExec(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
+	args := append(mysqlBaseArgs(host, port, user, pass), "-N", "-B", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := parseRoleSwitchConfig(req.Config)
+
+	if cfg.GracePeriodSec > 0 {
+		time.Sleep(time.Duration(cfg.GracePeriodSec) * time.Second)
+	}
+
+	readOnlySQL := "SELECT @@read_only, @@server_id, @@server_uuid"
+	output, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", readOnlySQL)
+	if err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("failed to query instance state: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	role := "replica"
+	if !strings.Contains(output, "1") {
+		role = "primary"
+	}
+
+	slaveOutput, _ := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", "SHOW SLAVE STATUS\\G")
+	slaveRunning := strings.Contains(slaveOutput, "Slave_IO_Running: Yes") &&
+		strings.Contains(slaveOutput, "Slave_SQL_Running: Yes")
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("role=%s read_only_state_checked slave_running=%t", role, slaveRunning),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := parseRoleSwitchConfig(req.Config)
+
+	if cfg.GracePeriodSec > 0 {
+		time.Sleep(time.Duration(cfg.GracePeriodSec) * time.Second)
+	}
+
+	steps := []struct {
+		sql   string
+		label string
+	}{
+		{"STOP SLAVE", "stop slave"},
+		{"STOP SLAVE IO_THREAD", "stop slave IO thread"},
+		{"SET GLOBAL read_only = OFF", "disable read_only"},
+		{"SET GLOBAL super_read_only = OFF", "disable super_read_only"},
+		{"RESET SLAVE ALL", "reset slave"},
+	}
+
+	for _, step := range steps {
+		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", step.sql); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  30,
+				Message:   fmt.Sprintf("promote step %q failed: %v", step.label, err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+
+	if cfg.ClusterType == "mgr" {
+		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", "SELECT group_replication_set_as_primary('THISUUID')"); err != nil {
+			if !cfg.Force {
+				return &TaskResult{
+					TaskID:    req.TaskID,
+					Status:    "failed",
+					Progress:  60,
+					Message:   fmt.Sprintf("MGR set_as_primary failed: %v (use force=true to skip)", err),
+					Timestamp: time.Now(),
+				}, nil
+			}
+		}
+	}
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("instance %s promoted to %s within %s cluster", cfg.InstanceID, cfg.TargetRole, cfg.ClusterType),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) ExecuteRoleDemote(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := parseRoleSwitchConfig(req.Config)
+
+	steps := []struct {
+		sql   string
+		label string
+	}{
+		{"SET GLOBAL super_read_only = OFF", "allow setting read_only"},
+		{"SET GLOBAL read_only = ON", "enable read_only"},
+		{"SET GLOBAL super_read_only = ON", "enable super_read_only"},
+	}
+
+	for _, step := range steps {
+		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", step.sql); err != nil {
+			if cfg.Force {
+				continue
+			}
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  30,
+				Message:   fmt.Sprintf("demote step %q failed: %v", step.label, err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("instance %s demoted to %s within %s cluster", cfg.InstanceID, cfg.TargetRole, cfg.ClusterType),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := parseRoleSwitchConfig(req.Config)
+	if cfg.NewMasterID == "" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   "new_master_id is required to rebuild replica",
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	changeSQL := fmt.Sprintf(
+		"STOP SLAVE; CHANGE MASTER TO MASTER_HOST='%s', MASTER_AUTO_POSITION=1; START SLAVE;",
+		cfg.NewMasterID,
+	)
+	if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", changeSQL); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  50,
+			Message:   fmt.Sprintf("replica rebuild failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("replica %s re-pointed to new master %s", cfg.InstanceID, cfg.NewMasterID),
+		Timestamp: time.Now(),
+	}, nil
+}

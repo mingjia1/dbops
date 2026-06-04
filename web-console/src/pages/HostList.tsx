@@ -1,14 +1,17 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Space, Tag, Popconfirm, message } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Space, Tag, Popconfirm, message, Tooltip, Empty } from 'antd'
+import { PlusOutlined, ReloadOutlined, ScanOutlined, DesktopOutlined, DatabaseOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { hostApi, Host } from '../services/api'
+import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
 
 const HostList: React.FC = () => {
   const navigate = useNavigate()
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(false)
+  const [instanceCount, setInstanceCount] = useState<Record<string, number>>({})
+  const [scanningHosts, setScanningHosts] = useState<Record<string, boolean>>({})
+  const pollRef = useRef<Record<string, number>>({})
 
   const fetchHosts = async () => {
     setLoading(true)
@@ -22,9 +25,88 @@ const HostList: React.FC = () => {
     }
   }
 
+  const fetchInstanceCount = async (hostId: string) => {
+    try {
+      const r: any = await instanceApi.listByHost(hostId, 1, 0)
+      const total = r?.total ?? r?.data?.length ?? (Array.isArray(r?.data) ? r.data.length : 0)
+      setInstanceCount((p) => ({ ...p, [hostId]: total }))
+    } catch {
+      setInstanceCount((p) => ({ ...p, [hostId]: 0 }))
+    }
+  }
+
   useEffect(() => {
     fetchHosts()
   }, [])
+
+  useEffect(() => {
+    hosts.forEach((h) => fetchInstanceCount(h.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hosts.length])
+
+  useEffect(() => () => {
+    Object.values(pollRef.current).forEach((t) => window.clearInterval(t))
+  }, [])
+
+  const stopScanPolling = (hostId: string) => {
+    const t = pollRef.current[hostId]
+    if (t) {
+      window.clearInterval(t)
+      delete pollRef.current[hostId]
+    }
+    setScanningHosts((p) => ({ ...p, [hostId]: false }))
+  }
+
+  const startScanPolling = (hostId: string, taskId: string) => {
+    const interval = window.setInterval(async () => {
+      try {
+        const r: any = await hostApi.getScanResult(hostId, taskId)
+        const data: HostScanResult = r?.data
+        if (!data) return
+        if (data.status === 'success') {
+          stopScanPolling(hostId)
+          const unManaged = (data.instances || []).filter((i) => !i.already_managed)
+          if (unManaged.length === 0) {
+            message.success(`主机扫描完成, 全部 ${data.instances.length} 个实例已纳管`)
+            navigate(`/dashboard/hosts/${hostId}?tab=instances`)
+          } else {
+            message.success(`发现 ${unManaged.length} 个新实例, 请在主机详情查看`)
+            navigate(`/dashboard/hosts/${hostId}?tab=instances&scan_task=${taskId}`)
+          }
+        } else if (data.status === 'failed') {
+          stopScanPolling(hostId)
+          message.error(`扫描失败: ${data.error || data.message || '未知错误'}`)
+        }
+      } catch {
+        // ignore poll errors
+      }
+    }, 2000)
+    pollRef.current[hostId] = interval
+  }
+
+  const handleScan = async (host: Host) => {
+    try {
+      setScanningHosts((p) => ({ ...p, [host.id]: true }))
+      const r: any = await hostApi.scanInstances(host.id)
+      const taskId = r?.data?.task_id
+      if (!taskId) {
+        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
+        navigate(`/dashboard/instances?preset_host=${host.id}`)
+        setScanningHosts((p) => ({ ...p, [host.id]: false }))
+        return
+      }
+      message.info(`已发起扫描: ${host.name}, 正在 SSH 探测中...`)
+      startScanPolling(host.id, taskId)
+    } catch (err: any) {
+      setScanningHosts((p) => ({ ...p, [host.id]: false }))
+      if (err?.response?.status === 404) {
+        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
+        navigate(`/dashboard/instances?preset_host=${host.id}`)
+      } else {
+        message.error('扫描发起失败')
+      }
+    }
+  }
 
   const handleDelete = async (id: string) => {
     try {
@@ -45,16 +127,26 @@ const HostList: React.FC = () => {
     },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     {
-      title: '认证方式',
-      dataIndex: 'ssh_auth_method',
-      key: 'ssh_auth_method',
-      render: (m) => <Tag>{m === 'password' ? '密码' : '密钥'}</Tag>,
-    },
-    {
       title: '操作系统',
       dataIndex: 'os_type',
       key: 'os_type',
       render: (os) => os?.toUpperCase() || '-',
+    },
+    {
+      title: '实例数',
+      key: 'instances',
+      render: (_, r) => {
+        const n = instanceCount[r.id]
+        if (n === undefined) return <Tag>未加载</Tag>
+        if (n === 0) {
+          return (
+            <Tooltip title="该主机暂无已纳管实例, 建议自动扫描或手动添加">
+              <Tag color="warning" icon={<DatabaseOutlined />}>0</Tag>
+            </Tooltip>
+          )
+        }
+        return <Tag color="processing" icon={<DatabaseOutlined />}>{n}</Tag>
+      },
     },
     {
       title: '状态',
@@ -85,10 +177,23 @@ const HostList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
+      width: 280,
       render: (_, r) => (
         <Space>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/hosts/${r.id}`)}>
             详情
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<ScanOutlined />}
+            loading={!!scanningHosts[r.id]}
+            onClick={() => handleScan(r)}
+          >
+            扫描实例
+          </Button>
+          <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances?host_id=${r.id}`)}>
+            管理实例
           </Button>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/hosts/${r.id}/edit`)}>
             编辑
@@ -111,7 +216,12 @@ const HostList: React.FC = () => {
   return (
     <div style={{ padding: '24px' }}>
       <Card
-        title="主机管理"
+        title={
+          <Space>
+            <DesktopOutlined />
+            <span>主机 & 实例管理</span>
+          </Space>
+        }
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={fetchHosts}>
@@ -129,7 +239,21 @@ const HostList: React.FC = () => {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 20 }}
-          locale={{ emptyText: '暂无主机,请添加' }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={
+                  <div>
+                    <div style={{ marginBottom: 8 }}>暂无主机</div>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/dashboard/hosts/new')}>
+                      添加第一台主机
+                    </Button>
+                  </div>
+                }
+              />
+            ),
+          }}
         />
       </Card>
     </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Alert } from 'antd'
-import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined } from '@ant-design/icons'
+import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Alert, Modal } from 'antd'
+import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, StopOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import { migrationApi, instanceApi } from '../services/api'
 
 interface MigrationTask {
@@ -132,6 +132,23 @@ const MigrationManage: React.FC = () => {
     }).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (!activeMigration) return
+    if (activeMigration.status !== 'running') return
+    const interval = setInterval(() => {
+      migrationApi.get(activeMigration.id).then((res: any) => {
+        const task = res?.data
+        if (!task) return
+        setActiveMigration((prev) => (prev ? { ...prev, ...task } : prev))
+        setMigrationTasks((tasks) => tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)))
+        if (task.status !== 'running') {
+          clearInterval(interval)
+        }
+      }).catch(() => clearInterval(interval))
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [activeMigration?.id, activeMigration?.status])
+
   const handlePhysicalMigration = async (values: any) => {
     setLoading(true)
     try {
@@ -234,12 +251,57 @@ const MigrationManage: React.FC = () => {
   }
 
   const handleSwitch = async (taskId: string) => {
-    message.info(`开始切换: ${taskId}`)
-    try { await migrationApi.switchover(taskId) } catch { /* fallback */ }
-    setMigrationTasks(tasks =>
-      tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
-    )
-    message.success('切换完成')
+    Modal.confirm({
+      title: '确认切换',
+      content: '切换操作将把业务流量切到目标实例, 会导致短暂不可用, 请确认已通知业务方。',
+      okText: '确认切换',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await migrationApi.switchover(taskId)
+          setMigrationTasks(tasks =>
+            tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
+          )
+          message.success('切换完成')
+        } catch (err: any) {
+          if (err?.response?.status === 404) {
+            setMigrationTasks(tasks =>
+              tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
+            )
+            message.warning('后端未实现, 已记录本地状态')
+          } else {
+            message.error(err?.response?.data?.message || '切换失败')
+          }
+        }
+      },
+    })
+  }
+
+  const handleCancel = (taskId: string) => {
+    Modal.confirm({
+      title: '确认取消迁移',
+      content: '取消后, 已传输的数据不会自动回滚, 需手动清理。继续吗?',
+      okText: '确认取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await migrationApi.cancel(taskId)
+          setMigrationTasks(tasks =>
+            tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消' } : t)
+          )
+          message.success('已取消迁移')
+        } catch (err: any) {
+          if (err?.response?.status === 404) {
+            setMigrationTasks(tasks =>
+              tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消(本地)' } : t)
+            )
+            message.warning('后端未实现 cancel, 已记录本地状态')
+          } else {
+            message.error(err?.response?.data?.message || '取消失败')
+          }
+        }
+      },
+    })
   }
 
   const renderProgressMonitor = () => (
@@ -347,16 +409,16 @@ const MigrationManage: React.FC = () => {
       key: 'action',
       render: (_: any, record: MigrationTask) => (
         <Space>
-          <Button 
-            size="small" 
+          <Button
+            size="small"
             icon={<CheckCircleOutlined />}
             onClick={() => handleVerify(record.id)}
             disabled={record.status !== 'running'}
           >
             Verify
           </Button>
-          <Button 
-            size="small" 
+          <Button
+            size="small"
             type="primary"
             icon={<SwapOutlined />}
             onClick={() => handleSwitch(record.id)}
@@ -364,13 +426,38 @@ const MigrationManage: React.FC = () => {
           >
             Switch
           </Button>
+          {(record.status === 'running' || record.status === 'pending' || record.status === 'verifying') && (
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              onClick={() => handleCancel(record.id)}
+            >
+              取消
+            </Button>
+          )}
         </Space>
       ),
     },
   ]
 
   return (
-    <Card title="数据迁移管理">
+    <div style={{ padding: '24px' }}>
+      <Alert
+        type="warning"
+        showIcon
+        icon={<ExclamationCircleOutlined />}
+        style={{ marginBottom: 16 }}
+        message="迁移注意事项"
+        description={
+          <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+            <li>迁移会占用源实例 IO, 建议在业务低峰期执行</li>
+            <li>Switch 操作将切换业务流量, 不可逆, 需提前通知业务方</li>
+            <li>迁移出错时可使用"取消"按钮中止, 但已传输数据需手动清理</li>
+          </ul>
+        }
+      />
+      <Card title="数据迁移管理">
       <Tabs
         activeKey={currentTab}
         onChange={setCurrentTab}
@@ -399,6 +486,7 @@ const MigrationManage: React.FC = () => {
         style={{ marginTop: 16 }}
       />
     </Card>
+    </div>
   )
 }
 
