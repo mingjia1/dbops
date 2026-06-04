@@ -40,26 +40,88 @@
 .dashboard-sider .ant-menu {
   background: transparent;
   border-inline-end: none !important;
+  padding: 8px 0;
 }
 
-.dashboard-sider .ant-menu-item {
-  margin: 2px 8px;
-  border-radius: 6px;
-  color: rgba(255,255,255,0.65);
+.dashboard-sider .ant-menu-item,
+.dashboard-sider .ant-menu-submenu-title {
+  margin: 4px 10px !important;
+  width: calc(100% - 20px) !important;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.78) !important;
+  font-weight: 500;
+  transition: all 0.2s ease;
 }
 
-.dashboard-sider .ant-menu-item:hover {
-  color: #fff;
-  background: rgba(255,255,255,0.06);
+/* hover */
+.dashboard-sider .ant-menu-item:hover,
+.dashboard-sider .ant-menu-submenu-title:hover {
+  color: #ffffff !important;
+  background: rgba(24, 144, 255, 0.18) !important;
 }
 
+/* 选中项: 高对比度蓝色填充 + 左侧色块 */
 .dashboard-sider .ant-menu-item-selected {
-  color: #fff;
-  background: #1890ff !important;
+  color: #ffffff !important;
+  background: linear-gradient(90deg, #1890ff 0%, #096dd9 100%) !important;
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.35);
+  font-weight: 600;
+}
+
+.dashboard-sider .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  background: #52c41a;
+  border-radius: 0 4px 4px 0;
 }
 
 .dashboard-sider .ant-menu-item-selected:hover {
-  background: #1890ff !important;
+  background: linear-gradient(90deg, #40a9ff 0%, #1890ff 100%) !important;
+}
+
+/* 父级菜单 (例如"主机与实例") 在子项被选中时, 也要明显 */
+.dashboard-sider .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  color: #ffffff !important;
+  background: rgba(24, 144, 255, 0.22) !important;
+}
+
+/* 子菜单展开区域 */
+.dashboard-sider .ant-menu-sub {
+  background: rgba(0, 0, 0, 0.18) !important;
+  border-radius: 8px;
+  margin: 4px 10px !important;
+  width: calc(100% - 20px) !important;
+  padding: 4px 0 !important;
+}
+
+.dashboard-sider .ant-menu-sub .ant-menu-item {
+  margin: 2px 8px !important;
+  width: calc(100% - 16px) !important;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+.dashboard-sider .ant-menu-sub .ant-menu-item-selected {
+  background: linear-gradient(90deg, #1890ff 0%, #096dd9 100%) !important;
+  color: #fff !important;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(24, 144, 255, 0.3);
+}
+
+.dashboard-sider .ant-menu-sub .ant-menu-item-selected::before {
+  left: -8px;
+  top: 4px;
+  bottom: 4px;
+}
+
+/* 图标颜色继承 */
+.dashboard-sider .ant-menu-item .anticon,
+.dashboard-sider .ant-menu-submenu-title .anticon {
+  color: inherit !important;
 }
 
 .dashboard-content {

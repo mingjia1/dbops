@@ -281,11 +281,52 @@ export const backupApi = {
 
   delete: (id: string) =>
     api.delete(`/backups/${id}`),
+
+  scan: (instanceId: string) =>
+    api.post(`/backups/scan`, { instance_id: instanceId }),
+}
+
+export interface DiscoveredBackup {
+  file_name: string
+  file_path: string
+  size_bytes: number
+  backup_type: string
+  detected_at: string
+  mtime?: string
+  already_managed?: boolean
+  managed_backup_id?: string
 }
 
 export const monitorApi = {
   queryMetrics: (instanceId: string) =>
     api.get(`/monitoring/metrics?instance_id=${instanceId}`),
+}
+
+export interface DataMigrationStatus {
+  dialect: 'sqlite' | 'mysql'
+  sqlite_path: string
+  mysql_configured: boolean
+  row_counts: Record<string, number>
+}
+
+export interface MigrateTableReport {
+  table: string
+  rows: number
+  status: 'ok' | 'skipped' | 'failed'
+  message: string
+}
+
+export interface MigrateResult {
+  tables: MigrateTableReport[]
+  total_rows: number
+  duration_ms: number
+  error?: string
+}
+
+export const dataMigrationApi = {
+  getStatus: () => api.get<any, { code: number; data: DataMigrationStatus }>('/data-migration/status'),
+  importLegacyJSON: () => api.post<any, { code: number; data: { imported: number } }>('/data-migration/import-legacy-json'),
+  migrateToMySQL: () => api.post<any, { code: number; data?: MigrateResult; message: string }>('/data-migration/migrate-to-mysql'),
 }
 
 export interface ParameterTemplate {

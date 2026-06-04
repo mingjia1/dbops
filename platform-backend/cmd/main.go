@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/controllers"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -22,16 +25,50 @@ func main() {
 	logInstance := logger.New(cfg.LogLevel)
 	logInstance.Info("Starting MySQL Ops Platform API Server")
 
-	db, err := repositories.NewDatabase(cfg.DatabaseURL)
+	sqlitePath := cfg.SQLitePath
+	if sqlitePath == "" {
+		sqlitePath = cfg.DataDir + string(filepath.Separator) + "dbops.db"
+	}
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		logInstance.Warn("Failed to create data dir " + cfg.DataDir + ": " + err.Error())
+	}
+	db, err := repositories.NewDatabase(cfg.DatabaseURL, sqlitePath)
 	if err != nil {
 		logInstance.Warn("Database not available, running in standalone mode")
 		db = nil
+	}
+	if db != nil {
+		if db.IsMySQL() {
+			logInstance.Info("Using MySQL as primary store")
+		} else {
+			logInstance.Info("Using SQLite as primary store at " + sqlitePath)
+		}
+	}
+
+	// 数据持久化目录: 当未连接 MySQL 时, 内存数据将序列化到 JSON 文件,
+	// 重启服务后会自动加载, 避免"重启后数据丢失"的问题.
+	jsonStore, err := repositories.NewJSONStore(cfg.DataDir)
+	if err != nil {
+		logInstance.Warn("Failed to init JSON store at " + cfg.DataDir + " (standalone data will not persist)")
+		jsonStore = nil
+	} else {
+		logInstance.Info("Data persistence directory: " + cfg.DataDir)
 	}
 
 	if db != nil {
 		defer db.Close()
 		if err := runMigrations(db); err != nil {
-			logInstance.Warn("Migrations skipped")
+			logInstance.Warn("Migrations skipped: " + err.Error())
+		} else {
+			logInstance.Info("Schema migrations applied")
+		}
+
+		// 自动从旧的 data/*.json 一次性导入到 SQLite (仅在 SQLite 模式 + 表为空时).
+		importer := repositories.NewJSONImporter(cfg.DataDir)
+		if n, err := importer.ImportAll(context.Background(), db); err != nil {
+			logInstance.Warn("JSON -> SQLite import failed: " + err.Error())
+		} else if n > 0 {
+			logInstance.Info("Imported " + fmt.Sprintf("%d", n) + " records from legacy JSON files to SQLite")
 		}
 	}
 
@@ -45,6 +82,11 @@ authController := controllers.NewAuthController(authService)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
+
+	// 绑定 JSON 持久化 (仅在 standalone / db=nil 时生效).
+	// 启动时自动从 ./data 目录加载 hosts.json / instances.json, 每次变更落盘.
+	instanceRepo.AttachStore(jsonStore)
+	hostRepo.AttachStore(jsonStore)
 	agentClient := services.NewAgentClient()
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient)
 	instanceController := controllers.NewInstanceController(instanceService)
@@ -114,6 +156,8 @@ authController := controllers.NewAuthController(authService)
 	approvalController := controllers.NewApprovalController(approvalService)
 	auditController := controllers.NewAuditController(auditService)
 
+	dataMigrationController := controllers.NewDataMigrationController(cfg)
+
 	r := gin.Default()
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(logInstance))
@@ -136,7 +180,8 @@ authController := controllers.NewAuthController(authService)
 		}
 
 		protected := api.Group("")
-		if db == nil {
+		// SQLite 兜底时, 用户表为空, 用测试身份注入方便 dev 使用
+		if db == nil || db.IsSQLite() {
 			protected.Use(func(c *gin.Context) {
 				c.Set("user_id", "test-user-001")
 				c.Set("username", "testuser")
@@ -288,6 +333,13 @@ migrations := protected.Group("/migrations")
 				auditLogs.GET("", auditController.ListAuditLogs)
 				auditLogs.GET("/:id", auditController.GetAuditLogByID)
 			}
+
+			dataMig := protected.Group("/data-migration")
+			{
+				dataMig.GET("/status", dataMigrationController.GetStatus)
+				dataMig.POST("/import-legacy-json", dataMigrationController.ImportLegacyJSON)
+				dataMig.POST("/migrate-to-mysql", dataMigrationController.MigrateToMySQL)
+			}
 		}
 	}
 
@@ -298,12 +350,5 @@ migrations := protected.Group("/migrations")
 }
 
 func runMigrations(db *repositories.Database) error {
-	ctx := context.Background()
-	conn, err := db.Pool.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	return repositories.RunMigrations(ctx, conn)
+	return repositories.RunMigrations(context.Background(), db)
 }

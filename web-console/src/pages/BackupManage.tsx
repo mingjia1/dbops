@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Table, Button, Space, Tag, Progress, Select, Modal, Form, Radio, Input, InputNumber, Switch, message, Alert, Tabs, Statistic, Row, Col } from 'antd'
-import { PlusOutlined, ReloadOutlined, ScheduleOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Space, Tag, Progress, Select, Modal, Form, Radio, Input, InputNumber, Switch, message, Alert, Tabs, Statistic, Row, Col, Tooltip } from 'antd'
+import { PlusOutlined, ReloadOutlined, ScheduleOutlined, ScanOutlined, FileSearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { backupApi, instanceApi, type Instance } from '../services/api'
+import { backupApi, instanceApi, type Instance, type DiscoveredBackup } from '../services/api'
 
 interface Backup {
   id: string
@@ -55,6 +55,12 @@ const BackupManage: React.FC = () => {
   const [restoreForm] = Form.useForm()
   const [policyForm] = Form.useForm()
 
+  const [discovered, setDiscovered] = useState<DiscoveredBackup[]>([])
+  const [scanLoading, setScanLoading] = useState(false)
+  const [scannedAt, setScannedAt] = useState<string | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [scanOpen, setScanOpen] = useState(false)
+
   useEffect(() => {
     instanceApi.list(100, 0).then((res: any) => {
       if (res?.data) setInstances(res.data)
@@ -99,6 +105,42 @@ const BackupManage: React.FC = () => {
     }
     form.setFieldsValue({ backup_type: 'full' })
     setCreateOpen(true)
+  }
+
+  const handleScanBackups = async () => {
+    if (!selectedInstance) {
+      message.warning('请先选择实例')
+      return
+    }
+    setScanLoading(true)
+    setScanError(null)
+    try {
+      const res: any = await backupApi.scan(selectedInstance)
+      const list: DiscoveredBackup[] = res?.data?.backups || res?.data || []
+      setDiscovered(list)
+      setScannedAt(res?.data?.scanned_at || new Date().toISOString())
+      const unManaged = list.filter((d) => !d.already_managed)
+      if (list.length === 0) {
+        message.info('未发现已存在的备份文件')
+      } else if (unManaged.length === 0) {
+        message.success(`扫描完成, 全部 ${list.length} 份备份已纳管`)
+      } else {
+        message.success(`发现 ${unManaged.length} 份待纳管备份, ${list.length - unManaged.length} 份已纳管`)
+      }
+      setScanOpen(true)
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        setScanError('后端未实现 /backups/scan 接口, 请确认 API 服务')
+        message.warning('后端未实现扫描接口')
+        setScanOpen(true)
+      } else {
+        setScanError(err?.response?.data?.message || '扫描失败')
+        message.error('扫描失败')
+        setScanOpen(true)
+      }
+    } finally {
+      setScanLoading(false)
+    }
   }
 
   const submitCreate = async () => {
@@ -356,6 +398,14 @@ const BackupManage: React.FC = () => {
                       onChange={setSelectedInstance}
                       options={instances.map((i) => ({ label: i.name, value: i.id }))}
                     />
+                    <Button
+                      icon={<FileSearchOutlined />}
+                      onClick={handleScanBackups}
+                      loading={scanLoading}
+                      disabled={!selectedInstance}
+                    >
+                      扫描已执行备份
+                    </Button>
                     <Button icon={<ReloadOutlined />} onClick={fetchBackups} disabled={!selectedInstance}>
                       刷新
                     </Button>
@@ -507,8 +557,92 @@ const BackupManage: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Modal
+        title="扫描已执行的备份"
+        open={scanOpen}
+        onCancel={() => setScanOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setScanOpen(false)}>关闭</Button>,
+          <Button key="rescan" icon={<ScanOutlined />} onClick={handleScanBackups} loading={scanLoading}>
+            重新扫描
+          </Button>,
+        ]}
+        width={780}
+      >
+        {scanError && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="扫描失败"
+            description={scanError}
+          />
+        )}
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="说明"
+          description={
+            <div>
+              <div>• 平台会 SSH 登录到目标主机, 在常见备份目录 (/data/backup, /var/lib/mysql-backup, /backup 等) 中查找 <code>*.sql / *.sql.gz / *.xbstream / *.xtrabackup</code> 等文件。</div>
+              <div>• 已纳管 = 在本平台执行过的备份; 未纳管 = 文件系统上已有的备份, 可点"纳管"登记到平台。</div>
+            </div>
+          }
+        />
+        {scannedAt && (
+          <div style={{ marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+            扫描时间: {new Date(scannedAt).toLocaleString()}
+          </div>
+        )}
+        <Table
+          rowKey="file_path"
+          size="small"
+          pagination={false}
+          dataSource={discovered}
+          locale={{
+            emptyText: scanLoading ? '扫描中...' : '未发现已存在的备份文件',
+          }}
+          columns={[
+            {
+              title: '文件', dataIndex: 'file_name', key: 'file_name',
+              render: (n: string) => <Tag color="blue">{n}</Tag>,
+            },
+            {
+              title: '类型', dataIndex: 'backup_type', key: 'backup_type',
+              render: (t: string) => (
+                <Tag color={t === 'full' ? 'blue' : t === 'incremental' ? 'green' : 'orange'}>
+                  {t === 'full' ? '全量' : t === 'incremental' ? '增量' : t === 'logical' ? '逻辑' : t}
+                </Tag>
+              ),
+            },
+            {
+              title: '大小', dataIndex: 'size_bytes', key: 'size_bytes',
+              render: (s: number) => s ? formatSize(s) : '-',
+            },
+            {
+              title: '路径', dataIndex: 'file_path', key: 'file_path',
+              render: (p: string) => <Tooltip title={p}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{p}</span></Tooltip>,
+            },
+            {
+              title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed',
+              render: (m: boolean) => m
+                ? <Tag color="success">已纳管</Tag>
+                : <Tag color="warning">未纳管</Tag>,
+            },
+          ]}
+        />
+      </Modal>
     </div>
   )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 export default BackupManage

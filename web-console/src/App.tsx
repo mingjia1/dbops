@@ -21,6 +21,7 @@ import HostForm from './pages/HostForm'
 import ClusterDeploy from './pages/ClusterDeploy'
 import HAManage from './pages/HAManage'
 import RoleSwitch from './pages/RoleSwitch'
+import DataStorage from './pages/DataStorage'
 import ProtectedRoute from './components/ProtectedRoute'
 import { onLogout } from './services/authEvents'
 
@@ -66,6 +67,7 @@ function App() {
         <Route path="cluster-deploy" element={<ClusterDeploy />} />
         <Route path="ha" element={<HAManage />} />
         <Route path="role-switch" element={<RoleSwitch />} />
+        <Route path="data-storage" element={<DataStorage />} />
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>

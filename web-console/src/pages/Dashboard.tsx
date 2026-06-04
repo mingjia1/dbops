@@ -8,7 +8,7 @@ import {
   AlertOutlined, SwapOutlined, PartitionOutlined,
   ApartmentOutlined, FileTextOutlined, SafetyOutlined,
   AuditOutlined, LogoutOutlined, UserOutlined,
-  ClusterOutlined, HeartOutlined, RetweetOutlined,
+  ClusterOutlined, HeartOutlined, RetweetOutlined, HddOutlined,
 } from '@ant-design/icons'
 
 const { Header, Content, Sider } = Layout
@@ -32,6 +32,7 @@ const Dashboard: React.FC = () => {
   }
 
   const menuItems = [
+    { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
     { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
     {
       key: '/dashboard/resources',
@@ -44,10 +45,10 @@ const Dashboard: React.FC = () => {
     },
     { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检测' },
     { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
-    { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
     { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
     { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
     { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
+    { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
     { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
     { key: '/dashboard/upgrade', icon: <SwapOutlined />, label: '升级管理' },
     { key: '/dashboard/migration', icon: <PartitionOutlined />, label: '数据迁移' },
@@ -100,9 +101,10 @@ const Dashboard: React.FC = () => {
         </div>
       </Header>
       <Layout>
-        <Sider width={220} className="dashboard-sider">
+        <Sider width={220} className="dashboard-sider" theme="dark">
           <Menu
             mode="inline"
+            theme="dark"
             selectedKeys={[selectedKey]}
             defaultOpenKeys={['/dashboard/resources']}
             items={menuItems.map((item: any) => {
