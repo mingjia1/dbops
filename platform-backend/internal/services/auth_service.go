@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -234,10 +236,15 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 func generateRandomPassword(n int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%"
 	b := make([]byte, n)
-	now := time.Now().UnixNano()
+	max := big.NewInt(int64(len(charset)))
 	for i := range b {
-		b[i] = charset[int(now)%len(charset)]
-		now = now*1103515245 + 12345
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			// fallback: 时间戳派生 (不会 panic)
+			b[i] = charset[int(time.Now().UnixNano()+int64(i))%len(charset)]
+			continue
+		}
+		b[i] = charset[idx.Int64()]
 	}
 	return string(b)
 }
