@@ -153,9 +153,12 @@ func (r *InstanceRepository) List(ctx context.Context, limit, offset int) ([]mod
 	instances := make([]models.Instance, 0)
 	for rows.Next() {
 		var instance models.Instance
-		var hostID sql.NullString
-		if err := rows.Scan(&instance.ID, &instance.Name, &instance.ClusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
+		var clusterID, hostID sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.Name, &clusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if clusterID.Valid {
+			instance.ClusterID = clusterID.String
 		}
 		if hostID.Valid {
 			s := hostID.String
