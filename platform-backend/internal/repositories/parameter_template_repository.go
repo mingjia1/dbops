@@ -94,7 +94,7 @@ func (r *ParameterTemplateRepository) List(ctx context.Context, limit, offset in
 	}
 	defer rows.Close()
 
-	var templates []models.ParameterTemplate
+	templates := make([]models.ParameterTemplate, 0)
 	for rows.Next() {
 		var template models.ParameterTemplate
 		if err := rows.Scan(
@@ -124,7 +124,7 @@ func (r *ParameterTemplateRepository) ListPresetTemplates(ctx context.Context) (
 	}
 	defer rows.Close()
 
-	var templates []models.ParameterTemplate
+	templates := make([]models.ParameterTemplate, 0)
 	for rows.Next() {
 		var template models.ParameterTemplate
 		if err := rows.Scan(
@@ -215,7 +215,7 @@ func (r *ParameterTemplateRepository) ListVersions(ctx context.Context, template
 	}
 	defer rows.Close()
 
-	var versions []models.ParameterTemplateVersion
+	versions := make([]models.ParameterTemplateVersion, 0)
 	for rows.Next() {
 		var version models.ParameterTemplateVersion
 		if err := rows.Scan(
@@ -301,7 +301,7 @@ func (r *ParameterTemplateRepository) ListParameters(ctx context.Context, templa
 	}
 	defer rows.Close()
 
-	var params []models.ParameterTemplateParameter
+	params := make([]models.ParameterTemplateParameter, 0)
 	for rows.Next() {
 		var param models.ParameterTemplateParameter
 		if err := rows.Scan(

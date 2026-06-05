@@ -120,7 +120,7 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 	}
 	defer rows.Close()
 
-	var rules []models.AlertRule
+	rules := make([]models.AlertRule, 0)
 	for rows.Next() {
 		var rule models.AlertRule
 		if err := rows.Scan(
@@ -151,7 +151,7 @@ func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models
 	}
 	defer rows.Close()
 
-	var rules []models.AlertRule
+	rules := make([]models.AlertRule, 0)
 	for rows.Next() {
 		var rule models.AlertRule
 		if err := rows.Scan(
@@ -206,7 +206,7 @@ func (r *AlertRuleRepository) ListAlertHistory(ctx context.Context, filter Alert
 		return nil, fmt.Errorf("failed to list alert history: %w", err)
 	}
 	defer rows.Close()
-	var out []models.AlertRecord
+	out := make([]models.AlertRecord, 0)
 	for rows.Next() {
 		var rec models.AlertRecord
 		var resolvedAt sql.NullTime

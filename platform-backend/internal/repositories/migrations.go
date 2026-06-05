@@ -308,6 +308,68 @@ var InitialSchema = []string{
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
 	`ALTER TABLE instances ADD CONSTRAINT fk_instances_host FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE SET NULL`,
+
+	`CREATE TABLE IF NOT EXISTS notification_channels (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(128) NOT NULL UNIQUE,
+		channel_type VARCHAR(32) NOT NULL,
+		channel_config TEXT,
+		template TEXT,
+		is_active TINYINT(1) DEFAULT 1,
+		priority INT DEFAULT 1,
+		description TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_notification_channels_active (is_active)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	`CREATE TABLE IF NOT EXISTS alert_notifications (
+		id VARCHAR(64) PRIMARY KEY,
+		alert_id VARCHAR(64) NOT NULL,
+		channel_type VARCHAR(32) NOT NULL,
+		channel_config TEXT,
+		sent_at TIMESTAMP NULL,
+		status VARCHAR(32) DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_alert_notifications_alert (alert_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	`CREATE TABLE IF NOT EXISTS approval_requests (
+		id VARCHAR(64) PRIMARY KEY,
+		requester_id VARCHAR(64) NOT NULL,
+		approver_id VARCHAR(64),
+		operation_type VARCHAR(64) NOT NULL,
+		resource_type VARCHAR(64) NOT NULL,
+		resource_id VARCHAR(64) NOT NULL,
+		request_reason TEXT,
+		approval_status VARCHAR(32) DEFAULT 'pending',
+		approval_comment TEXT,
+		priority INT DEFAULT 1,
+		expires_at TIMESTAMP NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		approved_at TIMESTAMP NULL,
+		INDEX idx_approval_requester (requester_id),
+		INDEX idx_approval_status (approval_status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	`CREATE TABLE IF NOT EXISTS audit_logs (
+		id VARCHAR(64) PRIMARY KEY,
+		user_id VARCHAR(64) NOT NULL,
+		operation VARCHAR(64) NOT NULL,
+		resource_type VARCHAR(64) NOT NULL,
+		resource_id VARCHAR(64),
+		action VARCHAR(32) NOT NULL,
+		details TEXT,
+		result VARCHAR(32) NOT NULL,
+		error_msg TEXT,
+		ip_address VARCHAR(64),
+		user_agent VARCHAR(255),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_audit_user (user_id),
+		INDEX idx_audit_action (action),
+		INDEX idx_audit_created (created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -592,6 +654,68 @@ var schemaSQLite = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cluster_deployments_type ON cluster_deployments(cluster_type)`,
 	`CREATE INDEX IF NOT EXISTS idx_cluster_deployments_status ON cluster_deployments(status)`,
+
+	`CREATE TABLE IF NOT EXISTS notification_channels (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		channel_type TEXT NOT NULL,
+		channel_config TEXT,
+		template TEXT,
+		is_active INTEGER DEFAULT 1,
+		priority INTEGER DEFAULT 1,
+		description TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_notification_channels_active ON notification_channels(is_active)`,
+
+	`CREATE TABLE IF NOT EXISTS alert_notifications (
+		id TEXT PRIMARY KEY,
+		alert_id TEXT NOT NULL,
+		channel_type TEXT NOT NULL,
+		channel_config TEXT,
+		sent_at TIMESTAMP,
+		status TEXT DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_alert_notifications_alert ON alert_notifications(alert_id)`,
+
+	`CREATE TABLE IF NOT EXISTS approval_requests (
+		id TEXT PRIMARY KEY,
+		requester_id TEXT NOT NULL,
+		approver_id TEXT,
+		operation_type TEXT NOT NULL,
+		resource_type TEXT NOT NULL,
+		resource_id TEXT NOT NULL,
+		request_reason TEXT,
+		approval_status TEXT DEFAULT 'pending',
+		approval_comment TEXT,
+		priority INTEGER DEFAULT 1,
+		expires_at TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		approved_at TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_approval_requester ON approval_requests(requester_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_approval_status ON approval_requests(approval_status)`,
+
+	`CREATE TABLE IF NOT EXISTS audit_logs (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		resource_type TEXT NOT NULL,
+		resource_id TEXT,
+		action TEXT NOT NULL,
+		details TEXT,
+		result TEXT NOT NULL,
+		error_msg TEXT,
+		ip_address TEXT,
+		user_agent TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.
