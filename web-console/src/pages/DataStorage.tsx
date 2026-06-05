@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons'
 import { dataMigrationApi, DataMigrationStatus, MigrateResult } from '../services/api'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const DataStoragePage: React.FC = () => {
   const [status, setStatus] = useState<DataMigrationStatus | null>(null)
@@ -97,14 +97,12 @@ const DataStoragePage: React.FC = () => {
   const totalRows = status ? Object.values(status.row_counts).reduce((a, b) => a + b, 0) : 0
 
   return (
-    <div style={{ padding: 24 }}>
-      <Title level={3}>
-        <DatabaseOutlined style={{ marginRight: 8 }} />
+    <div className="apple-page apple-fade-in">
+      <h1 className="apple-page-title">
+        <DatabaseOutlined style={{ marginRight: 10, color: 'var(--apple-blue)' }} />
         数据存储管理
-      </Title>
-      <Text type="secondary">
-        平台支持 SQLite / MySQL 双驱动. SQLite 零配置即用, MySQL 适合生产多机部署.
-      </Text>
+      </h1>
+      <p className="apple-page-subtitle">平台支持 SQLite / MySQL 双驱动 · SQLite 零配置即用, MySQL 适合生产多机部署</p>
 
       <Spin spinning={loading}>
         {status && dialectInfo && (
