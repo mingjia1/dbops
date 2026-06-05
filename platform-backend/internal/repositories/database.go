@@ -29,6 +29,20 @@ type Database struct {
 //   1. 生产环境正常连 MySQL, 走主库
 //   2. 离线 / 测试 / 用户没部署 MySQL, 自动落 SQLite, 同样能持久化
 func NewDatabase(mysqlDSN, sqlitePath string) (*Database, error) {
+	return NewDatabaseWithMode(mysqlDSN, sqlitePath, "auto")
+}
+
+// NewDatabaseWithMode P0-6: 显式选择存储后端行为, 杜绝静默降级.
+//   mode = "mysql"  -> 强制连 MySQL, 连不上直接 fail (不静默回退).
+//   mode = "sqlite" -> 强制使用 SQLite, 忽略 mysqlDSN.
+//   mode = "auto"   -> 优先 MySQL, 失败回退 SQLite (旧行为, 仅 dev 友好).
+func NewDatabaseWithMode(mysqlDSN, sqlitePath, mode string) (*Database, error) {
+	mode = normalizeMode(mode)
+
+	if mode == "sqlite" {
+		return openSQLite(sqlitePath)
+	}
+
 	if mysqlDSN != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -38,31 +52,59 @@ func NewDatabase(mysqlDSN, sqlitePath string) (*Database, error) {
 			pool.SetMaxIdleConns(5)
 			pool.SetConnMaxLifetime(30 * time.Minute)
 			pool.SetConnMaxIdleTime(5 * time.Minute)
-			if err = pool.PingContext(ctx); err == nil {
+			if pingErr := pool.PingContext(ctx); pingErr == nil {
 				return &Database{Pool: pool, Dialect: DialectMySQL}, nil
+			} else {
+				pool.Close()
+				if mode == "mysql" {
+					return nil, fmt.Errorf("storage_mode=mysql but MySQL connection failed: %w", pingErr)
+				}
 			}
-			pool.Close()
+		} else if mode == "mysql" {
+			return nil, fmt.Errorf("storage_mode=mysql but sql.Open failed: %w", err)
 		}
+	} else if mode == "mysql" {
+		return nil, fmt.Errorf("storage_mode=mysql requires database_url in config.yaml")
+	}
+
+	if mode == "mysql" {
+		// 走到这里说明 MySQL 模式但 mysqlDSN 为空 — 已在上面 fail.
+		return nil, fmt.Errorf("storage_mode=mysql unreachable")
 	}
 
 	if sqlitePath == "" {
 		return nil, fmt.Errorf("no database available: MySQL connection failed and sqlite path is empty")
 	}
+	return openSQLite(sqlitePath)
+}
 
+func normalizeMode(m string) string {
+	switch m {
+	case "mysql", "sqlite", "auto", "":
+		if m == "" {
+			return "auto"
+		}
+		return m
+	default:
+		return "auto"
+	}
+}
+
+func openSQLite(sqlitePath string) (*Database, error) {
+	if sqlitePath == "" {
+		return nil, fmt.Errorf("sqlite path is empty")
+	}
 	dir := filepath.Dir(sqlitePath)
 	if dir != "" && dir != "." {
 		_ = mkdirAll(dir)
 	}
-
-	// SQLite DSN: _pragma=... 启用外键 / busy_timeout / WAL
 	dsn := sqlitePath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
 	pool, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite at %s: %w", sqlitePath, err)
 	}
-	pool.SetMaxOpenConns(1) // SQLite 写串行, 多个连接会引起锁问题
+	pool.SetMaxOpenConns(1)
 	pool.SetConnMaxLifetime(0)
-
 	if err := pool.Ping(); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping sqlite: %w", err)

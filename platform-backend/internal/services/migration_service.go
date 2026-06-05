@@ -12,15 +12,37 @@ import (
 type MigrationService struct {
 	repo        *repositories.MigrationRepository
 	instRepo    *repositories.InstanceRepository
+	hostRepo    *repositories.HostRepository
 	agentClient *AgentClient
 }
 
-func NewMigrationService(repo *repositories.MigrationRepository, instRepo *repositories.InstanceRepository, agentClient *AgentClient) *MigrationService {
+func NewMigrationService(repo *repositories.MigrationRepository, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, agentClient *AgentClient) *MigrationService {
 	return &MigrationService{
 		repo:        repo,
 		instRepo:    instRepo,
+		hostRepo:    hostRepo,
 		agentClient: agentClient,
 	}
+}
+
+// resolveAgentHost P1-5: 仿 switch_service 模式, 从 instance → host 拿到真实 agent 地址和端口.
+func resolveAgentHost(ctx context.Context, inst *models.Instance, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, defaultPort int) (string, int) {
+	if inst == nil {
+		return "localhost", defaultPort
+	}
+	if inst.HostID == nil || *inst.HostID == "" {
+		// 没有 host 关联时退回到 instance.Connection.Host (但仍有可能不是 agent)
+		return "localhost", defaultPort
+	}
+	host, err := hostRepo.GetByID(ctx, *inst.HostID)
+	if err != nil || host == nil {
+		return "localhost", defaultPort
+	}
+	port := defaultPort
+	if host.AgentPort > 0 {
+		port = host.AgentPort
+	}
+	return host.Address, port
 }
 
 type CreateMigrationTaskRequest struct {
@@ -75,7 +97,10 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		"target_instance_id": task.TargetInstanceID,
 	}
 
-	result, err := s.agentClient.callAgent(ctx, "localhost", 9090, "/agent/tasks/migration", map[string]interface{}{
+	// P1-5: 用 instance → host → 真实 agent 地址, 不再写死 localhost.
+	sourceInstFull, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
+	agentHost, agentPort := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.SourceInstanceID,
 		"config":      config,
@@ -127,7 +152,14 @@ func (s *MigrationService) OrchestrateMigration(ctx context.Context, taskID stri
 }
 
 func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID string) (*models.MigrationProgress, error) {
-	result, err := s.agentClient.callAgent(ctx, "localhost", 9090, "/agent/tasks/migration", map[string]interface{}{
+	task, _ := s.repo.GetByID(ctx, taskID)
+	var agentHost string = "localhost"
+	agentPort := 9090
+	if task != nil {
+		inst, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
+		agentHost, agentPort = resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": "",
 		"config": map[string]interface{}{
@@ -150,21 +182,64 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	}, nil
 }
 
+// VerifyMigration P0-4: 真实调 Agent 拿校验结果, 不再写死 1000000 行一致.
 func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (*models.MigrationVerification, error) {
-	return &models.MigrationVerification{
-		TaskID:          taskID,
-		SourceCount:     1000000,
-		TargetCount:     1000000,
-		DataConsistency: true,
-		SchemaMatch:     true,
-		ChecksumMatch:   true,
-		VerifiedAt:      time.Now(),
-		Errors:          []string{},
-	}, nil
+	task, err := s.repo.GetByID(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, fmt.Errorf("migration task %s not found", taskID)
+	}
+	inst, err := s.instRepo.GetByID(ctx, task.TargetInstanceID)
+	if err != nil || inst == nil {
+		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
+	}
+	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	result, callErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-verify", map[string]interface{}{
+		"task_id":             taskID,
+		"source_instance_id":  task.SourceInstanceID,
+		"target_instance_id":  task.TargetInstanceID,
+	})
+	out := &models.MigrationVerification{
+		TaskID:     taskID,
+		VerifiedAt: time.Now(),
+	}
+	if callErr != nil {
+		out.Errors = []string{"agent verify call failed: " + callErr.Error()}
+		return out, nil
+	}
+	if v, ok := result.Data["source_count"].(float64); ok {
+		out.SourceCount = int64(v)
+	}
+	if v, ok := result.Data["target_count"].(float64); ok {
+		out.TargetCount = int64(v)
+	}
+	if v, ok := result.Data["data_consistency"].(bool); ok {
+		out.DataConsistency = v
+	}
+	if v, ok := result.Data["schema_match"].(bool); ok {
+		out.SchemaMatch = v
+	}
+	if v, ok := result.Data["checksum_match"].(bool); ok {
+		out.ChecksumMatch = v
+	}
+	if errs, ok := result.Data["errors"].([]interface{}); ok {
+		for _, e := range errs {
+			if s, ok := e.(string); ok {
+				out.Errors = append(out.Errors, s)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*models.MigrationSwitchResult, error) {
-	result, err := s.agentClient.callAgent(ctx, "localhost", 9090, "/agent/tasks/migration-switch", map[string]interface{}{
+	task, _ := s.repo.GetByID(ctx, taskID)
+	var agentHost string = "localhost"
+	agentPort := 9090
+	if task != nil {
+		inst, _ := s.instRepo.GetByID(ctx, task.TargetInstanceID)
+		agentHost, agentPort = resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-switch", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": "",
 		"config":      map[string]interface{}{},

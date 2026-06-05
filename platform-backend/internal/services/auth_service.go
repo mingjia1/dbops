@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -173,6 +174,70 @@ func (s *AuthService) HasPermission(role, permission string) bool {
 	return false
 }
 
+// Register P0-2: 真实实现 - bcrypt 哈希 + 写库, 不再是 no-op.
 func (s *AuthService) Register(ctx context.Context, username, password, email, role string) error {
-	return nil
+	if s.IsStandalone() || s.userRepo == nil {
+		return errors.New("registration is not available in standalone mode")
+	}
+	if existing, _ := s.userRepo.GetByUsername(ctx, username); existing != nil {
+		return errors.New("username already exists")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if role == "" {
+		role = "operator"
+	}
+	return s.userRepo.Create(ctx, &models.User{
+		Username:  username,
+		Password:  string(hash),
+		Email:     email,
+		Role:      role,
+		Status:    "active",
+		CreatedAt: time.Now(),
+	})
+}
+
+// SeedAdminIfEmpty 首次启动 + users 表为空时, 创建一个 admin 账号并返回明文密码.
+// 密码仅返回一次, 调用方必须落到日志里提示用户首次登录后修改.
+func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, username, plainPassword string, err error) {
+	if s.IsStandalone() || s.userRepo == nil {
+		return false, "", "", nil
+	}
+	users, err := s.userRepo.List(ctx, 1, 0)
+	if err != nil {
+		return false, "", "", err
+	}
+	if len(users) > 0 {
+		return false, "", "", nil
+	}
+	username = "admin"
+	plainPassword = generateRandomPassword(20)
+	hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
+	if hashErr != nil {
+		return false, "", "", hashErr
+	}
+	if createErr := s.userRepo.Create(ctx, &models.User{
+		Username:  username,
+		Password:  string(hash),
+		Email:     "admin@localhost",
+		Role:      "admin",
+		Status:    "active",
+		CreatedAt: time.Now(),
+	}); createErr != nil {
+		return false, "", "", createErr
+	}
+	return true, username, plainPassword, nil
+}
+
+func generateRandomPassword(n int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%"
+	b := make([]byte, n)
+	now := time.Now().UnixNano()
+	for i := range b {
+		b[i] = charset[int(now)%len(charset)]
+		now = now*1103515245 + 12345
+	}
+	return string(b)
 }

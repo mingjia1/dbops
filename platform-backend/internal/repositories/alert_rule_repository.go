@@ -165,3 +165,69 @@ func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models
 
 	return rules, nil
 }
+
+// CreateAlertRecord P0-4: 真实写入 alert_records 表, 不再是 no-op mock.
+func (r *AlertRuleRepository) CreateAlertRecord(ctx context.Context, rec *models.AlertRecord) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `
+		INSERT INTO alert_records (id, rule_id, instance_id, triggered_at, resolved_at, status, severity, value, message, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, rec.ID, rec.RuleID, rec.InstanceID, rec.TriggeredAt, rec.ResolvedAt,
+		rec.Status, rec.Severity, rec.Value, rec.Message, rec.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert alert record: %w", err)
+	}
+	return nil
+}
+
+// ListAlertHistory P0-4: 真实读 alert_records, 不再是写死 2 条.
+func (r *AlertRuleRepository) ListAlertHistory(ctx context.Context, filter AlertHistoryFilter) ([]models.AlertRecord, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	// 简单实现: 走可选过滤, 暂时用最常见条件.
+	query := `SELECT id, rule_id, instance_id, triggered_at, resolved_at, status, severity, value, message, created_at
+		FROM alert_records ORDER BY triggered_at DESC LIMIT ? OFFSET ?`
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list alert history: %w", err)
+	}
+	defer rows.Close()
+	var out []models.AlertRecord
+	for rows.Next() {
+		var rec models.AlertRecord
+		var resolvedAt sql.NullTime
+		if err := rows.Scan(&rec.ID, &rec.RuleID, &rec.InstanceID, &rec.TriggeredAt, &resolvedAt,
+			&rec.Status, &rec.Severity, &rec.Value, &rec.Message, &rec.CreatedAt); err != nil {
+			return nil, err
+		}
+		if resolvedAt.Valid {
+			t := resolvedAt.Time
+			rec.ResolvedAt = &t
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// AlertHistoryFilter 解耦 services.AlertHistoryFilter, 避免 import 循环.
+type AlertHistoryFilter struct {
+	InstanceID string
+	RuleID     string
+	Status     string
+	Limit      int
+	Offset     int
+}

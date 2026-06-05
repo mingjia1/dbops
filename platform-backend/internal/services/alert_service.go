@@ -1,8 +1,12 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/smtp"
 	"time"
 
 	"github.com/google/uuid"
@@ -118,19 +122,23 @@ func (s *AlertService) TriggerAlert(ctx context.Context, req TriggerAlertRequest
 	}
 
 	alertID := uuid.New().String()
+	now := time.Now()
 	alertRecord := &models.AlertRecord{
-		ID:         alertID,
-		RuleID:     req.RuleID,
-		InstanceID: req.InstanceID,
-		TriggeredAt: time.Now(),
-		Status:     "firing",
-		Severity:   rule.Severity,
-		Value:      req.Value,
-		Message:    req.Message,
-		CreatedAt:  time.Now(),
+		ID:          alertID,
+		RuleID:      req.RuleID,
+		InstanceID:  req.InstanceID,
+		TriggeredAt: now,
+		Status:      "firing",
+		Severity:    rule.Severity,
+		Value:       req.Value,
+		Message:     req.Message,
+		CreatedAt:   now,
 	}
 
-	fmt.Printf("Alert triggered: %s - Instance: %s - Value: %.2f\n", rule.Name, req.InstanceID, req.Value)
+	// P0-4: 真实写库, 不再是 no-op.
+	if err := s.ruleRepo.CreateAlertRecord(ctx, alertRecord); err != nil {
+		return nil, fmt.Errorf("failed to persist alert record: %w", err)
+	}
 
 	return &AlertTriggerResult{
 		AlertID:     alertID,
@@ -157,19 +165,78 @@ type NotificationResult struct {
 	SuccessCount int       `json:"success_count"`
 }
 
+// SendNotification P0-4: 真实按 channel.webhook_url 调 HTTP POST, 或 SMTP 发送邮件.
+// "channels" 接收 channel id 列表; service 用 notificationRepo 拉取 channel 配置.
 func (s *AlertService) SendNotification(ctx context.Context, req SendNotificationRequest) (*NotificationResult, error) {
 	sentAt := time.Now()
 	successCount := 0
+	failedChannels := []string{}
 
-	for _, channel := range req.Channels {
-		fmt.Printf("Sending notification via %s: %s\n", channel, req.Message)
-		successCount++
+	for _, channelID := range req.Channels {
+		ch, err := s.notificationRepo.GetAlertNotificationByID(ctx, channelID)
+		if err != nil || ch == nil {
+			failedChannels = append(failedChannels, channelID+" (not found)")
+			continue
+		}
+		// 解析 channel_config: {"webhook_url":"...","smtp_host":"...","smtp_user":"...","to":["a@x"]}
+		cfg := parseChannelConfig(ch.ChannelConfig)
+		switch ch.ChannelType {
+		case "webhook":
+			url, _ := cfg["webhook_url"].(string)
+			if url == "" {
+				failedChannels = append(failedChannels, channelID+" (no webhook_url)")
+				continue
+			}
+			payload, _ := json.Marshal(map[string]string{
+				"alert_id": req.AlertID,
+				"message":  req.Message,
+			})
+			httpClient := &http.Client{Timeout: 5 * time.Second}
+			resp, postErr := httpClient.Post(url, "application/json", bytes.NewReader(payload))
+			if postErr != nil || resp.StatusCode >= 400 {
+				failedChannels = append(failedChannels, channelID+" (webhook failed)")
+				continue
+			}
+			_ = resp.Body.Close()
+			successCount++
+		case "email":
+			smtpHost, _ := cfg["smtp_host"].(string)
+			smtpUser, _ := cfg["smtp_user"].(string)
+			smtpPass, _ := cfg["smtp_pass"].(string)
+			toList, _ := cfg["to"].([]interface{})
+			if smtpHost == "" || smtpUser == "" || len(toList) == 0 {
+				failedChannels = append(failedChannels, channelID+" (smtp misconfigured)")
+				continue
+			}
+			from := smtpUser
+			addrs := make([]string, 0, len(toList))
+			for _, a := range toList {
+				if s, ok := a.(string); ok {
+					addrs = append(addrs, s)
+				}
+			}
+			msg := []byte("From: " + from + "\r\n" +
+				"To: " + addrs[0] + "\r\n" +
+				"Subject: [DBOps Alert] " + req.AlertID + "\r\n\r\n" + req.Message)
+			auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+			if smtpErr := smtp.SendMail(smtpHost+":25", auth, from, addrs, msg); smtpErr != nil {
+				failedChannels = append(failedChannels, channelID+" (smtp send failed)")
+				continue
+			}
+			successCount++
+		default:
+			failedChannels = append(failedChannels, channelID+" (unsupported channel_type)")
+		}
 	}
 
 	status := "sent"
 	if successCount == 0 {
 		status = "failed"
+	} else if successCount < len(req.Channels) {
+		status = "partial"
 	}
+
+	// 注: 发送明细 (AlertNotification) 由 Agent 端在投递 webhook/smtp 后写回, 这里只返回汇总.
 
 	return &NotificationResult{
 		AlertID:      req.AlertID,
@@ -178,6 +245,15 @@ func (s *AlertService) SendNotification(ctx context.Context, req SendNotificatio
 		SentAt:       sentAt,
 		SuccessCount: successCount,
 	}, nil
+}
+
+func parseChannelConfig(raw string) map[string]interface{} {
+	out := map[string]interface{}{}
+	if raw == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
 }
 
 type AlertHistoryFilter struct {
@@ -203,38 +279,34 @@ type AlertHistoryEntry struct {
 	ResolvedAt  *time.Time `json:"resolved_at"`
 }
 
+// GetAlertHistory P0-4: 真实读 alert_records, 不再是写死的 2 条.
 func (s *AlertService) GetAlertHistory(ctx context.Context, filter AlertHistoryFilter) ([]AlertHistoryEntry, error) {
-	resolvedTime := time.Now().Add(-30 * time.Minute)
-	triggeredTime2 := time.Now().Add(-2 * time.Hour)
-
-	history := []AlertHistoryEntry{
-		{
-			ID:          uuid.New().String(),
-			RuleID:      "rule-001",
-			RuleName:    "CPU High Alert",
-			InstanceID:  "instance-001",
-			Status:      "firing",
-			Severity:    "critical",
-			Value:       85.5,
-			Message:     "CPU usage exceeded threshold",
-			TriggeredAt: time.Now().Add(-1 * time.Hour),
-			ResolvedAt:  nil,
-		},
-		{
-			ID:          uuid.New().String(),
-			RuleID:      "rule-002",
-			RuleName:    "Memory Low Alert",
-			InstanceID:  "instance-002",
-			Status:      "resolved",
-			Severity:    "warning",
-			Value:       15.2,
-			Message:     "Memory usage below threshold",
-			TriggeredAt: triggeredTime2,
-			ResolvedAt:  &resolvedTime,
-		},
+	records, err := s.ruleRepo.ListAlertHistory(ctx, repositories.AlertHistoryFilter{
+		InstanceID: filter.InstanceID,
+		RuleID:     filter.RuleID,
+		Status:     filter.Status,
+		Limit:      filter.Limit,
+		Offset:     filter.Offset,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return history, nil
+	out := make([]AlertHistoryEntry, 0, len(records))
+	for _, r := range records {
+		out = append(out, AlertHistoryEntry{
+			ID:          r.ID,
+			RuleID:      r.RuleID,
+			RuleName:    r.RuleID, // ruleName 需要 join, 这里返回 id 留 TODO
+			InstanceID:  r.InstanceID,
+			Status:      r.Status,
+			Severity:    r.Severity,
+			Value:       r.Value,
+			Message:     r.Message,
+			TriggeredAt: r.TriggeredAt,
+			ResolvedAt:  r.ResolvedAt,
+		})
+	}
+	return out, nil
 }
 
 func (s *AlertService) CreateAlertRule(ctx context.Context, rule *models.AlertRule) error {

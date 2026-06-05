@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -19,7 +20,7 @@ func NewUserRepository(db *Database) *UserRepository {
 
 func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 	if r.db == nil || r.db.Pool == nil {
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	if user.ID == "" {
 		user.ID = uuid.New().String()
@@ -36,7 +37,7 @@ func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return nil, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
@@ -60,7 +61,7 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return nil, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
@@ -84,7 +85,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 
 func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]models.User, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.User{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	query := `
 		SELECT id, username, password, email, role, status, created_at, updated_at
@@ -113,7 +114,7 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]models.
 
 func (r *UserRepository) Update(ctx context.Context, user *models.User) error {
 	if r.db == nil || r.db.Pool == nil {
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	query := `
 		UPDATE users SET username = ?, password = ?, email = ?, role = ?, status = ?, updated_at = ?
@@ -126,7 +127,7 @@ func (r *UserRepository) Update(ctx context.Context, user *models.User) error {
 
 func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	if r.db == nil || r.db.Pool == nil {
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	return err

@@ -88,16 +88,36 @@ func (r *AlertNotificationRepository) GetAlertNotificationByID(ctx context.Conte
 	`
 
 	notification := &models.NotificationChannel{}
+	var name, chType, chCfg, tmpl, desc sql.NullString
+	var updatedAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
-		&notification.ID, &notification.Name, &notification.ChannelType, &notification.ChannelConfig,
-		&notification.Template, &notification.IsActive, &notification.Priority, &notification.Description,
-		&notification.CreatedAt, &notification.UpdatedAt)
+		&notification.ID, &name, &chType, &chCfg,
+		&tmpl, &notification.IsActive, &notification.Priority, &desc,
+		&notification.CreatedAt, &updatedAt)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("alert notification not found")
 		}
 		return nil, fmt.Errorf("failed to get alert notification: %w", err)
+	}
+	if name.Valid {
+		notification.Name = name.String
+	}
+	if chType.Valid {
+		notification.ChannelType = chType.String
+	}
+	if chCfg.Valid {
+		notification.ChannelConfig = chCfg.String
+	}
+	if tmpl.Valid {
+		notification.Template = tmpl.String
+	}
+	if desc.Valid {
+		notification.Description = desc.String
+	}
+	if updatedAt.Valid {
+		notification.UpdatedAt = updatedAt.Time
 	}
 
 	return notification, nil
@@ -122,10 +142,30 @@ func (r *AlertNotificationRepository) ListAlertNotifications(ctx context.Context
 	var notifications []models.NotificationChannel
 	for rows.Next() {
 		var notification models.NotificationChannel
-		if err := rows.Scan(&notification.ID, &notification.Name, &notification.ChannelType, &notification.ChannelConfig,
-			&notification.Template, &notification.IsActive, &notification.Priority, &notification.Description,
-			&notification.CreatedAt, &notification.UpdatedAt); err != nil {
+		var name, chType, chCfg, tmpl, desc sql.NullString
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&notification.ID, &name, &chType, &chCfg,
+			&tmpl, &notification.IsActive, &notification.Priority, &desc,
+			&notification.CreatedAt, &updatedAt); err != nil {
 			return nil, err
+		}
+		if name.Valid {
+			notification.Name = name.String
+		}
+		if chType.Valid {
+			notification.ChannelType = chType.String
+		}
+		if chCfg.Valid {
+			notification.ChannelConfig = chCfg.String
+		}
+		if tmpl.Valid {
+			notification.Template = tmpl.String
+		}
+		if desc.Valid {
+			notification.Description = desc.String
+		}
+		if updatedAt.Valid {
+			notification.UpdatedAt = updatedAt.Time
 		}
 		notifications = append(notifications, notification)
 	}
@@ -152,10 +192,30 @@ func (r *AlertNotificationRepository) GetActiveNotifications(ctx context.Context
 	var notifications []models.NotificationChannel
 	for rows.Next() {
 		var notification models.NotificationChannel
-		if err := rows.Scan(&notification.ID, &notification.Name, &notification.ChannelType, &notification.ChannelConfig,
-			&notification.Template, &notification.IsActive, &notification.Priority, &notification.Description,
-			&notification.CreatedAt, &notification.UpdatedAt); err != nil {
+		var name, chType, chCfg, tmpl, desc sql.NullString
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&notification.ID, &name, &chType, &chCfg,
+			&tmpl, &notification.IsActive, &notification.Priority, &desc,
+			&notification.CreatedAt, &updatedAt); err != nil {
 			return nil, err
+		}
+		if name.Valid {
+			notification.Name = name.String
+		}
+		if chType.Valid {
+			notification.ChannelType = chType.String
+		}
+		if chCfg.Valid {
+			notification.ChannelConfig = chCfg.String
+		}
+		if tmpl.Valid {
+			notification.Template = tmpl.String
+		}
+		if desc.Valid {
+			notification.Description = desc.String
+		}
+		if updatedAt.Valid {
+			notification.UpdatedAt = updatedAt.Time
 		}
 		notifications = append(notifications, notification)
 	}

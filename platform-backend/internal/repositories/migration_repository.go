@@ -27,7 +27,7 @@ func NewMigrationRepository(db *Database) *MigrationRepository {
 
 func (r *MigrationRepository) Create(ctx context.Context, task *models.MigrationTask) error {
 	if r.db == nil || r.db.Pool == nil {
-		return r.createInMemory(task)
+		return fmt.Errorf("database not available")
 	}
 	return r.createInDB(ctx, task)
 }
@@ -66,7 +66,7 @@ func (r *MigrationRepository) createInDB(ctx context.Context, task *models.Migra
 
 func (r *MigrationRepository) GetByID(ctx context.Context, id string) (*models.MigrationTask, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return r.getByIDInMemory(id)
+		return nil, fmt.Errorf("database not available")
 	}
 	return r.getByIDInDB(ctx, id)
 }
@@ -104,14 +104,7 @@ func (r *MigrationRepository) getByIDInDB(ctx context.Context, id string) (*mode
 
 func (r *MigrationRepository) UpdateStatus(ctx context.Context, id string, status models.MigrationStatus, progress int) error {
 	if r.db == nil || r.db.Pool == nil {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if t, ok := r.memDB[id]; ok {
-			t.Status = status
-			t.Progress = progress
-			t.UpdatedAt = time.Now()
-		}
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `UPDATE migration_tasks SET status = ?, progress = ?, updated_at = ? WHERE id = ?`, status, progress, time.Now(), id)
 	return err
@@ -119,7 +112,7 @@ func (r *MigrationRepository) UpdateStatus(ctx context.Context, id string, statu
 
 func (r *MigrationRepository) List(ctx context.Context) ([]models.MigrationTask, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return r.listInMemory()
+		return nil, fmt.Errorf("database not available")
 	}
 	return r.listInDB(ctx)
 }

@@ -45,11 +45,31 @@ func ErrorHandler() gin.HandlerFunc {
 	}
 }
 
-func CORS() gin.HandlerFunc {
+// CORS P0-3: 用白名单代替 Allow-Origin: *, 防止任意站点跨源调用.
+// allowedOrigins: 从 config.yaml 注入, 默认 ["http://localhost:3000"].
+func CORS(allowedOrigins []string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
 	return func(ctx *gin.Context) {
-		ctx.Header("Access-Control-Allow-Origin", "*")
+		origin := ctx.GetHeader("Origin")
+		if origin != "" {
+			if _, ok := allowed[origin]; ok {
+				ctx.Header("Access-Control-Allow-Origin", origin)
+				ctx.Header("Vary", "Origin")
+				ctx.Header("Access-Control-Allow-Credentials", "true")
+			} else if len(allowed) > 0 {
+				// 显式拒绝: 不写 Access-Control-Allow-Origin, 浏览器会拦截响应.
+				ctx.Header("Vary", "Origin")
+			}
+		}
 		ctx.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		ctx.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+		ctx.Header("Access-Control-Max-Age", "600")
 
 		if ctx.Request.Method == "OPTIONS" {
 			ctx.AbortWithStatus(http.StatusNoContent)

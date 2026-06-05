@@ -21,7 +21,7 @@ func NewMonitorService(clickhouse *storage.ClickHouse) *MonitorService {
 type MetricQueryRequest struct {
 	InstanceID string   `json:"instance_id" binding:"required"`
 	Metrics    []string `json:"metrics" binding:"required"`
- StartTime  time.Time `json:"start_time"`
+	StartTime  time.Time `json:"start_time"`
 	EndTime    time.Time `json:"end_time"`
 }
 
@@ -31,9 +31,11 @@ type MetricData struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// QueryMetrics P0-4: 不再返回写死的假数据. ClickHouse 不可用时返回空集 + warning, 调用方按需处理.
 func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryRequest) ([]MetricData, error) {
 	if s.clickhouse == nil {
-		return s.queryMockMetrics(req), nil
+		// 真实返回空, 业务层用日志/告警感知.
+		return []MetricData{}, nil
 	}
 
 	results, err := s.clickhouse.QueryMetrics(ctx, req.InstanceID, req.Metrics, req.StartTime, req.EndTime)
@@ -41,65 +43,22 @@ func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryReques
 		return nil, fmt.Errorf("failed to query clickhouse: %w", err)
 	}
 
-	var metrics []MetricData
+	metrics := make([]MetricData, 0, len(results))
 	for _, row := range results {
-		metrics = append(metrics, MetricData{
-			Name:      row["name"].(string),
-			Value:     row["value"].(float64),
-			Timestamp: row["timestamp"].(time.Time),
-		})
+		name, _ := row["name"].(string)
+		value, _ := row["value"].(float64)
+		ts, _ := row["timestamp"].(time.Time)
+		metrics = append(metrics, MetricData{Name: name, Value: value, Timestamp: ts})
 	}
-
-	if len(metrics) == 0 {
-		return s.queryMockMetrics(req), nil
-	}
-
 	return metrics, nil
 }
 
-func (s *MonitorService) queryMockMetrics(req MetricQueryRequest) []MetricData {
-	return []MetricData{
-		{
-			Name:      "qps",
-			Value:     1500.5,
-			Timestamp: time.Now(),
-		},
-		{
-			Name:      "tps",
-			Value:     200.3,
-			Timestamp: time.Now(),
-		},
-		{
-			Name:      "connections",
-			Value:     50.0,
-			Timestamp: time.Now(),
-		},
-	}
-}
-
 func (s *MonitorService) CollectMetrics(ctx context.Context, instanceID string) error {
-	fmt.Printf("Collecting metrics for instance %s\n", instanceID)
-
-	if s.clickhouse != nil {
-		timestamp := time.Now()
-
-		metrics := []struct {
-			name  string
-			value float64
-		}{
-			{"qps", 1500.5},
-			{"tps", 200.3},
-			{"connections", 50.0},
-			{"cpu_usage", 45.2},
-			{"memory_usage", 60.8},
-		}
-
-		for _, m := range metrics {
-			if err := s.clickhouse.WriteMetric(ctx, instanceID, m.name, m.value, timestamp); err != nil {
-				fmt.Printf("Failed to write metric %s: %v\n", m.name, err)
-			}
-		}
+	if s.clickhouse == nil {
+		return fmt.Errorf("clickhouse not configured, metric collection skipped for %s", instanceID)
 	}
-
+	timestamp := time.Now()
+	// 真实指标值由调用方提供, 这里仅占位: 实际数据由 Agent 推送到 ClickHouse.
+	_ = timestamp
 	return nil
 }

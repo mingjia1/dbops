@@ -19,7 +19,7 @@ func NewBackupRepository(db *Database) *BackupRepository {
 
 func (r *BackupRepository) CreatePolicy(ctx context.Context, policy *models.BackupPolicy) error {
 	if r.db == nil || r.db.Pool == nil {
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	policy.ID = uuid.New().String()
 
@@ -41,7 +41,7 @@ func (r *BackupRepository) CreatePolicy(ctx context.Context, policy *models.Back
 
 func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*models.BackupPolicy, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return nil, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	query := `
 		SELECT id, instance_id, backup_type, schedule, retention_days, storage_type, storage_path, enabled, created_at, updated_at
@@ -65,7 +65,7 @@ func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*model
 
 func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.BackupRecord) error {
 	if r.db == nil || r.db.Pool == nil {
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	record.ID = uuid.New().String()
 
@@ -87,7 +87,7 @@ func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.Back
 
 func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, limit, offset int) ([]models.BackupRecord, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.BackupRecord{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	query := `
 		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at

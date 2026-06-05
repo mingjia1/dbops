@@ -5,19 +5,22 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
 
 type BackupService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
+	policyRepo  *repositories.BackupRepository
 	agentClient *AgentClient
 }
 
-func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, agentClient *AgentClient) *BackupService {
+func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, policyRepo *repositories.BackupRepository, agentClient *AgentClient) *BackupService {
 	return &BackupService{
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
+		policyRepo:  policyRepo,
 		agentClient: agentClient,
 	}
 }
@@ -47,8 +50,28 @@ type BackupTaskResult struct {
 	Checksum    string    `json:"checksum"`
 }
 
+// CreatePolicy P0-4: 真实写入 backup_policies 表, 不再是占位字符串.
 func (s *BackupService) CreatePolicy(ctx context.Context, req CreateBackupPolicyRequest) (string, error) {
-	return fmt.Sprintf("policy-%d", time.Now().Unix()), nil
+	policy := &models.BackupPolicy{
+		InstanceID:    req.InstanceID,
+		BackupType:    req.BackupType,
+		Schedule:      req.Schedule,
+		RetentionDays: req.RetentionDays,
+		StorageType:   req.StorageType,
+		StoragePath:   req.StoragePath,
+		Enabled:       req.Enabled,
+		CreatedAt:     time.Now(),
+	}
+	if policy.StorageType == "" {
+		policy.StorageType = "local"
+	}
+	if policy.RetentionDays == 0 {
+		policy.RetentionDays = 7
+	}
+	if err := s.policyRepo.CreatePolicy(ctx, policy); err != nil {
+		return "", err
+	}
+	return policy.ID, nil
 }
 
 func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequest) (*BackupTaskResult, error) {
@@ -73,29 +96,62 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		"backup_type": req.BackupType,
 		"target_dir":  "/backup/mysql",
 	}
-
+	taskID := fmt.Sprintf("backup-%d", time.Now().Unix())
+	now := time.Now()
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
-		"task_id":     fmt.Sprintf("backup-%d", time.Now().Unix()),
+		"task_id":     taskID,
 		"instance_id": req.InstanceID,
 		"config":      config,
 	})
-	if err != nil {
-		return &BackupTaskResult{
-			TaskID:    fmt.Sprintf("backup-%d", time.Now().Unix()),
-			Status:    "failed",
-			StartedAt: time.Now(),
-		}, nil
+	out := &BackupTaskResult{
+		TaskID:    taskID,
+		StartedAt: now,
 	}
+	if err != nil {
+		out.Status = "failed"
+		// 真实落库失败记录, 而不是悄无声息.
+		_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
+			InstanceID: req.InstanceID,
+			BackupType: req.BackupType,
+			StartedAt:  now,
+			Status:     "failed",
+			CreatedAt:  now,
+		})
+		return out, nil
+	}
+	out.Status = result.Status
+	out.CompletedAt = time.Now()
+	out.FilePath = result.Message
 
-	return &BackupTaskResult{
-		TaskID:      result.TaskID,
-		Status:      result.Status,
-		StartedAt:   time.Now(),
-		CompletedAt: time.Now(),
-		FilePath:    result.Message,
-	}, nil
+	_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
+		InstanceID: req.InstanceID,
+		BackupType: req.BackupType,
+		StartedAt:  now,
+		CompletedAt: out.CompletedAt,
+		Status:     out.Status,
+		FilePath:   out.FilePath,
+		CreatedAt:  now,
+	})
+	return out, nil
 }
 
+// ListBackups P0-4: 真实从 backup_records 读, 不再返回空.
 func (s *BackupService) ListBackups(ctx context.Context, instanceID string) ([]BackupTaskResult, error) {
-	return []BackupTaskResult{}, nil
+	records, err := s.policyRepo.ListRecords(ctx, instanceID, 100, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BackupTaskResult, 0, len(records))
+	for _, r := range records {
+		out = append(out, BackupTaskResult{
+			TaskID:      r.ID,
+			Status:      r.Status,
+			StartedAt:   r.StartedAt,
+			CompletedAt: r.CompletedAt,
+			FilePath:    r.FilePath,
+			FileSize:    r.FileSize,
+			Checksum:    r.Checksum,
+		})
+	}
+	return out, nil
 }

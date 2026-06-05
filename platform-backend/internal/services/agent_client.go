@@ -14,13 +14,15 @@ import (
 
 type AgentClient struct {
 	httpClient *http.Client
+	agentToken string
 }
 
-func NewAgentClient() *AgentClient {
+func NewAgentClient(agentToken string) *AgentClient {
 	return &AgentClient{
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second,
 		},
+		agentToken: agentToken,
 	}
 }
 
@@ -36,6 +38,8 @@ type AgentTaskResult struct {
 	Progress  int    `json:"progress"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+	// Data 携带 verify / 复杂任务的额外字段, 例如 source_count / target_count / errors.
+	Data map[string]interface{} `json:"data"`
 }
 
 type agentResponse struct {
@@ -101,6 +105,10 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// P1-2: 携带 agent_token 鉴权, 与 Agent 端校验.
+	if c.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.agentToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -133,6 +141,9 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.agentToken)
 	}
 
 	resp, err := c.httpClient.Do(req)

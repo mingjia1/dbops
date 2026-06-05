@@ -27,7 +27,7 @@ func NewClusterDeployRepository(db *Database) *ClusterDeployRepository {
 
 func (r *ClusterDeployRepository) Create(ctx context.Context, dep *models.ClusterDeployment) error {
 	if r.db == nil || r.db.Pool == nil {
-		return r.createInMemory(dep)
+		return fmt.Errorf("database not available")
 	}
 	return r.createInDB(ctx, dep)
 }
@@ -66,7 +66,7 @@ func (r *ClusterDeployRepository) createInDB(ctx context.Context, dep *models.Cl
 
 func (r *ClusterDeployRepository) GetByID(ctx context.Context, id string) (*models.ClusterDeployment, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return r.getByIDInMemory(id)
+		return nil, fmt.Errorf("database not available")
 	}
 	return r.getByIDInDB(ctx, id)
 }
@@ -97,13 +97,7 @@ func (r *ClusterDeployRepository) getByIDInDB(ctx context.Context, id string) (*
 
 func (r *ClusterDeployRepository) UpdateStatus(ctx context.Context, id, status string) error {
 	if r.db == nil || r.db.Pool == nil {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if dep, ok := r.memDB[id]; ok {
-			dep.Status = status
-			dep.UpdatedAt = time.Now()
-		}
-		return nil
+		return fmt.Errorf("database not available")
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `UPDATE cluster_deployments SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now(), id)
 	return err

@@ -44,5 +44,5 @@ func newTestMigrationRepo() *repositories.MigrationRepository {
 }
 
 func newTestMigrationService() *MigrationService {
-	return NewMigrationService(newTestMigrationRepo(), newTestInstanceRepo(context.Background()), newTestAgentClient())
+	return NewMigrationService(newTestMigrationRepo(), newTestInstanceRepo(context.Background()), nil, newTestAgentClient())
 }

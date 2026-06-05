@@ -73,7 +73,7 @@ func (r *AuditLogRepository) GetByID(ctx context.Context, id string) (*models.Au
 
 func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]models.AuditLog, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.AuditLog{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 
 	query := `
@@ -103,7 +103,7 @@ func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]mod
 
 func (r *AuditLogRepository) ListByUserID(ctx context.Context, userID string, limit, offset int) ([]models.AuditLog, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.AuditLog{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 
 	query := `
@@ -133,7 +133,7 @@ func (r *AuditLogRepository) ListByUserID(ctx context.Context, userID string, li
 
 func (r *AuditLogRepository) ListByResource(ctx context.Context, resourceType, resourceID string, limit, offset int) ([]models.AuditLog, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.AuditLog{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 
 	query := `
@@ -248,7 +248,7 @@ func (r *ApprovalRequestRepository) GetByID(ctx context.Context, id string) (*mo
 
 func (r *ApprovalRequestRepository) List(ctx context.Context, limit, offset int) ([]models.ApprovalRequest, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.ApprovalRequest{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 
 	query := `
@@ -276,7 +276,7 @@ func (r *ApprovalRequestRepository) List(ctx context.Context, limit, offset int)
 
 func (r *ApprovalRequestRepository) ListByStatus(ctx context.Context, status string, limit, offset int) ([]models.ApprovalRequest, error) {
 	if r.db == nil || r.db.Pool == nil {
-		return []models.ApprovalRequest{}, nil
+		return nil, fmt.Errorf("database not available")
 	}
 
 	query := `
