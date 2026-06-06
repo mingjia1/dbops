@@ -178,6 +178,20 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			// B8: 长任务进度查询. 当前 agent 端不持久化 task 状态 (内存),
+			// 返 "no record" 让 backend 知道任务已结束. 后续可以挂 Redis 持久化.
+			tasks.GET("/:id/progress", func(c *gin.Context) {
+				taskID := c.Param("id")
+				if taskID == "" {
+					c.JSON(400, gin.H{"code": 400, "message": "task id required"})
+					return
+				}
+				c.JSON(404, gin.H{
+					"code":    404,
+					"message": "agent has no in-memory record of task " + taskID + " (long ops don't track progress in v1; rely on backend TaskRepository)",
+				})
+			})
+
 			tasks.POST("/migration-switch", func(c *gin.Context) {
 				var req executor.DeployTaskRequest
 				if err := c.ShouldBindJSON(&req); err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -248,7 +249,7 @@ func TestUpgradeService_CheckCompatibility_InstanceNotFound(t *testing.T) {
 }
 
 func TestUpgradeService_Original_GetServiceStatus(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	service := NewUpgradeService(nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -262,7 +263,7 @@ func TestUpgradeService_Original_GetServiceStatus(t *testing.T) {
 }
 
 func TestUpgradeService_Original_GetSupportedVersions(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	service := NewUpgradeService(nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -278,7 +279,7 @@ func TestUpgradeService_Original_GetSupportedVersions(t *testing.T) {
 }
 
 func TestUpgradeService_Original_ValidateUpgradePath(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	service := NewUpgradeService(nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -290,7 +291,7 @@ func TestUpgradeService_Original_ValidateUpgradePath(t *testing.T) {
 }
 
 func TestUpgradeService_Original_ValidateUpgradePath_Invalid(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	service := NewUpgradeService(nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -302,7 +303,11 @@ func TestUpgradeService_Original_ValidateUpgradePath_Invalid(t *testing.T) {
 }
 
 func TestUpgradeService_Original_ExecuteRollingUpgrade(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	// B3: 真用 instanceRepo.ListByClusterID, 不能再传 nil. 改用共享 sqlite test DB.
+	db := newTestDB()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
 
 	ctx := context.Background()
 
@@ -322,7 +327,11 @@ func TestUpgradeService_Original_ExecuteRollingUpgrade(t *testing.T) {
 }
 
 func TestUpgradeService_Original_GenerateUpgradeReport(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	// B3: GenerateUpgradeReport 现在真用 taskRepo.GetByID. 共享 sqlite test DB.
+	db := newTestDB()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
 
 	ctx := context.Background()
 
@@ -341,7 +350,7 @@ func TestUpgradeService_Original_GenerateUpgradeReport(t *testing.T) {
 }
 
 func TestUpgradeService_Original_extractMajorVersion(t *testing.T) {
-	service := NewUpgradeService(nil, nil)
+	service := NewUpgradeService(nil, nil, nil)
 
 	assert.Equal(t, "5.7", service.extractMajorVersion("5.7.40"))
 	assert.Equal(t, "8.0", service.extractMajorVersion("8.0.36"))

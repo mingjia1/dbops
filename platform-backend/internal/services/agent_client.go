@@ -19,8 +19,10 @@ type AgentClient struct {
 
 func NewAgentClient(agentToken string) *AgentClient {
 	return &AgentClient{
+		// B8: 之前 300s timeout 撞死长任务 (backup/upgrade/migration/role-switch).
+		// 修: 30s 适合短 op; 长 op 走 fire-and-forget + GetTaskProgress 轮询.
 		httpClient: &http.Client{
-			Timeout: 300 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 		agentToken: agentToken,
 	}
@@ -185,6 +187,43 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	return result.Data, nil
+}
+
+// GetTaskProgress B8: 长任务 (backup/upgrade/migration/role-switch) 现在用
+// fire-and-forget 派发 (调 callAgent 拿到 202 + task_id 后立即返), 前端用此方法
+// 轮询 task 进度, 不再被 300s httpClient.Timeout 撞死.
+func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int, taskID string) (*AgentTaskResult, error) {
+	url := fmt.Sprintf("http://%s:%d/agent/tasks/%s/progress", host, port, taskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.agentToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agent progress request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("agent has no record of task %s (may have completed and been purged)", taskID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result agentResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
 	return result.Data, nil
 }
 

@@ -152,7 +152,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)
 
-	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo)
+	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient)
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
 	versionCatalog := services.NewVersionCatalog()
@@ -175,6 +175,9 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	approvalService := services.NewApprovalService(approvalRepo, auditRepo)
 	auditService := services.NewAuditService(auditRepo, approvalRepo)
 	approvalController := controllers.NewApprovalController(approvalService)
+
+	// B8: 长任务进度查询.
+	taskController := controllers.NewTaskController(taskRepo)
 	auditController := controllers.NewAuditController(auditService)
 
 	dataMigrationController := controllers.NewDataMigrationController(cfg)
@@ -396,6 +399,13 @@ migrations := protected.Group("/migrations")
 				approvals.GET("/:id", approvalController.GetApprovalRequestByID)
 				approvals.POST("/:id/approve", approvalController.ApproveRequest)
 				approvals.POST("/:id/reject", approvalController.RejectRequest)
+			}
+
+			// B8: 通用 task 进度查询, 升级/备份/迁移共用.
+			tasks := protected.Group("/tasks")
+			{
+				tasks.GET("/:id", taskController.GetByID)
+				tasks.GET("", taskController.ListByInstance)
 			}
 
 			auditLogs := protected.Group("/audit-logs")

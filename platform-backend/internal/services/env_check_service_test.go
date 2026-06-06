@@ -84,8 +84,8 @@ func TestEnvironmentCheck_checkHost(t *testing.T) {
 	for _, r := range results {
 		assert.NotEmpty(t, r.Category)
 		assert.NotEmpty(t, r.Name)
+		// B4: 真实探测后状态可能是 passed/failed/unknown, 不再硬要求 true.
 		assert.NotEmpty(t, r.Status)
-		assert.True(t, r.Passed)
 		assert.NotEmpty(t, r.Value)
 	}
 }
@@ -190,8 +190,13 @@ func TestCheckResult_AllPassed(t *testing.T) {
 		if r.Category == "agent" {
 			// 不可达时 agent 探测应失败.
 			assert.False(t, r.Passed)
+		} else if r.Name == "port_reachable" {
+			// B4: TCP 真实探测, 端口 1 必失败.
+			assert.False(t, r.Passed)
 		} else {
-			assert.True(t, r.Passed)
+			// B4: 硬件/os/依赖 需要 agent 端采集, 标 unknown 而不是假装 passed.
+			assert.Equal(t, "unknown", r.Status)
+			assert.False(t, r.Passed)
 		}
 	}
 }

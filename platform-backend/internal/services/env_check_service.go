@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
+	"net"
+	"runtime"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -87,57 +89,59 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	return result, nil
 }
 
+// checkHost B4: 之前 6 条检查全写死 Passed:true, 客户被假数据误导.
+// 修: TCP 端口可达性用 net.Dial 真探测; CPU/内存/磁盘/内核/依赖 标记 unknown (需要 agent
+// 真实采集, 当前 backend 没有 SSH 通道, 不能假报 passed).
 func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
-	return []CheckResult{
-		{
-			Category:   "hardware",
-			Name:       "cpu_cores",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "8",
-			Suggestion: "",
-		},
-		{
-			Category:   "hardware",
-			Name:       "memory_size",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "16GB",
-			Suggestion: "生产环境建议 ≥ 32GB",
-		},
-		{
-			Category:   "hardware",
-			Name:       "disk_space",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "100GB",
-			Suggestion: "数据目录建议 ≥ 500GB",
-		},
-		{
-			Category:   "os",
-			Name:       "kernel_version",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "5.4.0",
-			Suggestion: "",
-		},
-		{
+	results := []CheckResult{}
+
+	// 真探测: TCP 3306 可达
+	addr := net.JoinHostPort(host.Host, fmt.Sprintf("%d", host.Port))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		results = append(results, CheckResult{
 			Category:   "network",
-			Name:       "port_3306",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "available",
-			Suggestion: "",
-		},
-		{
-			Category:   "dependency",
-			Name:       "libaio",
-			Status:     "passed",
-			Passed:     true,
-			Value:      "installed",
-			Suggestion: "",
-		},
+			Name:       "port_reachable",
+			Status:     "failed",
+			Passed:     false,
+			Value:      fmt.Sprintf("%s: %v", addr, err),
+			Suggestion: "确认 MySQL 已启动且 3306 端口对 backend 可达",
+		})
+	} else {
+		_ = conn.Close()
+		results = append(results, CheckResult{
+			Category: "network",
+			Name:     "port_reachable",
+			Status:   "passed",
+			Passed:   true,
+			Value:    fmt.Sprintf("%s: ok", addr),
+		})
 	}
+
+	// 硬件/OS/依赖 真探测需要 agent 走 SSH/sysfs, 当前 backend 没有 SSH,
+	// 标 unknown 让用户看到 "需要安装 agent 才有真实数据", 不再假报 passed.
+	for _, item := range []struct{ cat, name, suggestion string }{
+		{"hardware", "cpu_cores", "需要 agent 端采集"},
+		{"hardware", "memory_size", "需要 agent 端采集"},
+		{"hardware", "disk_space", "需要 agent 端采集"},
+		{"os", "kernel_version", "需要 agent 端采集"},
+		{"dependency", "libaio", "需要 agent 端采集"},
+	} {
+		results = append(results, CheckResult{
+			Category:   item.cat,
+			Name:       item.name,
+			Status:     "unknown",
+			Passed:     false,
+			Value:      "not_collected",
+			Suggestion: item.suggestion,
+		})
+	}
+
+	// 本地 backend 的 runtime 信息 (仅供 debug, 不冒充目标主机)
+	_ = runtime.GOOS
+	_ = runtime.NumCPU()
+
+	return results
 }
 
 func (s *EnvironmentCheckService) GetByID(ctx context.Context, checkID string) (*EnvironmentCheckResult, error) {

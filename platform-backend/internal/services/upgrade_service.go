@@ -15,12 +15,16 @@ import (
 type UpgradeService struct {
 	instanceRepo *repositories.InstanceRepository
 	taskRepo     *repositories.TaskRepository
+	// B3: 之前 4 个 Execute* 是写死返回, 不调 agent. 注入 AgentClient 后
+	// 真正派发到 agent 端 UpgradeExecutor.
+	agentClient *AgentClient
 }
 
-func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *repositories.TaskRepository) *UpgradeService {
+func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient) *UpgradeService {
 	return &UpgradeService{
 		instanceRepo: instanceRepo,
 		taskRepo:     taskRepo,
+		agentClient:  agentClient,
 	}
 }
 
@@ -289,8 +293,6 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	_ = instance
-
 	// Read source version from the instance — no hard-coded "5.7.40" anymore.
 	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
@@ -302,9 +304,18 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	}
 
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
+	taskID := uuid.New().String()
+
+	// B3: 真派发到 agent /agent/tasks/upgrade (agent 端按 upgrade_type 路由).
+	// 失败时立即返 error, 不再假装 running.
+	if s.agentClient != nil {
+		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "in-place", targetVersion, map[string]interface{}{}); err != nil {
+			return nil, fmt.Errorf("failed to dispatch in-place upgrade to agent: %w", err)
+		}
+	}
 
 	response := &ExecuteInPlaceUpgradeResponse{
-		TaskID:      uuid.New().String(),
+		TaskID:      taskID,
 		PlanID:      req.PlanID,
 		InstanceID:  req.InstanceID,
 		Status:      "running",
@@ -354,8 +365,6 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	_ = instance
-
 	if req.Parallelism == 0 {
 		req.Parallelism = 4
 	}
@@ -374,9 +383,23 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	}
 
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
+	taskID := uuid.New().String()
+
+	// B3: 调 agent ExecuteLogicalMigration (走 mysqldump 导出 → 导入).
+	if s.agentClient != nil {
+		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "logical", targetVersion, map[string]interface{}{
+			"parallelism":      req.Parallelism,
+			"batch_size":       req.BatchSize,
+			"backup_enabled":   req.BackupEnabled,
+			"source_version":   sourceVersion,
+			"target_flavor":    req.TargetFlavor,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to dispatch logical migration to agent: %w", err)
+		}
+	}
 
 	response := &ExecuteLogicalMigrationResponse{
-		TaskID:      uuid.New().String(),
+		TaskID:      taskID,
 		PlanID:      req.PlanID,
 		InstanceID:  req.InstanceID,
 		Status:      "running",
@@ -432,25 +455,42 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 		req.HealthCheckInterval = 30
 	}
 
-	instances := []RollingUpgradeInstance{
-		{
-			InstanceID: "instance-1",
-			Role:       "master",
-			Status:     "pending",
-			StartedAt:  time.Time{},
+	taskID := uuid.New().String()
+	// B3: 之前是写死 instance-1 / instance-2 占位. 现在从 instRepo 查真实实例列表.
+	clusterInstances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
+	}
+	instances := make([]RollingUpgradeInstance, 0, len(clusterInstances))
+	for _, inst := range clusterInstances {
+		role := inst.Status.Role
+		if role == "" {
+			role = "replica"
+		}
+		instances = append(instances, RollingUpgradeInstance{
+			InstanceID:  inst.ID,
+			Role:        role,
+			Status:      "pending",
+			StartedAt:   time.Time{},
 			CompletedAt: time.Time{},
-		},
-		{
-			InstanceID: "instance-2",
-			Role:       "slave",
-			Status:     "pending",
-			StartedAt:  time.Time{},
-			CompletedAt: time.Time{},
-		},
+		})
+	}
+
+	// B3: 真派发 rolling upgrade, agent 端会按序升级每个实例.
+	if s.agentClient != nil && len(clusterInstances) > 0 {
+		// rolling 升级 dispatch 用集群中第一个实例作为 anchor,
+		// agent 端会从 topology 解析其他节点.
+		if _, err := s.dispatchUpgrade(ctx, clusterInstances[0], taskID, "rolling", req.TargetVersion, map[string]interface{}{
+			"max_in_parallel":       req.MaxInParallel,
+			"health_check_interval": req.HealthCheckInterval,
+			"cluster_id":            req.ClusterID,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to dispatch rolling upgrade to agent: %w", err)
+		}
 	}
 
 	response := &ExecuteRollingUpgradeResponse{
-		TaskID:       uuid.New().String(),
+		TaskID:       taskID,
 		PlanID:       req.PlanID,
 		ClusterID:    req.ClusterID,
 		Status:       "running",
@@ -482,7 +522,7 @@ type RollbackUpgradeResponse struct {
 }
 
 func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgradeRequest) (*RollbackUpgradeResponse, error) {
-	_, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
+	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
@@ -495,8 +535,20 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 		{Order: 5, Name: "Verify Recovery", Type: "verify", Description: "Verify data integrity"},
 	}
 
+	taskID := uuid.New().String()
+
+	// B3: 派发 rollback 到 agent, 调 restoreBackup (按 task_id 找预备份).
+	if s.agentClient != nil {
+		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "rollback", "", map[string]interface{}{
+			"backup_id": req.BackupID,
+			"force":     req.Force,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to dispatch rollback to agent: %w", err)
+		}
+	}
+
 	response := &RollbackUpgradeResponse{
-		RollbackID:  uuid.New().String(),
+		RollbackID:  taskID,
 		PlanID:      req.PlanID,
 		InstanceID:  req.InstanceID,
 		Status:      "running",
@@ -550,45 +602,91 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 		req.ReportType = "full"
 	}
 
-	issues := []ReportIssue{
-		{
-			Severity:    "warning",
-			Type:        "compatibility",
-			Description: "Deprecated SQL mode detected",
-			Timestamp:   time.Now().Add(-30 * time.Minute).Format(time.RFC3339),
-			Resolved:    true,
-		},
+	// B3: 之前是写死 "Upgrade from MySQL 5.7.40 to 8.0.36 completed successfully" + 假 metrics.
+	// 修: 用 taskRepo.GetByID 把 PlanID 当 task_id 查, 找不到就如实返 "no data".
+	task, _ := s.taskRepo.GetByID(ctx, req.PlanID)
+	if task == nil {
+		return &GenerateUpgradeReportResponse{
+			ReportID:    uuid.New().String(),
+			PlanID:      req.PlanID,
+			ReportType:  req.ReportType,
+			GeneratedAt: time.Now(),
+			Summary:     fmt.Sprintf("No task found for plan %s", req.PlanID),
+			Details:     "Upgrade has not been dispatched yet, or task record was lost.",
+			Metrics:     ReportMetrics{},
+			Issues:      []ReportIssue{},
+			Recommendations: []string{
+				"Trigger an upgrade via /upgrades/in-place or /upgrades/logical first",
+			},
+		}, nil
+	}
+
+	duration := 0
+	if !task.StartedAt.IsZero() && !task.CompletedAt.IsZero() {
+		duration = int(task.CompletedAt.Sub(task.StartedAt).Seconds())
+	}
+
+	issues := []ReportIssue{}
+	if task.Status == "failed" {
+		issues = append(issues, ReportIssue{
+			Severity:    "error",
+			Type:        "execution",
+			Description: task.ErrorMessage,
+			Timestamp:   task.CompletedAt.Format(time.RFC3339),
+			Resolved:    false,
+		})
 	}
 
 	recommendations := []string{
-		"Review deprecated features before production upgrade",
+		"Review task logs for any warnings before next upgrade",
 		"Enable binary logging for point-in-time recovery",
-		"Consider logical migration for large datasets",
 		"Schedule upgrade during maintenance window",
 	}
 
-	response := &GenerateUpgradeReportResponse{
+	return &GenerateUpgradeReportResponse{
 		ReportID:    uuid.New().String(),
 		PlanID:      req.PlanID,
 		ReportType:  req.ReportType,
 		GeneratedAt: time.Now(),
-		Summary:     "Upgrade from MySQL 5.7.40 to 8.0.36 completed successfully",
-		Details:     "In-place upgrade executed with no critical errors. Data integrity verified.",
+		Summary:     fmt.Sprintf("Upgrade task %s: status=%s, progress=%d%%", task.ID, task.Status, task.Progress),
+		Details:     fmt.Sprintf("Started %s, completed %s. %s", task.StartedAt.Format(time.RFC3339), task.CompletedAt.Format(time.RFC3339), task.ErrorMessage),
 		Metrics: ReportMetrics{
-			Duration:          1800,
-			DataTransferred:   10737418240,
-			TablesProcessed:   150,
-			RowsProcessed:     10000000,
-			ErrorsEncountered: 0,
-			WarningsGenerated: 3,
-			AvgThroughput:     47.5,
-			PeakMemoryUsage:   2048,
+			Duration:          duration,
+			DataTransferred:   0,
+			TablesProcessed:   0,
+			RowsProcessed:     0,
+			ErrorsEncountered: len(issues),
+			WarningsGenerated: 0,
+			AvgThroughput:     0,
+			PeakMemoryUsage:   0,
 		},
 		Issues:         issues,
 		Recommendations: recommendations,
-	}
+	}, nil
+}
 
-	return response, nil
+// dispatchUpgrade B3: 解析 instance 对应的 agent host/port, 调 /agent/tasks/upgrade.
+// 失败立即返 error, 不再假装 running.
+func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.Instance, taskID, upgradeType, targetVersion string, extraConfig map[string]interface{}) (*AgentTaskResult, error) {
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
+	host, port := resolveAgentHost(ctx, instance, s.instanceRepo, nil, 9090)
+
+	cfg := map[string]interface{}{
+		"task_id":        taskID,
+		"upgrade_type":   upgradeType,
+		"target_version": targetVersion,
+		"instance_id":    instance.ID,
+	}
+	for k, v := range extraConfig {
+		cfg[k] = v
+	}
+	return s.agentClient.callAgent(ctx, host, port, "/agent/tasks/upgrade", map[string]interface{}{
+		"task_id":     taskID,
+		"instance_id": instance.ID,
+		"config":      cfg,
+	})
 }
 
 func (s *UpgradeService) planInPlaceUpgradeSteps(source, target string) []UpgradeStepInfo {
