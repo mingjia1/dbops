@@ -749,8 +749,20 @@ func isAlreadyExistsError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	// MySQL: Error 1060 (Duplicate column), Error 1061 (Duplicate key name), Error 121 (Duplicate key)
-	// SQLite: UNIQUE constraint failed
+	// P1-4: 覆盖更多 MySQL 错误码以保证 ALTER / FK 重复执行安全.
+	// 1022 Duplicate entry for key, 1050 Table already exists, 1060 Duplicate column name,
+	// 1061 Duplicate key name, 1062 Duplicate entry, 1091 Can't DROP (idempotent),
+	// 1826 Duplicate foreign key constraint name.
+	if strings.Contains(msg, "Error 1022") ||
+		strings.Contains(msg, "Error 1050") ||
+		strings.Contains(msg, "Error 1060") ||
+		strings.Contains(msg, "Error 1061") ||
+		strings.Contains(msg, "Error 1062") ||
+		strings.Contains(msg, "Error 1091") ||
+		strings.Contains(msg, "Error 1826") {
+		return true
+	}
+	// 兜底关键字匹配, 兼容 driver 版本差异.
 	return strings.Contains(msg, "Duplicate column") ||
 		strings.Contains(msg, "Duplicate key") ||
 		strings.Contains(msg, "already exists") ||

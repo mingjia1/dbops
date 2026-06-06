@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type AuthController struct {
@@ -17,29 +18,17 @@ func NewAuthController(authService *services.AuthService) *AuthController {
 func (c *AuthController) Login(ctx *gin.Context) {
 	var req services.LoginRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request parameters",
-			"error":   err.Error(),
-		})
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
 
 	resp, err := c.authService.Login(ctx.Request.Context(), req)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Authentication failed",
-			"error":   err.Error(),
-		})
+		utils.UnauthorizedResponse(ctx, "Authentication failed")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data":    resp,
-	})
+	utils.SuccessResponse(ctx, resp)
 }
 
 func (c *AuthController) Register(ctx *gin.Context) {
@@ -51,21 +40,12 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request parameters",
-			"error":   err.Error(),
-		})
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
 
-	err := c.authService.Register(ctx.Request.Context(), req.Username, req.Password, req.Email, req.Role)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to register user",
-			"error":   err.Error(),
-		})
+	if err := c.authService.Register(ctx.Request.Context(), req.Username, req.Password, req.Email, req.Role); err != nil {
+		utils.ErrorResponse(ctx, 400, err.Error(), nil)
 		return
 	}
 
@@ -78,10 +58,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	token := ctx.GetHeader("Authorization")
 	if token == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Missing authorization token",
-		})
+		utils.UnauthorizedResponse(ctx, "Missing authorization token")
 		ctx.Abort()
 		return
 	}
@@ -92,11 +69,7 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 
 	claims, err := c.authService.ValidateToken(token)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Invalid token",
-			"error":   err.Error(),
-		})
+		utils.UnauthorizedResponse(ctx, "Invalid token")
 		ctx.Abort()
 		return
 	}

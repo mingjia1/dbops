@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 // DataMigrationController 用于"存储后端"切换:
@@ -34,7 +35,7 @@ func (c *DataMigrationController) GetStatus(ctx *gin.Context) {
 	sqlitePath := c.resolveSQLitePath()
 	db, err := repositories.NewDatabase(c.cfg.DatabaseURL, sqlitePath)
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": "open db failed: " + err.Error()})
+		utils.InternalServerErrorResponse(ctx, "open db failed", err)
 		return
 	}
 	defer db.Close()
@@ -78,7 +79,7 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 	sqlitePath := c.resolveSQLitePath()
 	db, err := repositories.NewDatabase(c.cfg.DatabaseURL, sqlitePath)
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": "open db failed: " + err.Error()})
+		utils.InternalServerErrorResponse(ctx, "open db failed", err)
 		return
 	}
 	defer db.Close()
@@ -86,7 +87,7 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 	importer := repositories.NewJSONImporter(c.cfg.DataDir)
 	n, err := importer.ImportAll(context.Background(), db)
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": err.Error(), "data": gin.H{"imported": n}})
+		utils.ErrorResponse(ctx, 500, "import failed", err)
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{
@@ -99,21 +100,21 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 // MigrateToMySQL 触发 SQLite -> MySQL 全量迁移
 func (c *DataMigrationController) MigrateToMySQL(ctx *gin.Context) {
 	if c.cfg.DatabaseURL == "" {
-		ctx.JSON(http.StatusOK, gin.H{"code": 400, "message": "mysql DSN is empty; please set database_url in config.yaml first"})
+		utils.BadRequestResponse(ctx, "mysql DSN is empty; please set database_url in config.yaml first")
 		return
 	}
 	sqlitePath := c.resolveSQLitePath()
 
 	src, err := repositories.NewDatabase("", sqlitePath)
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": "open sqlite failed: " + err.Error()})
+		utils.InternalServerErrorResponse(ctx, "open sqlite failed", err)
 		return
 	}
 	defer src.Close()
 
 	dst, err := repositories.NewDatabase(c.cfg.DatabaseURL, "")
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": "open mysql failed: " + err.Error()})
+		utils.InternalServerErrorResponse(ctx, "open mysql failed", err)
 		return
 	}
 	defer dst.Close()
@@ -121,7 +122,7 @@ func (c *DataMigrationController) MigrateToMySQL(ctx *gin.Context) {
 	mig := repositories.NewMigrator()
 	res, err := mig.Migrate(src, dst)
 	if err != nil {
-		ctx.JSON(http.StatusOK, gin.H{"code": 500, "message": err.Error(), "data": res})
+		utils.ErrorResponse(ctx, 500, "migration failed", err)
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{

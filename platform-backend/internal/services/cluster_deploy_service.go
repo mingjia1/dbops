@@ -7,6 +7,7 @@ import (
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/config"
 )
 
 type ClusterDeployService struct {
@@ -14,6 +15,7 @@ type ClusterDeployService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	agentClient *AgentClient
+	defaults    config.ClusterDefaults
 }
 
 func NewClusterDeployService(
@@ -21,12 +23,14 @@ func NewClusterDeployService(
 	hostRepo *repositories.HostRepository,
 	instRepo *repositories.InstanceRepository,
 	agentClient *AgentClient,
+	defaults config.ClusterDefaults,
 ) *ClusterDeployService {
 	return &ClusterDeployService{
 		repo:        repo,
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		agentClient: agentClient,
+		defaults:    defaults,
 	}
 }
 
@@ -46,8 +50,8 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		"master_host":    req.MasterHost,
 		"master_port":    req.MasterPort,
 		"vip":            req.VIP,
-		"repl_user":      "repl",
-		"repl_pass":      "repl123",
+		"repl_user":      s.defaults.ReplicationUser,
+		"repl_pass":      s.defaults.ReplicationPass,
 		"ssh_user":       "root",
 		"ping_interval":  3,
 		"ping_retry":     3,
@@ -131,8 +135,8 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			"server_id":       i + 1,
 			"primary_host":    req.PrimaryHost,
 			"primary_port":    req.PrimaryPort,
-			"replicate_user":  "repl",
-			"replicate_pass":  "repl123",
+			"replicate_user":  s.defaults.ReplicationUser,
+			"replicate_pass":  s.defaults.ReplicationPass,
 			"bootstrap":       isPrimary,
 		}
 
@@ -194,8 +198,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		"nodes":           []string{req.BootstrapNode.Host},
 		"wsrep_port":      4567,
 		"sst_method":      "xtrabackup-v2",
-		"replicate_user":  "sstuser",
-		"replicate_pass":  "sstpass",
+		"replicate_user":  s.defaults.SSTUser,
+		"replicate_pass":  s.defaults.SSTPass,
 		"data_dir":        "/var/lib/mysql",
 	}
 
@@ -236,8 +240,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"nodes":          []string{node.Host},
 			"wsrep_port":     4567,
 			"sst_method":     "xtrabackup-v2",
-			"replicate_user": "sstuser",
-			"replicate_pass": "sstpass",
+			"replicate_user": s.defaults.SSTUser,
+			"replicate_pass": s.defaults.SSTPass,
 			"data_dir":       "/var/lib/mysql",
 		}
 		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{

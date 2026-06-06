@@ -7,6 +7,7 @@ import (
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type InstanceService struct {
@@ -14,14 +15,16 @@ type InstanceService struct {
 	hostRepo    *repositories.HostRepository
 	taskRepo    *repositories.TaskRepository
 	agentClient *AgentClient
+	encKey      string
 }
 
-func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient) *InstanceService {
+func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, encKey string) *InstanceService {
 	return &InstanceService{
 		repo:        repo,
 		hostRepo:    hostRepo,
 		taskRepo:    taskRepo,
 		agentClient: agentClient,
+		encKey:      encKey,
 	}
 }
 
@@ -46,9 +49,14 @@ func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest)
 		Host:             req.Host,
 		Port:             req.Port,
 		Username:         req.Username,
-		PasswordEncrypted: req.Password,
 		SSLEnabled:       req.SSLEnabled,
 	}
+	// P1-3: 落库前用 AES-GCM 加密, 与 host.SSHCredential 一致.
+	enc, err := utils.Encrypt(req.Password, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt password: %w", err)
+	}
+	conn.PasswordEncrypted = enc
 
 	if err := s.repo.CreateConnection(ctx, conn); err != nil {
 		return nil, fmt.Errorf("failed to create connection: %w", err)

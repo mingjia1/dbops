@@ -33,7 +33,30 @@ func main() {
 		})
 	})
 
-	agent := r.Group("/agent")
+	// P1-2: 校验 platform-backend 调用 agent 时携带的 Bearer token, 与 config.agent_token 一致.
+	authAgent := func(c *gin.Context) {
+		if cfg.AgentToken == "" {
+			c.AbortWithStatusJSON(500, gin.H{"code": 500, "message": "agent_token not configured"})
+			return
+		}
+		h := c.GetHeader("Authorization")
+		const prefix = "Bearer "
+		if len(h) < len(prefix) || h[:len(prefix)] != prefix {
+			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "missing bearer token"})
+			return
+		}
+		tok := h[len(prefix):]
+		if tok != cfg.AgentToken {
+			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "invalid agent token"})
+			return
+		}
+		c.Next()
+	}
+
+	// 跳过授权的辅助: 把 agent 路由组挂上中间件.
+	_ = authAgent
+
+	agent := r.Group("/agent", authAgent)
 	{
 		tasks := agent.Group("/tasks")
 		{

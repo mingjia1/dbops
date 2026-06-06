@@ -104,7 +104,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	instanceRepo.AttachStore(jsonStore)
 	hostRepo.AttachStore(jsonStore)
 	agentClient := services.NewAgentClient(cfg.AgentToken)
-	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient)
+	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
 	hostService.SetInstanceRepo(instanceRepo)
@@ -142,7 +142,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
-	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient)
+	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 
 	healthCheckService := services.NewHealthCheckService(db)
@@ -189,6 +189,45 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 			"message": "success",
 			"data":    gin.H{"status": "ok", "service": "mysql-ops-platform"},
 		})
+	})
+
+	// P1-8: 探活/就绪分流, 供 k8s livenessProbe / readinessProbe 使用.
+	// /health/live: 进程能响应 HTTP 即返回 200, 用于存活探针.
+	// /health/ready: 校验 db/redis 可达, 失败返 503, 用于就绪探针.
+	r.GET("/health/live", func(c *gin.Context) {
+		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "alive"}})
+	})
+	r.GET("/health/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		checks := gin.H{}
+		allOK := true
+		if db != nil {
+			if err := db.HealthCheck(ctx); err != nil {
+				checks["db"] = err.Error()
+				allOK = false
+			} else {
+				checks["db"] = "ok"
+			}
+		} else {
+			checks["db"] = "not initialized"
+			allOK = false
+		}
+		if redisClient != nil && redisClient.Client != nil {
+			if err := redisClient.Client.Ping(ctx).Err(); err != nil {
+				checks["redis"] = err.Error()
+				allOK = false
+			} else {
+				checks["redis"] = "ok"
+			}
+		} else {
+			checks["redis"] = "disabled"
+		}
+		if allOK {
+			c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "ready", "checks": checks}})
+		} else {
+			c.JSON(503, gin.H{"code": 503, "message": "not ready", "data": gin.H{"status": "not_ready", "checks": checks}})
+		}
 	})
 
 	api := r.Group("/api/v1")
