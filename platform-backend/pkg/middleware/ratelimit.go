@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -65,7 +66,11 @@ func RateLimitByIP(limiter *RateLimiter) gin.HandlerFunc {
 }
 
 // LoginRateLimit 登录端点专用, 更严格 (5 req/min per IP).
+// 通过环境变量 DBOPS_LOGIN_RATELIMIT_DISABLE=1 可禁用 (用于 e2e).
 func LoginRateLimit(limiter *RateLimiter) gin.HandlerFunc {
+	if os.Getenv("DBOPS_LOGIN_RATELIMIT_DISABLE") == "1" {
+		return func(c *gin.Context) { c.Next() }
+	}
 	return func(ctx *gin.Context) {
 		ip := ctx.ClientIP()
 		if !limiter.Allow("login:"+ip) {

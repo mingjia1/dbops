@@ -550,8 +550,8 @@ var schemaSQLite = []string{
 
 	`CREATE TABLE IF NOT EXISTS alert_records (
 		id TEXT PRIMARY KEY,
-		rule_id TEXT REFERENCES alert_rules(id) ON DELETE CASCADE,
-		instance_id TEXT REFERENCES instances(id) ON DELETE CASCADE,
+		rule_id TEXT,
+		instance_id TEXT,
 		triggered_at TIMESTAMP NOT NULL,
 		resolved_at TIMESTAMP,
 		status TEXT DEFAULT 'firing',
