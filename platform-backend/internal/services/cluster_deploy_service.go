@@ -52,7 +52,7 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		"vip":            req.VIP,
 		"repl_user":      s.defaults.ReplicationUser,
 		"repl_pass":      s.defaults.ReplicationPass,
-		"ssh_user":       "root",
+		"ssh_user":       s.defaults.SSHUser,
 		"ping_interval":  3,
 		"ping_retry":     3,
 	}

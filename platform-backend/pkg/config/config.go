@@ -28,6 +28,9 @@ type ClusterDefaults struct {
 	ReplicationPass string
 	SSTUser         string
 	SSTPass         string
+	// P1-6: 之前 cluster_deploy_service 写死 "ssh_user": "root",
+	// 不同环境 (k8s pod / 容器 / 物理机) 不一定是 root. 改成可配.
+	SSHUser string
 }
 
 func Load() (*Config, error) {
@@ -56,6 +59,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("cluster_defaults.replication_pass", "Repl#2024!ChangeMe")
 	viper.SetDefault("cluster_defaults.sst_user", "sstuser")
 	viper.SetDefault("cluster_defaults.sst_pass", "Sst#2024!ChangeMe")
+	// P1-6: 集群部署默认 SSH 账号. 留空让 service 层 fallback 到 "root"
+	// (因为旧部署可能确实就是 root, 不强推非 root).
+	viper.SetDefault("cluster_defaults.ssh_user", "root")
 	// B7: 强制从环境变量注入敏感配置. 即使 config.yaml 误提交, 环境变量也会覆盖.
 	viper.SetDefault("agent_token", "")
 	viper.BindEnv("database_url", "DBOPS_DB_URL")
@@ -90,6 +96,7 @@ func Load() (*Config, error) {
 			ReplicationPass: viper.GetString("cluster_defaults.replication_pass"),
 			SSTUser:         viper.GetString("cluster_defaults.sst_user"),
 			SSTPass:         viper.GetString("cluster_defaults.sst_pass"),
+			SSHUser:         viper.GetString("cluster_defaults.ssh_user"),
 		},
 	}, nil
 }

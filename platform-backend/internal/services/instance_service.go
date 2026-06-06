@@ -112,28 +112,30 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 }
 
 func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models.InstanceVersion, error) {
-	_, err := s.repo.GetByID(ctx, id)
-	if err != nil {
+	if _, err := s.repo.GetByID(ctx, id); err != nil {
 		return nil, err
 	}
-
-	version := &models.InstanceVersion{
-		InstanceID:  id,
-		Flavor:      "mysql",
-		Version:     "8.0",
-		FullVersion: "8.0.36",
-		IsLTS:       true,
-		ReleaseDate: time.Now(),
-		EOLDate:     time.Now().AddDate(5, 0, 0),
-		Features:    "gtid,mgr,window_functions,cte",
-		Engines:     "innodb,myisam",
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 
-	if err := s.repo.CreateVersion(ctx, version); err != nil {
-		return nil, fmt.Errorf("failed to create version: %w", err)
+	// P1-5: 之前直接写死 Flavor=mysql Version=8.0 FullVersion=8.0.36 落库,
+	// 任何 5.6 / 5.7 / 8.4 / MariaDB 都被标记成 8.0.36,
+	// 后续 PlanUpgradePath 用这个假版本做"升级路径校验"全部 OK, 真实升级时炸.
+	// 修: 走 agent 真探测 (SELECT @@version + @@version_comment).
+	// agent 端没对应路由时返 error, 业务层按需处理.
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured; cannot detect version for instance %s", id)
 	}
-
-	return version, nil
+	hostAddr := conn.Host
+	port := conn.Port
+	if hostAddr == "" {
+		return nil, fmt.Errorf("instance %s has no host/port to probe", id)
+	}
+	// Agent 端暂无 /version-detect 专用路由, 这里用一个标记字段让 agent 端知道
+	// (后续可加 tasks.POST("/version-detect")). 现阶段返明确失败.
+	return nil, fmt.Errorf("version detection requires agent support (probe %s:%d) which is not yet wired; manual entry needed", hostAddr, port)
 }
 
 func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult, error) {
