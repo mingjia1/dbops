@@ -57,8 +57,11 @@ func (s *MonitorService) CollectMetrics(ctx context.Context, instanceID string) 
 	if s.clickhouse == nil {
 		return fmt.Errorf("clickhouse not configured, metric collection skipped for %s", instanceID)
 	}
-	timestamp := time.Now()
-	// 真实指标值由调用方提供, 这里仅占位: 实际数据由 Agent 推送到 ClickHouse.
-	_ = timestamp
+	// P1-1: 之前 clickhouse != nil 时直接 return nil, 静默"成功"但实际啥都没做.
+	// 修: 写一行 heartbeat 探针到 clickhouse, 失败立刻报错, 运维能看到 clickhouse 通道是否正常.
+	// 真实指标值由 Agent 推, 这里只做探活.
+	if err := s.clickhouse.WriteMetric(ctx, instanceID, "agent_heartbeat", 1.0, time.Now()); err != nil {
+		return fmt.Errorf("failed to write heartbeat to clickhouse: %w", err)
+	}
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 )
@@ -190,9 +192,27 @@ func (r *AlertRuleRepository) ListAlertHistory(ctx context.Context, filter Alert
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	// 简单实现: 走可选过滤, 暂时用最常见条件.
-	query := `SELECT id, rule_id, instance_id, triggered_at, resolved_at, status, severity, value, message, created_at
-		FROM alert_records ORDER BY triggered_at DESC LIMIT ? OFFSET ?`
+	// P1-2: 之前 SQL 没应用 filter, 注释承认 "暂时用最常见条件". 客户传 instance_id 也返全表.
+	// 修: 动态拼 WHERE, 过滤条件全用 ? 占位符 (防注入).
+	whereClauses := []string{}
+	args := []interface{}{}
+	if filter.InstanceID != "" {
+		whereClauses = append(whereClauses, "instance_id = ?")
+		args = append(args, filter.InstanceID)
+	}
+	if filter.RuleID != "" {
+		whereClauses = append(whereClauses, "rule_id = ?")
+		args = append(args, filter.RuleID)
+	}
+	if filter.Status != "" {
+		whereClauses = append(whereClauses, "status = ?")
+		args = append(args, filter.Status)
+	}
+	where := ""
+	if len(whereClauses) > 0 {
+		where = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
 	limit := filter.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -201,7 +221,12 @@ func (r *AlertRuleRepository) ListAlertHistory(ctx context.Context, filter Alert
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
+	args = append(args, limit, offset)
+
+	query := `SELECT id, rule_id, instance_id, triggered_at, resolved_at, status, severity, value, message, created_at
+		FROM alert_records` + where + ` ORDER BY triggered_at DESC LIMIT ? OFFSET ?`
+
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list alert history: %w", err)
 	}

@@ -140,7 +140,9 @@ func (r *HostRepository) Update(ctx context.Context, host *models.Host) error {
 		return fmt.Errorf("database not initialized")
 	}
 	host.UpdatedAt = time.Now().UTC()
-	_, err := r.db.Pool.ExecContext(ctx, `
+	// P1-3: 之前 UPDATE 不检查 RowsAffected, host 已删除时 update 返 nil 假装成功.
+	// 修: 拿 res.RowsAffected, 0 行返 not found, 业务层能感知.
+	res, err := r.db.Pool.ExecContext(ctx, `
 		UPDATE hosts SET name = ?, address = ?, ssh_port = ?, ssh_user = ?, ssh_auth_method = ?,
 			ssh_credential = ?, agent_port = ?, os_type = ?, description = ?, tags = ?, updated_at = ?
 		WHERE id = ?`,
@@ -149,6 +151,13 @@ func (r *HostRepository) Update(ctx context.Context, host *models.Host) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update host: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("host not found: %s", host.ID)
 	}
 	return nil
 }
