@@ -394,7 +394,12 @@ var schemaSQLite = []string{
 		port INTEGER NOT NULL,
 		username TEXT NOT NULL,
 		password_encrypted TEXT NOT NULL,
-		ssl_enabled INTEGER DEFAULT 0
+		ssl_enabled INTEGER DEFAULT 0,
+		basedir TEXT DEFAULT '',
+		datadir TEXT DEFAULT '',
+		os_user TEXT DEFAULT '',
+		package_url TEXT DEFAULT '',
+		version_id TEXT DEFAULT ''
 	)`,
 
 	`CREATE TABLE IF NOT EXISTS instance_versions (
@@ -716,6 +721,14 @@ var schemaSQLite = []string{
 	`CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`,
+
+	// 版本无关安装/升级字段 (P-generic). idempotent: 已存在则忽略.
+	`ALTER TABLE instance_connections ADD COLUMN basedir VARCHAR(255) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN datadir VARCHAR(255) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN os_user VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN package_url VARCHAR(1024) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN version_id VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.
@@ -748,25 +761,26 @@ func isAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	// P1-4: 覆盖更多 MySQL 错误码以保证 ALTER / FK 重复执行安全.
 	// 1022 Duplicate entry for key, 1050 Table already exists, 1060 Duplicate column name,
 	// 1061 Duplicate key name, 1062 Duplicate entry, 1091 Can't DROP (idempotent),
 	// 1826 Duplicate foreign key constraint name.
-	if strings.Contains(msg, "Error 1022") ||
-		strings.Contains(msg, "Error 1050") ||
-		strings.Contains(msg, "Error 1060") ||
-		strings.Contains(msg, "Error 1061") ||
-		strings.Contains(msg, "Error 1062") ||
-		strings.Contains(msg, "Error 1091") ||
-		strings.Contains(msg, "Error 1826") {
+	if strings.Contains(msg, "error 1022") ||
+		strings.Contains(msg, "error 1050") ||
+		strings.Contains(msg, "error 1060") ||
+		strings.Contains(msg, "error 1061") ||
+		strings.Contains(msg, "error 1062") ||
+		strings.Contains(msg, "error 1091") ||
+		strings.Contains(msg, "error 1826") {
 		return true
 	}
-	// 兜底关键字匹配, 兼容 driver 版本差异.
-	return strings.Contains(msg, "Duplicate column") ||
-		strings.Contains(msg, "Duplicate key") ||
+	// 兜底关键字匹配, 兼容 driver 版本差异 (大小写无关).
+	return strings.Contains(msg, "duplicate column") ||
+		strings.Contains(msg, "duplicate key") ||
 		strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "UNIQUE constraint failed")
+		strings.Contains(msg, "unique constraint failed") ||
+		strings.Contains(msg, "table") && strings.Contains(msg, "already exists")
 }
 
 func trimSQL(s string) string {

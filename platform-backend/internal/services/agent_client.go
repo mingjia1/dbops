@@ -54,14 +54,33 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 
+	cfg := map[string]interface{}{
+		"deploy_mode": "single",
+		"host":        conn.Host,
+		"port":        conn.Port,
+	}
+	// Forward version-agnostic install fields. They are optional — when absent
+	// the agent falls back to whatever is on PATH (legacy behaviour).
+	if conn.VersionID != "" {
+		cfg["version_id"] = conn.VersionID
+	}
+	if conn.PackageURL != "" {
+		cfg["package_url"] = conn.PackageURL
+	}
+	if conn.Basedir != "" {
+		cfg["basedir"] = conn.Basedir
+	}
+	if conn.Datadir != "" {
+		cfg["datadir"] = conn.Datadir
+	}
+	if conn.OSUser != "" {
+		cfg["os_user"] = conn.OSUser
+	}
+
 	payload := DeployTaskPayload{
 		TaskID:     taskID,
 		InstanceID: instance.ID,
-		Config: map[string]interface{}{
-			"deploy_mode": "single",
-			"host":        conn.Host,
-			"port":        conn.Port,
-		},
+		Config:     cfg,
 	}
 
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload)

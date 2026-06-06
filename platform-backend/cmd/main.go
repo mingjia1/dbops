@@ -154,6 +154,9 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo)
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
+	versionCatalog := services.NewVersionCatalog()
+	versionController := controllers.NewVersionController(versionCatalog)
+
 	migrationRepo := repositories.NewMigrationRepository(db)
 	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient)
 
@@ -341,6 +344,13 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 				upgrades.POST("/rollback", upgradeController.RollbackUpgrade)
 				upgrades.GET("/:id", upgradeController.GetUpgradeByID)
 				upgrades.GET("/:id/report", upgradeController.GenerateUpgradeReport)
+			}
+
+			versions := protected.Group("/versions")
+			{
+				versions.GET("", versionController.List)
+				versions.POST("/validate-path", versionController.ValidatePath)
+				versions.GET("/:id", versionController.GetOne)
 			}
 
 migrations := protected.Group("/migrations")

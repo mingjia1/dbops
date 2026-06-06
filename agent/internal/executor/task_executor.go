@@ -82,7 +82,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	host, _ := req.Config["host"].(string)
 	port, _ := req.Config["port"].(int)
 	dataDir, _ := req.Config["data_dir"].(string)
-	
+	packageURL, _ := req.Config["package_url"].(string)
+	basedir, _ := req.Config["basedir"].(string)
+	osUser, _ := req.Config["os_user"].(string)
+
 	if host == "" {
 		host = "localhost"
 	}
@@ -92,8 +95,36 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	if dataDir == "" {
 		dataDir = fmt.Sprintf("/data/mysql/%d", port)
 	}
-	
-	initCmd := exec.CommandContext(ctx, "mysqld", "--initialize-insecure", "--datadir="+dataDir)
+
+	// Version-agnostic path: download + extract the requested tarball.
+	// Falls back to "whatever is on PATH" if package_url is absent (legacy).
+	var mysqld string
+	if packageURL != "" {
+		var installErr error
+		mysqld, installErr = InstallFromURL(ctx, packageURL, "", basedir, osUser)
+		if installErr != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("install from URL failed: %v", installErr),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	} else {
+		// Legacy: rely on PATH
+		mysqld = "mysqld"
+	}
+
+	initArgs := []string{
+		"--initialize-insecure",
+		"--datadir=" + dataDir,
+		"--user=" + osUser,
+	}
+	if basedir != "" {
+		initArgs = append(initArgs, "--basedir="+basedir)
+	}
+	initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
 	if err := initCmd.Run(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -104,7 +135,15 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}, nil
 	}
 	
-	startCmd := exec.CommandContext(ctx, "mysqld_safe", "--datadir="+dataDir, "--port="+fmt.Sprintf("%d", port))
+	startArgs := []string{
+		"--datadir=" + dataDir,
+		"--port=" + fmt.Sprintf("%d", port),
+		"--user=" + osUser,
+	}
+	if basedir != "" {
+		startArgs = append(startArgs, "--basedir="+basedir)
+	}
+	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
 	if err := startCmd.Start(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,

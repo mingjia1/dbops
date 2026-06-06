@@ -45,11 +45,16 @@ func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest)
 	}
 
 	conn := &models.InstanceConnection{
-		InstanceID:       instance.ID,
-		Host:             req.Host,
-		Port:             req.Port,
-		Username:         req.Username,
-		SSLEnabled:       req.SSLEnabled,
+		InstanceID: instance.ID,
+		Host:       req.Host,
+		Port:       req.Port,
+		Username:   req.Username,
+		SSLEnabled: req.SSLEnabled,
+		Basedir:    req.Basedir,
+		Datadir:    req.Datadir,
+		OSUser:     req.OSUser,
+		PackageURL: req.PackageURL,
+		VersionID:  req.VersionID,
 	}
 	// P1-3: 落库前用 AES-GCM 加密, 与 host.SSHCredential 一致.
 	enc, err := utils.Encrypt(req.Password, s.encKey)
@@ -201,6 +206,14 @@ type CreateInstanceRequest struct {
 	Username   string `json:"username" binding:"required"`
 	Password   string `json:"password" binding:"required"`
 	SSLEnabled bool   `json:"ssl_enabled"`
+	// Version-agnostic install fields. Optional at create time; if absent the
+	// install/upgrade can still be triggered later via the deploy endpoint
+	// after a version is selected from /api/v1/versions.
+	VersionID  string `json:"version_id"`
+	PackageURL string `json:"package_url"`
+	Basedir    string `json:"basedir"`
+	Datadir    string `json:"datadir"`
+	OSUser     string `json:"os_user"`
 }
 
 type UpdateInstanceRequest struct {

@@ -9,15 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newInstanceRepoWithHost 创建一个共享 db 的 host+instance repo, 预先 insert 一台 host.
+// instance.host_id 是外键, 没有 host 行时 insert 会失败.
+func newInstanceRepoWithHost(t *testing.T) (*InstanceRepository, *HostRepository) {
+	t.Helper()
+	db := newRepoTestDB()
+	hostRepo := NewHostRepository(db)
+	instRepo := NewInstanceRepository(db)
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: "host-1", Name: "test-host-1", Address: "127.0.0.1"}))
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: "host-2", Name: "test-host-2", Address: "127.0.0.1"}))
+	return instRepo, hostRepo
+}
+
 func TestNewInstanceRepository(t *testing.T) {
-	repo := NewInstanceRepository(nil)
+	repo := NewInstanceRepository(newRepoTestDB())
 	assert.NotNil(t, repo)
-	assert.NotNil(t, repo.memDB)
+	assert.NotNil(t, repo.db)
 }
 
 func TestInstanceRepository_Create_And_GetByID(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
 	hostID := "host-1"
 	inst := &models.Instance{
@@ -40,7 +52,7 @@ func TestInstanceRepository_Create_And_GetByID(t *testing.T) {
 
 func TestInstanceRepository_Create_DuplicateName(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
 	inst1 := &models.Instance{ID: "i-1", Name: "dup"}
 	inst2 := &models.Instance{ID: "i-2", Name: "dup"}
@@ -53,14 +65,14 @@ func TestInstanceRepository_Create_DuplicateName(t *testing.T) {
 
 func TestInstanceRepository_GetByID_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	_, err := repo.GetByID(ctx, "missing")
 	assert.Error(t, err)
 }
 
 func TestInstanceRepository_List_Empty(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
 	items, err := repo.List(ctx, 10, 0)
 	assert.NoError(t, err)
@@ -69,9 +81,9 @@ func TestInstanceRepository_List_Empty(t *testing.T) {
 
 func TestInstanceRepository_List_OrderAndLimit(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
-	hostID := "h"
+	hostID := "host-1"
 	for _, id := range []string{"a", "b", "c"} {
 		require.NoError(t, repo.Create(ctx, &models.Instance{ID: id, Name: id, HostID: &hostID}))
 	}
@@ -88,7 +100,7 @@ func TestInstanceRepository_List_OrderAndLimit(t *testing.T) {
 
 func TestInstanceRepository_ListByHostID(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
 	h1 := "host-1"
 	h2 := "host-2"
@@ -112,9 +124,9 @@ func TestInstanceRepository_ListByHostID(t *testing.T) {
 // --- TDD: ListByClusterID ---
 func TestInstanceRepository_ListByClusterID(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 
-	hostID := "h"
+	hostID := "host-1"
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "a", Name: "a", HostID: &hostID, ClusterID: "c1"}))
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "b", Name: "b", HostID: &hostID, ClusterID: "c1"}))
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "c", Name: "c", HostID: &hostID, ClusterID: "c2"}))
@@ -129,7 +141,7 @@ func TestInstanceRepository_ListByClusterID(t *testing.T) {
 
 func TestInstanceRepository_ListByClusterID_Empty(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	got, err := repo.ListByClusterID(ctx, "nope")
 	assert.NoError(t, err)
 	assert.Empty(t, got)
@@ -137,7 +149,7 @@ func TestInstanceRepository_ListByClusterID_Empty(t *testing.T) {
 
 func TestInstanceRepository_ListByClusterID_NilHostIDAllowed(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "x", Name: "x", ClusterID: "c1"}))
 
 	got, err := repo.ListByClusterID(ctx, "c1")
@@ -147,9 +159,9 @@ func TestInstanceRepository_ListByClusterID_NilHostIDAllowed(t *testing.T) {
 
 func TestInstanceRepository_Update(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
-	hostID := "h1"
-	newHost := "h2"
+	repo, _ := newInstanceRepoWithHost(t)
+	hostID := "host-1"
+	newHost := "host-2"
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "i-1", Name: "i-1", HostID: &hostID, ClusterID: "c1"}))
 
 	updated := &models.Instance{ID: "i-1", Name: "renamed", ClusterID: "c2", HostID: &newHost}
@@ -160,19 +172,19 @@ func TestInstanceRepository_Update(t *testing.T) {
 	assert.Equal(t, "renamed", got.Name)
 	assert.Equal(t, "c2", got.ClusterID)
 	assert.NotNil(t, got.HostID)
-	assert.Equal(t, "h2", *got.HostID)
+	assert.Equal(t, "host-2", *got.HostID)
 }
 
 func TestInstanceRepository_Update_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	err := repo.Update(ctx, &models.Instance{ID: "missing", Name: "x"})
 	assert.Error(t, err)
 }
 
 func TestInstanceRepository_Delete(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "i-1", Name: "i-1"}))
 	require.NoError(t, repo.Delete(ctx, "i-1"))
 
@@ -182,7 +194,9 @@ func TestInstanceRepository_Delete(t *testing.T) {
 
 func TestInstanceRepository_CreateConnection(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
+	hostID := "host-1"
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "inst-1", Name: "inst-1", HostID: &hostID}))
 	conn := &models.InstanceConnection{
 		InstanceID: "inst-1",
 		Host:       "db.example.com",
@@ -202,14 +216,16 @@ func TestInstanceRepository_CreateConnection(t *testing.T) {
 
 func TestInstanceRepository_GetConnection_NotFound(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
 	_, err := repo.GetConnection(ctx, "missing")
 	assert.Error(t, err)
 }
 
 func TestInstanceRepository_CreateVersion(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInstanceRepository(nil)
+	repo, _ := newInstanceRepoWithHost(t)
+	hostID := "host-1"
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "inst-1", Name: "inst-1", HostID: &hostID}))
 	v := &models.InstanceVersion{
 		InstanceID: "inst-1",
 		Flavor:     "mysql",

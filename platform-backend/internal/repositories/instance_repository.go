@@ -117,6 +117,30 @@ func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.
 	return err
 }
 
+func (r *InstanceRepository) GetVersion(ctx context.Context, instanceID string) (*models.InstanceVersion, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	row := r.db.Pool.QueryRowContext(ctx, `
+		SELECT id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, COALESCE(features,''), COALESCE(engines,'')
+		FROM instance_versions WHERE instance_id = ?`, instanceID)
+	var v models.InstanceVersion
+	var releaseDate, eolDate sql.NullTime
+	if err := row.Scan(&v.ID, &v.InstanceID, &v.Flavor, &v.Version, &v.FullVersion, &releaseDate, &eolDate, &v.IsLTS, &v.Features, &v.Engines); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("version not detected for instance %s", instanceID)
+		}
+		return nil, fmt.Errorf("failed to get version: %w", err)
+	}
+	if releaseDate.Valid {
+		v.ReleaseDate = releaseDate.Time
+	}
+	if eolDate.Valid {
+		v.EOLDate = eolDate.Time
+	}
+	return &v, nil
+}
+
 func (r *InstanceRepository) GetByID(ctx context.Context, id string) (*models.Instance, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not initialized")
@@ -124,18 +148,124 @@ func (r *InstanceRepository) GetByID(ctx context.Context, id string) (*models.In
 	row := r.db.Pool.QueryRowContext(ctx,
 		`SELECT id, name, cluster_id, host_id, created_at, updated_at FROM instances WHERE id = ?`, id)
 	instance := &models.Instance{}
-	var hostID sql.NullString
-	if err := row.Scan(&instance.ID, &instance.Name, &instance.ClusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
+	var clusterID, hostID sql.NullString
+	if err := row.Scan(&instance.ID, &instance.Name, &clusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("instance not found")
 		}
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
+	if clusterID.Valid {
+		instance.ClusterID = clusterID.String
+	}
 	if hostID.Valid {
 		s := hostID.String
 		instance.HostID = &s
 	}
+	// 加载 instance_statuses.role / health_status 等运行时字段, 否则 SwitchService 等调用方
+	// 永远读到 Role="" 就会把所有实例误判为 replica 角色.
+	if status, err := r.GetStatus(ctx, id); err == nil {
+		instance.Status = *status
+	}
+	// 加载 instance_topologies (master_id 等), 否则依赖 topology 推导的角色关系会丢失.
+	if topology, err := r.GetTopology(ctx, id); err == nil {
+		instance.Topology = *topology
+	}
 	return instance, nil
+}
+
+// GetTopology 读 instance_topologies 表, 返回该实例的拓扑信息.
+func (r *InstanceRepository) GetTopology(ctx context.Context, instanceID string) (*models.InstanceTopology, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	row := r.db.Pool.QueryRowContext(ctx, `
+		SELECT id, instance_id, COALESCE(cluster_id,''), COALESCE(master_id,''), COALESCE(slave_ids,''), COALESCE(replication_mode,'')
+		FROM instance_topologies WHERE instance_id = ?`, instanceID)
+	var t models.InstanceTopology
+	var id, instID string
+	if err := row.Scan(&id, &instID, &t.ClusterID, &t.MasterID, &t.SlaveIDs, &t.ReplicationMode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("topology not found for instance %s", instanceID)
+		}
+		return nil, fmt.Errorf("failed to get topology: %w", err)
+	}
+	t.InstanceID = instID
+	return &t, nil
+}
+
+// UpsertTopology 写 instance_topologies 行, 存在则 update 否则 insert.
+func (r *InstanceRepository) UpsertTopology(ctx context.Context, instanceID string, topology *models.InstanceTopology) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	var existing string
+	err := r.db.Pool.QueryRowContext(ctx, `SELECT id FROM instance_topologies WHERE instance_id = ?`, instanceID).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			INSERT INTO instance_topologies (id, instance_id, cluster_id, master_id, slave_ids, replication_mode)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			uuid.New().String(), instanceID, nullableString(topology.ClusterID), nullableString(topology.MasterID), nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode))
+	} else if err == nil {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			UPDATE instance_topologies SET cluster_id=?, master_id=?, slave_ids=?, replication_mode=? WHERE instance_id=?`,
+			nullableString(topology.ClusterID), nullableString(topology.MasterID), nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode), instanceID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to upsert topology: %w", err)
+	}
+	return nil
+}
+
+// GetStatus 读 instance_statuses 表, 返回该实例的运行时状态.
+func (r *InstanceRepository) GetStatus(ctx context.Context, instanceID string) (*models.InstanceStatus, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	row := r.db.Pool.QueryRowContext(ctx, `
+		SELECT id, instance_id, run_status, health_status, role, COALESCE(replication_status,''), COALESCE(seconds_behind_master,-1), updated_at
+		FROM instance_statuses WHERE instance_id = ?`, instanceID)
+	var s models.InstanceStatus
+	var id, instID string
+	var lag sql.NullInt64
+	if err := row.Scan(&id, &instID, &s.RunStatus, &s.HealthStatus, &s.Role, &s.ReplicationStatus, &lag, &s.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("status not found for instance %s", instanceID)
+		}
+		return nil, fmt.Errorf("failed to get status: %w", err)
+	}
+	s.InstanceID = instID
+	if lag.Valid {
+		s.SecondsBehindMaster = int(lag.Int64)
+	}
+	return &s, nil
+}
+
+// UpsertStatus 写 instance_statuses 行, 存在则 update 否则 insert.
+func (r *InstanceRepository) UpsertStatus(ctx context.Context, instanceID string, status *models.InstanceStatus) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	now := time.Now().UTC()
+	status.UpdatedAt = now
+	// 先看是否存在
+	var existing string
+	err := r.db.Pool.QueryRowContext(ctx, `SELECT id FROM instance_statuses WHERE instance_id = ?`, instanceID).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			INSERT INTO instance_statuses (id, instance_id, run_status, health_status, role, replication_status, seconds_behind_master, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.New().String(), instanceID, status.RunStatus, status.HealthStatus, status.Role,
+			nullableString(status.ReplicationStatus), status.SecondsBehindMaster, now)
+	} else if err == nil {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			UPDATE instance_statuses SET run_status=?, health_status=?, role=?, replication_status=?, seconds_behind_master=?, updated_at=? WHERE instance_id=?`,
+			status.RunStatus, status.HealthStatus, status.Role, nullableString(status.ReplicationStatus), status.SecondsBehindMaster, now, instanceID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to upsert status: %w", err)
+	}
+	return nil
 }
 
 func (r *InstanceRepository) List(ctx context.Context, limit, offset int) ([]models.Instance, error) {
@@ -184,12 +314,15 @@ func (r *InstanceRepository) ListByHostID(ctx context.Context, hostID string, li
 	instances := make([]models.Instance, 0)
 	for rows.Next() {
 		var instance models.Instance
-		var hid sql.NullString
-		if err := rows.Scan(&instance.ID, &instance.Name, &instance.ClusterID, &hid, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
+		var clusterID, hostID sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.Name, &clusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
 			return nil, err
 		}
-		if hid.Valid {
-			s := hid.String
+		if clusterID.Valid {
+			instance.ClusterID = clusterID.String
+		}
+		if hostID.Valid {
+			s := hostID.String
 			instance.HostID = &s
 		}
 		instances = append(instances, instance)
@@ -212,9 +345,12 @@ func (r *InstanceRepository) ListByClusterID(ctx context.Context, clusterID stri
 	instances := make([]*models.Instance, 0)
 	for rows.Next() {
 		instance := &models.Instance{}
-		var hostID sql.NullString
-		if err := rows.Scan(&instance.ID, &instance.Name, &instance.ClusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
+		var clusterID, hostID sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.Name, &clusterID, &hostID, &instance.CreatedAt, &instance.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if clusterID.Valid {
+			instance.ClusterID = clusterID.String
 		}
 		if hostID.Valid {
 			s := hostID.String
@@ -230,12 +366,20 @@ func (r *InstanceRepository) Update(ctx context.Context, instance *models.Instan
 		return fmt.Errorf("database not initialized")
 	}
 	instance.UpdatedAt = time.Now().UTC()
-	_, err := r.db.Pool.ExecContext(ctx,
+	res, err := r.db.Pool.ExecContext(ctx,
 		`UPDATE instances SET name = ?, cluster_id = ?, host_id = ?, updated_at = ? WHERE id = ?`,
 		instance.Name, instance.ClusterID, nullableStringPtr(instance.HostID), instance.UpdatedAt, instance.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update instance: %w", err)
+	}
+	// P0-5: 不能默默吞掉 0 rows affected; 0 表示 instance 不存在, 业务应感知.
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("instance not found: %s", instance.ID)
 	}
 	return nil
 }

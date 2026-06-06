@@ -20,13 +20,20 @@ type Instance struct {
 }
 
 type InstanceConnection struct {
-	ID               string `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID       string `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	Host             string `json:"host" gorm:"type:varchar(255);not null"`
-	Port             int    `json:"port" gorm:"type:int;not null"`
-	Username         string `json:"username" gorm:"type:varchar(64);not null"`
+	ID                string `gorm:"primaryKey;type:varchar(64)"`
+	InstanceID        string `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
+	Host              string `json:"host" gorm:"type:varchar(255);not null"`
+	Port              int    `json:"port" gorm:"type:int;not null"`
+	Username          string `json:"username" gorm:"type:varchar(64);not null"`
 	PasswordEncrypted string `json:"password_encrypted" gorm:"type:varchar(255);not null"`
-	SSLEnabled       bool   `json:"ssl_enabled" gorm:"type:boolean;default:false"`
+	SSLEnabled        bool   `json:"ssl_enabled" gorm:"type:boolean;default:false"`
+	// Install / upgrade paths. These let the platform install or upgrade to
+	// ANY version from the catalog (not hard-coded to 5.7/8.0).
+	Basedir    string `json:"basedir"     gorm:"type:varchar(255)"`
+	Datadir    string `json:"datadir"     gorm:"type:varchar(255)"`
+	OSUser     string `json:"os_user"     gorm:"type:varchar(64)"`
+	PackageURL string `json:"package_url" gorm:"type:varchar(1024)"`
+	VersionID  string `json:"version_id"  gorm:"type:varchar(64)"` // FK to version catalog id e.g. "mysql-8.0.36"
 }
 
 type InstanceVersion struct {

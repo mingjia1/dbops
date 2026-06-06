@@ -85,8 +85,9 @@ func TestMigrationService_VerifyMigration(t *testing.T) {
 	service := newTestMigrationService()
 	ctx := context.Background()
 
+	// 不存在的 task 应该返回 error 而不是静默成功.
 	result, err := service.VerifyMigration(ctx, "migration-001")
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.True(t, result.DataConsistency)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "not found")
 }

@@ -17,6 +17,7 @@ func NewUpgradeExecutor() *UpgradeExecutor {
 type UpgradeConfig struct {
 	CurrentVersion     string   `json:"current_version"`
 	TargetVersion      string   `json:"target_version"`
+	TargetFlavor       string   `json:"target_flavor"`
 	UpgradeType        string   `json:"upgrade_type"`
 	InstanceHost       string   `json:"instance_host"`
 	InstancePort       int      `json:"instance_port"`
@@ -24,6 +25,10 @@ type UpgradeConfig struct {
 	MySQLPass          string   `json:"mysql_pass"`
 	DataDir            string   `json:"data_dir"`
 	BackupDir          string   `json:"backup_dir"`
+	Basedir            string   `json:"basedir"`
+	OSUser             string   `json:"os_user"`
+	PackageURL         string   `json:"package_url"`
+	Checksum           string   `json:"checksum"`
 	UpgradeMethod      string   `json:"upgrade_method"`
 	SkipCompatibility  bool     `json:"skip_compatibility"`
 	SkipBackup         bool     `json:"skip_backup"`
@@ -82,6 +87,21 @@ func parseUpgradeConfig(config map[string]interface{}) UpgradeConfig {
 	}
 	if v, ok := config["target_version"].(string); ok {
 		uc.TargetVersion = v
+	}
+	if v, ok := config["target_flavor"].(string); ok {
+		uc.TargetFlavor = v
+	}
+	if v, ok := config["basedir"].(string); ok {
+		uc.Basedir = v
+	}
+	if v, ok := config["os_user"].(string); ok {
+		uc.OSUser = v
+	}
+	if v, ok := config["package_url"].(string); ok {
+		uc.PackageURL = v
+	}
+	if v, ok := config["checksum"].(string); ok {
+		uc.Checksum = v
 	}
 	if v, ok := config["upgrade_type"].(string); ok {
 		uc.UpgradeType = v
@@ -456,6 +476,26 @@ func (e *UpgradeExecutor) stopMySQLGracefully(ctx context.Context, config Upgrad
 }
 
 func (e *UpgradeExecutor) upgradePackage(ctx context.Context, config UpgradeConfig) *TaskResult {
+	// Version-agnostic path: if a package_url is supplied, download and
+	// extract the new version to the existing datadir's basedir. The actual
+	// mysqld --upgrade is the caller's responsibility.
+	if config.PackageURL != "" {
+		if _, err := InstallFromURL(ctx, config.PackageURL, config.Checksum, config.Basedir, config.OSUser); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  30,
+				Message:   fmt.Sprintf("install from URL failed: %v", err),
+				Timestamp: time.Now(),
+			}
+		}
+		return &TaskResult{
+			Status:    "completed",
+			Progress:  50,
+			Message:   fmt.Sprintf("MySQL %s installed from %s", config.TargetVersion, config.PackageURL),
+			Timestamp: time.Now(),
+		}
+	}
+
 	upgradeCmd := exec.CommandContext(ctx, "yum",
 		"update", "-y",
 		fmt.Sprintf("mysql-server-%s", config.TargetVersion))
@@ -696,12 +736,46 @@ func (e *UpgradeExecutor) exportData(ctx context.Context, config UpgradeConfig) 
 }
 
 func (e *UpgradeExecutor) installNewVersion(ctx context.Context, config UpgradeConfig) *TaskResult {
-	removeCmd := exec.CommandContext(ctx, "yum", "remove", "-y", "mysql-server")
-	_ = removeCmd.Run()
+	// Version-agnostic path: if a package_url was provided, download + extract
+	// to basedir using the shared helper. Otherwise fall back to the OS
+	// package manager (legacy behaviour, only works if the version is in
+	// yum/apt repos).
+	if config.PackageURL != "" {
+		mysqld, err := InstallFromURL(ctx, config.PackageURL, config.Checksum, config.Basedir, config.OSUser)
+		if err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  30,
+				Message:   fmt.Sprintf("install from URL failed: %v", err),
+				Timestamp: time.Now(),
+			}
+		}
 
+		initArgs := []string{"--initialize-insecure", "--datadir=" + config.DataDir, "--user=" + config.OSUser}
+		if config.Basedir != "" {
+			initArgs = append(initArgs, "--basedir="+config.Basedir)
+		}
+		initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
+		if err := initCmd.Run(); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  40,
+				Message:   fmt.Sprintf("initialize %s failed: %v", config.TargetVersion, err),
+				Timestamp: time.Now(),
+			}
+		}
+		return &TaskResult{
+			Status:    "completed",
+			Progress:  50,
+			Message:   fmt.Sprintf("MySQL %s installed and initialized from %s", config.TargetVersion, config.PackageURL),
+			Timestamp: time.Now(),
+		}
+	}
+
+	// Legacy fallback: rely on OS package manager.
+	_ = exec.CommandContext(ctx, "yum", "remove", "-y", "mysql-server").Run()
 	installCmd := exec.CommandContext(ctx, "yum", "install", "-y",
 		fmt.Sprintf("mysql-server-%s", config.TargetVersion))
-
 	if err := installCmd.Run(); err != nil {
 		aptCmd := exec.CommandContext(ctx, "apt-get", "install", "-y",
 			fmt.Sprintf("mysql-server=%s", config.TargetVersion))
@@ -714,7 +788,6 @@ func (e *UpgradeExecutor) installNewVersion(ctx context.Context, config UpgradeC
 			}
 		}
 	}
-
 	initCmd := exec.CommandContext(ctx, "mysqld", "--initialize-insecure", "--datadir="+config.DataDir)
 	if err := initCmd.Run(); err != nil {
 		return &TaskResult{
@@ -724,11 +797,10 @@ func (e *UpgradeExecutor) installNewVersion(ctx context.Context, config UpgradeC
 			Timestamp: time.Now(),
 		}
 	}
-
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  50,
-		Message:   fmt.Sprintf("MySQL %s installed and initialized", config.TargetVersion),
+		Message:   fmt.Sprintf("MySQL %s installed and initialized (legacy path)", config.TargetVersion),
 		Timestamp: time.Now(),
 	}
 }

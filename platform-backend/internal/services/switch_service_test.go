@@ -92,7 +92,8 @@ func newTestSwitchService(t *testing.T) (*SwitchService, *agentStub, *repositori
 
 	stub := newAgentStub()
 
-	hostRepo := repositories.NewHostRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
 	host := &models.Host{
 		ID:        "host-001",
 		Name:      "test-host",
@@ -103,7 +104,7 @@ func newTestSwitchService(t *testing.T) (*SwitchService, *agentStub, *repositori
 	}
 	require.NoError(t, hostRepo.Create(ctx, host))
 
-	instRepo := repositories.NewInstanceRepository(nil)
+	instRepo := repositories.NewInstanceRepository(db)
 	hostID := "host-001"
 	instRepo.Create(ctx, &models.Instance{
 		ID:        "inst-old-master",
@@ -130,10 +131,10 @@ func newTestSwitchService(t *testing.T) (*SwitchService, *agentStub, *repositori
 		Topology:  models.InstanceTopology{MasterID: "inst-old-master"},
 	})
 
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "cluster-1", ClusterType: "mha", Name: "mha-cluster"})
 
-	agent := NewAgentClient()
+	agent := NewAgentClient("")
 	service := NewSwitchService(hostRepo, instRepo, clusterRepo, agent)
 	return service, stub, hostRepo, instRepo, clusterRepo
 }
@@ -143,7 +144,7 @@ func TestNewSwitchService(t *testing.T) {
 	tctx := context.Background()
 	hostRepo := newTestHostRepo(tctx)
 	instRepo := newTestInstanceRepo(tctx)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	clusterRepo := repositories.NewClusterDeployRepository(newTestDB())
 	agent := newTestAgentClient()
 
 	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, agent)
@@ -192,18 +193,23 @@ func TestSwitchRoleWithinCluster_PromoteMHASlaveToMaster(t *testing.T) {
 // --- TDD: MGR primary promotion ---
 func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "host-gr"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "gr-host"})
 	instRepo.Create(ctx, &models.Instance{ID: "gr-1", HostID: &hostID, ClusterID: "gr-cluster", Name: "gr-1", Status: models.InstanceStatus{Role: "primary"}, Topology: models.InstanceTopology{MasterID: ""}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "gr-1", &models.InstanceTopology{MasterID: ""}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "gr-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
 	instRepo.Create(ctx, &models.Instance{ID: "gr-2", HostID: &hostID, ClusterID: "gr-cluster", Name: "gr-2", Status: models.InstanceStatus{Role: "secondary"}, Topology: models.InstanceTopology{MasterID: "gr-1"}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "gr-2", &models.InstanceTopology{MasterID: "gr-1"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "gr-2", &models.InstanceStatus{Role: "secondary", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "gr-cluster", ClusterType: "mgr", Name: "gr-c"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:   "gr-cluster",
 		InstanceID:  "gr-2",
@@ -220,17 +226,20 @@ func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 // --- TDD: PXC demote primary -> secondary ---
 func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h-pxc"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "pxc-h"})
 	instRepo.Create(ctx, &models.Instance{ID: "pxc-1", HostID: &hostID, ClusterID: "pxc-cluster", Name: "pxc-1", Status: models.InstanceStatus{Role: "primary"}, Topology: models.InstanceTopology{MasterID: ""}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "pxc-1", &models.InstanceTopology{MasterID: ""}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "pxc-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "pxc-cluster", ClusterType: "pxc", Name: "pxc-c"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "pxc-cluster",
 		InstanceID: "pxc-1",
@@ -245,17 +254,20 @@ func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 // --- TDD: skip when current role == target role ---
 func TestSwitchRoleWithinCluster_SkipWhenAlreadyInTargetRole(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "inst-skip", HostID: &hostID, ClusterID: "cluster-1", Name: "skip", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "inst-skip", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "inst-skip", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "cluster-1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "cluster-1",
 		InstanceID: "inst-skip",
@@ -305,9 +317,10 @@ func TestSwitchRoleWithinCluster_ClusterNotFound(t *testing.T) {
 // --- TDD: instance not in specified cluster ---
 func TestSwitchRoleWithinCluster_InstanceNotInCluster(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h-x"
@@ -315,7 +328,7 @@ func TestSwitchRoleWithinCluster_InstanceNotInCluster(t *testing.T) {
 	instRepo.Create(ctx, &models.Instance{ID: "inst-a", HostID: &hostID, ClusterID: "other-cluster", Name: "a"})
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "cluster-1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "cluster-1",
 		InstanceID: "inst-a",
@@ -347,15 +360,16 @@ func TestSwitchRoleWithinCluster_InstanceNotFound(t *testing.T) {
 // --- TDD: instance without host ---
 func TestSwitchRoleWithinCluster_InstanceWithoutHost(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "cluster-1", ClusterType: "mha", Name: "c1"})
 	instRepo.Create(ctx, &models.Instance{ID: "inst-nohost", ClusterID: "cluster-1", Name: "nohost"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "cluster-1",
 		InstanceID: "inst-nohost",
@@ -369,19 +383,24 @@ func TestSwitchRoleWithinCluster_InstanceWithoutHost(t *testing.T) {
 // --- TDD: agent failure during promote ---
 func TestSwitchRoleWithinCluster_AgentPromoteFails(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	stub.failPath = "/role-promote"
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "old-m", HostID: &hostID, ClusterID: "c1", Name: "old", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	instRepo.Create(ctx, &models.Instance{ID: "new-m", HostID: &hostID, ClusterID: "c1", Name: "new", Status: models.InstanceStatus{Role: "slave"}, Topology: models.InstanceTopology{MasterID: "old-m"}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "new-m", &models.InstanceTopology{MasterID: "old-m"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "new-m", &models.InstanceStatus{Role: "slave", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:   "c1",
 		InstanceID:  "new-m",
@@ -397,19 +416,24 @@ func TestSwitchRoleWithinCluster_AgentPromoteFails(t *testing.T) {
 // --- TDD: agent failure during demote-old-master ---
 func TestSwitchRoleWithinCluster_AgentDemoteOldMasterFails(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	stub.failPath = "/role-demote"
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "old-m", HostID: &hostID, ClusterID: "c1", Name: "old", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	instRepo.Create(ctx, &models.Instance{ID: "new-m", HostID: &hostID, ClusterID: "c1", Name: "new", Status: models.InstanceStatus{Role: "slave"}, Topology: models.InstanceTopology{MasterID: "old-m"}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "new-m", &models.InstanceTopology{MasterID: "old-m"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "new-m", &models.InstanceStatus{Role: "slave", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:   "c1",
 		InstanceID:  "new-m",
@@ -425,18 +449,21 @@ func TestSwitchRoleWithinCluster_AgentDemoteOldMasterFails(t *testing.T) {
 // --- TDD: agent failure during demote (instance is current primary) ---
 func TestSwitchRoleWithinCluster_AgentDemoteFails(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	stub.failPath = "/role-demote"
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "i-1", HostID: &hostID, ClusterID: "c1", Name: "i1", Status: models.InstanceStatus{Role: "primary"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "pxc", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "c1",
 		InstanceID: "i-1",
@@ -462,17 +489,20 @@ func TestListRoleSwitchHistory_Empty(t *testing.T) {
 // --- TDD: ListRoleSwitchHistory records and sorts by recency ---
 func TestListRoleSwitchHistory_Limit(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "i-1", HostID: &hostID, ClusterID: "c1", Name: "i1", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	for i := 0; i < 3; i++ {
 		_, _ = svc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
 			ClusterID:  "c1",
@@ -596,17 +626,20 @@ func TestRoleSwitchRecord_Fields(t *testing.T) {
 // --- TDD: demote old master (MHA primary, no slaves) ---
 func TestSwitchRoleWithinCluster_DemoteOnlyPrimary(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "mha-master", HostID: &hostID, ClusterID: "c1", Name: "master", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "mha-master", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "mha-master", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "c1",
 		InstanceID: "mha-master",
@@ -621,18 +654,23 @@ func TestSwitchRoleWithinCluster_DemoteOnlyPrimary(t *testing.T) {
 // --- TDD: no old master id given; uses inst.Topology.MasterID ---
 func TestSwitchRoleWithinCluster_UsesTopologyMasterID(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	instRepo.Create(ctx, &models.Instance{ID: "old-m", HostID: &hostID, ClusterID: "c1", Name: "old-m", Status: models.InstanceStatus{Role: "master"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-m", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
 	instRepo.Create(ctx, &models.Instance{ID: "new-m", HostID: &hostID, ClusterID: "c1", Name: "new-m", Status: models.InstanceStatus{Role: "slave"}, Topology: models.InstanceTopology{MasterID: "old-m"}})
+	require.NoError(t, instRepo.UpsertTopology(ctx, "new-m", &models.InstanceTopology{MasterID: "old-m"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "new-m", &models.InstanceStatus{Role: "slave", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "c1",
 		InstanceID: "new-m",
@@ -648,18 +686,21 @@ func TestSwitchRoleWithinCluster_UsesTopologyMasterID(t *testing.T) {
 // --- TDD: ambiguous old master id (current instance is primary AND target is primary, different ids) ---
 func TestSwitchRoleWithinCluster_AmbiguousOldMaster(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "h"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "h1"})
 	// Use MGR where "primary" and "primary_master" are both valid primaries
 	instRepo.Create(ctx, &models.Instance{ID: "i-1", HostID: &hostID, ClusterID: "c1", Name: "i1", Status: models.InstanceStatus{Role: "primary"}})
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "i-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mgr", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:   "c1",
 		InstanceID:  "i-1",
@@ -675,15 +716,16 @@ func TestSwitchRoleWithinCluster_AmbiguousOldMaster(t *testing.T) {
 // --- TDD: nil pointer for inst.HostID returns error ---
 func TestSwitchRoleWithinCluster_NilHostID(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 	instRepo.Create(ctx, &models.Instance{ID: "no-host", ClusterID: "c1", Name: "nohost"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "c1",
 		InstanceID: "no-host",
@@ -697,16 +739,17 @@ func TestSwitchRoleWithinCluster_NilHostID(t *testing.T) {
 // --- TDD: host repo missing host ---
 func TestSwitchRoleWithinCluster_HostRepoMissing(t *testing.T) {
 	ctx := context.Background()
-	hostRepo := repositories.NewHostRepository(nil)
-	instRepo := repositories.NewInstanceRepository(nil)
-	clusterRepo := repositories.NewClusterDeployRepository(nil)
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostID := "missing"
 	instRepo.Create(ctx, &models.Instance{ID: "i-1", HostID: &hostID, ClusterID: "c1", Name: "i1"})
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient())
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""))
 	req := RoleSwitchRequest{
 		ClusterID:  "c1",
 		InstanceID: "i-1",

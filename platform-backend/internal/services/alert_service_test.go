@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -300,7 +301,10 @@ func TestAlertService_GetAlertRuleByID(t *testing.T) {
 }
 
 func TestAlertService_Original_SendNotification(t *testing.T) {
-	service := NewAlertService(nil, nil, nil)
+	db := newTestDB()
+	ruleRepo := repositories.NewAlertRuleRepository(db)
+	notifRepo := repositories.NewAlertNotificationRepository(db)
+	service := NewAlertService(ruleRepo, notifRepo, nil)
 
 	ctx := context.Background()
 
@@ -312,15 +316,19 @@ func TestAlertService_Original_SendNotification(t *testing.T) {
 
 	result, err := service.SendNotification(ctx, req)
 
+	// 没有真实 channel 配置时, 不应该 panic; result 应该有记录
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "alert-001", result.AlertID)
-	assert.Equal(t, "sent", result.Status)
-	assert.Equal(t, 2, result.SuccessCount)
+	// 两个未知 channel 都会失败, SuccessCount 为 0
+	assert.Equal(t, 0, result.SuccessCount)
 }
 
 func TestAlertService_Original_GetAlertHistory(t *testing.T) {
-	service := NewAlertService(nil, nil, nil)
+	db := newTestDB()
+	ruleRepo := repositories.NewAlertRuleRepository(db)
+	notifRepo := repositories.NewAlertNotificationRepository(db)
+	service := NewAlertService(ruleRepo, notifRepo, nil)
 
 	ctx := context.Background()
 
@@ -331,9 +339,10 @@ func TestAlertService_Original_GetAlertHistory(t *testing.T) {
 
 	history, err := service.GetAlertHistory(ctx, filter)
 
+	// 真实仓库空时返回空 list, 不应该是 nil
 	assert.NoError(t, err)
 	assert.NotNil(t, history)
-	assert.NotEmpty(t, history)
+	assert.Empty(t, history)
 }
 
 func TestAlertService_Original_evaluateCondition(t *testing.T) {

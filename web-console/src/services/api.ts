@@ -62,6 +62,12 @@ export interface InstanceConnection {
   port: number
   username: string
   ssl_enabled: boolean
+  // Version-agnostic install / upgrade paths
+  basedir?: string
+  datadir?: string
+  os_user?: string
+  package_url?: string
+  version_id?: string
 }
 
 export interface InstanceVersion {
@@ -452,6 +458,32 @@ export const upgradeApi = {
   listHistory: () => api.get('/upgrades'),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`),
   get: (id: string) => api.get(`/upgrades/${id}`),
+}
+
+export interface VersionEntry {
+  id: string
+  flavor: string
+  version: string
+  major_minor: string
+  is_lts: boolean
+  release_date: string
+  eol_date: string
+  package_url: string
+  checksum: string
+  min_glibc: string
+  os_family: string[]
+  status: 'active' | 'deprecated' | 'eol'
+  upgrade_from: string[]
+  upgrade_notes?: string
+}
+
+export const versionApi = {
+  // List all versions in the catalog. Optional ?flavor=mysql|mariadb|percona.
+  list: (flavor?: string) => api.get('/versions' + (flavor ? `?flavor=${flavor}` : '')),
+  get: (id: string) => api.get(`/versions/${encodeURIComponent(id)}`),
+  // Validate an upgrade path (e.g. before submitting an in-place upgrade).
+  validatePath: (data: { source_flavor?: string; source_version: string; target_flavor?: string; target_version: string }) =>
+    api.post('/versions/validate-path', data),
 }
 
 export const migrationApi = {

@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Empty } from 'antd'
+import { Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Empty, Divider } from 'antd'
 import { PlusOutlined, ReloadOutlined, ScanOutlined, DesktopOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { instanceApi, hostApi, Instance, Host } from '../services/api'
+import { instanceApi, hostApi, versionApi, Instance, Host, type VersionEntry } from '../services/api'
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -12,6 +12,7 @@ const InstanceList: React.FC = () => {
 
   const [instances, setInstances] = useState<Instance[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
+  const [versions, setVersions] = useState<VersionEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [hostFilter, setHostFilter] = useState<string | undefined>(presetHost)
   const [modalOpen, setModalOpen] = useState(false)
@@ -45,6 +46,8 @@ const InstanceList: React.FC = () => {
   useEffect(() => {
     fetchInstances()
     fetchHosts()
+    // Load version catalog for the "目标版本" dropdown in the create modal.
+    versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -377,6 +380,36 @@ const InstanceList: React.FC = () => {
 
           <Form.Item name="cluster_id" label="集群 ID (可选)">
             <Input placeholder="例如: mgr-cluster-01" />
+          </Form.Item>
+
+          <Divider plain style={{ margin: '8px 0 0' }}>安装参数 (版本无关, 可选, 用于后续部署/升级)</Divider>
+          <Form.Item
+            name="version_id"
+            label="目标版本 (来自版本目录)"
+            extra="选择要安装/升级到的 MySQL/MariaDB/Percona 版本"
+          >
+            <Select
+              allowClear
+              showSearch
+              placeholder="留空表示不指定, 后续可手动选择"
+              options={versions.map((v) => ({
+                value: v.id,
+                label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}`,
+              }))}
+            />
+          </Form.Item>
+
+          <Form.Item name="basedir" label="basedir (安装根目录)">
+            <Input placeholder="/opt/mysql-8.0.36" />
+          </Form.Item>
+          <Form.Item name="datadir" label="datadir (数据目录)">
+            <Input placeholder="/data/mysql/3307" />
+          </Form.Item>
+          <Form.Item name="os_user" label="OS 用户" initialValue="mysql">
+            <Input placeholder="mysql" />
+          </Form.Item>
+          <Form.Item name="package_url" label="package_url (可选, 留空将使用版本目录默认 URL)">
+            <Input placeholder="https://dev.mysql.com/.../mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz" />
           </Form.Item>
         </Form>
       </Modal>

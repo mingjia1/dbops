@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Card, Progress, DatePicker, Divider, Typography, Tabs, Alert, Result, Switch, Statistic, Row, Col } from 'antd'
+import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Card, Progress, DatePicker, Divider, Typography, Tabs, Alert, Result, Switch, Statistic, Row, Col, Spin, Empty } from 'antd'
 import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, HistoryOutlined, DownloadOutlined, FileTextOutlined, ExclamationCircleOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { upgradeApi, instanceApi, type Instance } from '../services/api'
+import { upgradeApi, instanceApi, versionApi, type Instance, type VersionEntry } from '../services/api'
 
 const { Title, Paragraph } = Typography
 
@@ -21,12 +21,6 @@ interface UpgradeHistory {
   message?: string
 }
 
-const MOCK_HISTORY: UpgradeHistory[] = [
-  { id: '1', instance_id: 'inst-001', instance_name: 'MySQL-生产-01', upgrade_type: 'in_place', source_version: '5.7.38', target_version: '8.0.32', status: 'success', start_time: '2024-01-15 10:00:00', end_time: '2024-01-15 10:30:00', duration: 1800, progress: 100 },
-  { id: '2', instance_id: 'inst-002', instance_name: 'MySQL-生产-02', upgrade_type: 'logical', source_version: '5.6.51', target_version: '8.0.32', status: 'running', start_time: '2024-01-16 14:00:00', progress: 45, stage: '数据导入' },
-  { id: '3', instance_id: 'inst-003', instance_name: 'MySQL-测试-01', upgrade_type: 'rolling', source_version: '5.7.42', target_version: '8.0.33', status: 'failed', start_time: '2024-01-17 09:00:00', end_time: '2024-01-17 09:15:00', duration: 900, progress: 30, message: '主从切换失败: 复制延迟过高' },
-]
-
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
@@ -40,6 +34,8 @@ const UpgradeManage: React.FC = () => {
   const [activeUpgrade, setActiveUpgrade] = useState<UpgradeHistory | null>(null)
   const [compatResult, setCompatResult] = useState<any>(null)
   const [reportContent, setReportContent] = useState<any>(null)
+  const [versions, setVersions] = useState<VersionEntry[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(true)
   const pollRef = useRef<number | null>(null)
 
   const [planForm] = Form.useForm()
@@ -48,6 +44,28 @@ const UpgradeManage: React.FC = () => {
   const [logicalForm] = Form.useForm()
   const [rollingForm] = Form.useForm()
 
+  // Build a sorted, filterable list of options from the version catalog.
+  // We use the same data for every version dropdown on this page — there is
+  // exactly one source of truth (the catalog) and zero hard-coded version
+  // lists. Dropdowns can be filtered by flavor when needed.
+  const buildVersionOptions = (filter?: (v: VersionEntry) => boolean) => {
+    return (versions || [])
+      .filter((v) => (filter ? filter(v) : true))
+      .sort((a, b) => {
+        if (a.flavor !== b.flavor) return a.flavor.localeCompare(b.flavor)
+        return b.release_date.localeCompare(a.release_date)
+      })
+      .map((v) => {
+        const ltsTag = v.is_lts ? ' [LTS]' : ''
+        const eolTag = v.status === 'eol' ? ' [EOL]' : ''
+        return {
+          value: v.id,
+          label: `${v.flavor} ${v.version}${ltsTag}${eolTag}`,
+          version: v,
+        }
+      })
+  }
+
   const inPlaceBackup = Form.useWatch('skip_backup', inPlaceForm)
   const logicalVerify = Form.useWatch('verify_data', logicalForm)
 
@@ -55,13 +73,25 @@ const UpgradeManage: React.FC = () => {
     upgradeApi.listHistory().then((res: any) => {
       setHistory(res?.data || [])
     }).catch(() => {
-      setHistory(MOCK_HISTORY)
+      // No mock fallback — if the backend returns an error, show an empty list.
+      // The user will see the empty state in the table.
+      setHistory([])
     })
   }
 
   useEffect(() => {
     fetchHistory()
     instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
+    // Fetch the full version catalog once on mount. The catalog is the single
+    // source of truth for all version dropdowns on this page — no hard-coded
+    // version lists.
+    setVersionsLoading(true)
+    versionApi.list().then((res: any) => {
+      setVersions(res?.data || [])
+    }).catch((err) => {
+      message.error('加载版本目录失败: ' + (err?.message || '未知错误'))
+      setVersions([])
+    }).finally(() => setVersionsLoading(false))
   }, [])
 
   useEffect(() => () => {
@@ -443,19 +473,22 @@ const UpgradeManage: React.FC = () => {
             <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="source_version" label="源版本" rules={[{ required: true }]}>
-            <Select placeholder="选择源版本">
-              <Select.Option value="5.6.51">MySQL 5.6.51</Select.Option>
-              <Select.Option value="5.7.38">MySQL 5.7.38</Select.Option>
-              <Select.Option value="5.7.42">MySQL 5.7.42</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择源版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
-            <Select placeholder="选择目标版本">
-              <Select.Option value="5.7.42">MySQL 5.7.42</Select.Option>
-              <Select.Option value="8.0.32">MySQL 8.0.32</Select.Option>
-              <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
-              <Select.Option value="8.0.35">MySQL 8.0.35</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择目标版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="upgrade_strategy" label="升级策略" rules={[{ required: true }]}>
             <Select placeholder="选择升级策略">
@@ -502,10 +535,13 @@ const UpgradeManage: React.FC = () => {
             <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
-            <Select placeholder="选择目标版本">
-              <Select.Option value="8.0.32">MySQL 8.0.32</Select.Option>
-              <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择目标版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="check_scope" label="检查范围">
             <Select mode="multiple" placeholder="选择检查项目">
@@ -561,10 +597,13 @@ const UpgradeManage: React.FC = () => {
             <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
-            <Select placeholder="选择目标版本">
-              <Select.Option value="8.0.32">MySQL 8.0.32</Select.Option>
-              <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择目标版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="backup_path" label="备份路径" rules={[{ required: true }]}>
             <Input placeholder="/data/backup/mysql" />
@@ -604,10 +643,13 @@ const UpgradeManage: React.FC = () => {
             <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择目标实例" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
-            <Select placeholder="选择目标版本">
-              <Select.Option value="8.0.32">MySQL 8.0.32</Select.Option>
-              <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择目标版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
             <InputNumber min={1} max={16} style={{ width: '100%' }} />
@@ -652,10 +694,13 @@ const UpgradeManage: React.FC = () => {
             <Input placeholder="输入集群ID" />
           </Form.Item>
           <Form.Item name="target_version" label="目标版本" rules={[{ required: true }]}>
-            <Select placeholder="选择目标版本">
-              <Select.Option value="8.0.32">MySQL 8.0.32</Select.Option>
-              <Select.Option value="8.0.33">MySQL 8.0.33</Select.Option>
-            </Select>
+            <Select
+              placeholder={versionsLoading ? '加载版本目录中…' : '选择目标版本 (来自版本目录)'}
+              loading={versionsLoading}
+              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="版本目录为空" />}
+              showSearch optionFilterProp="label"
+              options={buildVersionOptions()}
+            />
           </Form.Item>
           <Form.Item name="upgrade_order" label="升级顺序" initialValue="replica_first">
             <Select>

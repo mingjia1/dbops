@@ -27,18 +27,21 @@ func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *
 type PlanUpgradePathRequest struct {
 	InstanceID    string `json:"instance_id" binding:"required"`
 	TargetVersion string `json:"target_version" binding:"required"`
+	TargetFlavor  string `json:"target_flavor"` // optional, defaults to source flavor
 	Strategy      string `json:"strategy" binding:"required"`
 }
 
 type PlanUpgradePathResponse struct {
-	PlanID          string       `json:"plan_id"`
-	SourceVersion   string       `json:"source_version"`
-	TargetVersion   string       `json:"target_version"`
-	Strategy        string       `json:"strategy"`
-	UpgradePath     []UpgradeStepInfo `json:"upgrade_path"`
-	EstimatedTime   int          `json:"estimated_time"`
-	RiskLevel       string       `json:"risk_level"`
-	PreCheckWarnings []string    `json:"pre_check_warnings"`
+	PlanID          string             `json:"plan_id"`
+	SourceVersion   string             `json:"source_version"`
+	SourceFlavor    string             `json:"source_flavor"`
+	TargetVersion   string             `json:"target_version"`
+	TargetFlavor    string             `json:"target_flavor"`
+	Strategy        string             `json:"strategy"`
+	UpgradePath     []UpgradeStepInfo  `json:"upgrade_path"`
+	EstimatedTime   int                `json:"estimated_time"`
+	RiskLevel       string             `json:"risk_level"`
+	PreCheckWarnings []string          `json:"pre_check_warnings"`
 }
 
 type UpgradeStepInfo struct {
@@ -54,8 +57,18 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	sourceVersion := "5.7.40"
+	// Read the actual source version from the instance, not a hard-coded value.
+	// If the instance has not been version-detected yet, the caller must run
+	// POST /api/v1/instances/:id/detect-version first.
+	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
+	if err != nil {
+		return nil, err
+	}
 	targetVersion := req.TargetVersion
+	targetFlavor := req.TargetFlavor
+	if targetFlavor == "" {
+		targetFlavor = sourceFlavor
+	}
 
 	var steps []UpgradeStepInfo
 	var estimatedTime int
@@ -79,6 +92,9 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 	}
 
 	warnings := s.generatePreCheckWarnings(instance, req.Strategy)
+	if allowed, reason := IsValidUpgradePath(sourceFlavor, sourceVersion, targetFlavor, targetVersion); !allowed {
+		warnings = append(warnings, "upgrade path check: "+reason)
+	}
 
 	plan := &models.UpgradePlan{
 		ID:             uuid.New().String(),
@@ -89,33 +105,57 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		Status:         "planned",
 		EstimatedTime:  estimatedTime,
 		RiskLevel:      riskLevel,
-		UpgradePath:     s.serializeSteps(steps),
+		UpgradePath:    s.serializeSteps(steps),
 	}
 
 	response := &PlanUpgradePathResponse{
-		PlanID:          plan.ID,
-		SourceVersion:   sourceVersion,
-		TargetVersion:   targetVersion,
-		Strategy:        req.Strategy,
-		UpgradePath:     steps,
-		EstimatedTime:   estimatedTime,
-		RiskLevel:       riskLevel,
+		PlanID:           plan.ID,
+		SourceVersion:    sourceVersion,
+		SourceFlavor:     sourceFlavor,
+		TargetVersion:    targetVersion,
+		TargetFlavor:     targetFlavor,
+		Strategy:         req.Strategy,
+		UpgradePath:      steps,
+		EstimatedTime:    estimatedTime,
+		RiskLevel:        riskLevel,
 		PreCheckWarnings: warnings,
 	}
 
 	return response, nil
 }
 
+// readSourceVersion returns the actual on-host version detected for an instance.
+// It is the single source of truth for "what is the source version" across the
+// entire UpgradeService. No hard-coded versions allowed.
+func (s *UpgradeService) readSourceVersion(ctx context.Context, instanceID string) (string, string, error) {
+	ver, err := s.instanceRepo.GetVersion(ctx, instanceID)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot determine source version for instance %s: %w (call POST /api/v1/instances/%s/detect-version first)", instanceID, err, instanceID)
+	}
+	flavor := ver.Flavor
+	if flavor == "" {
+		flavor = "mysql"
+	}
+	fullVer := ver.FullVersion
+	if fullVer == "" {
+		fullVer = ver.Version
+	}
+	return fullVer, flavor, nil
+}
+
 type CheckCompatibilityRequest struct {
 	InstanceID    string `json:"instance_id" binding:"required"`
 	TargetVersion string `json:"target_version" binding:"required"`
+	TargetFlavor  string `json:"target_flavor"`
 }
 
 type CheckCompatibilityResponse struct {
 	CheckID           string               `json:"check_id"`
 	InstanceID        string               `json:"instance_id"`
 	SourceVersion     string               `json:"source_version"`
-	TargetVersion     string              `json:"target_version"`
+	SourceFlavor      string               `json:"source_flavor"`
+	TargetVersion     string               `json:"target_version"`
+	TargetFlavor      string               `json:"target_flavor"`
 	IsCompatible      bool                 `json:"is_compatible"`
 	WarningCount      int                  `json:"warning_count"`
 	ErrorCount        int                  `json:"error_count"`
@@ -137,8 +177,15 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	sourceVersion := "5.7.40"
+	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
+	if err != nil {
+		return nil, err
+	}
 	targetVersion := req.TargetVersion
+	targetFlavor := req.TargetFlavor
+	if targetFlavor == "" {
+		targetFlavor = sourceFlavor
+	}
 
 	var incompatibilities []IncompatibilityItem
 	var recommendations []string
@@ -154,6 +201,17 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 
 	authPluginIssues := s.checkAuthenticationPlugin(sourceVersion, targetVersion)
 	incompatibilities = append(incompatibilities, authPluginIssues...)
+
+	// Catalog-driven path check (no hard-coded 5.7→8.0 limit)
+	if allowed, reason := IsValidUpgradePath(sourceFlavor, sourceVersion, targetFlavor, targetVersion); !allowed {
+		incompatibilities = append(incompatibilities, IncompatibilityItem{
+			Type:        "upgrade_path",
+			Level:       "error",
+			Description: fmt.Sprintf("升级路径 %s %s → %s %s 不被支持", sourceFlavor, sourceVersion, targetFlavor, targetVersion),
+			Impact:      reason,
+			Solution:    "请使用逻辑迁移 (logical migration) 跨大版本或跨 flavor, 或选择 catalog 中允许的目标版本",
+		})
+	}
 
 	errorCount := 0
 	warningCount := 0
@@ -193,7 +251,9 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 		CheckID:           uuid.New().String(),
 		InstanceID:        req.InstanceID,
 		SourceVersion:     sourceVersion,
+		SourceFlavor:      sourceFlavor,
 		TargetVersion:     targetVersion,
+		TargetFlavor:      targetFlavor,
 		IsCompatible:      isCompatible,
 		WarningCount:      warningCount,
 		ErrorCount:        errorCount,
@@ -207,6 +267,8 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 type ExecuteInPlaceUpgradeRequest struct {
 	InstanceID    string `json:"instance_id" binding:"required"`
 	PlanID        string `json:"plan_id" binding:"required"`
+	TargetVersion string `json:"target_version"`
+	TargetFlavor  string `json:"target_flavor"`
 	BackupEnabled bool   `json:"backup_enabled"`
 }
 
@@ -229,7 +291,17 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 
 	_ = instance
 
-	steps := s.planInPlaceUpgradeSteps("5.7.40", "8.0.36")
+	// Read source version from the instance — no hard-coded "5.7.40" anymore.
+	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	targetVersion := req.TargetVersion
+	if targetVersion == "" {
+		targetVersion = "8.0.36"
+	}
+
+	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
 
 	response := &ExecuteInPlaceUpgradeResponse{
 		TaskID:      uuid.New().String(),
@@ -248,6 +320,8 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 type ExecuteLogicalMigrationRequest struct {
 	InstanceID      string `json:"instance_id" binding:"required"`
 	PlanID          string `json:"plan_id" binding:"required"`
+	TargetVersion   string `json:"target_version"`
+	TargetFlavor    string `json:"target_flavor"`
 	BackupEnabled   bool   `json:"backup_enabled"`
 	Parallelism     int    `json:"parallelism"`
 	BatchSize       int    `json:"batch_size"`
@@ -289,7 +363,17 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 		req.BatchSize = 1000
 	}
 
-	steps := s.planLogicalMigrationSteps("5.7.40", "8.0.36")
+	// Read source version from the instance — no hard-coded "5.7.40" anymore.
+	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	targetVersion := req.TargetVersion
+	if targetVersion == "" {
+		targetVersion = "8.0.36"
+	}
+
+	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
 
 	response := &ExecuteLogicalMigrationResponse{
 		TaskID:      uuid.New().String(),
@@ -682,42 +766,43 @@ func (s *UpgradeService) GetServiceStatus(ctx context.Context) (*UpgradeServiceS
 }
 
 type SupportedVersion struct {
+	Flavor      string `json:"flavor"`
 	Version     string `json:"version"`
+	MajorMinor  string `json:"major_minor"`
 	IsLTS       bool   `json:"is_lts"`
 	ReleaseDate string `json:"release_date"`
 	EOLDate     string `json:"eol_date"`
+	Status      string `json:"status"`
 }
 
+// GetSupportedVersions delegates to the version catalog. The catalog is the
+// single source of truth; this method exists only for legacy callers that
+// import the upgrade service.
 func (s *UpgradeService) GetSupportedVersions(ctx context.Context) ([]SupportedVersion, error) {
-	return []SupportedVersion{
-		{Version: "8.0.36", IsLTS: true, ReleaseDate: "2024-01-16", EOLDate: "2026-04-30"},
-		{Version: "8.0.35", IsLTS: true, ReleaseDate: "2023-10-12", EOLDate: "2025-04-30"},
-		{Version: "8.0.34", IsLTS: true, ReleaseDate: "2023-07-18", EOLDate: "2025-01-30"},
-		{Version: "8.0.33", IsLTS: false, ReleaseDate: "2023-04-18", EOLDate: "2024-10-30"},
-		{Version: "8.0.32", IsLTS: false, ReleaseDate: "2023-01-17", EOLDate: "2024-07-30"},
-	}, nil
+	c := NewVersionCatalog()
+	out := make([]SupportedVersion, 0, len(c.List()))
+	for _, e := range c.List() {
+		out = append(out, SupportedVersion{
+			Flavor:      e.Flavor,
+			Version:     e.Version,
+			MajorMinor:  e.MajorMinor,
+			IsLTS:       e.IsLTS,
+			ReleaseDate: e.ReleaseDate,
+			EOLDate:     e.EOLDate,
+			Status:      e.Status,
+		})
+	}
+	return out, nil
 }
 
-func (s *UpgradeService) ValidateUpgradePath(ctx context.Context, sourceVersion, targetVersion string) (bool, []string, error) {
-	var errors []string
-	sourceMajor := s.extractMajorVersion(sourceVersion)
-	targetMajor := s.extractMajorVersion(targetVersion)
-
-	if sourceMajor == "5.7" && targetMajor == "8.0" {
+// ValidateUpgradePath delegates to the catalog-driven IsValidUpgradePath.
+// Source/target flavors default to "mysql" if omitted. No hard-coded matrix.
+func (s *UpgradeService) ValidateUpgradePath(ctx context.Context, sourceVersion, targetVersion, sourceFlavor, targetFlavor string) (bool, []string, error) {
+	allowed, reason := IsValidUpgradePath(sourceFlavor, sourceVersion, targetFlavor, targetVersion)
+	if allowed {
 		return true, nil, nil
 	}
-
-	if sourceMajor == "8.0" && targetMajor == "8.0" {
-		return true, nil, nil
-	}
-
-	if sourceMajor == "5.6" && targetMajor == "8.0" {
-		errors = append(errors, "Direct upgrade from 5.6 to 8.0 not supported, upgrade to 5.7 first")
-		return false, errors, nil
-	}
-
-	errors = append(errors, fmt.Sprintf("Unsupported upgrade path from %s to %s", sourceVersion, targetVersion))
-	return false, errors, nil
+	return false, []string{reason}, nil
 }
 
 func (s *UpgradeService) extractMajorVersion(version string) string {

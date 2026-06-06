@@ -282,7 +282,7 @@ func TestUpgradeService_Original_ValidateUpgradePath(t *testing.T) {
 
 	ctx := context.Background()
 
-	valid, errors, err := service.ValidateUpgradePath(ctx, "5.7.40", "8.0.36")
+	valid, errors, err := service.ValidateUpgradePath(ctx, "5.7.40", "8.0.36", "mysql", "mysql")
 
 	assert.NoError(t, err)
 	assert.True(t, valid)
@@ -294,7 +294,7 @@ func TestUpgradeService_Original_ValidateUpgradePath_Invalid(t *testing.T) {
 
 	ctx := context.Background()
 
-	valid, errors, err := service.ValidateUpgradePath(ctx, "5.6.40", "8.0.36")
+	valid, errors, err := service.ValidateUpgradePath(ctx, "5.6.40", "8.0.36", "mysql", "mysql")
 
 	assert.NoError(t, err)
 	assert.False(t, valid)
