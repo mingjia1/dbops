@@ -56,8 +56,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("cluster_defaults.replication_pass", "Repl#2024!ChangeMe")
 	viper.SetDefault("cluster_defaults.sst_user", "sstuser")
 	viper.SetDefault("cluster_defaults.sst_pass", "Sst#2024!ChangeMe")
-	// Agent 鉴权 token (Agent <-> Backend 通信). 强制要求设置, 无默认值.
+	// B7: 强制从环境变量注入敏感配置. 即使 config.yaml 误提交, 环境变量也会覆盖.
 	viper.SetDefault("agent_token", "")
+	viper.BindEnv("database_url", "DBOPS_DB_URL")
+	viper.BindEnv("jwt_secret", "DBOPS_JWT_SECRET")
+	viper.BindEnv("encryption_key", "DBOPS_ENCRYPTION_KEY")
+	viper.BindEnv("agent_token", "DBOPS_AGENT_TOKEN")
 	// JWT / 加密密钥故意不设默认值, 必须从 config.yaml 显式注入, 启动时校验.
 
 	if err := viper.ReadInConfig(); err != nil {

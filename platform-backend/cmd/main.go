@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/controllers"
@@ -418,14 +419,26 @@ func runMigrations(db *repositories.Database) error {
 
 // validateSecrets P0-1 防护: 任何缺省 / 短 / 明显示例值都直接拒启动.
 func validateSecrets(cfg *config.Config) error {
+	if cfg.DatabaseURL == "" || strings.Contains(cfg.DatabaseURL, "${DBOPS_DB_URL}") {
+		return fmt.Errorf("DBOPS_DB_URL env var must be set (got %q). Set it to a valid DSN, e.g. export DBOPS_DB_URL='root:s3cret@tcp(host:3306)/dbops?parseTime=true&loc=Local'", cfg.DatabaseURL)
+	}
 	if len(cfg.JWTSecret) < 32 {
-		return fmt.Errorf("jwt_secret must be set and >= 32 chars (current len=%d). Generate with: openssl rand -hex 32", len(cfg.JWTSecret))
+		return fmt.Errorf("jwt_secret must be set and >= 32 chars (current len=%d). Set DBOPS_JWT_SECRET or generate with: openssl rand -hex 32", len(cfg.JWTSecret))
+	}
+	if strings.Contains(cfg.JWTSecret, "PLEASE-CHANGE") || strings.Contains(cfg.JWTSecret, "INJECT_VIA_") {
+		return fmt.Errorf("jwt_secret is a placeholder (%q); set DBOPS_JWT_SECRET to a strong random value", cfg.JWTSecret)
 	}
 	if len(cfg.EncryptionKey) < 32 {
-		return fmt.Errorf("encryption_key must be set and >= 32 chars (current len=%d). Generate with: openssl rand -hex 32", len(cfg.EncryptionKey))
+		return fmt.Errorf("encryption_key must be set and >= 32 chars (current len=%d). Set DBOPS_ENCRYPTION_KEY or generate with: openssl rand -hex 32", len(cfg.EncryptionKey))
+	}
+	if strings.Contains(cfg.EncryptionKey, "PLEASE-CHANGE") || strings.Contains(cfg.EncryptionKey, "INJECT_VIA_") {
+		return fmt.Errorf("encryption_key is a placeholder (%q); set DBOPS_ENCRYPTION_KEY to a strong random value", cfg.EncryptionKey)
 	}
 	if cfg.AgentToken == "" || len(cfg.AgentToken) < 16 {
-		return fmt.Errorf("agent_token must be set and >= 16 chars. Generate with: openssl rand -hex 16")
+		return fmt.Errorf("agent_token must be set and >= 16 chars. Set DBOPS_AGENT_TOKEN or generate with: openssl rand -hex 16")
+	}
+	if strings.Contains(cfg.AgentToken, "PLEASE-CHANGE") || strings.Contains(cfg.AgentToken, "INJECT_VIA_") {
+		return fmt.Errorf("agent_token is a placeholder (%q); set DBOPS_AGENT_TOKEN to a strong random value", cfg.AgentToken)
 	}
 	return nil
 }
