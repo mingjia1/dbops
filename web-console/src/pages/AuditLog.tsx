@@ -19,6 +19,15 @@ const AuditLog: React.FC = () => {
 
   useEffect(() => { fetchData() }, [])
 
+  // P1: 之前 Input onChange 立即 setFilters, 配合 handleSearch 按钮 trigger
+  // 重复 fetch, 且搜索按钮连点会发重复请求. 修: 加 300ms debounce
+  // (输入稳定后再 fetch), 搜索按钮变手动 retry.
+  useEffect(() => {
+    const timer = setTimeout(() => { fetchData() }, 300)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters])
+
   const handleSearch = () => fetchData()
 
   const columns: ColumnsType<AuditLogType> = [
@@ -36,7 +45,14 @@ const AuditLog: React.FC = () => {
       ),
     },
     { title: 'IP地址', dataIndex: 'ip_address', key: 'ip_address' },
-    { title: '时间', dataIndex: 'created_at', key: 'created_at' },
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      // P1: 之前直接展示 ISO 字符串 "2024-12-04T10:30:00Z" 不可读.
+      // 修: toLocaleString 本地化显示.
+      render: (t: string) => (t ? new Date(t).toLocaleString() : '-'),
+    },
   ]
 
   return (

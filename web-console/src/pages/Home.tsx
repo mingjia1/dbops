@@ -74,11 +74,13 @@ const Home: React.FC = () => {
     },
     {
       label: '告警历史', value: alertCount, accent: '#FF9500', icon: <AlertOutlined />,
-      extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>近 7 天累计</div>,
+      // P1: 之前写 "近 7 天累计" 但 alertApi.listHistory() 返全表 (无时间过滤),
+      // 显示数字永远偏小. 改成 "总记录数" 诚实表达.
+      extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>总记录数</div>,
     },
     {
       label: '待审批', value: approvalCount, accent: '#AF52DE', icon: <SafetyCertificateOutlined />,
-      extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>高危操作待批</div>,
+      extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>待处理数</div>,
     },
     {
       label: '审计日志', value: auditCount, accent: '#5856D6', icon: <AuditOutlined />,
