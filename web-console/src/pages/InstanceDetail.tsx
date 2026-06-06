@@ -99,14 +99,14 @@ const InstanceDetail: React.FC = () => {
         const data = res?.data
         const status = data?.status
         if (!status) return
-        const role = status.role
-        const health = status.health_status
         const prog = status.deploy_progress
         if (typeof prog === 'number') setDeployProgress(prog)
         if (status.stage) setDeployStage(status.stage)
         if (status.deploy_status) setDeployStatus(status.deploy_status)
         if (status.deploy_message) setDeployMessage(status.deploy_message)
-        if (status.deploy_status === 'success' || health === 'healthy' || role) {
+        // F4: 之前 health==='healthy' || role 任一为真就判定 "部署完成",
+        // 对于已运行实例 role 永远有值, 点 "部署" 立即假完成. 现在只信 deploy_status.
+        if (status.deploy_status === 'success') {
           setDeployStatus('success')
           setDeployProgress(100)
           setDeployStage('部署完成')

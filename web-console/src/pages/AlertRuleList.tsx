@@ -37,23 +37,8 @@ interface AlertHistory {
   message: string
 }
 
-const MOCK_RULES: AlertRule[] = [
-  { id: '1', name: 'CPU使用率告警', metric: 'cpu_usage', condition: '>', threshold: 80, duration: 300, severity: 'warning', enabled: true, notification_channels: ['email-1', 'dingtalk-1'], created_at: '2024-01-15 10:00:00', updated_at: '2024-01-15 10:00:00' },
-  { id: '2', name: '内存使用率告警', metric: 'memory_usage', condition: '>', threshold: 90, duration: 180, severity: 'critical', enabled: true, notification_channels: ['email-1', 'webhook-1'], created_at: '2024-01-15 11:00:00', updated_at: '2024-01-15 11:00:00' },
-  { id: '3', name: '磁盘空间不足告警', metric: 'disk_usage', condition: '>', threshold: 85, duration: 600, severity: 'warning', enabled: false, notification_channels: ['email-1'], created_at: '2024-01-15 12:00:00', updated_at: '2024-01-15 12:00:00' },
-]
-
-const MOCK_CHANNELS: NotificationChannel[] = [
-  { id: 'email-1', name: '运维邮箱组', type: 'email', config: { recipients: ['ops@example.com'] }, enabled: true, created_at: '2024-01-10 09:00:00' },
-  { id: 'dingtalk-1', name: '钉钉告警群', type: 'dingtalk', config: { webhook: 'https://oapi.dingtalk.com/robot/send?access_token=xxx' }, enabled: true, created_at: '2024-01-10 10:00:00' },
-  { id: 'webhook-1', name: '运维平台Webhook', type: 'webhook', config: { url: 'https://ops.example.com/webhook/alert' }, enabled: true, created_at: '2024-01-10 11:00:00' },
-]
-
-const MOCK_HISTORIES: AlertHistory[] = [
-  { id: 'h1', rule_id: '1', rule_name: 'CPU使用率告警', status: 'resolved', value: 92.5, triggered_at: '2024-01-20 14:30:00', resolved_at: '2024-01-20 14:45:00', message: 'CPU使用率超过阈值: 92.5% > 80%' },
-  { id: 'h2', rule_id: '2', rule_name: '内存使用率告警', status: 'firing', value: 94.2, triggered_at: '2024-01-20 15:00:00', resolved_at: null, message: '内存使用率超过阈值: 94.2% > 90%' },
-  { id: 'h3', rule_id: '1', rule_name: 'CPU使用率告警', status: 'resolved', value: 88.3, triggered_at: '2024-01-19 10:00:00', resolved_at: '2024-01-19 10:20:00', message: 'CPU使用率超过阈值: 88.3% > 80%' },
-]
+// F1: 删 MOCK_RULES / MOCK_CHANNELS / MOCK_HISTORIES 三组 2024-01-15 假数据.
+// 之前 catch 回落 mock, 后端 down 时用户看到假告警, 还以为是真数据. 现在失败 message.error, 列表留空.
 
 const NotificationChannelsSection: React.FC<{
   channels: NotificationChannel[]
@@ -81,9 +66,14 @@ const NotificationChannelsSection: React.FC<{
       title: '确认删除',
       content: '确定要删除此通知渠道吗？',
       onOk: async () => {
-        try { await alertApi.deleteChannel(id) } catch { /* fallback */ }
-        onChange(channels.filter(c => c.id !== id))
-        message.success('删除成功')
+        try {
+          await alertApi.deleteChannel(id)
+          onChange(channels.filter(c => c.id !== id))
+          message.success('删除成功')
+        } catch (err: any) {
+          // F1: 失败时 message.error, 不再假装成功
+          message.error('删除失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
+        }
       },
     })
   }
@@ -91,17 +81,20 @@ const NotificationChannelsSection: React.FC<{
   const handleSubmit = async (values: any) => {
     try {
       if (editingChannel) {
-        try { await alertApi.updateChannel(editingChannel.id, values) } catch { /* fallback */ }
-        onChange(channels.map(c => c.id === editingChannel.id ? { ...c, ...values } : c))
+        const res: any = await alertApi.updateChannel(editingChannel.id, values)
+        const updated = res?.data || { ...editingChannel, ...values }
+        onChange(channels.map(c => c.id === editingChannel.id ? updated : c))
         message.success('更新通知渠道成功')
       } else {
-        try { await alertApi.createChannel(values) } catch { /* fallback */ }
-        const newChannel: NotificationChannel = { id: `channel-${Date.now()}`, ...values, created_at: new Date().toISOString() }
-        onChange([...channels, newChannel])
+        const res: any = await alertApi.createChannel(values)
+        const created = res?.data || { id: `channel-${Date.now()}`, ...values, created_at: new Date().toISOString() }
+        onChange([...channels, created])
         message.success('创建通知渠道成功')
       }
       setModalVisible(false)
-    } catch { message.error('操作失败') }
+    } catch (err: any) {
+      message.error('操作失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
+    }
   }
 
   const channelColumns = [
@@ -202,8 +195,10 @@ const AlertRuleList: React.FC = () => {
     try {
       const res: any = await alertApi.listRules()
       setAlertRules(res?.data || [])
-    } catch {
-      setAlertRules(MOCK_RULES)
+    } catch (err: any) {
+      // F1: 失败时留空 + message.error, 不再回落假数据
+      setAlertRules([])
+      message.error('加载告警规则失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -213,8 +208,9 @@ const AlertRuleList: React.FC = () => {
     try {
       const res: any = await alertApi.listChannels()
       setNotificationChannels(res?.data || [])
-    } catch {
-      setNotificationChannels(MOCK_CHANNELS)
+    } catch (err: any) {
+      setNotificationChannels([])
+      message.error('加载通知渠道失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     }
   }
 
@@ -222,8 +218,9 @@ const AlertRuleList: React.FC = () => {
     try {
       const res: any = await alertApi.listHistory()
       setAlertHistories(res?.data || [])
-    } catch {
-      setAlertHistories(MOCK_HISTORIES)
+    } catch (err: any) {
+      setAlertHistories([])
+      message.error('加载告警历史失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     }
   }
 
@@ -246,9 +243,12 @@ const AlertRuleList: React.FC = () => {
       onOk: async () => {
         try {
           await alertApi.deleteRule(id)
-        } catch { /* fallback */ }
-        setAlertRules(alertRules.filter(r => r.id !== id))
-        message.success('删除成功')
+          setAlertRules(alertRules.filter(r => r.id !== id))
+          message.success('删除成功')
+        } catch (err: any) {
+          // F1: 不再静默吞错, 让用户看到真错误
+          message.error('删除失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
+        }
       },
     })
   }
@@ -256,25 +256,24 @@ const AlertRuleList: React.FC = () => {
   const handleSubmitAlertRule = async (values: any) => {
     try {
       if (editingRule) {
-        try { await alertApi.updateRule(editingRule.id, values) } catch { /* fallback */ }
-        setAlertRules(alertRules.map(r =>
-          r.id === editingRule.id ? { ...r, ...values, updated_at: new Date().toISOString() } : r
-        ))
+        const res: any = await alertApi.updateRule(editingRule.id, values)
+        const updated = res?.data || { ...editingRule, ...values, updated_at: new Date().toISOString() }
+        setAlertRules(alertRules.map(r => r.id === editingRule.id ? updated : r))
         message.success('更新告警规则成功')
       } else {
-        try { await alertApi.createRule(values) } catch { /* fallback */ }
-        const newRule: AlertRule = {
+        const res: any = await alertApi.createRule(values)
+        const created = res?.data || {
           id: `rule-${Date.now()}`,
           ...values,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }
-        setAlertRules([...alertRules, newRule])
+        setAlertRules([...alertRules, created])
         message.success('创建告警规则成功')
       }
       setRuleModalVisible(false)
-    } catch (err) {
-      message.error('操作失败')
+    } catch (err: any) {
+      message.error('操作失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     }
   }
 

@@ -163,17 +163,11 @@ const UpgradeManage: React.FC = () => {
       const res: any = await upgradeApi.checkCompat(values)
       message.destroy()
       setCompatResult(res?.data)
-    } catch {
-      setTimeout(() => {
-        message.destroy()
-        setCompatResult({
-          compatible: true,
-          warnings: ['检测到使用了已废弃的 SQL_MODE: NO_AUTO_CREATE_USER', '存在 MySQL 5.6 不支持的保留字作为表名', '部分存储过程使用了新版本不支持的语法'],
-          recommendations: ['建议升级前修改 SQL_MODE', '建议重命名使用保留字的表', '建议先在测试环境验证存储过程'],
-          sql_mode_changes: [{ old: 'NO_AUTO_CREATE_USER', new: '已移除', impact: '需要手动迁移用户权限' }],
-          deprecated_features: [{ feature: 'QUERY_CACHE', action: '需要禁用或移除相关配置' }],
-        })
-      }, 1000)
+    } catch (err: any) {
+      // F3: 失败时 message.error + setCompatResult(null), 不再回落硬编码假数据
+      message.destroy()
+      setCompatResult(null)
+      message.error('兼容性检查失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     }
   }
 

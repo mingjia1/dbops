@@ -63,14 +63,10 @@ const EnvironmentCheck: React.FC = () => {
         message.warning('所选主机均未通过可用性检测, 请先在主机管理中点击"测试连接"')
         return
       }
-      payload = {
-        hosts: okHosts.map((h) => ({
-          host: h.address,
-          port: h.ssh_port,
-          username: h.ssh_user,
-          password: '',
-        })),
-      }
+      // F4: 之前 "从主机列表" 模式提交时 password='', SSH 必败.
+      // 现在: 平台没有存凭据, 必须切到 "手动输入" 模式, 不再假装能跑.
+      message.warning('"从主机列表" 模式需要主机存有 SSH 凭据, 当前 UI 未提供凭据录入. 请切换到 "手动输入" 模式填入 SSH 密码.')
+      return
     } else {
       const values = await form.validateFields()
       if (!values.hosts || values.hosts.length === 0) {

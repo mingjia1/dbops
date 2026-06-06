@@ -152,7 +152,9 @@ const MigrationManage: React.FC = () => {
   const handlePhysicalMigration = async (values: any) => {
     setLoading(true)
     try {
-      let task: MigrationTask = {
+      // F2: 后端失败时直接 message.error + return, 不再塞假 task 进列表
+      const res: any = await migrationApi.createPhysical(values)
+      const task: MigrationTask = res?.data || {
         id: `mig-${Date.now()}`,
         migration_type: 'physical',
         source_instance: values.source_instance,
@@ -161,10 +163,6 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
-      try {
-        const res: any = await migrationApi.createPhysical(values)
-        if (res?.data) task = { ...task, ...res.data }
-      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('物理迁移任务已启动')
@@ -173,8 +171,8 @@ const MigrationManage: React.FC = () => {
         { stage: '数据传输', progress: 0, details: '等待中...' },
         { stage: '数据导入', progress: 0, details: '等待中...' },
       ])
-    } catch (err) {
-      message.error('启动物理迁移失败')
+    } catch (err: any) {
+      message.error('启动物理迁移失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -183,7 +181,9 @@ const MigrationManage: React.FC = () => {
   const handleReplicationMigration = async (values: any) => {
     setLoading(true)
     try {
-      let task: MigrationTask = {
+      // F2: 同上, 不再吞错
+      const res: any = await migrationApi.createReplication(values)
+      const task: MigrationTask = res?.data || {
         id: `mig-${Date.now()}`,
         migration_type: 'replication',
         source_instance: values.source_instance,
@@ -192,10 +192,6 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
-      try {
-        const res: any = await migrationApi.createReplication(values)
-        if (res?.data) task = { ...task, ...res.data }
-      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('复制迁移任务已启动')
@@ -204,8 +200,8 @@ const MigrationManage: React.FC = () => {
         { stage: '数据同步', progress: 0, details: '等待中...' },
         { stage: '一致性校验', progress: 0, details: '等待中...' },
       ])
-    } catch (err) {
-      message.error('启动复制迁移失败')
+    } catch (err: any) {
+      message.error('启动复制迁移失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -214,7 +210,9 @@ const MigrationManage: React.FC = () => {
   const handleGTIDMigration = async (values: any) => {
     setLoading(true)
     try {
-      let task: MigrationTask = {
+      // F2: 同上
+      const res: any = await migrationApi.createGTID(values)
+      const task: MigrationTask = res?.data || {
         id: `mig-${Date.now()}`,
         migration_type: 'gtid',
         source_instance: values.source_instance,
@@ -223,10 +221,6 @@ const MigrationManage: React.FC = () => {
         progress: 0,
         started_at: new Date().toISOString(),
       }
-      try {
-        const res: any = await migrationApi.createGTID(values)
-        if (res?.data) task = { ...task, ...res.data }
-      } catch { /* fallback */ }
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('GTID迁移任务已启动')
@@ -235,8 +229,8 @@ const MigrationManage: React.FC = () => {
         { stage: '事务应用', progress: 0, details: '等待中...' },
         { stage: '数据校验', progress: 0, details: '等待中...' },
       ])
-    } catch (err) {
-      message.error('启动GTID迁移失败')
+    } catch (err: any) {
+      message.error('启动GTID迁移失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
     } finally {
       setLoading(false)
     }
