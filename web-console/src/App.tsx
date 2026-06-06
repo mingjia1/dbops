@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { App as AntApp } from 'antd'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -35,6 +36,9 @@ function App() {
   }, [navigate])
 
   return (
+    // P1: 用 <AntApp> 包根, 让 Login / Dashboard 等页面的 AntApp.useApp()
+    // 拿到正确的 message / modal / notification context (之前是 antd 静态 fallback).
+    <AntApp>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route
@@ -71,6 +75,7 @@ function App() {
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
+    </AntApp>
   )
 }
 

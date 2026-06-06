@@ -26,7 +26,10 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
+      // P1: 之前只 removeItem('token'), 'user' 残留导致 Dashboard 仍读出 user
+      // 显示 "欢迎xxx", 业务上已经重定向到 /login 但前端 UI 不一致.
       localStorage.removeItem('token')
+      localStorage.removeItem('user')
       triggerLogout()
       return Promise.reject(error)
     }

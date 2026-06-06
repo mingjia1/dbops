@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Form, Input, Button, Tabs, App as AntApp } from 'antd'
 import { UserOutlined, LockOutlined, MailOutlined, AppleOutlined, CloudOutlined, SafetyCertificateOutlined, ThunderboltOutlined, ClusterOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../services/api'
 import './Login.css'
 
 const Login: React.FC = () => {
@@ -10,21 +10,26 @@ const Login: React.FC = () => {
   const navigate = useNavigate()
   const { message } = AntApp.useApp()
 
+  // P1: 之前 Login.tsx 用裸 axios.post 绕开了 services/api.ts 的统一拦截器
+  // (401 触发 triggerLogout / 错误 message 统一格式化). 后端 5xx 字段若不是
+  // {message: ...} 就会显示 "undefined". 改用共享 api 实例, 同时 401 路径
+  // 自动 triggerLogout, 与其他页面一致.
   const onLogin = async (values: any) => {
     setLoading(true)
     try {
-      const response = await axios.post('/api/v1/auth/login', {
+      // api.interceptors.response 已经 return response.data, 这里 res 就是后端 body
+      const res: any = await api.post('/auth/login', {
         username: values.username,
         password: values.password,
       })
-      if (response.data && response.data.code === 200 && response.data.data) {
-        const { token, user } = response.data.data
-        localStorage.setItem('token', token)
-        localStorage.setItem('user', JSON.stringify(user))
+      if (res && res.code === 200 && res.data) {
+        const { token, user } = res.data
+        if (token) localStorage.setItem('token', token)
+        if (user) localStorage.setItem('user', JSON.stringify(user))
         message.success('欢迎回来，' + (user?.username || ''))
         setTimeout(() => navigate('/dashboard', { replace: true }), 220)
       } else {
-        message.error(response.data?.message || '登录失败')
+        message.error(res?.message || '登录失败')
       }
     } catch (error: any) {
       const status = error.response?.status
@@ -33,7 +38,7 @@ const Login: React.FC = () => {
       } else if (status === 429) {
         message.warning('登录尝试过于频繁，请稍后再试')
       } else {
-        message.error(error.response?.data?.message || '登录请求失败')
+        message.error(error.response?.data?.message || error.message || '登录请求失败')
       }
     } finally {
       setLoading(false)
@@ -43,19 +48,19 @@ const Login: React.FC = () => {
   const onRegister = async (values: any) => {
     setLoading(true)
     try {
-      const response = await axios.post('/api/v1/auth/register', {
+      const res: any = await api.post('/auth/register', {
         username: values.username,
         password: values.password,
         email: values.email,
         role: 'operator',
       })
-      if (response.data && response.data.code === 200) {
+      if (res && res.code === 200) {
         message.success('注册成功，请登录')
       } else {
-        message.error(response.data?.message || '注册失败')
+        message.error(res?.message || '注册失败')
       }
     } catch (error: any) {
-      message.error(error.response?.data?.message || '注册请求失败')
+      message.error(error.response?.data?.message || error.message || '注册请求失败')
     } finally {
       setLoading(false)
     }
