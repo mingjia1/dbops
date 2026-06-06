@@ -131,7 +131,9 @@ const RoleSwitch: React.FC = () => {
           <Form.Item label="架构类型" required>
             <Select
               value={archType}
-              onChange={setArchType}
+              // P2: 之前从 MHA 切到 MGR, targetRole 仍是 "master" (MHA 角色),
+              // 后端校验失败. 架构类型变化时清空 targetRole.
+              onChange={(v) => { setArchType(v); setTargetRole(undefined) }}
               options={[
                 { value: 'mha', label: 'MHA (master/slave)' },
                 { value: 'mgr', label: 'MGR (primary/secondary)' },
