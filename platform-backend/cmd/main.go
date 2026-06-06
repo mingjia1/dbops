@@ -252,12 +252,13 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 			instances := protected.Group("/instances")
 			{
 				instances.GET("", instanceController.List)
-				instances.POST("", instanceController.Create)
 				instances.GET("/:id", instanceController.GetByID)
-				instances.PUT("/:id", instanceController.Update)
-				instances.DELETE("/:id", instanceController.Delete)
-				instances.POST("/:id/detect-version", instanceController.DetectVersion)
-			instances.POST("/:id/deploy", instanceController.Deploy)
+				// B2: 写操作 (POST/PUT/DELETE) 需要 admin 角色, 任何登录用户都不能直接调.
+				instances.POST("", middleware.RequirePermission("admin"), instanceController.Create)
+				instances.PUT("/:id", middleware.RequirePermission("admin"), instanceController.Update)
+				instances.DELETE("/:id", middleware.RequirePermission("admin"), instanceController.Delete)
+				instances.POST("/:id/detect-version", middleware.RequirePermission("admin"), instanceController.DetectVersion)
+				instances.POST("/:id/deploy", middleware.RequirePermission("admin"), instanceController.Deploy)
 			}
 
 			hosts := protected.Group("/hosts")
@@ -283,8 +284,9 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 
 			backups := protected.Group("/backups")
 			{
-				backups.POST("/policies", backupController.CreatePolicy)
-				backups.POST("", backupController.ExecuteBackup)
+				// B2: 备份策略创建是 admin 操作.
+				backups.POST("/policies", middleware.RequirePermission("admin"), backupController.CreatePolicy)
+				backups.POST("", middleware.RequirePermission("admin"), backupController.ExecuteBackup)
 				backups.GET("", backupController.ListBackups)
 			}
 
@@ -308,9 +310,10 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 
 			deployments := protected.Group("/deployments")
 			{
-				deployments.POST("/mha", clusterDeployController.DeployMHA)
-				deployments.POST("/mgr", clusterDeployController.DeployMGR)
-				deployments.POST("/pxc", clusterDeployController.DeployPXC)
+				// B2: 集群部署是高危操作, 必须 admin.
+				deployments.POST("/mha", middleware.RequirePermission("admin"), clusterDeployController.DeployMHA)
+				deployments.POST("/mgr", middleware.RequirePermission("admin"), clusterDeployController.DeployMGR)
+				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)
 				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
 			}
 
@@ -329,8 +332,9 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 				ha.GET("/health/failure-state", healthCheckController.GetFailureState)
 				ha.GET("/health/detect", healthCheckController.DetectFailure)
 				ha.POST("/health/batch", healthCheckController.BatchHealthCheck)
-				ha.POST("/failover", failoverController.ExecuteAutoFailover)
-				ha.POST("/manual-switch", failoverController.ExecuteManualFailover)
+				// B2: 自动/手动 failover 是最危险操作, 强制 admin.
+				ha.POST("/failover", middleware.RequirePermission("admin"), failoverController.ExecuteAutoFailover)
+				ha.POST("/manual-switch", middleware.RequirePermission("admin"), failoverController.ExecuteManualFailover)
 				ha.GET("/status", failoverController.GetClusterStatus)
 			}
 
@@ -339,10 +343,11 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 				upgrades.GET("", upgradeController.ListHistory)
 				upgrades.POST("/plan", upgradeController.PlanUpgradePath)
 				upgrades.POST("/check", upgradeController.CheckCompatibility)
-				upgrades.POST("/in-place", upgradeController.ExecuteInPlaceUpgrade)
-				upgrades.POST("/logical", upgradeController.ExecuteLogicalMigration)
-				upgrades.POST("/rolling", upgradeController.ExecuteRollingUpgrade)
-				upgrades.POST("/rollback", upgradeController.RollbackUpgrade)
+				// B2: 实际触发升级 (in-place / logical / rolling / rollback) 全部 admin.
+				upgrades.POST("/in-place", middleware.RequirePermission("admin"), upgradeController.ExecuteInPlaceUpgrade)
+				upgrades.POST("/logical", middleware.RequirePermission("admin"), upgradeController.ExecuteLogicalMigration)
+				upgrades.POST("/rolling", middleware.RequirePermission("admin"), upgradeController.ExecuteRollingUpgrade)
+				upgrades.POST("/rollback", middleware.RequirePermission("admin"), upgradeController.RollbackUpgrade)
 				upgrades.GET("/:id", upgradeController.GetUpgradeByID)
 				upgrades.GET("/:id/report", upgradeController.GenerateUpgradeReport)
 			}
@@ -369,19 +374,20 @@ migrations := protected.Group("/migrations")
 			alerts := protected.Group("/alerts")
 			{
 				alerts.GET("/rules", alertController.ListAlertRules)
-				alerts.POST("/rules", alertController.CreateAlertRule)
+				// B2: 告警规则 / 渠道的写操作 admin 才能调.
+				alerts.POST("/rules", middleware.RequirePermission("admin"), alertController.CreateAlertRule)
 				alerts.GET("/rules/:id", alertController.GetAlertRule)
-				alerts.PUT("/rules/:id", alertController.UpdateAlertRule)
-				alerts.DELETE("/rules/:id", alertController.DeleteAlertRule)
+				alerts.PUT("/rules/:id", middleware.RequirePermission("admin"), alertController.UpdateAlertRule)
+				alerts.DELETE("/rules/:id", middleware.RequirePermission("admin"), alertController.DeleteAlertRule)
 				alerts.POST("/evaluate", alertController.EvaluateAlert)
-				alerts.POST("/trigger", alertController.TriggerAlert)
+				alerts.POST("/trigger", middleware.RequirePermission("admin"), alertController.TriggerAlert)
 				alerts.GET("/history", alertController.GetAlertHistory)
-				alerts.POST("/notifications", alertController.SendNotification)
+				alerts.POST("/notifications", middleware.RequirePermission("admin"), alertController.SendNotification)
 				alerts.GET("/notifications/channels", alertController.ListNotificationChannels)
-				alerts.POST("/notifications/channels", alertController.CreateNotificationChannel)
+				alerts.POST("/notifications/channels", middleware.RequirePermission("admin"), alertController.CreateNotificationChannel)
 				alerts.GET("/notifications/channels/:id", alertController.GetNotificationChannel)
-				alerts.PUT("/notifications/channels/:id", alertController.UpdateNotificationChannel)
-				alerts.DELETE("/notifications/channels/:id", alertController.DeleteNotificationChannel)
+				alerts.PUT("/notifications/channels/:id", middleware.RequirePermission("admin"), alertController.UpdateNotificationChannel)
+				alerts.DELETE("/notifications/channels/:id", middleware.RequirePermission("admin"), alertController.DeleteNotificationChannel)
 			}
 
 			approvals := protected.Group("/approvals")

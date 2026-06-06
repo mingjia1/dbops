@@ -8,10 +8,24 @@ import (
 	"time"
 )
 
-type TaskExecutor struct{}
+// TaskExecutor 持有子 executor, 让 cmd/main.go 路由层可以派发到具体方法.
+// 之前是空 struct, 路由只能调 TaskExecutor 自己的方法, 缺 upgrade / migration-verify 入口.
+type TaskExecutor struct {
+	UpgradeExecutor   *UpgradeExecutor
+	MigrationExecutor *MigrationExecutor
+}
 
 func NewTaskExecutor() *TaskExecutor {
-	return &TaskExecutor{}
+	return &TaskExecutor{
+		UpgradeExecutor:   NewUpgradeExecutor(),
+		MigrationExecutor: NewMigrationExecutor(),
+	}
+}
+
+// ExecuteVerifyMigration A1: 之前 /agent/tasks/migration-verify 路由不存在,
+// backend 调过去 404, 现在转发到 MigrationExecutor.VerifyMigration.
+func (t *TaskExecutor) ExecuteVerifyMigration(ctx context.Context, req DeployTaskRequest) *MigrationVerifyResult {
+	return t.MigrationExecutor.VerifyMigration(ctx, req)
 }
 
 type DeployTaskRequest struct {

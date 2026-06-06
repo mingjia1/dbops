@@ -135,6 +135,49 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			// A1: 之前 backend 调 /agent/tasks/migration-verify 会 404,
+			// 现在路由到 MigrationExecutor.VerifyMigration.
+			tasks.POST("/migration-verify", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result := taskExecutor.ExecuteVerifyMigration(c.Request.Context(), req)
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			// A1: 之前 backend 调 /agent/tasks/upgrade 会 404.
+			// 派发到 UpgradeExecutor 的具体方法, 通过 req.Config["upgrade_type"] 区分.
+			tasks.POST("/upgrade", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				upgradeType, _ := req.Config["upgrade_type"].(string)
+				ue := taskExecutor.UpgradeExecutor
+
+				var result *executor.TaskResult
+				var execErr error
+				switch upgradeType {
+				case "rolling":
+					result, execErr = ue.ExecuteRollingUpgrade(c.Request.Context(), req)
+				case "in-place", "":
+					result, execErr = ue.ExecuteInPlaceUpgrade(c.Request.Context(), req)
+				default:
+					c.JSON(400, gin.H{"code": 400, "message": "unsupported upgrade_type: " + upgradeType})
+					return
+				}
+				if execErr != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Upgrade failed: " + execErr.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
 			tasks.POST("/migration-switch", func(c *gin.Context) {
 				var req executor.DeployTaskRequest
 				if err := c.ShouldBindJSON(&req); err != nil {
