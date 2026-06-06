@@ -76,7 +76,9 @@ const ClusterDeploy: React.FC = () => {
         }
         patchDeployment(next)
         const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
-        if (stepIdx >= 0) setCurrentStep(stepIdx + 1)
+        // P2: 之前 +1 让"环境检查"(index 0) → current=1 → Steps 高亮"安装二进制",
+        // 部署开始第一步就跳到第二步. 修: antd Steps.current 是 0-based, 直接用 stepIdx.
+        if (stepIdx >= 0) setCurrentStep(stepIdx)
         if (next.status === 'success' || next.status === 'failed' || attempts > 600) {
           stopPolling()
           if (next.status === 'success') message.success(`${dep.cluster_type.toUpperCase()} 集群部署完成`)
