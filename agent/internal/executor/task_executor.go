@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -414,7 +415,7 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 
 func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
 	backupDir := fmt.Sprintf("%s/%s-%d", config.TargetDir, config.BackupType, time.Now().Unix())
-	
+
 	backupCmd := exec.CommandContext(ctx, "xtrabackup",
 		"--backup",
 		"--target-dir="+backupDir,
@@ -425,11 +426,25 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		"--stream=xbstream",
 		"--compress",
 	)
-	
+
+	// A3 part 1: --stream=xbstream 写到 stdout, 之前 Stdout=nil 把流扔了,
+	// sha256sum 必然拿不到文件, 然后假装 "checksum-unavailable" + 报 completed.
+	// 修: 把 xbstream 流到磁盘, sha256sum 才能算出真 hash.
 	backupFile := fmt.Sprintf("%s.xbstream", backupDir)
-	backupCmd.Stdout = nil
-	
+	streamOut, err := os.Create(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Failed to open backup file %s: %v", backupFile, err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	backupCmd.Stdout = streamOut
+	backupCmd.Stderr = os.Stderr
+
 	if err := backupCmd.Run(); err != nil {
+		_ = streamOut.Close()
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  0,
@@ -437,12 +452,20 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 			Timestamp: time.Now(),
 		}, nil
 	}
-	
+	if err := streamOut.Close(); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Failed to close backup file %s: %v", backupFile, err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
 	prepareCmd := exec.CommandContext(ctx, "xtrabackup",
 		"--prepare",
 		"--target-dir="+backupDir,
 	)
-	
+
 	if err := prepareCmd.Run(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
@@ -451,13 +474,19 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 			Timestamp: time.Now(),
 		}, nil
 	}
-	
+
 	checksumCmd := exec.CommandContext(ctx, "sha256sum", backupFile)
 	checksumOutput, err := checksumCmd.Output()
 	if err != nil {
-		checksumOutput = []byte("checksum-unavailable")
+		// 真没拿到 hash 时标 failed, 不能再假装 "checksum-unavailable" 然后 completed
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("sha256sum failed: %v (backup file: %s)", err, backupFile),
+			Timestamp: time.Now(),
+		}, nil
 	}
-	
+
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  100,
@@ -710,6 +739,20 @@ type RoleSwitchConfig struct {
 	ReplicationPass string `json:"replication_pass"`
 	Force           bool   `json:"force"`
 	GracePeriodSec  int    `json:"grace_period_sec"`
+	// A3 part 2/3: 之前 executor 硬编 127.0.0.1:3306 root ''.
+	// 改成 backend 通过 req.Config 传入 target host/port/user/pass.
+	// (即 "本实例" 的连接信息 - 同一个 agent 跑多实例时要按 instance_id 区分)
+	TargetHost string `json:"target_host"`
+	TargetPort int    `json:"target_port"`
+	TargetUser string `json:"target_user"`
+	TargetPass string `json:"target_pass"`
+	// MGR promote 真正需要的: 新主 server_uuid, 不是 THISUUID.
+	NewMasterServerUUID string `json:"new_master_server_uuid"`
+	// Replica-rebuild 需要新主 host:port:user:pass, 之前用 NewMasterID (UUID) 拼 MASTER_HOST.
+	NewMasterHost string `json:"new_master_host"`
+	NewMasterPort int    `json:"new_master_port"`
+	NewMasterUser string `json:"new_master_user"`
+	NewMasterPass string `json:"new_master_pass"`
 }
 
 type RoleQueryResult struct {
@@ -759,6 +802,37 @@ func parseRoleSwitchConfig(config map[string]interface{}) RoleSwitchConfig {
 	if v, ok := config["grace_period_sec"].(int); ok {
 		c.GracePeriodSec = v
 	}
+	if v, ok := config["target_host"].(string); ok {
+		c.TargetHost = v
+	}
+	if v, ok := config["target_port"].(int); ok {
+		c.TargetPort = v
+	} else if v, ok := config["target_port"].(float64); ok {
+		c.TargetPort = int(v)
+	}
+	if v, ok := config["target_user"].(string); ok {
+		c.TargetUser = v
+	}
+	if v, ok := config["target_pass"].(string); ok {
+		c.TargetPass = v
+	}
+	if v, ok := config["new_master_server_uuid"].(string); ok {
+		c.NewMasterServerUUID = v
+	}
+	if v, ok := config["new_master_host"].(string); ok {
+		c.NewMasterHost = v
+	}
+	if v, ok := config["new_master_port"].(int); ok {
+		c.NewMasterPort = v
+	} else if v, ok := config["new_master_port"].(float64); ok {
+		c.NewMasterPort = int(v)
+	}
+	if v, ok := config["new_master_user"].(string); ok {
+		c.NewMasterUser = v
+	}
+	if v, ok := config["new_master_pass"].(string); ok {
+		c.NewMasterPass = v
+	}
 	return c
 }
 
@@ -769,6 +843,15 @@ func mysqlBaseArgs(host string, port int, user, pass string) []string {
 		"-u", user,
 		fmt.Sprintf("-p%s", pass),
 	}
+}
+
+// resolveTargetConn A3 part 2: 优先用 cfg 传入的 target_host/port/user/pass,
+// 缺失时 fallback 到 127.0.0.1:3306 root '' (保持向后兼容, 但有 warn).
+func resolveTargetConn(cfg RoleSwitchConfig) (string, int, string, string) {
+	if cfg.TargetHost != "" {
+		return cfg.TargetHost, cfg.TargetPort, cfg.TargetUser, cfg.TargetPass
+	}
+	return "127.0.0.1", 3306, "root", ""
 }
 
 func runMySQLExec(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
@@ -786,7 +869,8 @@ func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskReque
 	}
 
 	readOnlySQL := "SELECT @@read_only, @@server_id, @@server_uuid"
-	output, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", readOnlySQL)
+	host, port, user, pass := resolveTargetConn(cfg)
+	output, err := runMySQLExec(ctx, host, port, user, pass, readOnlySQL)
 	if err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -802,7 +886,7 @@ func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskReque
 		role = "primary"
 	}
 
-	slaveOutput, _ := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", "SHOW SLAVE STATUS\\G")
+	slaveOutput, _ := runMySQLExec(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G")
 	slaveRunning := strings.Contains(slaveOutput, "Slave_IO_Running: Yes") &&
 		strings.Contains(slaveOutput, "Slave_SQL_Running: Yes")
 
@@ -822,6 +906,8 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 		time.Sleep(time.Duration(cfg.GracePeriodSec) * time.Second)
 	}
 
+	host, port, user, pass := resolveTargetConn(cfg)
+
 	steps := []struct {
 		sql   string
 		label string
@@ -834,7 +920,7 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 	}
 
 	for _, step := range steps {
-		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", step.sql); err != nil {
+		if _, err := runMySQLExec(ctx, host, port, user, pass, step.sql); err != nil {
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "failed",
@@ -845,8 +931,20 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 		}
 	}
 
+	// A3 part 3: MGR promote 之前发 'THISUUID' 永远失败 (或 force=true 时静默成功).
+	// 修: 用 cfg.NewMasterServerUUID, 由 backend 解析新 primary 的 @@server_uuid 后下发.
 	if cfg.ClusterType == "mgr" {
-		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", "SELECT group_replication_set_as_primary('THISUUID')"); err != nil {
+		if cfg.NewMasterServerUUID == "" {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  80,
+				Message:   "MGR promote requires new_master_server_uuid in request config",
+				Timestamp: time.Now(),
+			}, nil
+		}
+		mgrSQL := fmt.Sprintf("SELECT group_replication_set_as_primary('%s')", cfg.NewMasterServerUUID)
+		if _, err := runMySQLExec(ctx, host, port, user, pass, mgrSQL); err != nil {
 			if !cfg.Force {
 				return &TaskResult{
 					TaskID:    req.TaskID,
@@ -871,6 +969,8 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 func (e *TaskExecutor) ExecuteRoleDemote(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	cfg := parseRoleSwitchConfig(req.Config)
 
+	host, port, user, pass := resolveTargetConn(cfg)
+
 	steps := []struct {
 		sql   string
 		label string
@@ -881,7 +981,7 @@ func (e *TaskExecutor) ExecuteRoleDemote(ctx context.Context, req DeployTaskRequ
 	}
 
 	for _, step := range steps {
-		if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", step.sql); err != nil {
+		if _, err := runMySQLExec(ctx, host, port, user, pass, step.sql); err != nil {
 			if cfg.Force {
 				continue
 			}
@@ -915,12 +1015,25 @@ func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req Deploy
 			Timestamp: time.Now(),
 		}, nil
 	}
+	// A3 part 3: 之前直接用 cfg.NewMasterID (UUID) 当 MASTER_HOST, 复制永远起不来.
+	// 修: 优先用 cfg.NewMasterHost/Port/User/Pass, 缺失时 fail 让人补, 不再猜.
+	if cfg.NewMasterHost == "" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  10,
+			Message:   "new_master_host is required to rebuild replica (cannot use UUID as MASTER_HOST)",
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	host, port, user, pass := resolveTargetConn(cfg)
 
 	changeSQL := fmt.Sprintf(
-		"STOP SLAVE; CHANGE MASTER TO MASTER_HOST='%s', MASTER_AUTO_POSITION=1; START SLAVE;",
-		cfg.NewMasterID,
+		"STOP SLAVE; CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%d, MASTER_USER='%s', MASTER_PASSWORD='%s', MASTER_AUTO_POSITION=1; START SLAVE;",
+		cfg.NewMasterHost, cfg.NewMasterPort, cfg.NewMasterUser, cfg.NewMasterPass,
 	)
-	if _, err := runMySQLExec(ctx, "127.0.0.1", 3306, "root", "", changeSQL); err != nil {
+	if _, err := runMySQLExec(ctx, host, port, user, pass, changeSQL); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -934,7 +1047,7 @@ func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req Deploy
 		TaskID:    req.TaskID,
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("replica %s re-pointed to new master %s", cfg.InstanceID, cfg.NewMasterID),
+		Message:   fmt.Sprintf("replica %s re-pointed to new master %s (%s:%d)", cfg.InstanceID, cfg.NewMasterID, cfg.NewMasterHost, cfg.NewMasterPort),
 		Timestamp: time.Now(),
 	}, nil
 }

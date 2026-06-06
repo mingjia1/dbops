@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +39,11 @@ type UpgradeConfig struct {
 	BinlogSyncTimeout  int      `json:"binlog_sync_timeout"`
 	UpgradeTimeout     int      `json:"upgrade_timeout"`
 	RollingNodes       []string `json:"rolling_nodes"`
+	// A4: 之前 export/import/pre-upgrade-backup 各自 time.Now().Unix(),
+	// import 时 exportDir 找不到自己的导出目录; rollback 找不到预备份.
+	// 改成用 backend 下发的 task_id (在每个 Execute* 入口从 req.TaskID 拷过来)
+	// 作为整个升级过程唯一定位符.
+	TaskID string `json:"task_id"`
 }
 
 type UpgradePath struct {
@@ -402,7 +408,9 @@ func (e *UpgradeExecutor) ExecuteInPlaceUpgrade(ctx context.Context, req DeployT
 }
 
 func (e *UpgradeExecutor) createPreUpgradeBackup(ctx context.Context, config UpgradeConfig) *TaskResult {
-	backupDir := fmt.Sprintf("%s/pre-upgrade-%s-%d", config.BackupDir, config.TargetVersion, time.Now().Unix())
+	// A4: 文件名用 config.TaskID 唯一定位, 不再 time.Now().Unix().
+	// restoreBackup 之前找 `pre-upgrade-{version}` 找不到带时间戳的目录.
+	backupDir := fmt.Sprintf("%s/pre-upgrade-%s-%s", config.BackupDir, config.TargetVersion, config.TaskID)
 
 	cmd := exec.CommandContext(ctx, "mysqldump",
 		"-h", config.InstanceHost,
@@ -543,6 +551,17 @@ func (e *UpgradeExecutor) rollbackPackage(ctx context.Context, config UpgradeCon
 }
 
 func (e *UpgradeExecutor) runMysqlUpgrade(ctx context.Context, config UpgradeConfig) *TaskResult {
+	// A4: mysql_upgrade 在 MySQL 8.0.16+ 已废弃 (server 启动时自动处理 schema 升级).
+	// 目标 ≥ 8.0.17 时直接跳过, 否则会失败在 "Schema upgrade" 步骤.
+	if !needsMysqlUpgrade(config.TargetVersion) {
+		return &TaskResult{
+			Status:    "completed",
+			Progress:  70,
+			Message:   fmt.Sprintf("mysql_upgrade skipped (target %s >= 8.0.17, server auto-upgrades schema on startup)", config.TargetVersion),
+			Timestamp: time.Now(),
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "mysql_upgrade",
 		"-u", config.MySQLUser,
 		"-p"+config.MySQLPass,
@@ -564,6 +583,56 @@ func (e *UpgradeExecutor) runMysqlUpgrade(ctx context.Context, config UpgradeCon
 		Message:   "Schema upgrade completed",
 		Timestamp: time.Now(),
 	}
+}
+
+// needsMysqlUpgrade 返回是否需要调 mysql_upgrade 命令行工具.
+// MySQL 8.0.16 起 server 启动自动调用 mysql_upgrade 逻辑, 命令行工具标记 deprecated.
+// 8.0.17 起命令行 mysql_upgrade 会被移除, 调到即失败.
+func needsMysqlUpgrade(target string) bool {
+	major, minor, patch, ok := parseVersion(target)
+	if !ok {
+		// 解析失败时保守执行, 不静默跳过
+		return true
+	}
+	if major < 8 {
+		return true
+	}
+	// 8.0.16 -> 仍需要; 8.0.17+ -> server 启动自动处理, 跳过命令行 mysql_upgrade
+	if major == 8 && minor == 0 && patch < 17 {
+		return true
+	}
+	// 8.1+ 任何 patch 都已移除
+	return false
+}
+
+func parseVersion(v string) (int, int, int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, 0, 0, false
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 1 {
+		return 0, 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	minor := 0
+	if len(parts) >= 2 {
+		minor, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return major, 0, 0, true
+		}
+	}
+	patch := 0
+	if len(parts) >= 3 {
+		patch, err = strconv.Atoi(parts[2])
+		if err != nil {
+			return major, minor, 0, true
+		}
+	}
+	return major, minor, patch, true
 }
 
 func (e *UpgradeExecutor) startMySQL(ctx context.Context, config UpgradeConfig) *TaskResult {
@@ -672,7 +741,8 @@ func (e *UpgradeExecutor) ExecuteLogicalMigration(ctx context.Context, req Deplo
 }
 
 func (e *UpgradeExecutor) exportData(ctx context.Context, config UpgradeConfig) *TaskResult {
-	exportDir := fmt.Sprintf("%s/migration-%d", config.BackupDir, time.Now().Unix())
+	// A4: 用 task_id 而不是 time.Now().Unix() 两次调 (export + import) 不一致.
+	exportDir := fmt.Sprintf("%s/migration-%s", config.BackupDir, config.TaskID)
 
 	mkdirCmd := exec.CommandContext(ctx, "mkdir", "-p", exportDir)
 	if err := mkdirCmd.Run(); err != nil {
@@ -827,7 +897,8 @@ func (e *UpgradeExecutor) startNewInstance(ctx context.Context, config UpgradeCo
 }
 
 func (e *UpgradeExecutor) importData(ctx context.Context, config UpgradeConfig) *TaskResult {
-	exportDir := fmt.Sprintf("%s/migration-%d", config.BackupDir, time.Now().Unix())
+	// A4: 与 exportData 同样的命名规则, 用 task_id 唯一定位 export 目录.
+	exportDir := fmt.Sprintf("%s/migration-%s", config.BackupDir, config.TaskID)
 
 	switch config.LogicalMigrateTool {
 	case "mydumper":
@@ -1041,7 +1112,9 @@ func (e *UpgradeExecutor) RollbackUpgrade(ctx context.Context, req DeployTaskReq
 }
 
 func (e *UpgradeExecutor) restoreBackup(ctx context.Context, config UpgradeConfig) *TaskResult {
-	backupDir := fmt.Sprintf("%s/pre-upgrade-%s", config.BackupDir, config.TargetVersion)
+	// A4: 与 createPreUpgradeBackup 文件名规则一致 (`pre-upgrade-{version}-{task_id}`),
+	// 不再是 `pre-upgrade-{version}` 找不到带时间戳的目录.
+	backupDir := fmt.Sprintf("%s/pre-upgrade-%s-%s", config.BackupDir, config.TargetVersion, config.TaskID)
 
 	stopCmd := exec.CommandContext(ctx, "systemctl", "stop", "mysqld")
 	_ = stopCmd.Run()
