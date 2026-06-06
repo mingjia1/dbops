@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
@@ -141,7 +143,13 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 
 	var nodes []TopologyNode
 	for _, topologyInst := range clusterTopology.Instances {
-		inst := instanceMap[topologyInst.InstanceID]
+		inst, ok := instanceMap[topologyInst.InstanceID]
+		if !ok {
+			// B5: instanceMap 拿不到时不要塞零值, 跳过该节点 + 记 warn,
+			// 避免前端出现"未命名节点"假象.
+			log.Printf("WARN: topology node %s has no matching instance row, skipping", topologyInst.InstanceID)
+			continue
+		}
 		node := TopologyNode{
 			ID:        topologyInst.InstanceID,
 			Name:      inst.Name,

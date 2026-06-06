@@ -5,27 +5,36 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type HealthCheckService struct {
-	db              *repositories.Database
-	instanceRepo    *repositories.InstanceRepository
-	checkInterval   time.Duration
-	timeout         time.Duration
+	db               *repositories.Database
+	instanceRepo     *repositories.InstanceRepository
+	checkInterval    time.Duration
+	timeout          time.Duration
 	failureThreshold int
+	encryptionKey    string
+	// B9: failureStates 并发安全 - 从 package var 改为字段 + mutex
+	failureMu     sync.Mutex
+	failureStates map[string]*FailureState
 }
 
-func NewHealthCheckService(db *repositories.Database) *HealthCheckService {
+func NewHealthCheckService(db *repositories.Database, encryptionKey string) *HealthCheckService {
 	return &HealthCheckService{
 		db:               db,
 		instanceRepo:     repositories.NewInstanceRepository(db),
 		checkInterval:    10 * time.Second,
 		timeout:          5 * time.Second,
 		failureThreshold: 3,
+		encryptionKey:    encryptionKey,
+		failureStates:    make(map[string]*FailureState),
 	}
 }
 
@@ -71,7 +80,7 @@ type FailureState struct {
 	FailureReason   string    `json:"failure_reason"`
 }
 
-var failureStates = make(map[string]*FailureState)
+// failureStates moved into HealthCheckService.failureStates (B9: was package var with no lock)
 
 func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthCheckRequest) (*HealthCheckResult, error) {
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
@@ -146,15 +155,17 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 }
 
 func (s *HealthCheckService) DetectFailure(ctx context.Context, instanceID string) (*FailureState, error) {
-	state, exists := failureStates[instanceID]
+	s.failureMu.Lock()
+	state, exists := s.failureStates[instanceID]
 	if !exists {
 		state = &FailureState{
-			InstanceID:         instanceID,
+			InstanceID:          instanceID,
 			ConsecutiveFailures: 0,
-			IsMarkedFailed:     false,
+			IsMarkedFailed:      false,
 		}
-		failureStates[instanceID] = state
+		s.failureStates[instanceID] = state
 	}
+	s.failureMu.Unlock()
 
 	req := HealthCheckRequest{
 		InstanceID: instanceID,
@@ -165,6 +176,9 @@ func (s *HealthCheckService) DetectFailure(ctx context.Context, instanceID strin
 	}
 
 	result, err := s.ExecuteHealthCheck(ctx, req)
+
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
 	if err != nil {
 		state.ConsecutiveFailures++
 		state.LastFailureTime = time.Now()
@@ -190,11 +204,15 @@ func (s *HealthCheckService) DetectFailure(ctx context.Context, instanceID strin
 }
 
 func (s *HealthCheckService) GetFailureState(instanceID string) *FailureState {
-	return failureStates[instanceID]
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+	return s.failureStates[instanceID]
 }
 
 func (s *HealthCheckService) ClearFailureState(instanceID string) {
-	delete(failureStates, instanceID)
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+	delete(s.failureStates, instanceID)
 }
 
 func (s *HealthCheckService) StartPeriodicCheck(ctx context.Context, instanceID string, interval time.Duration) error {
@@ -218,11 +236,10 @@ func (s *HealthCheckService) StartPeriodicCheck(ctx context.Context, instanceID 
 func (s *HealthCheckService) checkTCP(ctx context.Context, host string, port int, timeout time.Duration) *HealthCheckResult {
 	startTime := time.Now()
 
-	_, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
+	// B9: 用 Dialer.DialContext 让 ctx cancel 能真正中断握手, 不再"造个 ctx 立刻 cancel".
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
 	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return &HealthCheckResult{
 			CheckType:    "tcp",
@@ -231,7 +248,7 @@ func (s *HealthCheckService) checkTCP(ctx context.Context, host string, port int
 			ErrorMessage: fmt.Sprintf("TCP connection failed: %v", err),
 		}
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	return &HealthCheckResult{
 		CheckType:    "tcp",
@@ -246,7 +263,29 @@ func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port i
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?timeout=%ds", username, password, net.JoinHostPort(host, fmt.Sprintf("%d", port)), int(timeout.Seconds()))
+	// A5: PasswordEncrypted 是 AES-GCM 密文, 必须先 Decrypt, 否则 MySQL 用密文当密码必败.
+	plain, err := utils.Decrypt(password, s.encryptionKey)
+	if err != nil {
+		return &HealthCheckResult{
+			CheckType:    "mysql",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: fmt.Sprintf("Failed to decrypt password: %v", err),
+		}
+	}
+
+	// B1: 用 mysql.Config.FormatDSN() 自动转义 @ / : 等 DSN 特殊字符, 杜绝 Sprintf 拼接注入.
+	cfg := mysql.NewConfig()
+	cfg.User = username
+	cfg.Passwd = plain
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	cfg.ParseTime = true
+	cfg.Loc = time.Local
+	cfg.Timeout = timeout
+	cfg.ReadTimeout = timeout
+	cfg.WriteTimeout = timeout
+	dsn := cfg.FormatDSN()
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -299,7 +338,29 @@ func (s *HealthCheckService) checkReplication(ctx context.Context, host string, 
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?timeout=%ds", username, password, net.JoinHostPort(host, fmt.Sprintf("%d", port)), int(timeout.Seconds()))
+	// A5: 先 Decrypt, 同 checkMySQL.
+	plain, err := utils.Decrypt(password, s.encryptionKey)
+	if err != nil {
+		return &HealthCheckResult{
+			CheckType:    "replication",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: fmt.Sprintf("Failed to decrypt password: %v", err),
+		}
+	}
+
+	// B1: 用 mysql.Config.FormatDSN(), 同 checkMySQL.
+	cfg := mysql.NewConfig()
+	cfg.User = username
+	cfg.Passwd = plain
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	cfg.ParseTime = true
+	cfg.Loc = time.Local
+	cfg.Timeout = timeout
+	cfg.ReadTimeout = timeout
+	cfg.WriteTimeout = timeout
+	dsn := cfg.FormatDSN()
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -378,12 +439,14 @@ func (s *HealthCheckService) getInstanceConnection(ctx context.Context, instance
 }
 
 func (s *HealthCheckService) updateFailureState(instanceID string, isHealthy bool, errorMsg string) {
-	state, exists := failureStates[instanceID]
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+	state, exists := s.failureStates[instanceID]
 	if !exists {
 		state = &FailureState{
 			InstanceID: instanceID,
 		}
-		failureStates[instanceID] = state
+		s.failureStates[instanceID] = state
 	}
 
 	if isHealthy {

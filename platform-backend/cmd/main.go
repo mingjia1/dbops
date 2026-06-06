@@ -146,10 +146,10 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 
-	healthCheckService := services.NewHealthCheckService(db)
+	healthCheckService := services.NewHealthCheckService(db, cfg.EncryptionKey)
 	healthCheckController := controllers.NewHealthCheckController(healthCheckService)
 
-	failoverService := services.NewFailoverService(db)
+	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)
 
 	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo)

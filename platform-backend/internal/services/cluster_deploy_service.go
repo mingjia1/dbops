@@ -66,10 +66,8 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	config["slave_hosts"] = slaveHosts
 	config["slave_ports"] = slavePorts
 
-	host, err := s.hostRepo.GetByID(ctx, "")
-	if err != nil || host == nil {
-		host, _ = s.hostRepo.GetByID(ctx, "")
-	}
+	// B6: 删 hostRepo.GetByID(ctx, "") 重复两次的死代码.
+	// 真实 agent host 走 req.ManagerHost, 不再尝试从 hostRepo 反查空字符串.
 	agentHost := req.ManagerHost
 	agentPort := 9090
 

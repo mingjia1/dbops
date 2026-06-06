@@ -7,21 +7,25 @@ import (
 	"net"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type FailoverService struct {
 	db            *repositories.Database
 	instanceRepo  *repositories.InstanceRepository
 	healthService *HealthCheckService
+	encryptionKey string
 }
 
-func NewFailoverService(db *repositories.Database) *FailoverService {
+func NewFailoverService(db *repositories.Database, encryptionKey string) *FailoverService {
 	return &FailoverService{
 		db:            db,
 		instanceRepo:  repositories.NewInstanceRepository(db),
-		healthService: NewHealthCheckService(db),
+		healthService: NewHealthCheckService(db, encryptionKey),
+		encryptionKey: encryptionKey,
 	}
 }
 
@@ -151,7 +155,7 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 
 	conn, err := s.getInstanceConnection(ctx, master.InstanceID)
 	if err == nil {
-		s.StopReplicationOnSlaves(ctx, slaves, conn.Username, conn.PasswordEncrypted)
+		s.StopReplicationOnSlaves(ctx, slaves, conn)
 	}
 
 	newConn, err := s.getInstanceConnection(ctx, newMaster.InstanceID)
@@ -293,8 +297,27 @@ func (s *FailoverService) SelectCandidateMaster(ctx context.Context, slaves []Ma
 	return nil, fmt.Errorf("no healthy slave available")
 }
 
+// dsnForConnection A5 + B1: 用 mysql.Config.FormatDSN() 而非 fmt.Sprintf, 密码先 Decrypt.
+func (s *FailoverService) dsnForConnection(conn *models.InstanceConnection) (string, error) {
+	plain, err := utils.Decrypt(conn.PasswordEncrypted, s.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt password: %w", err)
+	}
+	cfg := mysql.NewConfig()
+	cfg.User = conn.Username
+	cfg.Passwd = plain
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port))
+	cfg.ParseTime = true
+	cfg.Loc = time.Local
+	return cfg.FormatDSN(), nil
+}
+
 func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInfo, conn *models.InstanceConnection) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/", conn.Username, conn.PasswordEncrypted, net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port)))
+	dsn, err := s.dsnForConnection(conn)
+	if err != nil {
+		return err
+	}
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -320,9 +343,12 @@ func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInf
 	return nil
 }
 
-func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []MasterInfo, username, password string) error {
-	for _, slave := range slaves {
-		dsn := fmt.Sprintf("%s:%s@tcp(%s)/", username, password, net.JoinHostPort(slave.Host, fmt.Sprintf("%d", slave.Port)))
+func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []MasterInfo, conn *models.InstanceConnection) error {
+	for range slaves {
+		dsn, err := s.dsnForConnection(conn)
+		if err != nil {
+			continue
+		}
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
@@ -351,7 +377,10 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 			continue
 		}
 
-		dsn := fmt.Sprintf("%s:%s@tcp(%s)/", slaveConn.Username, slaveConn.PasswordEncrypted, net.JoinHostPort(slave.Host, fmt.Sprintf("%d", slave.Port)))
+		dsn, err := s.dsnForConnection(slaveConn)
+		if err != nil {
+			continue
+		}
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
@@ -359,13 +388,23 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 		}
 		defer db.Close()
 
-		changeMasterSQL := fmt.Sprintf(
-			"CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%d, MASTER_USER='%s', MASTER_PASSWORD='%s', MASTER_LOG_FILE='%s', MASTER_LOG_POS=%d",
-			newMaster.Host, newMaster.Port, newConn.Username, newConn.PasswordEncrypted,
+		// B1: 用 ? 占位符, 杜绝 Sprintf 拼接造成的注入 + 密码 ' 转义.
+		// PasswordEncrypted 在这里已经被 dsnForConnection 解密到 plain, 但 CHANGE MASTER
+		// 的 MASTER_PASSWORD 是明文参数, 需要解密 newConn 同理.
+		newPlain, err := utils.Decrypt(newConn.PasswordEncrypted, s.encryptionKey)
+		if err != nil {
+			continue
+		}
+		_, err = db.ExecContext(ctx,
+			"CHANGE MASTER TO MASTER_HOST=?, MASTER_PORT=?, MASTER_USER=?, MASTER_PASSWORD=?, MASTER_LOG_FILE=?, MASTER_LOG_POS=?",
+			newMaster.Host, newMaster.Port, newConn.Username, newPlain,
 			masterBinlogPos.File, masterBinlogPos.Position,
 		)
+		if err != nil {
+			continue
+		}
 
-		_, err = db.Exec(changeMasterSQL)
+		_, err = db.Exec("START SLAVE")
 		if err != nil {
 			continue
 		}
@@ -385,7 +424,10 @@ type BinlogPosition struct {
 }
 
 func (s *FailoverService) GetMasterBinlogPosition(master *MasterInfo, conn *models.InstanceConnection) (*BinlogPosition, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/", conn.Username, conn.PasswordEncrypted, net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port)))
+	dsn, err := s.dsnForConnection(conn)
+	if err != nil {
+		return nil, err
+	}
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

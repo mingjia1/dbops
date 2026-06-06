@@ -152,26 +152,28 @@ func (s *MigrationService) OrchestrateMigration(ctx context.Context, taskID stri
 }
 
 func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID string) (*models.MigrationProgress, error) {
-	task, _ := s.repo.GetByID(ctx, taskID)
-	var agentHost string = "localhost"
-	agentPort := 9090
-	if task != nil {
-		inst, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
-		agentHost, agentPort = resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	// B10: silent 吞 err 改为显式: task 不存在直接 404, 不要用假 Progress 误导前端.
+	task, err := s.repo.GetByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("task not found: %w", err)
 	}
+	if task == nil {
+		return nil, fmt.Errorf("task not found: %s", taskID)
+	}
+	inst, err := s.instRepo.GetByID(ctx, task.SourceInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("source instance not found: %w", err)
+	}
+	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
-		"instance_id": "",
+		"instance_id": task.SourceInstanceID,
 		"config": map[string]interface{}{
 			"monitor": true,
 		},
 	})
 	if err != nil {
-		return &models.MigrationProgress{
-			TaskID:    taskID,
-			Status:    models.MigrationStatusMigrating,
-			Progress:  0,
-		}, nil
+		return nil, fmt.Errorf("agent monitor call failed: %w", err)
 	}
 
 	return &models.MigrationProgress{
