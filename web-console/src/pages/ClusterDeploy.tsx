@@ -178,8 +178,18 @@ const ClusterDeploy: React.FC = () => {
       <Form.Item name="master_host_id" label="主节点主机" rules={[{ required: true, message: '请选择主节点' }]}>
         <Select options={hostOptions} placeholder="选择主节点主机" />
       </Form.Item>
-      <Form.Item name="replica_host_ids" label="从节点主机" rules={[{ required: true, message: '请选择从节点' }]}>
-        <Select mode="multiple" options={hostOptions} placeholder="可多选" />
+      <Form.Item
+        name="replica_host_ids"
+        label="从节点主机"
+        rules={[
+          { required: true, message: '请选择从节点' },
+          // P2: 显式 min 1 校验, 防止用户选 0 个直提交后端返 422.
+          {
+            validator: (_, v) => (Array.isArray(v) && v.length >= 1 ? Promise.resolve() : Promise.reject(new Error('至少选择 1 个从节点'))),
+          },
+        ]}
+      >
+        <Select mode="multiple" options={hostOptions} placeholder="至少选择 1 个从节点" maxTagCount={5} />
       </Form.Item>
       <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
         <Input />
