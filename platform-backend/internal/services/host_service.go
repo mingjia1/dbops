@@ -601,11 +601,20 @@ func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string
 		return "", fmt.Errorf("failed to create instance: %w", err)
 	}
 	conn := &models.InstanceConnection{
-		InstanceID:       inst.ID,
-		Host:             host.Address,
-		Port:             req.Port,
-		Username:         req.Username,
-		PasswordEncrypted: req.Password,
+		InstanceID: inst.ID,
+		Host:       host.Address,
+		Port:       req.Port,
+		Username:   req.Username,
+	}
+	// P1-4: 之前 PasswordEncrypted: req.Password 直接存明文, 与 InstanceService.Create
+	// 不一致 — 任何后续 health_check / failover 拿 conn 当密码, MySQL 收到 AES-GCM 密文必败.
+	// 修: 落库前 utils.Encrypt.
+	if req.Password != "" {
+		encPwd, err := utils.Encrypt(req.Password, s.encKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to encrypt password: %w", err)
+		}
+		conn.PasswordEncrypted = encPwd
 	}
 	if err := s.instanceRepo.CreateConnection(ctx, conn); err != nil {
 		return "", fmt.Errorf("failed to create connection: %w", err)
