@@ -186,7 +186,9 @@ const RoleSwitch: React.FC = () => {
           <Table
             columns={historyColumns}
             dataSource={history}
-            rowKey="occurred_at"
+            // P2: 之前 rowKey="occurred_at" 同秒会重复, React 报 duplicate key warn;
+            // 改用后端返的 id (uuid).
+            rowKey="id"
             loading={historyLoading}
             locale={{ emptyText: '暂无切换记录' }}
           />
