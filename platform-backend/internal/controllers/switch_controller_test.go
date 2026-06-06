@@ -34,7 +34,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repositories.HostRepository, *
 	instRepo.Create(ctx, &models.Instance{ID: "i-1", HostID: &hostID, ClusterID: "c1", Name: "i-1", Status: models.InstanceStatus{Role: "master"}})
 	clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "c1", ClusterType: "mha", Name: "c1"})
 
-	svc := services.NewSwitchService(hostRepo, instRepo, clusterRepo, services.NewAgentClient(""))
+	svc := services.NewSwitchService(hostRepo, instRepo, clusterRepo, services.NewAgentClient(""), nil)
 	ctrl := NewSwitchController(svc)
 
 	r := gin.New()
@@ -138,7 +138,7 @@ func TestSwitchController_NewSwitchController(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(newTestDB())
 	instRepo := repositories.NewInstanceRepository(newTestDB())
 	clusterRepo := repositories.NewClusterDeployRepository(newTestDB())
-	svc := services.NewSwitchService(hostRepo, instRepo, clusterRepo, services.NewAgentClient(""))
+	svc := services.NewSwitchService(hostRepo, instRepo, clusterRepo, services.NewAgentClient(""), nil)
 	ctrl := NewSwitchController(svc)
 	assert.NotNil(t, ctrl)
 	assert.NotNil(t, ctrl.service)

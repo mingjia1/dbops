@@ -1,8 +1,6 @@
 package controllers
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -47,21 +45,11 @@ func (c *InstanceController) GetByID(ctx *gin.Context) {
 }
 
 func (c *InstanceController) List(ctx *gin.Context) {
-	limitStr := ctx.DefaultQuery("limit", "20")
-	offsetStr := ctx.DefaultQuery("offset", "0")
+	limit, offset := parsePagination(ctx)
 	hostID := ctx.Query("host_id")
 
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		limit = 20
-	}
-
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil {
-		offset = 0
-	}
-
 	var instances []models.Instance
+	var err error
 	if hostID != "" {
 		instances, err = c.service.ListByHostID(ctx.Request.Context(), hostID, limit, offset)
 	} else {

@@ -729,6 +729,26 @@ var schemaSQLite = []string{
 	`ALTER TABLE instance_connections ADD COLUMN package_url VARCHAR(1024) DEFAULT ''`,
 	`ALTER TABLE instance_connections ADD COLUMN version_id VARCHAR(64) DEFAULT ''`,
 	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
+	// P1: 之前 SwitchService.history 是 in-memory map, 后端重启就丢,
+	// ListRoleSwitchHistory 返空. 现在持久化到 role_switch_history 表.
+	`CREATE TABLE IF NOT EXISTS role_switch_history (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		cluster_type VARCHAR(32) NOT NULL DEFAULT 'mha',
+		instance_id VARCHAR(64) NOT NULL DEFAULT '',
+		instance_host VARCHAR(255) NOT NULL DEFAULT '',
+		old_role VARCHAR(32) NOT NULL DEFAULT '',
+		new_role VARCHAR(32) NOT NULL DEFAULT '',
+		old_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		new_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		rebuilt_replicas TEXT,
+		status VARCHAR(32) NOT NULL DEFAULT 'completed',
+		message TEXT,
+		started_at TIMESTAMP,
+		completed_at TIMESTAMP,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_rsh_cluster ON role_switch_history(cluster_id, created_at)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

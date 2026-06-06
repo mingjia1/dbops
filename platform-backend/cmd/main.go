@@ -161,7 +161,8 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	migrationRepo := repositories.NewMigrationRepository(db)
 	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient)
 
-	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient)
+	switchHistoryRepo := repositories.NewRoleSwitchHistoryRepository(db)
+	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo)
 	switchController := controllers.NewSwitchController(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 

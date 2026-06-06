@@ -77,10 +77,10 @@ func (r *HostRepository) GetByID(ctx context.Context, id string) (*models.Host, 
 		FROM hosts WHERE id = ?`, id)
 	host := &models.Host{}
 	var lastCheckAt sql.NullTime
-	var sshCredential sql.NullString
+	var sshCredential, description, tags sql.NullString
 	if err := row.Scan(
 		&host.ID, &host.Name, &host.Address, &host.SSHPort, &host.SSHUser, &host.SSHAuthMethod,
-		&sshCredential, &host.AgentPort, &host.OSType, &host.Description, &host.Tags, &host.Status,
+		&sshCredential, &host.AgentPort, &host.OSType, &description, &tags, &host.Status,
 		&lastCheckAt, &host.CreatedAt, &host.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -94,6 +94,12 @@ func (r *HostRepository) GetByID(ctx context.Context, id string) (*models.Host, 
 	}
 	if sshCredential.Valid {
 		host.SSHCredential = sshCredential.String
+	}
+	if description.Valid {
+		host.Description = description.String
+	}
+	if tags.Valid {
+		host.Tags = tags.String
 	}
 	return host, nil
 }
@@ -115,10 +121,10 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 	for rows.Next() {
 		var h models.Host
 		var lastCheckAt sql.NullTime
-		var sshCredential sql.NullString
+		var sshCredential, description, tags sql.NullString
 		if err := rows.Scan(
 			&h.ID, &h.Name, &h.Address, &h.SSHPort, &h.SSHUser, &h.SSHAuthMethod,
-			&sshCredential, &h.AgentPort, &h.OSType, &h.Description, &h.Tags, &h.Status,
+			&sshCredential, &h.AgentPort, &h.OSType, &description, &tags, &h.Status,
 			&lastCheckAt, &h.CreatedAt, &h.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -126,6 +132,15 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 		if lastCheckAt.Valid {
 			t := lastCheckAt.Time
 			h.LastCheckAt = &t
+		}
+		if sshCredential.Valid {
+			h.SSHCredential = sshCredential.String
+		}
+		if description.Valid {
+			h.Description = description.String
+		}
+		if tags.Valid {
+			h.Tags = tags.String
 		}
 		if sshCredential.Valid {
 			h.SSHCredential = sshCredential.String

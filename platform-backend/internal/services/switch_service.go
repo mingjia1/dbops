@@ -17,16 +17,19 @@ type SwitchService struct {
 	instRepo    *repositories.InstanceRepository
 	clusterRepo *repositories.ClusterDeployRepository
 	agentClient *AgentClient
+	// P1: 角色切换历史持久化, 之前是 in-memory map 重启即丢.
+	historyRepo *repositories.RoleSwitchHistoryRepository
 
 	mu      sync.RWMutex
 	history map[string][]RoleSwitchRecord
 }
 
-func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, clusterRepo *repositories.ClusterDeployRepository, agentClient *AgentClient) *SwitchService {
+func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, clusterRepo *repositories.ClusterDeployRepository, agentClient *AgentClient, historyRepo *repositories.RoleSwitchHistoryRepository) *SwitchService {
 	return &SwitchService{
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		clusterRepo: clusterRepo,
+		historyRepo: historyRepo,
 		agentClient: agentClient,
 		history:     make(map[string][]RoleSwitchRecord),
 	}
@@ -78,22 +81,8 @@ type RoleSwitchResult struct {
 	CompletedAt     time.Time `json:"completed_at"`
 }
 
-type RoleSwitchRecord struct {
-	ID              string    `json:"id"`
-	ClusterID       string    `json:"cluster_id"`
-	ClusterType     string    `json:"cluster_type"`
-	InstanceID      string    `json:"instance_id"`
-	InstanceHost    string    `json:"instance_host"`
-	OldRole         string    `json:"old_role"`
-	NewRole         string    `json:"new_role"`
-	OldMasterID     string    `json:"old_master_id"`
-	NewMasterID     string    `json:"new_master_id"`
-	RebuiltReplicas []string  `json:"rebuilt_replicas"`
-	Status          string    `json:"status"`
-	Message         string    `json:"message"`
-	StartedAt       time.Time `json:"started_at"`
-	CompletedAt     time.Time `json:"completed_at"`
-}
+// RoleSwitchRecord 别名到 models.RoleSwitchRecord, 保持向后兼容 (controllers/前端用的就是这个类型).
+type RoleSwitchRecord = models.RoleSwitchRecord
 
 func (s *SwitchService) SingleToMHA(ctx context.Context, req SwitchClusterRequest) (*SwitchClusterResult, error) {
 	return s.executeSwitch(ctx, req, "standalone", "mha")
@@ -214,7 +203,7 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 				result.Status = "failed"
 				result.Message = fmt.Sprintf("demote old master failed: %v", err)
 				result.CompletedAt = time.Now()
-				s.recordHistory(result)
+				s.recordHistory(ctx, result)
 				return result, nil
 			}
 		}
@@ -223,7 +212,7 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 			result.Status = "failed"
 			result.Message = fmt.Sprintf("promote instance failed: %v", err)
 			result.CompletedAt = time.Now()
-			s.recordHistory(result)
+			s.recordHistory(ctx, result)
 			return result, nil
 		}
 
@@ -236,7 +225,7 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 			result.Status = "failed"
 			result.Message = fmt.Sprintf("demote instance failed: %v", err)
 			result.CompletedAt = time.Now()
-			s.recordHistory(result)
+			s.recordHistory(ctx, result)
 			return result, nil
 		}
 	}
@@ -244,7 +233,7 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 	result.Status = "completed"
 	result.CompletedAt = time.Now()
 	result.Message = fmt.Sprintf("role switched within %s cluster: %s -> %s", clusterType, currentRole, req.TargetRole)
-	s.recordHistory(result)
+	s.recordHistory(ctx, result)
 	return result, nil
 }
 
@@ -436,11 +425,8 @@ func (s *SwitchService) listClusterInstances(ctx context.Context, clusterID stri
 	return s.instRepo.ListByClusterID(ctx, clusterID)
 }
 
-func (s *SwitchService) recordHistory(r *RoleSwitchResult) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	record := RoleSwitchRecord{
+func (s *SwitchService) recordHistory(ctx context.Context, r *RoleSwitchResult) {
+	record := &RoleSwitchRecord{
 		ID:              uuid.New().String(),
 		ClusterID:       r.ClusterID,
 		ClusterType:     r.ClusterType,
@@ -456,10 +442,28 @@ func (s *SwitchService) recordHistory(r *RoleSwitchResult) {
 		StartedAt:       r.StartedAt,
 		CompletedAt:     r.CompletedAt,
 	}
-	s.history[r.ClusterID] = append(s.history[r.ClusterID], record)
+
+	// 优先落库, 失败也只是 log + 内存继续; 不阻塞业务流.
+	if s.historyRepo != nil {
+		if err := s.historyRepo.Create(ctx, record); err != nil {
+			// 落库失败也保留内存, 后端不会因此报错
+			// (用户体感: 重启后历史可能丢, 但本次操作不中断)
+		}
+	}
+	s.mu.Lock()
+	s.history[r.ClusterID] = append(s.history[r.ClusterID], *record)
+	s.mu.Unlock()
 }
 
 func (s *SwitchService) ListRoleSwitchHistory(ctx context.Context, clusterID string, limit int) ([]RoleSwitchRecord, error) {
+	// P1: 优先从 role_switch_history 表读 (跨重启持久化).
+	// 表读失败时 fallback 到 in-memory (后端刚启动 / repo 不可用).
+	if s.historyRepo != nil {
+		if records, err := s.historyRepo.ListByCluster(ctx, clusterID, limit, 0); err == nil && len(records) > 0 {
+			return records, nil
+		}
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
