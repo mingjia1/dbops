@@ -5,46 +5,46 @@ import (
 )
 
 type AuditLog struct {
-	ID          string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	UserID      string    `json:"user_id" gorm:"type:varchar(64);index;not null"`
-	Operation   string    `json:"operation" gorm:"type:varchar(64);not null"`
-	ResourceType string   `json:"resource_type" gorm:"type:varchar(64);not null"`
-	ResourceID  string    `json:"resource_id" gorm:"type:varchar(64);index"`
-	Action      string    `json:"action" gorm:"type:varchar(32);not null"`
-	Details     string    `json:"details" gorm:"type:text"`
-	Result      string    `json:"result" gorm:"type:varchar(32);not null"`
-	ErrorMsg    string    `json:"error_msg" gorm:"type:text"`
-	IPAddress   string    `json:"ip_address" gorm:"type:varchar(64)"`
-	UserAgent   string    `json:"user_agent" gorm:"type:varchar(255)"`
-	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Operation   string    `json:"operation"`
+	ResourceType string   `json:"resource_type"`
+	ResourceID  string    `json:"resource_id"`
+	Action      string    `json:"action"`
+	Details     string    `json:"details"`
+	Result      string    `json:"result"`
+	ErrorMsg    string    `json:"error_msg"`
+	IPAddress   string    `json:"ip_address"`
+	UserAgent   string    `json:"user_agent"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type ApprovalRequest struct {
-	ID            string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	RequesterID   string    `json:"requester_id" gorm:"type:varchar(64);index;not null"`
-	ApproverID    string    `json:"approver_id" gorm:"type:varchar(64);index"`
-	OperationType string    `json:"operation_type" gorm:"type:varchar(64);not null"`
-	ResourceType  string    `json:"resource_type" gorm:"type:varchar(64);not null"`
-	ResourceID    string    `json:"resource_id" gorm:"type:varchar(64);index;not null"`
-	RequestReason string    `json:"request_reason" gorm:"type:text"`
-	ApprovalStatus string   `json:"approval_status" gorm:"type:varchar(32);default:'pending';index"`
-	ApprovalComment string  `json:"approval_comment" gorm:"type:text"`
-	Priority      int       `json:"priority" gorm:"type:int;default:1"`
-	ExpiresAt     time.Time `json:"expires_at" gorm:"type:timestamp"`
-	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
-	ApprovedAt    time.Time `json:"approved_at" gorm:"type:timestamp"`
+	ID            string    `json:"id"`
+	RequesterID   string    `json:"requester_id"`
+	ApproverID    string    `json:"approver_id"`
+	OperationType string    `json:"operation_type"`
+	ResourceType  string    `json:"resource_type"`
+	ResourceID    string    `json:"resource_id"`
+	RequestReason string    `json:"request_reason"`
+	ApprovalStatus string   `json:"approval_status"`
+	ApprovalComment string  `json:"approval_comment"`
+	Priority      int       `json:"priority"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	ApprovedAt    time.Time `json:"approved_at"`
 }
 
 type HighRiskOperation struct {
-	ID          string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	Name        string    `json:"name" gorm:"type:varchar(128);uniqueIndex;not null"`
-	Category    string    `json:"category" gorm:"type:varchar(64);not null"`
-	Description string    `json:"description" gorm:"type:text"`
-	RiskLevel   string    `json:"risk_level" gorm:"type:varchar(32);not null"`
-	RequiresApproval bool  `json:"requires_approval" gorm:"type:boolean;default:true"`
-	ApprovalTimeout int   `json:"approval_timeout" gorm:"type:int;default:3600"`
-	AffectedResources string `json:"affected_resources" gorm:"type:text"`
-	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt   time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"`
+	Description string    `json:"description"`
+	RiskLevel   string    `json:"risk_level"`
+	RequiresApproval bool  `json:"requires_approval"`
+	ApprovalTimeout int   `json:"approval_timeout"`
+	AffectedResources string `json:"affected_resources"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

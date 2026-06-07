@@ -26,35 +26,35 @@ const (
 )
 
 type MigrationTask struct {
-	ID               string           `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	Name             string           `json:"name" gorm:"type:varchar(128);not null"`
-	SourceInstanceID string           `json:"source_instance_id" gorm:"type:varchar(64);not null;index"`
-	TargetInstanceID string           `json:"target_instance_id" gorm:"type:varchar(64);not null;index"`
-	Strategy         MigrationStrategy `json:"strategy" gorm:"type:varchar(32);not null"`
-	Status           MigrationStatus  `json:"status" gorm:"type:varchar(32);default:'pending'"`
-	Progress         int              `json:"progress" gorm:"type:int;default:0"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	SourceInstanceID string           `json:"source_instance_id"`
+	TargetInstanceID string           `json:"target_instance_id"`
+	Strategy         MigrationStrategy `json:"strategy"`
+	Status           MigrationStatus  `json:"status"`
+	Progress         int              `json:"progress"`
 	
-	StartedAt       *time.Time        `json:"started_at" gorm:"type:timestamp"`
-	CompletedAt     *time.Time        `json:"completed_at" gorm:"type:timestamp"`
+	StartedAt       *time.Time        `json:"started_at"`
+	CompletedAt     *time.Time        `json:"completed_at"`
 	
-	Config          string            `json:"config" gorm:"type:text"`
-	Error           string            `json:"error" gorm:"type:text"`
+	Config          string            `json:"config"`
+	Error           string            `json:"error"`
 	
-	CreatedAt       time.Time         `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt       time.Time         `json:"updated_at" gorm:"autoUpdateTime"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 	
-	Steps []MigrationStep `json:"steps" gorm:"foreignKey:TaskID"`
+	Steps []MigrationStep `json:"steps"`
 }
 
 type MigrationStep struct {
-	ID          string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	TaskID      string    `json:"task_id" gorm:"type:varchar(64);not null;index"`
-	Name        string    `json:"name" gorm:"type:varchar(64);not null"`
-	Status      string    `json:"status" gorm:"type:varchar(32);default:'pending'"`
-	StartedAt   *time.Time `json:"started_at" gorm:"type:timestamp"`
-	CompletedAt *time.Time `json:"completed_at" gorm:"type:timestamp"`
-	Error       string    `json:"error" gorm:"type:text"`
-	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
+	ID          string    `json:"id"`
+	TaskID      string    `json:"task_id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	StartedAt   *time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+	Error       string    `json:"error"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type MigrationProgress struct {

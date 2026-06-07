@@ -5,75 +5,75 @@ import (
 )
 
 type Instance struct {
-	ID        string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	Name      string    `json:"name" gorm:"type:varchar(255);not null"`
-	ClusterID string    `json:"cluster_id" gorm:"type:varchar(64);index"`
-	HostID    *string   `json:"host_id" gorm:"type:varchar(64);index"`
-	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	ClusterID string    `json:"cluster_id"`
+	HostID    *string   `json:"host_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	
-	Connection  InstanceConnection  `json:"connection" gorm:"foreignKey:InstanceID"`
-	Version     InstanceVersion     `json:"version" gorm:"foreignKey:InstanceID"`
-	Config      InstanceConfig      `json:"config" gorm:"foreignKey:InstanceID"`
-	Status      InstanceStatus      `json:"status" gorm:"foreignKey:InstanceID"`
-	Topology    InstanceTopology    `json:"topology" gorm:"foreignKey:InstanceID"`
+	Connection  InstanceConnection  `json:"connection"`
+	Version     InstanceVersion     `json:"version"`
+	Config      InstanceConfig      `json:"config"`
+	Status      InstanceStatus      `json:"status"`
+	Topology    InstanceTopology    `json:"topology"`
 }
 
 type InstanceConnection struct {
 	ID                string `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID        string `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	Host              string `json:"host" gorm:"type:varchar(255);not null"`
-	Port              int    `json:"port" gorm:"type:int;not null"`
-	Username          string `json:"username" gorm:"type:varchar(64);not null"`
-	PasswordEncrypted string `json:"password_encrypted" gorm:"type:varchar(255);not null"`
-	SSLEnabled        bool   `json:"ssl_enabled" gorm:"type:boolean;default:false"`
+	InstanceID        string `json:"instance_id"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	PasswordEncrypted string `json:"password_encrypted"`
+	SSLEnabled        bool   `json:"ssl_enabled"`
 	// Install / upgrade paths. These let the platform install or upgrade to
 	// ANY version from the catalog (not hard-coded to 5.7/8.0).
-	Basedir    string `json:"basedir"     gorm:"type:varchar(255)"`
-	Datadir    string `json:"datadir"     gorm:"type:varchar(255)"`
-	OSUser     string `json:"os_user"     gorm:"type:varchar(64)"`
-	PackageURL string `json:"package_url" gorm:"type:varchar(1024)"`
-	VersionID  string `json:"version_id"  gorm:"type:varchar(64)"` // FK to version catalog id e.g. "mysql-8.0.36"
+	Basedir    string `json:"basedir"    `
+	Datadir    string `json:"datadir"    `
+	OSUser     string `json:"os_user"    `
+	PackageURL string `json:"package_url"`
+	VersionID  string `json:"version_id" ` // FK to version catalog id e.g. "mysql-8.0.36"
 }
 
 type InstanceVersion struct {
 	ID            string    `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID    string    `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	Flavor        string    `json:"flavor" gorm:"type:varchar(32);not null"`
-	Version       string    `json:"version" gorm:"type:varchar(32);not null"`
-	FullVersion   string    `json:"full_version" gorm:"type:varchar(64);not null"`
-	ReleaseDate   time.Time `json:"release_date" gorm:"type:date"`
-	EOLDate       time.Time `json:"eol_date" gorm:"type:date"`
-	IsLTS         bool      `json:"is_lts" gorm:"type:boolean;default:false"`
-	Features      string    `json:"features" gorm:"type:text"`
-	Engines       string    `json:"engines" gorm:"type:text"`
+	InstanceID    string    `json:"instance_id"`
+	Flavor        string    `json:"flavor"`
+	Version       string    `json:"version"`
+	FullVersion   string    `json:"full_version"`
+	ReleaseDate   time.Time `json:"release_date"`
+	EOLDate       time.Time `json:"eol_date"`
+	IsLTS         bool      `json:"is_lts"`
+	Features      string    `json:"features"`
+	Engines       string    `json:"engines"`
 }
 
 type InstanceConfig struct {
 	ID                string `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID        string `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	ParameterTemplateID string `json:"parameter_template_id" gorm:"type:varchar(64)"`
-	Parameters        string `json:"parameters" gorm:"type:text"`
-	Charset           string `json:"charset" gorm:"type:varchar(32);default:'utf8mb4'"`
-	Collation         string `json:"collation" gorm:"type:varchar(64);default:'utf8mb4_general_ci'"`
+	InstanceID        string `json:"instance_id"`
+	ParameterTemplateID string `json:"parameter_template_id"`
+	Parameters        string `json:"parameters"`
+	Charset           string `json:"charset"`
+	Collation         string `json:"collation"`
 }
 
 type InstanceStatus struct {
 	ID                  string    `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID          string    `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	RunStatus           string    `json:"run_status" gorm:"type:varchar(32);default:'unknown'"`
-	HealthStatus        string    `json:"health_status" gorm:"type:varchar(32);default:'unknown'"`
-	Role                string    `json:"role" gorm:"type:varchar(32);default:'unknown'"`
-	ReplicationStatus   string    `json:"replication_status" gorm:"type:varchar(32)"`
-	SecondsBehindMaster int       `json:"seconds_behind_master" gorm:"type:int;default:-1"`
-	UpdatedAt           time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	InstanceID          string    `json:"instance_id"`
+	RunStatus           string    `json:"run_status"`
+	HealthStatus        string    `json:"health_status"`
+	Role                string    `json:"role"`
+	ReplicationStatus   string    `json:"replication_status"`
+	SecondsBehindMaster int       `json:"seconds_behind_master"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type InstanceTopology struct {
 	ID              string `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID      string `json:"instance_id" gorm:"type:varchar(64);uniqueIndex;not null"`
-	ClusterID       string `json:"cluster_id" gorm:"type:varchar(64);index"`
-	MasterID        string `json:"master_id" gorm:"type:varchar(64)"`
-	SlaveIDs        string `json:"slave_ids" gorm:"type:text"`
-	ReplicationMode string `json:"replication_mode" gorm:"type:varchar(32)"`
+	InstanceID      string `json:"instance_id"`
+	ClusterID       string `json:"cluster_id"`
+	MasterID        string `json:"master_id"`
+	SlaveIDs        string `json:"slave_ids"`
+	ReplicationMode string `json:"replication_mode"`
 }

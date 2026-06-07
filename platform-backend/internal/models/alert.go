@@ -5,41 +5,41 @@ import (
 )
 
 type AlertRule struct {
-	ID                 string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	Name               string    `json:"name" gorm:"type:varchar(128);not null"`
-	Metric             string    `json:"metric" gorm:"type:varchar(128);not null"`
-	Condition          string    `json:"condition" gorm:"type:varchar(32);not null"`
-	Threshold          float64   `json:"threshold" gorm:"type:decimal(10,2);not null"`
-	DurationSeconds    int       `json:"duration_seconds" gorm:"type:int;default:60"`
-	Severity           string    `json:"severity" gorm:"type:varchar(16);not null"`
-	NotificationChannels string   `json:"notification_channels" gorm:"type:text"`
-	CreatedAt          time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt          time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Metric             string    `json:"metric"`
+	Condition          string    `json:"condition"`
+	Threshold          float64   `json:"threshold"`
+	DurationSeconds    int       `json:"duration_seconds"`
+	Severity           string    `json:"severity"`
+	NotificationChannels string   `json:"notification_channels"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 	
-	Records []AlertRecord `json:"records" gorm:"foreignKey:RuleID"`
+	Records []AlertRecord `json:"records"`
 }
 
 type AlertRecord struct {
-	ID          string     `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	RuleID      string     `json:"rule_id" gorm:"type:varchar(64);index"`
-	InstanceID  string     `json:"instance_id" gorm:"type:varchar(64);index"`
-	TriggeredAt time.Time  `json:"triggered_at" gorm:"type:timestamp;not null"`
-	ResolvedAt  *time.Time `json:"resolved_at" gorm:"type:timestamp"`
-	Status      string     `json:"status" gorm:"type:varchar(32);default:'firing'"`
-	Severity    string     `json:"severity" gorm:"type:varchar(16);not null"`
-	Value       float64    `json:"value" gorm:"type:decimal(10,2)"`
-	Message     string     `json:"message" gorm:"type:text"`
-	CreatedAt   time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	ID          string     `json:"id"`
+	RuleID      string     `json:"rule_id"`
+	InstanceID  string     `json:"instance_id"`
+	TriggeredAt time.Time  `json:"triggered_at"`
+	ResolvedAt  *time.Time `json:"resolved_at"`
+	Status      string     `json:"status"`
+	Severity    string     `json:"severity"`
+	Value       float64    `json:"value"`
+	Message     string     `json:"message"`
+	CreatedAt   time.Time  `json:"created_at"`
 	
-	Notifications []AlertNotification `json:"notifications" gorm:"foreignKey:AlertID"`
+	Notifications []AlertNotification `json:"notifications"`
 }
 
 type AlertNotification struct {
-	ID            string    `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	AlertID       string    `json:"alert_id" gorm:"type:varchar(64);index"`
-	ChannelType   string    `json:"channel_type" gorm:"type:varchar(32);not null"`
-	ChannelConfig string    `json:"channel_config" gorm:"type:text"`
-	SentAt        time.Time `json:"sent_at" gorm:"type:timestamp"`
-	Status        string    `json:"status" gorm:"type:varchar(32);default:'pending'"`
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+	ID            string    `json:"id"`
+	AlertID       string    `json:"alert_id"`
+	ChannelType   string    `json:"channel_type"`
+	ChannelConfig string    `json:"channel_config"`
+	SentAt        time.Time `json:"sent_at"`
+	Status        string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
 }
