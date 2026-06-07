@@ -117,6 +117,24 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			// P0: backend DetectVersion 之前返 error, 阻断升级链路.
+			// 现在调 agent 真跑 SELECT @@version, @@version_comment.
+			tasks.POST("/version-detect", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteVersionDetect(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Version detect failed: " + err.Error()})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
 			tasks.POST("/migration", func(c *gin.Context) {
 				var req executor.DeployTaskRequest
 				if err := c.ShouldBindJSON(&req); err != nil {

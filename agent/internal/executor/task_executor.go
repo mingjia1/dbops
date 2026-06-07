@@ -574,7 +574,7 @@ func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig)
 
 func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string) (*TaskResult, error) {
 	cmd := exec.CommandContext(ctx, "mysqladmin", "ping", "-h", "localhost", "-u", "root")
-	
+
 	if err := cmd.Run(); err != nil {
 		return &TaskResult{
 			TaskID:    fmt.Sprintf("health-%s", instanceID),
@@ -584,12 +584,57 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string
 			Timestamp: time.Now(),
 		}, nil
 	}
-	
+
 	return &TaskResult{
 		TaskID:    fmt.Sprintf("health-%s", instanceID),
 		Status:    "healthy",
 		Progress:  100,
 		Message:   "Instance is healthy",
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// ExecuteVersionDetect P0: 之前 backend DetectVersion 直接返 error, 阻断所有
+// 升级链路 (PlanUpgradePath / CheckCompatibility 都需要 source version).
+// 修: agent 调 mysql -e "SELECT @@version, @@version_comment", 真实探测.
+// 走 MYSQL_PWD env 传密码避免 ps 泄露.
+func (e *TaskExecutor) ExecuteVersionDetect(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	host, _ := req.Config["target_host"].(string)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port, _ := req.Config["target_port"].(int)
+	if port == 0 {
+		port = 3306
+	}
+	user, _ := req.Config["target_user"].(string)
+	if user == "" {
+		user = "root"
+	}
+	pass, _ := req.Config["target_pass"].(string)
+
+	cmd := exec.CommandContext(ctx, "mysql",
+		"-h", host,
+		"-P", fmt.Sprintf("%d", port),
+		"-u", user,
+		"-N", "-B", "-e", "SELECT @@version, @@version_comment")
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &TaskResult{
+			TaskID:    fmt.Sprintf("version-detect-%s", req.InstanceID),
+			Status:    "failed",
+			Progress:  100,
+			Message:   fmt.Sprintf("version detect failed: %v, output: %s", err, string(output)),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	// 输出形如: 8.0.36\tuuid-uuid\tMySQL Community Server - GPL
+	return &TaskResult{
+		TaskID:    fmt.Sprintf("version-detect-%s", req.InstanceID),
+		Status:    "completed",
+		Progress:  100,
+		Message:   string(output),
 		Timestamp: time.Now(),
 	}, nil
 }

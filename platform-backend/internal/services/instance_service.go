@@ -3,8 +3,10 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -120,22 +122,71 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 
-	// P1-5: 之前直接写死 Flavor=mysql Version=8.0 FullVersion=8.0.36 落库,
-	// 任何 5.6 / 5.7 / 8.4 / MariaDB 都被标记成 8.0.36,
-	// 后续 PlanUpgradePath 用这个假版本做"升级路径校验"全部 OK, 真实升级时炸.
-	// 修: 走 agent 真探测 (SELECT @@version + @@version_comment).
-	// agent 端没对应路由时返 error, 业务层按需处理.
+	// P0: 之前返 error "agent not yet wired", 阻断所有升级路径.
+	// 修: 调 agent POST /agent/tasks/version-detect, 真跑 SELECT @@version, @@version_comment.
 	if s.agentClient == nil {
 		return nil, fmt.Errorf("agent client not configured; cannot detect version for instance %s", id)
 	}
-	hostAddr := conn.Host
-	port := conn.Port
-	if hostAddr == "" {
+	host, port := conn.Host, conn.Port
+	if host == "" {
 		return nil, fmt.Errorf("instance %s has no host/port to probe", id)
 	}
-	// Agent 端暂无 /version-detect 专用路由, 这里用一个标记字段让 agent 端知道
-	// (后续可加 tasks.POST("/version-detect")). 现阶段返明确失败.
-	return nil, fmt.Errorf("version detection requires agent support (probe %s:%d) which is not yet wired; manual entry needed", hostAddr, port)
+	// PasswordEncrypted 是 AES-GCM 密文, agent 端自己解密再连 MySQL.
+	cfg := map[string]interface{}{
+		"target_host": host,
+		"target_port": port,
+		"target_user": conn.Username,
+		"target_pass": conn.PasswordEncrypted,
+	}
+	result, err := s.agentClient.callAgent(ctx, host, 9090, "/agent/tasks/version-detect", map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"instance_id": id,
+		"config":      cfg,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("version detect call failed: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("version detect returned no result")
+	}
+	// agent 返 message 形如 "8.0.36\tuuid\tMySQL Community Server"
+	// 解析成 3 段, 失败则把整段当 full_version.
+	parts := strings.SplitN(strings.TrimSpace(result.Message), "\t", 3)
+	var fullVersion, version, versionComment string
+	if len(parts) >= 1 {
+		fullVersion = strings.TrimSpace(parts[0])
+	}
+	if len(parts) >= 2 {
+		versionComment = strings.TrimSpace(parts[1])
+	}
+	// "8.0.36" → "8.0", "5.7.44" → "5.7"
+	if idx := strings.LastIndex(fullVersion, "."); idx > 0 {
+		version = fullVersion[:idx]
+	} else {
+		version = fullVersion
+	}
+	// @@version_comment 包含 "MySQL Community" / "MariaDB" 等用于判别 flavor.
+	flavor := "mysql"
+	if strings.Contains(strings.ToLower(versionComment), "mariadb") {
+		flavor = "mariadb"
+	} else if strings.Contains(strings.ToLower(versionComment), "percona") {
+		flavor = "percona"
+	}
+	versionRow := &models.InstanceVersion{
+		InstanceID:  id,
+		Flavor:      flavor,
+		Version:     version,
+		FullVersion: fullVersion,
+		IsLTS:       strings.HasPrefix(version, "8.0") || strings.HasPrefix(version, "5.7"),
+		ReleaseDate: time.Now(),
+		EOLDate:     time.Now().AddDate(3, 0, 0),
+		Features:    "auto-detected from agent",
+		Engines:     "innodb",
+	}
+	if err := s.repo.CreateVersion(ctx, versionRow); err != nil {
+		return nil, fmt.Errorf("failed to create version: %w", err)
+	}
+	return versionRow, nil
 }
 
 func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult, error) {
