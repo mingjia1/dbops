@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Layout, Menu, Dropdown, Avatar, Space, Typography, Switch, Tooltip } from 'antd'
 import { BulbOutlined, BulbFilled } from '@ant-design/icons'
-import { getStoredThemeMode, setStoredThemeMode, type ThemeMode } from '../appTheme'
+import { getStoredThemeMode, type ThemeMode } from '../appTheme'
 import './Dashboard.css'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -27,16 +27,14 @@ const Dashboard: React.FC = () => {
     } catch { /* ignore */ }
   }, [])
 
-  // 主题切换: 状态 + 持久化 + 同时更新 <html data-theme> (CSS 变量) 与 antd ConfigProvider.
-  // antd theme 通过顶层 main.tsx 传 initial, 这里只更新 html 变量 + localStorage.
-  // 完整 antd 主题热切换需要把 ConfigProvider 提到一个 ThemeProvider 组件,
-  // 下一轮再做.
+  // P0: 之前只改 <html data-theme> + localStorage, ConfigProvider 不重渲.
+  // 修: 派发 'app:theme-change' CustomEvent, ThemeRoot (main.tsx) 监听到后
+  // 调 setMode + 重渲 ConfigProvider, 这样 antd Button/Table/Card 全部跟着切.
   const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
   const toggleTheme = (checked: boolean) => {
     const next: ThemeMode = checked ? 'dark' : 'light'
     setThemeMode(next)
-    setStoredThemeMode(next)
-    document.documentElement.dataset.theme = next
+    window.dispatchEvent(new CustomEvent<ThemeMode>('app:theme-change', { detail: next }))
   }
 
   const handleLogout = () => {
