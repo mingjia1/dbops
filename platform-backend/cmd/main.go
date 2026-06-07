@@ -246,6 +246,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 			loginLimiter := middleware.LoginRateLimit(middleware.NewRateLimiter(5, time.Minute))
 			auth.POST("/login", loginLimiter, authController.Login)
 			auth.POST("/register", loginLimiter, authController.Register)
+			auth.POST("/logout", authController.Logout)
 		}
 
 		protected := api.Group("")

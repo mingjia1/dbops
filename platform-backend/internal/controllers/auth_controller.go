@@ -65,8 +65,22 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	})
 }
 
+// Logout 清 HttpOnly cookie. 客户端收到 200 后清 localStorage user 信息即可.
+func (c *AuthController) Logout(ctx *gin.Context) {
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie("auth_token", "", -1, "/", "", false, true)
+	ctx.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
+}
+
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
+	// B1 (cookie): 优先读 Authorization header, fallback 到 HttpOnly cookie "auth_token".
+	// 这样无 cookie 老前端 / curl 还能用 Bearer, 而启用 cookie 的浏览器请求无需暴露 token.
 	token := ctx.GetHeader("Authorization")
+	if token == "" {
+		if c, err := ctx.Cookie("auth_token"); err == nil && c != "" {
+			token = "Bearer " + c
+		}
+	}
 	if token == "" {
 		utils.UnauthorizedResponse(ctx, "Missing authorization token")
 		ctx.Abort()
