@@ -10,6 +10,7 @@ import {
   hostApi, instanceApi, alertApi, approvalApi, auditApi,
   dataMigrationApi, hostApi as _h, type Host, type Instance,
 } from '../services/api'
+import { palette } from '../appTheme'
 import './Home.css'
 
 const Home: React.FC = () => {
@@ -53,7 +54,7 @@ const Home: React.FC = () => {
 
   const stats = [
     {
-      label: '主机', value: hosts.length, accent: '#0071E3', icon: <DesktopOutlined />,
+      label: '主机', value: hosts.length, accent: palette.accent.blue, icon: <DesktopOutlined />,
       extra: (
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           {hostOk > 0 && <span className="apple-tag is-green">{hostOk} 可用</span>}
@@ -64,7 +65,7 @@ const Home: React.FC = () => {
       ),
     },
     {
-      label: '实例', value: instances.length, accent: '#34C759', icon: <DatabaseOutlined />,
+      label: '实例', value: instances.length, accent: palette.accent.green, icon: <DatabaseOutlined />,
       extra: (
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           {instWithHost > 0 && <span className="apple-tag">{instWithHost} 已关联主机</span>}
@@ -73,13 +74,13 @@ const Home: React.FC = () => {
       ),
     },
     {
-      label: '告警历史', value: alertCount, accent: '#FF9500', icon: <AlertOutlined />,
+      label: '告警历史', value: alertCount, accent: palette.accent.orange, icon: <AlertOutlined />,
       // P1: 之前写 "近 7 天累计" 但 alertApi.listHistory() 返全表 (无时间过滤),
       // 显示数字永远偏小. 改成 "总记录数" 诚实表达.
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>总记录数</div>,
     },
     {
-      label: '待审批', value: approvalCount, accent: '#AF52DE', icon: <SafetyCertificateOutlined />,
+      label: '待审批', value: approvalCount, accent: palette.accent.purple, icon: <SafetyCertificateOutlined />,
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>待处理数</div>,
     },
     {
@@ -87,19 +88,19 @@ const Home: React.FC = () => {
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>近 7 天累计</div>,
     },
     {
-      label: '存储后端', value: dialect === 'mysql' ? 'MySQL' : 'SQLite', accent: '#5AC8FA',
+      label: '存储后端', value: dialect === 'mysql' ? 'MySQL' : 'SQLite', accent: palette.accent.cyan,
       icon: <CloudOutlined />, valueIsString: true,
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>{dialect === 'mysql' ? '生产级' : '嵌入式'}</div>,
     },
   ]
 
   const quickActions = [
-    { title: '添加主机', desc: '录入资产并测试连接', icon: <DesktopOutlined />, color: '#0071E3', path: '/dashboard/hosts/new' },
-    { title: '新建实例', desc: '注册 MySQL 实例', icon: <DatabaseOutlined />, color: '#34C759', path: '/dashboard/instances' },
-    { title: '环境检测', desc: '检测部署环境', icon: <SettingOutlined />, color: '#FF9500', path: '/dashboard/env-check' },
-    { title: '备份策略', desc: '数据备份与恢复', icon: <CloudOutlined />, color: '#AF52DE', path: '/dashboard/backup' },
-    { title: '告警规则', desc: '配置监控告警', icon: <AlertOutlined />, color: '#FF3B30', path: '/dashboard/alert-rules' },
-    { title: '数据存储', desc: 'SQLite / MySQL 切换', icon: <CloudOutlined />, color: '#5AC8FA', path: '/dashboard/data-storage' },
+    { title: '添加主机', desc: '录入资产并测试连接', icon: <DesktopOutlined />, color: palette.accent.blue, path: '/dashboard/hosts/new' },
+    { title: '新建实例', desc: '注册 MySQL 实例', icon: <DatabaseOutlined />, color: palette.accent.green, path: '/dashboard/instances' },
+    { title: '环境检测', desc: '检测部署环境', icon: <SettingOutlined />, color: palette.accent.orange, path: '/dashboard/env-check' },
+    { title: '备份策略', desc: '数据备份与恢复', icon: <CloudOutlined />, color: palette.accent.purple, path: '/dashboard/backup' },
+    { title: '告警规则', desc: '配置监控告警', icon: <AlertOutlined />, color: palette.accent.red, path: '/dashboard/alert-rules' },
+    { title: '数据存储', desc: 'SQLite / MySQL 切换', icon: <CloudOutlined />, color: palette.accent.cyan, path: '/dashboard/data-storage' },
   ]
 
   if (loading) {

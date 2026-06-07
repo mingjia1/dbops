@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { instanceApi, monitorApi } from '../services/api'
+import { palette } from '../appTheme'
 
 interface MetricPoint {
   ts: string
@@ -155,18 +156,18 @@ const MonitorDashboard: React.FC = () => {
   const trafficData = useMemo(() => {
     if (!metrics) return []
     return [
-      { name: '接收', value: metrics.bytes_received || 0, color: '#1890ff' },
-      { name: '发送', value: metrics.bytes_sent || 0, color: '#52c41a' },
+      { name: '接收', value: metrics.bytes_received || 0, color: palette.series.primary },
+      { name: '发送', value: metrics.bytes_sent || 0, color: palette.series.success },
     ]
   }, [metrics])
 
   const dmlData = useMemo(() => {
     if (!metrics) return []
     return [
-      { name: 'INSERT', value: metrics.innodb_rows_inserted || 0, color: '#1890ff' },
-      { name: 'UPDATE', value: metrics.innodb_rows_updated || 0, color: '#fa8c16' },
-      { name: 'DELETE', value: metrics.innodb_rows_deleted || 0, color: '#f5222d' },
-      { name: 'SELECT', value: metrics.innodb_rows_read || 0, color: '#52c41a' },
+      { name: 'INSERT', value: metrics.innodb_rows_inserted || 0, color: palette.series.primary },
+      { name: 'UPDATE', value: metrics.innodb_rows_updated || 0, color: palette.series.warning },
+      { name: 'DELETE', value: metrics.innodb_rows_deleted || 0, color: palette.series.danger },
+      { name: 'SELECT', value: metrics.innodb_rows_read || 0, color: palette.series.success },
     ]
   }, [metrics])
 
@@ -192,17 +193,17 @@ const MonitorDashboard: React.FC = () => {
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="健康" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#3f8600' }} />
+            <Statistic title="健康" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: palette.text.healthy }} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="异常" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: '#cf1322' }} />
+            <Statistic title="异常" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="已停止" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: '#8c8c8c' }} />
+            <Statistic title="已停止" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} />
           </Card>
         </Col>
       </Row>
@@ -250,7 +251,7 @@ const MonitorDashboard: React.FC = () => {
                     value={metrics.qps?.[metrics.qps.length - 1]?.value || 0}
                     precision={1}
                     prefix={<ThunderboltOutlined />}
-                    valueStyle={{ color: '#1890ff' }}
+                    valueStyle={{ color: palette.series.primary }}
                   />
                 </Card>
               </Col>
@@ -261,7 +262,7 @@ const MonitorDashboard: React.FC = () => {
                     value={metrics.tps?.[metrics.tps.length - 1]?.value || 0}
                     precision={1}
                     prefix={<ArrowUpOutlined />}
-                    valueStyle={{ color: '#52c41a' }}
+                    valueStyle={{ color: palette.series.success }}
                   />
                 </Card>
               </Col>
@@ -406,7 +407,7 @@ const MonitorDashboard: React.FC = () => {
                         format={(p) => `${p}%`}
                         strokeColor={bufferHit > 0.95 ? '#52c41a' : bufferHit > 0.85 ? '#fa8c16' : '#f5222d'}
                       />
-                      <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+                      <div style={{ marginTop: 8, color: palette.text.stopped, fontSize: 12 }}>
                         健康范围: ≥ 95%
                       </div>
                     </>
@@ -417,7 +418,7 @@ const MonitorDashboard: React.FC = () => {
                 <Card size="small" title="MySQL 运行时间">
                   <Statistic
                     value={formatDuration(metrics.uptime)}
-                    valueStyle={{ color: '#1890ff' }}
+                    valueStyle={{ color: palette.series.primary }}
                     prefix={<ClockCircleOutlined />}
                   />
                 </Card>
@@ -426,7 +427,7 @@ const MonitorDashboard: React.FC = () => {
                 <Card size="small" title="连接数详情">
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Statistic title="活跃" value={metrics.threads_running || 0} valueStyle={{ fontSize: 18, color: '#fa8c16' }} />
+                      <Statistic title="活跃" value={metrics.threads_running || 0} valueStyle={{ fontSize: 18, color: palette.series.warning }} />
                     </Col>
                     <Col span={12}>
                       <Statistic title="已连接" value={metrics.threads_connected || 0} valueStyle={{ fontSize: 18 }} />

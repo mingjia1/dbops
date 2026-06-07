@@ -3,6 +3,7 @@ import { Form, Input, Button, Tabs, App as AntApp } from 'antd'
 import { UserOutlined, LockOutlined, MailOutlined, AppleOutlined, CloudOutlined, SafetyCertificateOutlined, ThunderboltOutlined, ClusterOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
+import { palette } from '../appTheme'
 import './Login.css'
 
 const Login: React.FC = () => {
@@ -128,28 +129,28 @@ const Login: React.FC = () => {
 
           <div className="brand-feature-grid">
             <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: 'linear-gradient(135deg,#0071E3,#5AC8FA)' }}><CloudOutlined /></div>
+              <div className="brand-feature-icon" style={{ background: palette.gradient.blueCloud }}><CloudOutlined /></div>
               <div className="brand-feature-text">
                 <div className="brand-feature-title">主机与实例</div>
                 <div className="brand-feature-desc">资产盘点 · 自动发现</div>
               </div>
             </div>
             <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: 'linear-gradient(135deg,#34C759,#30D158)' }}><SafetyCertificateOutlined /></div>
+              <div className="brand-feature-icon" style={{ background: palette.gradient.greenSafety }}><SafetyCertificateOutlined /></div>
               <div className="brand-feature-text">
                 <div className="brand-feature-title">备份与恢复</div>
                 <div className="brand-feature-desc">策略化 · 一键回滚</div>
               </div>
             </div>
             <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: 'linear-gradient(135deg,#FF9500,#FFCC00)' }}><ThunderboltOutlined /></div>
+              <div className="brand-feature-icon" style={{ background: palette.gradient.orangeBolt }}><ThunderboltOutlined /></div>
               <div className="brand-feature-text">
                 <div className="brand-feature-title">监控告警</div>
                 <div className="brand-feature-desc">指标聚合 · 阈值告警</div>
               </div>
             </div>
             <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: 'linear-gradient(135deg,#AF52DE,#FF2D55)' }}><ClusterOutlined /></div>
+              <div className="brand-feature-icon" style={{ background: palette.gradient.purpleCluster }}><ClusterOutlined /></div>
               <div className="brand-feature-text">
                 <div className="brand-feature-title">高可用集群</div>
                 <div className="brand-feature-desc">MHA · MGR · PXC</div>

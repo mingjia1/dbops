@@ -67,3 +67,37 @@ export const appleTheme: ThemeConfig = {
     },
   },
 }
+
+// palette 集中存放硬编码颜色, 各页面引用而不是写死.
+// 命名按用途 (series / gradient / status) 而不是字面颜色,
+// 这样未来切暗主题时一处改全局生效.
+export const palette = {
+  series: {
+    primary: '#1890ff',     // 接收/INSERT
+    success: '#52c41a',     // 发送/UPDATE-success/SELECT
+    warning: '#fa8c16',     // 慢查询/UPDATE-warning
+    danger:  '#f5222d',     // DELETE/异常
+    info:    '#13c2c2',
+  },
+  text: {
+    healthy:   '#3f8600',
+    unhealthy: '#cf1322',
+    stopped:   '#8c8c8c',
+    warning:   '#fa8c16',
+  },
+  gradient: {
+    blueCloud:    'linear-gradient(135deg,#0071E3,#5AC8FA)',
+    greenSafety:  'linear-gradient(135deg,#34C759,#30D158)',
+    orangeBolt:   'linear-gradient(135deg,#FF9500,#FFCC00)',
+    purpleCluster: 'linear-gradient(135deg,#AF52DE,#FF2D55)',
+  },
+  accent: {
+    blue:   '#0071E3',
+    green:  '#34C759',
+    orange: '#FF9500',
+    purple: '#AF52DE',
+    red:    '#FF3B30',
+    cyan:   '#5AC8FA',
+  },
+} as const
+

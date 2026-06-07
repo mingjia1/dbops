@@ -9,6 +9,7 @@ import {
   FileTextOutlined, HddOutlined,
 } from '@ant-design/icons'
 import { dataMigrationApi, DataMigrationStatus, MigrateResult } from '../services/api'
+import { palette } from '../appTheme'
 
 const { Text } = Typography
 
@@ -114,7 +115,7 @@ const DataStoragePage: React.FC = () => {
                     title="当前存储后端"
                     value={dialectInfo.label}
                     prefix={dialectInfo.icon}
-                    valueStyle={{ color: dialectInfo.color === 'green' ? '#52c41a' : '#1890ff' }}
+                    valueStyle={{ color: dialectInfo.color === 'green' ? palette.series.success : palette.series.primary }}
                   />
                   <Tag color={dialectInfo.color} style={{ marginTop: 8 }}>{status.dialect}</Tag>
                 </Card>
@@ -140,7 +141,7 @@ const DataStoragePage: React.FC = () => {
                   <Statistic
                     title="MySQL DSN"
                     value={status.mysql_configured ? '已配置' : '未配置'}
-                    valueStyle={{ color: status.mysql_configured ? '#52c41a' : '#999' }}
+                    valueStyle={{ color: status.mysql_configured ? palette.series.success : palette.text.stopped }}
                     prefix={status.mysql_configured ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
                   />
                   <Text type="secondary" style={{ fontSize: 12 }}>config.yaml database_url</Text>
