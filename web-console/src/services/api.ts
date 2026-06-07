@@ -5,6 +5,8 @@ import { triggerLogout } from './authEvents'
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 10000,
+  // HttpOnly cookie (auth_token) 跟随请求自动带, 不再单靠 Authorization header.
+  withCredentials: true,
 })
 
 api.interceptors.request.use(
