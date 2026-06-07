@@ -298,7 +298,13 @@ const ParameterTemplateList: React.FC = () => {
             validateStatus={paramJsonError ? 'error' : undefined}
             help={paramJsonError ? `JSON 解析失败: ${paramJsonError}` : '例如: {"innodb_buffer_pool_size": "4G", "max_connections": 1000}'}
           >
-            <Input.TextArea rows={6} placeholder='{"innodb_buffer_pool_size": "4G", "max_connections": 1000}' />
+            <Input.TextArea
+              rows={6}
+              placeholder='{"innodb_buffer_pool_size": "4G", "max_connections": 1000}'
+              // P2: 用户开始改时清掉旧解析错误, 避免 Form.Item 红色边框 +
+              // help 红字 + 提交时再次显示错误, 三处红打架.
+              onChange={() => paramJsonError && setParamJsonError(null)}
+            />
           </Form.Item>
           {restartKeys.length > 0 && (
             <Alert
