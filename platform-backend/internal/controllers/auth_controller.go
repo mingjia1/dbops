@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -26,6 +27,15 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	if err != nil {
 		utils.UnauthorizedResponse(ctx, "Authentication failed")
 		return
+	}
+
+	// 同时写 Set-Cookie (HttpOnly, SameSite=Lax), 让浏览器自动带,
+	// 前端 axios 配 withCredentials=true 后能跨 fetch 复用同一会话.
+	// 旧前端走 localStorage 也兼容 (LoginResponse 仍返 token).
+	if resp != nil && resp.Token != "" {
+		// 7 天, 与现有 auth_service token expiry 对齐.
+		ctx.SetSameSite(http.SameSiteLaxMode)
+		ctx.SetCookie("auth_token", resp.Token, 7*24*3600, "/", "", false, true)
 	}
 
 	utils.SuccessResponse(ctx, resp)
