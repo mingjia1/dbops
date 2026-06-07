@@ -17,15 +17,17 @@ type InstanceService struct {
 	hostRepo    *repositories.HostRepository
 	taskRepo    *repositories.TaskRepository
 	agentClient *AgentClient
+	auditSvc    *AuditService // P0: 删/更新/部署 写 audit, SOC2 合规
 	encKey      string
 }
 
-func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, encKey string) *InstanceService {
+func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, auditSvc *AuditService, encKey string) *InstanceService {
 	return &InstanceService{
 		repo:        repo,
 		hostRepo:    hostRepo,
 		taskRepo:    taskRepo,
 		agentClient: agentClient,
+		auditSvc:    auditSvc,
 		encKey:      encKey,
 	}
 }
@@ -105,12 +107,34 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 	if err := s.repo.Update(ctx, instance); err != nil {
 		return nil, fmt.Errorf("failed to update instance: %w", err)
 	}
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Action:       "update",
+			ResourceType: "instance",
+			ResourceID:   id,
+			Result:       "success",
+		})
+	}
 
 	return instance, nil
 }
 
 func (s *InstanceService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	// P0: 写 audit, 之前删 instance 0 记录, SOC2 不通过.
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Action:       "delete",
+			ResourceType: "instance",
+			ResourceID:   id,
+			Result:       "success",
+		})
+	}
+	return nil
 }
 
 func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models.InstanceVersion, error) {

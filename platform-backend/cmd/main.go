@@ -105,7 +105,10 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	instanceRepo.AttachStore(jsonStore)
 	hostRepo.AttachStore(jsonStore)
 	agentClient := services.NewAgentClient(cfg.AgentToken)
-	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, cfg.EncryptionKey)
+	// P0: 提前建 auditService, 让 instanceService/hostService 等可注入.
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
 	hostService.SetInstanceRepo(instanceRepo)
@@ -172,9 +175,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	alertController := controllers.NewAlertController(alertService)
 
 	approvalRepo := repositories.NewApprovalRequestRepository(db)
-	auditRepo := repositories.NewAuditLogRepository(db)
 	approvalService := services.NewApprovalService(approvalRepo, auditRepo)
-	auditService := services.NewAuditService(auditRepo, approvalRepo)
 	approvalController := controllers.NewApprovalController(approvalService)
 
 	// B8: 长任务进度查询.
