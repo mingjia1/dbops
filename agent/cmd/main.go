@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-agent/internal/executor"
 	"github.com/monkeycode/mysql-ops-agent/internal/collector"
@@ -339,8 +342,29 @@ func main() {
 	// }()
 	_ = metricsCollector // 保留引用避免 unused 警告
 
+	// P0: 用 http.Server 替代 gin.Default 的 r.Run, 设 ReadHeaderTimeout 等.
+	// gin.Default 底层 http.Server 全 0 timeout, Slowloris 攻击可 pin 死端口.
+	r.Use(func(c *gin.Context) {
+		// 透传 backend X-Trace-Id; 没有就自己生成一个, 至少 agent 端有 trace.
+		tid := c.GetHeader("X-Trace-Id")
+		if tid == "" {
+			tid = "agent-" + c.Request.Header.Get("X-Request-Id")
+		}
+		c.Set("trace_id", tid)
+		c.Writer.Header().Set("X-Trace-Id", tid)
+		c.Next()
+	})
+
 	logInstance.Info("Agent starting on port " + cfg.AgentPort)
-	if err := r.Run(":" + cfg.AgentPort); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + cfg.AgentPort,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start agent: %v", err)
 	}
 }

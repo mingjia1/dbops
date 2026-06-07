@@ -126,6 +126,12 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// P0: 把 backend 中间件生成的 trace_id 透传给 agent, 跨组件排障可串联.
+	if tid := ctx.Value("trace_id"); tid != nil {
+		if s, ok := tid.(string); ok && s != "" {
+			req.Header.Set("X-Trace-Id", s)
+		}
+	}
 	// P1-2: 携带 agent_token 鉴权, 与 Agent 端校验.
 	if c.agentToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.agentToken)
