@@ -181,7 +181,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	taskController := controllers.NewTaskController(taskRepo)
 	auditController := controllers.NewAuditController(auditService)
 
-	dataMigrationController := controllers.NewDataMigrationController(cfg)
+	dataMigrationController := controllers.NewDataMigrationController(cfg, db)
 
 	r := gin.Default()
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
