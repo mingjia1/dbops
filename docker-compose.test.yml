@@ -1,23 +1,6 @@
 version: '3.8'
 
 services:
-  postgres-test:
-    image: postgres:15-alpine
-    container_name: mysql-ops-postgres-test
-    environment:
-      POSTGRES_USER: mysql_ops
-      POSTGRES_PASSWORD: mysql_ops_test
-      POSTGRES_DB: mysql_ops_platform
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_test_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mysql_ops -d mysql_ops_platform"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   redis-test:
     image: redis:7-alpine
     container_name: mysql-ops-redis-test
@@ -92,11 +75,10 @@ services:
       dockerfile: Dockerfile.test
     container_name: mysql-ops-backend-test
     environment:
-      DB_HOST: postgres-test
-      DB_PORT: 5432
-      DB_USER: mysql_ops
-      DB_PASSWORD: mysql_ops_test
-      DB_NAME: mysql_ops_platform
+      DBOPS_DB_URL: "root:root_test_password@tcp(mysql-test-target:3306)/testdb?charset=utf8mb4&parseTime=true&loc=Local"
+      DBOPS_JWT_SECRET: "test_jwt_secret_key_must_be_at_least_32_chars_long"
+      DBOPS_ENCRYPTION_KEY: "test_aes_key_must_be_at_least_32_chars_long_xx"
+      DBOPS_AGENT_TOKEN: "test_agent_token_must_be_at_least_16_chars"
       REDIS_HOST: redis-test
       REDIS_PORT: 6379
       CLICKHOUSE_HOST: clickhouse-test
@@ -104,12 +86,11 @@ services:
       CLICKHOUSE_USER: mysql_ops
       CLICKHOUSE_PASSWORD: mysql_ops_test
       CLICKHOUSE_DB: mysql_ops_metrics
-      JWT_SECRET: test_jwt_secret_key
       LOG_LEVEL: debug
     ports:
       - "8081:8080"
     depends_on:
-      postgres-test:
+      mysql-test-target:
         condition: service_healthy
       redis-test:
         condition: service_healthy
@@ -127,7 +108,8 @@ services:
       dockerfile: Dockerfile.test
     container_name: mysql-ops-agent-test
     environment:
-      PLATFORM_URL: http://platform-backend-test:8080
+      DBOPS_PLATFORM_URL: http://platform-backend-test:8080
+      DBOPS_AGENT_TOKEN: "test_agent_token_must_be_at_least_16_chars"
       AGENT_ID: test-agent-001
       LOG_LEVEL: debug
     ports:
@@ -142,7 +124,6 @@ services:
       retries: 10
 
 volumes:
-  postgres_test_data:
   redis_test_data:
   clickhouse_test_data:
   mysql_test_data:
