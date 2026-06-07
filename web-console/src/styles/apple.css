@@ -247,3 +247,36 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(60, 60, 67, 0.18); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(60, 60, 67, 0.32); }
+
+/* Dark theme: html data-theme="dark" 触发. main.tsx 启动时按 localStorage 设置.
+   仅覆写 token, antd darkAlgorithm 处理组件内色, CSS 这一层处理品牌背景/文字. */
+:root[data-theme="dark"] {
+  --apple-bg: #000000;
+  --apple-bg-elevated: #1C1C1E;
+  --apple-bg-grouped: #2C2C2E;
+  --apple-bg-sidebar: rgba(28, 28, 30, 0.72);
+  --apple-bg-header: rgba(28, 28, 30, 0.72);
+  --apple-bg-tint: rgba(10, 132, 255, 0.10);
+  --apple-separator: rgba(255, 255, 255, 0.10);
+  --apple-separator-strong: rgba(255, 255, 255, 0.20);
+  --apple-border: rgba(255, 255, 255, 0.10);
+  --apple-text: #F5F5F7;
+  --apple-text-secondary: #A1A1A6;
+  --apple-text-tertiary: #6E6E73;
+  --apple-blue: #0A84FF;
+  --apple-blue-hover: #409CFF;
+  --apple-blue-tint: rgba(10, 132, 255, 0.15);
+  --apple-green: #30D158;
+  --apple-green-tint: rgba(48, 209, 88, 0.15);
+  --apple-orange: #FF9F0A;
+  --apple-orange-tint: rgba(255, 159, 10, 0.15);
+  --apple-red: #FF453A;
+  --apple-red-tint: rgba(255, 69, 58, 0.15);
+  --apple-purple: #BF5AF2;
+  --apple-pink: #FF375F;
+  --apple-indigo: #5E5CE6;
+  --apple-teal: #64D2FF;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.20); }
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
