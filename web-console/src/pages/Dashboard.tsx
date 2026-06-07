@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Layout, Menu, Dropdown, Avatar, Space, Typography } from 'antd'
+import { Layout, Menu, Dropdown, Avatar, Space, Typography, Switch, Tooltip } from 'antd'
+import { BulbOutlined, BulbFilled } from '@ant-design/icons'
+import { getStoredThemeMode, setStoredThemeMode, type ThemeMode } from '../appTheme'
 import './Dashboard.css'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -24,6 +26,18 @@ const Dashboard: React.FC = () => {
       if (u) setUser(JSON.parse(u))
     } catch { /* ignore */ }
   }, [])
+
+  // 主题切换: 状态 + 持久化 + 同时更新 <html data-theme> (CSS 变量) 与 antd ConfigProvider.
+  // antd theme 通过顶层 main.tsx 传 initial, 这里只更新 html 变量 + localStorage.
+  // 完整 antd 主题热切换需要把 ConfigProvider 提到一个 ThemeProvider 组件,
+  // 下一轮再做.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
+  const toggleTheme = (checked: boolean) => {
+    const next: ThemeMode = checked ? 'dark' : 'light'
+    setThemeMode(next)
+    setStoredThemeMode(next)
+    document.documentElement.dataset.theme = next
+  }
 
   const handleLogout = () => {
     localStorage.removeItem('token')
@@ -106,6 +120,15 @@ const Dashboard: React.FC = () => {
           </Typography.Title>
         </div>
         <div className="header-right">
+          <Tooltip title={themeMode === 'dark' ? '切换到亮色' : '切换到暗色'}>
+            <Switch
+              checked={themeMode === 'dark'}
+              onChange={toggleTheme}
+              checkedChildren={<BulbFilled />}
+              unCheckedChildren={<BulbOutlined />}
+              style={{ marginRight: 16 }}
+            />
+          </Tooltip>
           <Dropdown menu={userMenu} placement="bottomRight">
             <Space style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.85)' }}>
               <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />
