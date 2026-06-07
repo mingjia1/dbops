@@ -69,6 +69,20 @@ const Dashboard: React.FC = () => {
     return '/dashboard/home'
   })()
 
+  // P2: 之前用 defaultOpenKeys 只在 mount 时展开一次.
+  // 用户深链接到 /dashboard/hosts/:id 或 /dashboard/instances 后,
+  // antd Menu 4+ 不会自动展开 parent group (需要受控 openKeys).
+  // 修: 根据当前 path 反推应该展开的 parent, 用 openKeys (受控).
+  const openKeys = (() => {
+    for (const m of menuItems) {
+      if ((m as any).children) {
+        const hit = (m as any).children.find((c: any) => location.pathname.startsWith(c.key))
+        if (hit) return [m.key]
+      }
+    }
+    return ['/dashboard/resources']
+  })()
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: `${user?.username || '用户'}` },
@@ -106,7 +120,7 @@ const Dashboard: React.FC = () => {
             mode="inline"
             theme="dark"
             selectedKeys={[selectedKey]}
-            defaultOpenKeys={['/dashboard/resources']}
+            openKeys={openKeys}
             items={menuItems.map((item: any) => {
               if (item.children) {
                 return {
