@@ -1,5 +1,26 @@
 import { theme, type ThemeConfig } from 'antd'
 
+// 主题模式: 'light' (默认) / 'dark'.
+export type ThemeMode = 'light' | 'dark'
+const THEME_KEY = 'app.theme.mode'
+
+export function getStoredThemeMode(): ThemeMode {
+  try {
+    const v = localStorage.getItem(THEME_KEY)
+    return v === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
+export function setStoredThemeMode(m: ThemeMode) {
+  try {
+    localStorage.setItem(THEME_KEY, m)
+  } catch {
+    /* ignore (e.g. private mode) */
+  }
+}
+
 // Apple-inspired antd theme tokens.
 export const appleTheme: ThemeConfig = {
   algorithm: theme.defaultAlgorithm,
@@ -68,6 +89,44 @@ export const appleTheme: ThemeConfig = {
   },
 }
 
+// Dark variant: algorithm=dark + 暗色 token 覆写.
+// 同一组 palette (本文件下方定义) 在两套主题下都能用.
+export const darkTheme: ThemeConfig = {
+  algorithm: theme.darkAlgorithm,
+  token: {
+    colorPrimary: '#0A84FF',
+    colorSuccess: '#30D158',
+    colorWarning: '#FF9F0A',
+    colorError: '#FF453A',
+    colorInfo: '#64D2FF',
+    colorTextBase: '#F5F5F7',
+    colorBgBase: '#000000',
+    colorBgLayout: '#1C1C1E',
+    colorBgContainer: '#2C2C2E',
+    borderRadius: 10,
+    borderRadiusLG: 14,
+    borderRadiusSM: 6,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", Arial, "Segoe UI", sans-serif',
+    fontSize: 14,
+    lineHeight: 1.55,
+    motionDurationMid: '0.28s',
+    motionEaseInOut: 'cubic-bezier(0.32, 0.72, 0, 1)',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.4)',
+    boxShadowSecondary: '0 2px 8px rgba(0,0,0,0.5)',
+  },
+  components: {
+    Card: { borderRadiusLG: 14, paddingLG: 20 },
+    Button: { borderRadius: 8, controlHeight: 36, fontWeight: 500 },
+    Input: { borderRadius: 8, controlHeight: 36 },
+    Select: { borderRadius: 8, controlHeight: 36 },
+    Table: { borderRadius: 10, headerBorderRadius: 10 },
+    Tabs: { titleFontSize: 15, horizontalItemGutter: 24 },
+    Tag: { borderRadiusSM: 6 },
+    Modal: { borderRadiusLG: 14 },
+    Message: { borderRadiusLG: 10 },
+  },
+}
+
 // palette 集中存放硬编码颜色, 各页面引用而不是写死.
 // 命名按用途 (series / gradient / status) 而不是字面颜色,
 // 这样未来切暗主题时一处改全局生效.
@@ -100,4 +159,9 @@ export const palette = {
     cyan:   '#5AC8FA',
   },
 } as const
+
+// pickTheme 按 mode 选 light/dark antd theme. 提供给 main.tsx 动态切换.
+export function pickTheme(mode: ThemeMode): ThemeConfig {
+  return mode === 'dark' ? darkTheme : appleTheme
+}
 
