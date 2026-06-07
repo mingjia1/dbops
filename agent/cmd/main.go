@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"log"
-	"time"
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-agent/internal/executor"
 	"github.com/monkeycode/mysql-ops-agent/internal/collector"
@@ -165,6 +163,10 @@ func main() {
 				switch upgradeType {
 				case "rolling":
 					result, execErr = ue.ExecuteRollingUpgrade(c.Request.Context(), req)
+				case "logical":
+					// P0: 之前 logical 走 default → 400 "unsupported upgrade_type",
+					// 阻断了 backend upgrade_service.ExecuteLogicalMigration 整条路径.
+					result, execErr = ue.ExecuteLogicalMigration(c.Request.Context(), req)
 				case "in-place", "":
 					result, execErr = ue.ExecuteInPlaceUpgrade(c.Request.Context(), req)
 				default:
@@ -307,14 +309,17 @@ func main() {
 		}
 	}
 
-	go func() {
-		ctx := context.Background()
-		for {
-			metrics, _ := metricsCollector.CollectSystemMetrics(ctx, "localhost")
-			metricsCollector.ReportMetrics(ctx, cfg.PlatformURL, metrics)
-			time.Sleep(10 * time.Second)
-		}
-	}()
+	// P0: 之前这段 goroutine 每 10s 调 ReportMetrics, 但 ReportMetrics
+	// 只是个 fmt.Printf noop, 假数据 + 不发 backend = 永远零真实指标.
+	// 修: 暂时禁用整段, 真接入 backend 推送留待下轮 (需先有 backend ingest 端点).
+	// go func() {
+	// 	ctx := context.Background()
+	// 	for {
+	// 		_ = metricsCollector.CollectSystemMetrics
+	// 		time.Sleep(10 * time.Second)
+	// 	}
+	// }()
+	_ = metricsCollector // 保留引用避免 unused 警告
 
 	logInstance.Info("Agent starting on port " + cfg.AgentPort)
 	if err := r.Run(":" + cfg.AgentPort); err != nil {

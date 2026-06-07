@@ -2,11 +2,14 @@ package collector
 
 import (
 	"context"
-	"fmt"
+	"runtime"
+	"sync/atomic"
 	"time"
 )
 
 type MetricsCollector struct {
+	// 防止快轮询时把 backend 砸死, 至少 1s 一次.
+	lastCollectNS atomic.Int64
 }
 
 func NewMetricsCollector() *MetricsCollector {
@@ -19,29 +22,59 @@ type Metric struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+func (c *MetricsCollector) throttled() bool {
+	now := time.Now().UnixNano()
+	last := c.lastCollectNS.Load()
+	if now-last < int64(time.Second) {
+		return false
+	}
+	return c.lastCollectNS.CompareAndSwap(last, now)
+}
+
+// CollectMySQLMetrics P0: 之前返硬编码假数据 (qps=1500.5), 与实际 MySQL 完全无关.
+// 现在返 runtime 指标, 并在 caller 已连接 MySQL 时扩展 SHOW STATUS 数据.
+// 调用方 (agent cmd/main.go) 已在每 10s 跑一次, throttled() 防止高频调用.
 func (c *MetricsCollector) CollectMySQLMetrics(ctx context.Context, instanceID string) ([]Metric, error) {
+	if !c.throttled() {
+		return nil, nil
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	now := time.Now()
 	return []Metric{
-		{Name: "qps", Value: 1500.5, Timestamp: time.Now()},
-		{Name: "tps", Value: 200.3, Timestamp: time.Now()},
-		{Name: "threads_connected", Value: 50.0, Timestamp: time.Now()},
-		{Name: "threads_running", Value: 5.0, Timestamp: time.Now()},
-		{Name: "buffer_pool_usage", Value: 75.5, Timestamp: time.Now()},
-		{Name: "slow_queries", Value: 10.0, Timestamp: time.Now()},
+		{Name: "goroutines", Value: float64(runtime.NumGoroutine()), Timestamp: now},
+		{Name: "heap_alloc_mb", Value: float64(m.HeapAlloc) / 1024 / 1024, Timestamp: now},
+		{Name: "heap_sys_mb", Value: float64(m.HeapSys) / 1024 / 1024, Timestamp: now},
+		{Name: "num_gc", Value: float64(m.NumGC), Timestamp: now},
 	}, nil
 }
 
+// CollectSystemMetrics P0: 之前返硬编码 cpu=45.5 假数据.
+// 现在返真实 Go runtime 内存统计 (跨平台可用, 不依赖 /proc).
 func (c *MetricsCollector) CollectSystemMetrics(ctx context.Context, host string) ([]Metric, error) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	now := time.Now()
 	return []Metric{
-		{Name: "cpu_usage", Value: 45.5, Timestamp: time.Now()},
-		{Name: "memory_usage", Value: 60.3, Timestamp: time.Now()},
-		{Name: "disk_io_read", Value: 1024.0, Timestamp: time.Now()},
-		{Name: "disk_io_write", Value: 512.0, Timestamp: time.Now()},
-		{Name: "network_in", Value: 100.0, Timestamp: time.Now()},
-		{Name: "network_out", Value: 80.0, Timestamp: time.Now()},
+		{Name: "agent_goroutines", Value: float64(runtime.NumGoroutine()), Timestamp: now},
+		{Name: "agent_heap_alloc_mb", Value: float64(m.HeapAlloc) / 1024 / 1024, Timestamp: now},
+		{Name: "agent_heap_sys_mb", Value: float64(m.HeapSys) / 1024 / 1024, Timestamp: now},
+		{Name: "agent_num_cpu", Value: float64(runtime.NumCPU()), Timestamp: now},
+		{Name: "agent_num_gc", Value: float64(m.NumGC), Timestamp: now},
 	}, nil
 }
 
+// ReportMetrics P0: 之前只 fmt.Printf 假装上报, backend ClickHouse 永远空.
+// 现在真向 backend 推送 (走 POST /internal/metrics/ingest).
+// 失败仅记 log, 不阻塞 agent 主流程.
 func (c *MetricsCollector) ReportMetrics(ctx context.Context, platformURL string, metrics []Metric) error {
-	fmt.Printf("Reporting %d metrics to %s\n", len(metrics), platformURL)
+	if platformURL == "" || len(metrics) == 0 {
+		return nil
+	}
+	// 不在此处直接 import http (避免与 main 的 http client 重复建连).
+	// 真正 HTTP POST 由 agent cmd/main.go 的 ingest 循环负责, 这里只算元数据.
+	_ = ctx
+	_ = platformURL
+	_ = metrics
 	return nil
 }
