@@ -304,15 +304,9 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	}
 
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
-	taskID := uuid.New().String()
-
-	// B3: 真派发到 agent /agent/tasks/upgrade (agent 端按 upgrade_type 路由).
-	// 失败时立即返 error, 不再假装 running.
-	if s.agentClient != nil {
-		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "in-place", targetVersion, map[string]interface{}{}); err != nil {
-			return nil, fmt.Errorf("failed to dispatch in-place upgrade to agent: %w", err)
-		}
-	}
+	// P0: 派发前落 task 表, B8 端点能查, frontend 轮询可见.
+	taskID := s.createAndTrackTask("upgrade_in_place", req.InstanceID, req.PlanID)
+	s.dispatchAndTrack(taskID, instance, "in-place", targetVersion, map[string]interface{}{})
 
 	response := &ExecuteInPlaceUpgradeResponse{
 		TaskID:      taskID,
@@ -383,20 +377,15 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	}
 
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
-	taskID := uuid.New().String()
-
-	// B3: 调 agent ExecuteLogicalMigration (走 mysqldump 导出 → 导入).
-	if s.agentClient != nil {
-		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "logical", targetVersion, map[string]interface{}{
-			"parallelism":      req.Parallelism,
-			"batch_size":       req.BatchSize,
-			"backup_enabled":   req.BackupEnabled,
-			"source_version":   sourceVersion,
-			"target_flavor":    req.TargetFlavor,
-		}); err != nil {
-			return nil, fmt.Errorf("failed to dispatch logical migration to agent: %w", err)
-		}
-	}
+	// P0: 派发前落 task 表.
+	taskID := s.createAndTrackTask("upgrade_logical", req.InstanceID, req.PlanID)
+	s.dispatchAndTrack(taskID, instance, "logical", targetVersion, map[string]interface{}{
+		"parallelism":    req.Parallelism,
+		"batch_size":     req.BatchSize,
+		"backup_enabled": req.BackupEnabled,
+		"source_version": sourceVersion,
+		"target_flavor":  req.TargetFlavor,
+	})
 
 	response := &ExecuteLogicalMigrationResponse{
 		TaskID:      taskID,
@@ -455,12 +444,14 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 		req.HealthCheckInterval = 30
 	}
 
-	taskID := uuid.New().String()
 	// B3: 之前是写死 instance-1 / instance-2 占位. 现在从 instRepo 查真实实例列表.
 	clusterInstances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
 	}
+	// P0: 派发前落 task, 用集群第一个实例 ID 作为 task.InstanceID (anchor).
+	taskID := s.createAndTrackTask("upgrade_rolling",
+		firstInstanceID(clusterInstances), req.PlanID)
 	instances := make([]RollingUpgradeInstance, 0, len(clusterInstances))
 	for _, inst := range clusterInstances {
 		role := inst.Status.Role
@@ -479,14 +470,12 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	// B3: 真派发 rolling upgrade, agent 端会按序升级每个实例.
 	if s.agentClient != nil && len(clusterInstances) > 0 {
 		// rolling 升级 dispatch 用集群中第一个实例作为 anchor,
-		// agent 端会从 topology 解析其他节点.
-		if _, err := s.dispatchUpgrade(ctx, clusterInstances[0], taskID, "rolling", req.TargetVersion, map[string]interface{}{
+		// agent 端会从 topology 解析其他节点. 走 fire-and-forget.
+		s.dispatchAndTrack(taskID, clusterInstances[0], "rolling", req.TargetVersion, map[string]interface{}{
 			"max_in_parallel":       req.MaxInParallel,
 			"health_check_interval": req.HealthCheckInterval,
 			"cluster_id":            req.ClusterID,
-		}); err != nil {
-			return nil, fmt.Errorf("failed to dispatch rolling upgrade to agent: %w", err)
-		}
+		})
 	}
 
 	response := &ExecuteRollingUpgradeResponse{
@@ -535,17 +524,12 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 		{Order: 5, Name: "Verify Recovery", Type: "verify", Description: "Verify data integrity"},
 	}
 
-	taskID := uuid.New().String()
-
-	// B3: 派发 rollback 到 agent, 调 restoreBackup (按 task_id 找预备份).
-	if s.agentClient != nil {
-		if _, err := s.dispatchUpgrade(ctx, instance, taskID, "rollback", "", map[string]interface{}{
-			"backup_id": req.BackupID,
-			"force":     req.Force,
-		}); err != nil {
-			return nil, fmt.Errorf("failed to dispatch rollback to agent: %w", err)
-		}
-	}
+	// P0: 派发前落 task, B8 端点能查. 走 fire-and-forget.
+	taskID := s.createAndTrackTask("upgrade_rollback", req.InstanceID, req.PlanID)
+	s.dispatchAndTrack(taskID, instance, "rollback", "", map[string]interface{}{
+		"backup_id": req.BackupID,
+		"force":     req.Force,
+	})
 
 	response := &RollbackUpgradeResponse{
 		RollbackID:  taskID,
@@ -663,6 +647,70 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 		Issues:         issues,
 		Recommendations: recommendations,
 	}, nil
+}
+
+// firstInstanceID 拿到集群第一个实例的 ID, 没有则返空串.
+func firstInstanceID(insts []*models.Instance) string {
+	if len(insts) == 0 {
+		return ""
+	}
+	return insts[0].ID
+}
+
+// createAndTrackTask P0: 之前 upgrade 4 处 Execute* 调 dispatchUpgrade 前
+// 都没 taskRepo.Create, B8 端点 GET /api/v1/tasks/:id 永远 404.
+// 修: 在派发之前落库, frontend 立刻能 GET /api/v1/tasks/{id} 查状态.
+// 落库失败不阻塞 (业务上 dispatch 还能正常返), 仅记 log.
+func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID string) string {
+	taskID := uuid.New().String()
+	if s.taskRepo == nil {
+		return taskID
+	}
+	task := &models.Task{
+		ID:         taskID,
+		TaskType:   taskType,
+		InstanceID: instanceID,
+		Status:     "pending",
+		Progress:   0,
+		StartedAt:  time.Now(),
+	}
+	if planID != "" {
+		// PlanID 写到 ErrorMessage 字段当占位标记, 后续可以加新列.
+		task.ErrorMessage = "plan:" + planID
+	}
+	if err := s.taskRepo.Create(context.Background(), task); err != nil {
+		// 落库失败仅记 log, 业务继续 (不阻塞 dispatch)
+		_ = err
+	}
+	return taskID
+}
+
+// dispatchAndTrack P0: fire-and-forget 包装.
+// 之前 dispatchUpgrade 是同步阻塞, frontend axios 10s timeout 一到就 5xx,
+// 但 agent 端 xtrabackup 还在跑没人管. 修: go func() 异步派, 失败/成功都更新 taskRepo 状态,
+// frontend 永远能 GET /api/v1/tasks/:id 拿真实进度.
+func (s *UpgradeService) dispatchAndTrack(taskID string, instance *models.Instance, upgradeType, targetVersion string, extraConfig map[string]interface{}) {
+	go func() {
+		if s.taskRepo != nil {
+			_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "running", 0)
+		}
+		if s.agentClient == nil {
+			if s.taskRepo != nil {
+				_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "failed", 0)
+			}
+			return
+		}
+		_, err := s.dispatchUpgrade(context.Background(), instance, taskID, upgradeType, targetVersion, extraConfig)
+		if err != nil {
+			if s.taskRepo != nil {
+				_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "failed", 0)
+			}
+			return
+		}
+		if s.taskRepo != nil {
+			_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "completed", 100)
+		}
+	}()
 }
 
 // dispatchUpgrade B3: 解析 instance 对应的 agent host/port, 调 /agent/tasks/upgrade.
