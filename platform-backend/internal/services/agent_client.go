@@ -50,7 +50,7 @@ type agentResponse struct {
 	Data    *AgentTaskResult `json:"data"`
 }
 
-func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agentPort int, instance *models.Instance, taskID string) (*AgentTaskResult, error) {
+func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agentPort int, instance *models.Instance, taskID, mysqlPassword string) (*AgentTaskResult, error) {
 	conn, err := getInstanceConnection(instance)
 	if err != nil {
 		return nil, fmt.Errorf("instance connection not found: %w", err)
@@ -60,6 +60,8 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 		"deploy_mode": "single",
 		"host":        conn.Host,
 		"port":        conn.Port,
+		"mysql_user":  conn.Username,
+		"mysql_pass":  mysqlPassword,
 	}
 	// Forward version-agnostic install fields. They are optional — when absent
 	// the agent falls back to whatever is on PATH (legacy behaviour).

@@ -108,11 +108,16 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 
 func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	host, _ := req.Config["host"].(string)
-	port, _ := req.Config["port"].(int)
-	dataDir, _ := req.Config["data_dir"].(string)
+	port := configInt(req.Config, "port")
+	dataDir, _ := req.Config["datadir"].(string)
+	if dataDir == "" {
+		dataDir, _ = req.Config["data_dir"].(string)
+	}
 	packageURL, _ := req.Config["package_url"].(string)
 	basedir, _ := req.Config["basedir"].(string)
 	osUser, _ := req.Config["os_user"].(string)
+	mysqlUser, _ := req.Config["mysql_user"].(string)
+	mysqlPass, _ := req.Config["mysql_pass"].(string)
 
 	if host == "" {
 		host = "localhost"
@@ -122,6 +127,37 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 	if dataDir == "" {
 		dataDir = fmt.Sprintf("/data/mysql/%d", port)
+	}
+	if osUser == "" {
+		osUser = "mysql"
+	}
+	if err := ensureOSUser(osUser); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("ensure OS user failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create data dir failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	uid, gid := lookupUserIDs(osUser)
+	if err := chownRecursive(dataDir, uid, gid); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("chown data dir failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
 	}
 
 	// Version-agnostic path: download + extract the requested tarball.
@@ -142,12 +178,18 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	} else {
 		// Legacy: rely on PATH
 		mysqld = "mysqld"
+		if basedir != "" {
+			mysqld = filepath.Join(basedir, "bin", "mysqld")
+		}
 	}
 
 	initArgs := []string{
+		"--no-defaults",
 		"--initialize-insecure",
 		"--datadir=" + dataDir,
-		"--user=" + osUser,
+	}
+	if osUser != "" {
+		initArgs = append(initArgs, "--user="+osUser)
 	}
 	if basedir != "" {
 		initArgs = append(initArgs, "--basedir="+basedir)
@@ -164,15 +206,23 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 
 	startArgs := []string{
+		"--no-defaults",
+		"--daemonize",
 		"--datadir=" + dataDir,
 		"--port=" + fmt.Sprintf("%d", port),
-		"--user=" + osUser,
+		"--bind-address=0.0.0.0",
+		"--socket=" + filepath.Join(dataDir, "mysql.sock"),
+		"--pid-file=" + filepath.Join(dataDir, "mysql.pid"),
+		"--log-error=" + filepath.Join(dataDir, "error.log"),
+	}
+	if osUser != "" {
+		startArgs = append(startArgs, "--user="+osUser)
 	}
 	if basedir != "" {
 		startArgs = append(startArgs, "--basedir="+basedir)
 	}
 	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
-	if err := startCmd.Start(); err != nil {
+	if err := startCmd.Run(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -184,7 +234,25 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	time.Sleep(5 * time.Second)
 
-	healthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "ping")
+	if mysqlPass != "" {
+		if mysqlUser == "" {
+			mysqlUser = "root"
+		}
+		if err := applyInitialMySQLPassword(ctx, port, mysqlUser, mysqlPass); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  70,
+				Message:   fmt.Sprintf("apply configured MySQL password failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+
+	healthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "ping")
+	if mysqlPass != "" {
+		healthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
+	}
 	if err := healthCmd.Run(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -618,7 +686,7 @@ func (e *TaskExecutor) ExecuteVersionDetect(ctx context.Context, req DeployTaskR
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	port, _ := req.Config["target_port"].(int)
+	port := configInt(req.Config, "target_port")
 	if port == 0 {
 		port = 3306
 	}
@@ -1336,6 +1404,59 @@ func adminTarget(config map[string]interface{}) (string, int, string, string) {
 	}
 	pass, _ := config["target_pass"].(string)
 	return host, port, user, pass
+}
+
+func configInt(config map[string]interface{}, key string) int {
+	if v, ok := config[key].(int); ok {
+		return v
+	}
+	if v, ok := config[key].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string) error {
+	escapedUser := escapeSQL(user)
+	escapedPass := escapeSQL(pass)
+	var sql string
+	if user == "root" {
+		sql = fmt.Sprintf(
+			"ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; "+
+				"CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s'; "+
+				"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapedPass, escapedPass,
+		)
+	} else {
+		sql = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapedUser, escapedPass, escapedUser,
+		)
+	}
+	attempts := [][]string{
+		{"--protocol=TCP", "-h", "127.0.0.1", "-P", fmt.Sprintf("%d", port), "-u", "root", "-e", sql},
+		{"-P", fmt.Sprintf("%d", port), "-u", "root", "-e", sql},
+	}
+	var lastErr error
+	var lastOut []byte
+	for _, args := range attempts {
+		cmd := exec.CommandContext(ctx, "mysql", args...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		lastOut = out
+	}
+	return fmt.Errorf("%v %s", lastErr, strings.TrimSpace(string(lastOut)))
 }
 
 func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {

@@ -54,6 +54,7 @@ const InstanceDetail: React.FC = () => {
   const [userForm] = Form.useForm()
   const [grantForm] = Form.useForm()
   const [passwordForm] = Form.useForm()
+  const [batchPasswordForm] = Form.useForm()
   const [variableForm] = Form.useForm()
   const [configForm] = Form.useForm()
   const [serviceForm] = Form.useForm()
@@ -115,6 +116,48 @@ const InstanceDetail: React.FC = () => {
     if (result?.message) {
       configForm.setFieldsValue({ content: result.message })
     }
+  }
+
+  const batchUpdatePassword = async () => {
+    const values = await batchPasswordForm.validateFields()
+    const ports = String(values.ports || '')
+      .split(',')
+      .map((item) => Number(item.trim()))
+      .filter((port) => Number.isInteger(port) && port > 0)
+    if (!ports.length) {
+      message.error('请输入有效端口')
+      return
+    }
+    Modal.confirm({
+      title: '确认批量修改密码',
+      content: `将修改 ${values.host} 上端口 ${ports.join(', ')} 的 ${values.username}@${values.user_host || '%'} 密码，并同步平台保存的连接密码。`,
+      okText: '确认修改',
+      onOk: async () => {
+        setAdminLoading(true)
+        try {
+          const response: any = await instanceApi.batchUpdatePassword({
+            host: values.host,
+            ports,
+            username: values.username,
+            user_host: values.user_host || '%',
+            current_password: values.current_password || '',
+            new_password: values.new_password,
+            update_stored: true,
+          })
+          const result = response?.data
+          setAdminOutput(result?.message || '')
+          if (result?.status === 'completed') {
+            message.success('批量密码修改完成')
+          } else {
+            message.warning(result?.message || '部分实例修改失败')
+          }
+        } catch (err: any) {
+          message.error(err?.response?.data?.message || '批量密码修改失败')
+        } finally {
+          setAdminLoading(false)
+        }
+      },
+    })
   }
 
   const writeConfig = async () => {
@@ -214,14 +257,6 @@ const InstanceDetail: React.FC = () => {
   const version = instance?.version
   const hasVersion = !!version?.full_version
 
-  const showRiskWarning = () => {
-    Modal.warning({
-      title: '高危操作提示',
-      content: '用户、权限、配置文件和服务启停会直接作用于目标实例或目标主机。请先确认实例连接信息、Agent 状态和回滚方案。',
-      okText: '我知道了',
-    })
-  }
-
   if (loading) return <Spin style={{ display: 'block', margin: '100px auto' }} />
   if (!instance) return <Card>实例不存在</Card>
 
@@ -303,10 +338,6 @@ const InstanceDetail: React.FC = () => {
             label: '全局管理',
             children: (
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
-                <div style={{ color: '#cf1322' }}>
-                  高危操作会直接作用于目标实例或主机。
-                  <Button type="link" danger onClick={showRiskWarning}>查看风险提示</Button>
-                </div>
                 <Tabs
                   items={[
                     {
@@ -324,12 +355,39 @@ const InstanceDetail: React.FC = () => {
                             <Form.Item name="password" rules={[{ required: true }]}><Input.Password placeholder="密码" /></Form.Item>
                             <Button htmlType="submit" type="primary" loading={adminLoading}>创建用户</Button>
                           </Form>
-                          <Form form={passwordForm} layout="inline" onFinish={(values) => runAdmin({ action: 'change_password', ...values })}>
+                          <Form form={passwordForm} layout="inline" onFinish={(values) => runAdmin({ action: 'change_password', update_stored_password: true, ...values })}>
                             <Form.Item name="username" rules={[{ required: true }]}><Input placeholder="用户名" /></Form.Item>
                             <Form.Item name="user_host" initialValue="%"><Input placeholder="Host" /></Form.Item>
                             <Form.Item name="password" rules={[{ required: true }]}><Input.Password placeholder="新密码" /></Form.Item>
                             <Button htmlType="submit" loading={adminLoading}>修改密码</Button>
                           </Form>
+                          <Card size="small" title="批量预配置密码生效">
+                            <Form
+                              form={batchPasswordForm}
+                              layout="inline"
+                              initialValues={{ host: '10.1.81.41', ports: '3307,3308', username: 'root', user_host: '%' }}
+                            >
+                              <Form.Item name="host" rules={[{ required: true }]}>
+                                <Input placeholder="主机地址" style={{ width: 140 }} />
+                              </Form.Item>
+                              <Form.Item name="ports" rules={[{ required: true }]}>
+                                <Input placeholder="端口,逗号分隔" style={{ width: 140 }} />
+                              </Form.Item>
+                              <Form.Item name="username" rules={[{ required: true }]}>
+                                <Input placeholder="用户名" style={{ width: 110 }} />
+                              </Form.Item>
+                              <Form.Item name="user_host">
+                                <Input placeholder="Host" style={{ width: 90 }} />
+                              </Form.Item>
+                              <Form.Item name="current_password">
+                                <Input.Password placeholder="当前密码(可空)" style={{ width: 160 }} />
+                              </Form.Item>
+                              <Form.Item name="new_password" rules={[{ required: true }]}>
+                                <Input.Password placeholder="新密码" style={{ width: 160 }} />
+                              </Form.Item>
+                              <Button onClick={batchUpdatePassword} loading={adminLoading}>批量修改并同步</Button>
+                            </Form>
+                          </Card>
                           <Form form={grantForm} layout="inline" onFinish={(values) => runAdmin({ action: 'grant_privileges', ...values })}>
                             <Form.Item name="username" rules={[{ required: true }]}><Input placeholder="用户名" /></Form.Item>
                             <Form.Item name="user_host" initialValue="%"><Input placeholder="Host" /></Form.Item>
@@ -423,10 +481,9 @@ const InstanceDetail: React.FC = () => {
         footer={[<Button key="close" onClick={() => { stopDeployPolling(); setDeployOpen(false) }}>关闭</Button>]}
         width={600}
       >
-        <div style={{ color: '#cf1322', marginBottom: 16 }}>部署过程不可中断，请等待任务完成。</div>
         <div style={{ marginBottom: 8 }}>当前阶段：<b>{deployStage}</b></div>
         <Progress percent={deployProgress} status={deployStatus === 'failed' ? 'exception' : deployStatus === 'success' ? 'success' : 'active'} />
-        {deployMessage && <div style={{ marginTop: 16, color: deployStatus === 'failed' ? '#cf1322' : '#595959' }}>{deployMessage}</div>}
+        {deployMessage && <div style={{ marginTop: 16, color: '#595959' }}>{deployMessage}</div>}
       </Modal>
     </Card>
   )

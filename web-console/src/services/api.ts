@@ -156,8 +156,20 @@ export const instanceApi = {
     content?: string
     service?: string
     verb?: string
+    update_stored_password?: boolean
   }) =>
     api.post(`/instances/${id}/admin-action`, data),
+
+  batchUpdatePassword: (data: {
+    host: string
+    ports: number[]
+    username: string
+    user_host?: string
+    current_password?: string
+    new_password: string
+    update_stored?: boolean
+  }) =>
+    api.post('/instances/admin/batch-password', data),
 }
 
 export interface Host {

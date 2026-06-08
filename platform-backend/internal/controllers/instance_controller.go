@@ -133,3 +133,19 @@ func (c *InstanceController) AdminAction(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, result)
 }
+
+func (c *InstanceController) BatchUpdatePassword(ctx *gin.Context) {
+	var req services.BatchPasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.BatchUpdatePassword(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to update instance passwords", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}

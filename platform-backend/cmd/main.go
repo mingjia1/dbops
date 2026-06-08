@@ -262,6 +262,7 @@ func main() {
 				instances.GET("/:id", instanceController.GetByID)
 				// B2: 写操作 (POST/PUT/DELETE) 需要 admin 角色, 任何登录用户都不能直接调.
 				instances.POST("", middleware.RequirePermission("admin"), instanceController.Create)
+				instances.POST("/admin/batch-password", middleware.RequirePermission("admin"), instanceController.BatchUpdatePassword)
 				instances.PUT("/:id", middleware.RequirePermission("admin"), instanceController.Update)
 				instances.DELETE("/:id", middleware.RequirePermission("admin"), instanceController.Delete)
 				instances.POST("/:id/detect-version", middleware.RequirePermission("admin"), instanceController.DetectVersion)

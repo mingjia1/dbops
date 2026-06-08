@@ -256,7 +256,7 @@ const BackupManage: React.FC = () => {
                     <Col span={6}><Card size="small"><Statistic title="记录数" value={records.length} /></Card></Col>
                     <Col span={6}><Card size="small"><Statistic title="已完成" value={records.filter((r) => r.status === 'completed').length} valueStyle={{ color: '#3f8600' }} /></Card></Col>
                     <Col span={6}><Card size="small"><Statistic title="运行中" value={records.filter((r) => r.status === 'running').length} valueStyle={{ color: '#1677ff' }} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="失败" value={records.filter((r) => r.status === 'failed').length} valueStyle={{ color: '#cf1322' }} /></Card></Col>
+                    <Col span={6}><Card size="small"><Statistic title="失败" value={records.filter((r) => r.status === 'failed').length} /></Card></Col>
                   </Row>
                   <Table columns={recordColumns} dataSource={records} rowKey="id" loading={loading} locale={{ emptyText: <Empty description="暂无备份记录" /> }} />
                 </>
@@ -354,9 +354,6 @@ const BackupManage: React.FC = () => {
         ]}
         width={860}
       >
-        <div style={{ color: '#cf1322', marginBottom: 12 }}>
-          扫描会通过 Agent 读取目标主机目录：/backup/mysql、/backup、/data/backup、/var/lib/mysql-backup。
-        </div>
         {scannedAt && <div style={{ marginBottom: 8, color: '#8c8c8c' }}>扫描时间：{new Date(scannedAt).toLocaleString()}</div>}
         <Table
           rowKey="file_path"

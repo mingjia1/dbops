@@ -106,6 +106,27 @@ func (r *InstanceRepository) GetConnection(ctx context.Context, instanceID strin
 	return conn, nil
 }
 
+func (r *InstanceRepository) UpdateConnectionPassword(ctx context.Context, instanceID, passwordEncrypted string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	res, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE instance_connections SET password_encrypted = ? WHERE instance_id = ?`,
+		passwordEncrypted, instanceID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update connection password: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("connection not found for instance %s", instanceID)
+	}
+	return nil
+}
+
 func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.InstanceVersion) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not initialized")
@@ -113,7 +134,11 @@ func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.
 	if version.ID == "" {
 		version.ID = uuid.New().String()
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `
+	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM instance_versions WHERE instance_id = ?`, version.InstanceID)
+	if err != nil {
+		return fmt.Errorf("failed to replace existing version: %w", err)
+	}
+	_, err = r.db.Pool.ExecContext(ctx, `
 		INSERT INTO instance_versions (id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, features, engines)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		version.ID, version.InstanceID, version.Flavor, version.Version, version.FullVersion,
