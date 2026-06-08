@@ -48,7 +48,6 @@ const InstanceDetail: React.FC = () => {
   const [adminLoading, setAdminLoading] = useState(false)
   const [users, setUsers] = useState<AdminRow[]>([])
   const [variables, setVariables] = useState<AdminRow[]>([])
-  const [adminOutput, setAdminOutput] = useState('')
   const pollRef = useRef<number | null>(null)
   const [form] = Form.useForm()
   const [userForm] = Form.useForm()
@@ -84,7 +83,6 @@ const InstanceDetail: React.FC = () => {
     try {
       const response: any = await instanceApi.adminAction(id, payload)
       const result = response?.data
-      setAdminOutput(result?.message || '')
       if (result?.status === 'failed') {
         message.error(result?.message || '操作失败')
       } else {
@@ -145,7 +143,6 @@ const InstanceDetail: React.FC = () => {
             update_stored: true,
           })
           const result = response?.data
-          setAdminOutput(result?.message || '')
           if (result?.status === 'completed') {
             message.success('批量密码修改完成')
           } else {
@@ -394,6 +391,7 @@ const InstanceDetail: React.FC = () => {
                             <Form.Item name="privileges" initialValue="SELECT"><Input placeholder="权限，如 SELECT, INSERT" style={{ width: 180 }} /></Form.Item>
                             <Form.Item name="scope" initialValue="*.*"><Input placeholder="范围，如 db.*" /></Form.Item>
                             <Button htmlType="submit" loading={adminLoading}>授权</Button>
+                            <Button onClick={() => grantForm.validateFields().then((values) => runAdmin({ action: 'revoke_privileges', ...values }))} loading={adminLoading}>回收权限</Button>
                           </Form>
                         </Space>
                       ),
@@ -436,8 +434,7 @@ const InstanceDetail: React.FC = () => {
                       key: 'service',
                       label: '服务启停',
                       children: (
-                        <Form form={serviceForm} layout="inline" initialValues={{ service: 'mysqld', verb: 'status' }} onFinish={(values) => runAdmin({ action: 'service_control', ...values })}>
-                          <Form.Item name="service" rules={[{ required: true }]}><Input placeholder="服务名，如 mysqld" /></Form.Item>
+                        <Form form={serviceForm} layout="inline" initialValues={{ verb: 'status' }} onFinish={(values) => runAdmin({ action: 'service_control', ...values })}>
                           <Form.Item name="verb" rules={[{ required: true }]}>
                             <Select style={{ width: 140 }} options={[
                               { value: 'status', label: '状态' },
@@ -452,11 +449,6 @@ const InstanceDetail: React.FC = () => {
                     },
                   ]}
                 />
-                {adminOutput && (
-                  <Card size="small" title="执行输出">
-                    <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{adminOutput}</pre>
-                  </Card>
-                )}
               </Space>
             ),
           },

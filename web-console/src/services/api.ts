@@ -136,9 +136,6 @@ export const instanceApi = {
   delete: (id: string) =>
     api.delete(`/instances/${id}`),
   
-  detectVersion: (id: string) =>
-    api.post(`/instances/${id}/detect-version`),
-
   deploy: (id: string) =>
     api.post(`/instances/${id}/deploy`),
 
@@ -158,7 +155,7 @@ export const instanceApi = {
     verb?: string
     update_stored_password?: boolean
   }) =>
-    api.post(`/instances/${id}/admin-action`, data),
+    api.post(`/instances/${id}/admin-action`, data, { timeout: 120000 }),
 
   batchUpdatePassword: (data: {
     host: string
@@ -311,7 +308,7 @@ export const backupApi = {
     api.delete(`/backups/policies/${id}`),
 
   executeBackup: (instanceId: string, backupType: string) =>
-    api.post('/backups', { instance_id: instanceId, backup_type: backupType }),
+    api.post('/backups', { instance_id: instanceId, backup_type: backupType }, { timeout: 300000 }),
 
   listBackups: (instanceId: string) =>
     api.get(`/backups?instance_id=${instanceId}`),
@@ -323,7 +320,7 @@ export const backupApi = {
     api.delete(`/backups/${id}`),
 
   scan: (instanceId: string) =>
-    api.post('/backups/scan', { instance_id: instanceId }),
+    api.post('/backups/scan', { instance_id: instanceId }, { timeout: 120000 }),
 }
 
 export interface DiscoveredBackup {

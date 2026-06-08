@@ -32,10 +32,11 @@ type EnvironmentCheckRequest struct {
 }
 
 type HostConfig struct {
-	Host     string `json:"host" binding:"required"`
-	Port     int    `json:"port" binding:"required"`
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Host      string `json:"host" binding:"required"`
+	Port      int    `json:"port" binding:"required"`
+	Username  string `json:"username" binding:"required"`
+	Password  string `json:"password" binding:"required"`
+	AgentPort int    `json:"agent_port,omitempty"`
 }
 
 type EnvironmentCheckResult struct {
@@ -68,7 +69,10 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	}
 
 	for _, host := range hosts {
-		agentPort := 9090
+		agentPort := host.AgentPort
+		if agentPort == 0 {
+			agentPort = 9090
+		}
 		agentResult := s.checkHost(host)
 		result.Results = append(result.Results, agentResult...)
 
@@ -93,6 +97,8 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 			Value:      fmt.Sprintf("%s:%d - %s", host.Host, agentPort, healthResult.Status),
 			Suggestion: "",
 		})
+		result.Results = removeAgentCollectedPlaceholders(result.Results)
+		result.Results = append(result.Results, agentSystemResults(healthResult.Data)...)
 	}
 
 	result.Status = "completed"
@@ -124,10 +130,11 @@ func (s *EnvironmentCheckService) resolveHosts(ctx context.Context, req Environm
 			return nil, fmt.Errorf("host %s has no SSH credential; please edit the host and save SSH credential", host.Name)
 		}
 		hosts = append(hosts, HostConfig{
-			Host:     host.Address,
-			Port:     host.SSHPort,
-			Username: host.SSHUser,
-			Password: password,
+			Host:      host.Address,
+			Port:      host.SSHPort,
+			Username:  host.SSHUser,
+			Password:  password,
+			AgentPort: host.AgentPort,
 		})
 	}
 	return hosts, nil
@@ -160,6 +167,18 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		})
 	}
 
+	results = append(results,
+		CheckResult{Category: "hardware", Name: "cpu_cores", Status: "unknown", Passed: false, Value: "agent_collected"},
+		CheckResult{Category: "hardware", Name: "memory_size", Status: "unknown", Passed: false, Value: "agent_collected"},
+		CheckResult{Category: "hardware", Name: "disk_space", Status: "unknown", Passed: false, Value: "agent_collected"},
+		CheckResult{Category: "os", Name: "kernel_version", Status: "unknown", Passed: false, Value: "agent_collected"},
+		CheckResult{Category: "dependency", Name: "libaio", Status: "unknown", Passed: false, Value: "agent_collected"},
+	)
+	return results
+
+	for _, item := range []struct{ cat, name, suggestion string }{} {
+		_ = item
+	}
 	for _, item := range []struct{ cat, name, suggestion string }{
 		{"hardware", "cpu_cores", "需要 Agent 端采集"},
 		{"hardware", "memory_size", "需要 Agent 端采集"},
@@ -196,4 +215,68 @@ func (s *EnvironmentCheckService) Export(ctx context.Context, checkID string) (s
 	report := fmt.Sprintf("# Environment Check Report: %s\n\nStatus: completed\nDate: %s\n",
 		checkID, time.Now().Format("2006-01-02 15:04:05"))
 	return report, nil
+}
+
+func agentSystemResults(data map[string]interface{}) []CheckResult {
+	items := []struct {
+		category   string
+		name       string
+		key        string
+		suggestion string
+	}{
+		{"os", "os_release", "os_release", "Agent 未采集到操作系统发行版"},
+		{"os", "kernel_version", "kernel_version", "Agent 未采集到内核版本"},
+		{"hardware", "cpu_cores", "cpu_cores", "Agent 未采集到 CPU 核数"},
+		{"hardware", "memory_size", "memory_size", "Agent 未采集到内存信息"},
+		{"hardware", "disk_space", "disk_space", "Agent 未采集到磁盘信息"},
+		{"dependency", "libaio", "libaio", "请安装 libaio 依赖"},
+	}
+	out := make([]CheckResult, 0, len(items))
+	for _, item := range items {
+		value := stringMapValue(data, item.key)
+		passed := value != "" && value != "not_found"
+		status := "passed"
+		suggestion := ""
+		if !passed {
+			status = "failed"
+			if value == "" {
+				value = "not_collected"
+			}
+			suggestion = item.suggestion
+		}
+		out = append(out, CheckResult{
+			Category:   item.category,
+			Name:       item.name,
+			Status:     status,
+			Passed:     passed,
+			Value:      value,
+			Suggestion: suggestion,
+		})
+	}
+	return out
+}
+
+func stringMapValue(data map[string]interface{}, key string) string {
+	if data == nil {
+		return ""
+	}
+	v, ok := data[key]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
+func removeAgentCollectedPlaceholders(results []CheckResult) []CheckResult {
+	out := results[:0]
+	for _, result := range results {
+		if result.Value == "agent_collected" {
+			continue
+		}
+		out = append(out, result)
+	}
+	return out
 }

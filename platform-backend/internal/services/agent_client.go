@@ -22,7 +22,7 @@ func NewAgentClient(agentToken string) *AgentClient {
 		// B8: 之前 300s timeout 撞死长任务 (backup/upgrade/migration/role-switch).
 		// 修: 30s 适合短 op; 长 op 走 fire-and-forget + GetTaskProgress 轮询.
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 2 * time.Minute,
 		},
 		agentToken: agentToken,
 	}

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -503,6 +504,9 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
 	// P0: 之前用 time.Now().Unix() 1 秒精度, 同秒并发会写同 dir 互相覆盖.
 	// 改 UnixNano 纳秒精度, 并发 backup 不可能撞.
+	if _, err := exec.LookPath("xtrabackup"); err != nil {
+		return e.executeLogicalBackup(ctx, config, "xtrabackup not found, used logical full backup")
+	}
 	backupDir := fmt.Sprintf("%s/%s-%d", config.TargetDir, config.BackupType, time.Now().UnixNano())
 	if err := os.MkdirAll(config.TargetDir, 0o755); err != nil {
 		return &TaskResult{
@@ -590,6 +594,95 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 	}, nil
 }
 
+func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupConfig, reason string) (*TaskResult, error) {
+	if err := os.MkdirAll(config.TargetDir, 0o755); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create backup root failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	backupFile := fmt.Sprintf("%s/%s-%d.sql", config.TargetDir, config.BackupType, time.Now().UnixNano())
+	outFile, err := os.Create(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create logical backup file failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	args := []string{
+		"--single-transaction",
+		"--routines",
+		"--events",
+		"--triggers",
+		"--all-databases",
+		"-h", defaultString(config.MySQLHost, "127.0.0.1"),
+		"-P", fmt.Sprintf("%d", config.MySQLPort),
+		"-u", defaultString(config.MySQLUser, "root"),
+	}
+	cmd := exec.CommandContext(ctx, "mysqldump", args...)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+	cmd.Stdout = outFile
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_ = outFile.Close()
+		_ = os.Remove(backupFile)
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("mysqldump backup failed: %v\n%s", err, strings.TrimSpace(stderr.String())),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if err := outFile.Close(); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("close logical backup file failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	sizeBytes, err := pathSize(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup size failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	checksum, err := checksumPath(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup checksum failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	msg := fmt.Sprintf("Backup completed successfully. Path: %s, Checksum: %s", backupFile, checksum)
+	if reason != "" {
+		msg += ". " + reason
+	}
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  100,
+		Message:   msg,
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"backup_path": backupFile,
+			"backup_type": "logical",
+			"file_size":   sizeBytes,
+			"checksum":    checksum,
+		},
+	}, nil
+}
+
 func (e *TaskExecutor) ExecuteRestore(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseRestoreConfig(req.Config)
 
@@ -667,6 +760,17 @@ func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig)
 }
 
 func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string) (*TaskResult, error) {
+	data := collectSystemInfo(ctx)
+	if instanceID == "" {
+		return &TaskResult{
+			TaskID:    "health-host",
+			Status:    "healthy",
+			Progress:  100,
+			Message:   "Host information collected",
+			Timestamp: time.Now(),
+			Data:      data,
+		}, nil
+	}
 	cmd := exec.CommandContext(ctx, "mysqladmin", "ping", "-h", "localhost", "-u", "root")
 
 	if err := cmd.Run(); err != nil {
@@ -676,6 +780,7 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string
 			Progress:  100,
 			Message:   fmt.Sprintf("Health check failed: %v", err),
 			Timestamp: time.Now(),
+			Data:      data,
 		}, nil
 	}
 
@@ -685,7 +790,45 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, instanceID string
 		Progress:  100,
 		Message:   "Instance is healthy",
 		Timestamp: time.Now(),
+		Data:      data,
 	}, nil
+}
+
+func collectSystemInfo(ctx context.Context) map[string]any {
+	data := map[string]any{}
+	if out := commandOutput(ctx, "sh", "-c", ". /etc/os-release 2>/dev/null; echo ${PRETTY_NAME:-unknown}"); out != "" {
+		data["os_release"] = out
+	}
+	if out := commandOutput(ctx, "uname", "-r"); out != "" {
+		data["kernel_version"] = out
+	}
+	if out := commandOutput(ctx, "nproc"); out != "" {
+		data["cpu_cores"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "awk '/MemTotal/ {print int($2/1024) \" MB\"}' /proc/meminfo"); out != "" {
+		data["memory_size"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "df -h / | awk 'NR==2 {print $4 \" available / \" $2 \" total\"}'"); out != "" {
+		data["disk_space"] = out
+	}
+	if _, err := os.Stat("/usr/lib64/libaio.so.1"); err == nil {
+		data["libaio"] = "installed"
+	} else if out := commandOutput(ctx, "sh", "-c", "ldconfig -p 2>/dev/null | grep -m1 libaio || rpm -q libaio 2>/dev/null || dpkg -s libaio1 2>/dev/null | grep -m1 '^Status:'"); out != "" {
+		data["libaio"] = "installed"
+	} else {
+		data["libaio"] = "not_found"
+	}
+	return data
+}
+
+func commandOutput(ctx context.Context, name string, args ...string) string {
+	cmdCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, name, args...).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ExecuteVersionDetect P0: 之前 backend DetectVersion 直接返 error, 阻断所有
@@ -1479,6 +1622,22 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		}
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
 			fmt.Sprintf("GRANT %s ON %s TO '%s'@'%s'", privileges, scope, escapeSQL(username), escapeSQL(userHost)))
+	case "revoke_privileges":
+		username, _ := req.Config["username"].(string)
+		userHost, _ := req.Config["user_host"].(string)
+		privileges, _ := req.Config["privileges"].(string)
+		scope, _ := req.Config["scope"].(string)
+		if userHost == "" {
+			userHost = "%"
+		}
+		if scope == "" {
+			scope = "*.*"
+		}
+		if !validSQLName(username) || !validPrivilegeList(privileges) || !validScope(scope) {
+			return adminFailed(req.TaskID, "invalid revoke input"), nil
+		}
+		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
+			fmt.Sprintf("REVOKE %s ON %s FROM '%s'@'%s'", privileges, scope, escapeSQL(username), escapeSQL(userHost)))
 	case "show_variables":
 		pattern, _ := req.Config["pattern"].(string)
 		if pattern == "" {

@@ -149,9 +149,6 @@ const InstanceList: React.FC = () => {
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>
             详情
           </Button>
-          <Button type="link" size="small" onClick={() => instanceApi.detectVersion(r.id).then(() => message.success('已触发版本检测')).catch(() => {})}>
-            检测版本
-          </Button>
           <Popconfirm
             title="确定删除该实例?"
             onConfirm={() => handleDelete(r.id)}
