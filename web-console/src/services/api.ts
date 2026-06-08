@@ -534,6 +534,7 @@ export const clusterDeployApi = {
   deployMGR: (data: any) => api.post('/deployments/mgr', data),
   deployPXC: (data: any) => api.post('/deployments/pxc', data),
   getStatus: (id: string) => api.get(`/deployments/${id}`),
+  destroy: (id: string) => api.delete(`/deployments/${id}`),
 }
 
 export const haApi = {

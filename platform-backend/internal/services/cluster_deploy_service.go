@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,6 +22,12 @@ type ClusterDeployService struct {
 type deploymentHost struct {
 	Address   string
 	AgentPort int
+}
+
+type pseudoNode struct {
+	Host string
+	Port int
+	Role string
 }
 
 func NewClusterDeployService(
@@ -43,7 +50,13 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	if err := s.resolveMHARequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
+	if req.PseudoMode {
+		return s.deployPseudoCluster(ctx, "mha", req.ClusterID, req.Name, []pseudoNode{
+			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
+		}, slavePseudoNodes(req.SlaveHosts, "slave"))
+	}
 	deployment := &models.ClusterDeployment{
+		ID:          req.ClusterID,
 		ClusterType: "mha",
 		Name:        req.Name,
 		Status:      "pending",
@@ -119,7 +132,13 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	if err := s.resolveMGRRequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
+	if req.PseudoMode {
+		return s.deployPseudoCluster(ctx, "mgr", req.ClusterID, req.Name, []pseudoNode{
+			{Host: req.PrimaryHost, Port: req.PrimaryPort, Role: "primary"},
+		}, secondaryPseudoNodes(req.SecondaryHosts, "secondary"))
+	}
 	deployment := &models.ClusterDeployment{
+		ID:          req.ClusterID,
 		ClusterType: "mgr",
 		Name:        req.Name,
 		Status:      "pending",
@@ -203,7 +222,13 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	if err := s.resolvePXCRequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
+	if req.PseudoMode {
+		nodes := []pseudoNode{{Host: req.BootstrapNode.Host, Port: req.BootstrapNode.Port, Role: "primary"}}
+		nodes = append(nodes, pxcPseudoNodes(req.OtherNodes, "secondary")...)
+		return s.deployPseudoCluster(ctx, "pxc", req.ClusterID, req.Name, nodes, nil)
+	}
 	deployment := &models.ClusterDeployment{
+		ID:          req.ClusterID,
 		ClusterType: "pxc",
 		Name:        req.Name,
 		Status:      "pending",
@@ -308,7 +333,14 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 	if err := s.resolveHARequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
+	if req.PseudoMode {
+		return s.deployPseudoCluster(ctx, "ha", req.ClusterID, req.Name, []pseudoNode{
+			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
+			{Host: req.ReplicaHost, Port: req.ReplicaPort, Role: "slave"},
+		}, nil)
+	}
 	deployment := &models.ClusterDeployment{
+		ID:          req.ClusterID,
 		ClusterType: "ha",
 		Name:        req.Name,
 		Status:      "pending",
@@ -376,6 +408,55 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 	}, nil
 }
 
+func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (*DeployResponse, error) {
+	dep, err := s.repo.GetByID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.Delete(ctx, clusterID); err != nil {
+		return nil, err
+	}
+	return &DeployResponse{
+		DeploymentID: dep.ID,
+		ClusterType:  dep.ClusterType,
+		Name:         dep.Name,
+		Status:       "destroyed",
+		Message:      fmt.Sprintf("Cluster %s destroyed from platform management; database services were not stopped", clusterID),
+		CreatedAt:    dep.CreatedAt,
+	}, nil
+}
+
+func (s *ClusterDeployService) clearClusterManagement(ctx context.Context, clusterID string) error {
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		inst.ClusterID = ""
+		if err := s.instRepo.Update(ctx, inst); err != nil {
+			return err
+		}
+		_ = s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			RunStatus:           "running",
+			HealthStatus:        "healthy",
+			Role:                "",
+			ReplicationStatus:   "",
+			SecondsBehindMaster: 0,
+		})
+		_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       "",
+			MasterID:        "",
+			SlaveIDs:        "",
+			ReplicationMode: "",
+		})
+	}
+	return nil
+}
+
 type DeployMHARequest struct {
 	Name             string            `json:"name"`
 	ClusterID        string            `json:"cluster_id"`
@@ -393,6 +474,7 @@ type DeployMHARequest struct {
 	ReplPassword     string            `json:"repl_password"`
 	MySQLUser        string            `json:"mysql_user"`
 	MySQLPassword    string            `json:"mysql_password"`
+	PseudoMode       bool              `json:"pseudo_mode"`
 	ConfigParams     map[string]string `json:"config_params"`
 }
 
@@ -408,6 +490,7 @@ type DeployMGRRequest struct {
 	GroupMode        string            `json:"group_mode"`
 	MySQLUser        string            `json:"mysql_user"`
 	MySQLPassword    string            `json:"mysql_password"`
+	PseudoMode       bool              `json:"pseudo_mode"`
 	ConfigParams     map[string]string `json:"config_params"`
 }
 
@@ -422,6 +505,7 @@ type DeployPXCRequest struct {
 	WSREPPort       int               `json:"wsrep_port"`
 	MySQLUser       string            `json:"mysql_user"`
 	MySQLPassword   string            `json:"mysql_password"`
+	PseudoMode      bool              `json:"pseudo_mode"`
 	ConfigParams    map[string]string `json:"config_params"`
 }
 
@@ -439,6 +523,7 @@ type DeployHARequest struct {
 	ReplPassword    string `json:"repl_password"`
 	MySQLUser       string `json:"mysql_user"`
 	MySQLPassword   string `json:"mysql_password"`
+	PseudoMode      bool   `json:"pseudo_mode"`
 }
 
 type SlaveNode struct {
@@ -486,6 +571,123 @@ func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallb
 		port = 9090
 	}
 	return deploymentHost{Address: host.Address, AgentPort: port}, nil
+}
+
+func (s *ClusterDeployService) deployPseudoCluster(ctx context.Context, clusterType, clusterID, name string, primaryNodes []pseudoNode, replicaNodes []pseudoNode) (*DeployResponse, error) {
+	clusterID = defaultString(clusterID, defaultString(name, fmt.Sprintf("%s-%d", clusterType, time.Now().Unix())))
+	name = defaultString(name, clusterID)
+	nodes := append([]pseudoNode{}, primaryNodes...)
+	nodes = append(nodes, replicaNodes...)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("pseudo cluster requires at least one node")
+	}
+	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.Delete(ctx, clusterID); err != nil {
+		// Ignore missing cluster rows; Create below will surface real database errors.
+		_ = err
+	}
+	deployment := &models.ClusterDeployment{
+		ID:          clusterID,
+		ClusterType: clusterType,
+		Name:        name,
+		Status:      "success",
+	}
+	if err := s.repo.Create(ctx, deployment); err != nil {
+		return nil, fmt.Errorf("failed to create pseudo deployment: %w", err)
+	}
+
+	matched := make([]*models.Instance, 0, len(nodes))
+	for _, node := range nodes {
+		inst, err := s.findInstanceByEndpoint(ctx, node.Host, node.Port)
+		if err != nil {
+			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+			return &DeployResponse{
+				DeploymentID: deployment.ID,
+				ClusterType:  clusterType,
+				Name:         name,
+				Status:       "failed",
+				Message:      err.Error(),
+				CreatedAt:    deployment.CreatedAt,
+			}, nil
+		}
+		inst.ClusterID = clusterID
+		if err := s.instRepo.Update(ctx, inst); err != nil {
+			return nil, err
+		}
+		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			RunStatus:           "running",
+			HealthStatus:        "healthy",
+			Role:                node.Role,
+			ReplicationStatus:   "pseudo",
+			SecondsBehindMaster: 0,
+		}); err != nil {
+			return nil, err
+		}
+		matched = append(matched, inst)
+	}
+
+	primaryID := matched[0].ID
+	replicaIDs := make([]string, 0, len(matched)-1)
+	for i, inst := range matched {
+		if i > 0 {
+			replicaIDs = append(replicaIDs, inst.ID)
+		}
+	}
+	replicaJSON, _ := json.Marshal(replicaIDs)
+	for i, inst := range matched {
+		topology := &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       clusterID,
+			ReplicationMode: clusterType,
+		}
+		if i == 0 {
+			topology.SlaveIDs = string(replicaJSON)
+		} else {
+			topology.MasterID = primaryID
+		}
+		if err := s.instRepo.UpsertTopology(ctx, inst.ID, topology); err != nil {
+			return nil, err
+		}
+	}
+
+	return &DeployResponse{
+		DeploymentID: deployment.ID,
+		ClusterType:  clusterType,
+		Name:         name,
+		Status:       "success",
+		Message:      fmt.Sprintf("Pseudo %s cluster %s is managed with %d instances", clusterType, clusterID, len(matched)),
+		CreatedAt:    deployment.CreatedAt,
+	}, nil
+}
+
+func (s *ClusterDeployService) findInstanceByEndpoint(ctx context.Context, host string, port int) (*models.Instance, error) {
+	instances, err := s.instRepo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range instances {
+		inst := item
+		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
+		if err != nil {
+			continue
+		}
+		if conn.Port == port && sameHost(conn.Host, host) {
+			return &inst, nil
+		}
+	}
+	return nil, fmt.Errorf("no managed instance found for %s:%d", host, port)
+}
+
+func sameHost(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if (a == "127.0.0.1" || a == "localhost") && (b == "127.0.0.1" || b == "localhost") {
+		return true
+	}
+	return false
 }
 
 func (s *ClusterDeployService) resolveMHARequestHosts(ctx context.Context, req *DeployMHARequest) error {
@@ -584,6 +786,14 @@ func (s *ClusterDeployService) resolvePXCRequestHosts(ctx context.Context, req *
 			req.OtherNodes = append(req.OtherNodes, PXCNode{Host: host.Address, Port: req.BootstrapNode.Port})
 		}
 	}
+	for i := range req.OtherNodes {
+		if req.OtherNodes[i].Host == "" {
+			req.OtherNodes[i].Host = req.BootstrapNode.Host
+		}
+		if req.OtherNodes[i].Port == 0 {
+			req.OtherNodes[i].Port = req.BootstrapNode.Port
+		}
+	}
 	return nil
 }
 
@@ -645,4 +855,28 @@ func slavePorts(nodes []SlaveNode) []int {
 		ports = append(ports, node.Port)
 	}
 	return ports
+}
+
+func slavePseudoNodes(nodes []SlaveNode, role string) []pseudoNode {
+	out := make([]pseudoNode, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
+	}
+	return out
+}
+
+func secondaryPseudoNodes(nodes []SecondaryNode, role string) []pseudoNode {
+	out := make([]pseudoNode, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
+	}
+	return out
+}
+
+func pxcPseudoNodes(nodes []PXCNode, role string) []pseudoNode {
+	out := make([]pseudoNode, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
+	}
+	return out
 }

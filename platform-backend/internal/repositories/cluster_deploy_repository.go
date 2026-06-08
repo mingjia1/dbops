@@ -102,3 +102,11 @@ func (r *ClusterDeployRepository) UpdateStatus(ctx context.Context, id, status s
 	_, err := r.db.Pool.ExecContext(ctx, `UPDATE cluster_deployments SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now(), id)
 	return err
 }
+
+func (r *ClusterDeployRepository) Delete(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM cluster_deployments WHERE id = ?`, id)
+	return err
+}

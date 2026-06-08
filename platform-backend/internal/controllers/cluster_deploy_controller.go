@@ -89,3 +89,15 @@ func (c *ClusterDeployController) GetDeploymentStatus(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, response)
 }
+
+func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
+	deploymentID := ctx.Param("id")
+
+	response, err := c.service.DestroyCluster(ctx.Request.Context(), deploymentID)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to destroy cluster deployment", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}

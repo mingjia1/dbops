@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
+  Button, Card, Checkbox, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, type Host } from '../services/api'
 
@@ -20,7 +20,7 @@ interface DeployResult {
   deployment_id: string
   cluster_id: string
   cluster_type: ArchType
-  status: 'pending' | 'running' | 'success' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'completed' | 'failed' | 'destroyed'
   stage?: string
   progress: number
   message: string
@@ -73,8 +73,8 @@ const ClusterDeploy: React.FC = () => {
       title: '集群部署操作说明',
       content: (
         <div>
-          <p>集群部署会在目标主机上安装或配置 MySQL 实例，并可能修改复制、服务和数据目录配置。</p>
-          <p>请先确认目标主机已完成环境检测，且 SSH 凭据、Agent 状态和回滚备份可用。</p>
+          <p>真实部署会在目标主机上安装或配置 MySQL 实例，并可能修改复制、服务和数据目录配置。</p>
+          <p>伪集群演练模式只把已有实例写入平台集群拓扑，用于验证管理、拓扑、角色切换和销毁流程，不会停止或删除数据库服务。</p>
         </div>
       ),
       okText: '知道了',
@@ -121,6 +121,7 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const startPolling = (dep: DeployResult) => {
+    if (dep.status === 'success' || dep.status === 'completed' || dep.status === 'failed') return
     stopPolling()
     let attempts = 0
     pollRef.current = window.setInterval(async () => {
@@ -154,7 +155,9 @@ const ClusterDeploy: React.FC = () => {
   const runDeploy = (arch: ArchType, values: any, apiCall: (data: any) => Promise<any>) => {
     Modal.confirm({
       title: `确认启动 ${arch.toUpperCase()} 集群部署?`,
-      content: '部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。',
+      content: values.pseudo_mode
+        ? '伪集群演练只写入平台纳管关系和拓扑，不会停止或删除目标主机上的数据库服务。'
+        : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。',
       okText: '确认部署',
       cancelText: '取消',
       onOk: () => doDeploy(arch, values, apiCall),
@@ -167,13 +170,14 @@ const ClusterDeploy: React.FC = () => {
     setActiveDeployment(null)
     try {
       const res: any = await apiCall(buildDeployPayload(arch, values))
+      const status = res?.data?.status || 'running'
       const dep: DeployResult = {
-        deployment_id: res?.data?.deployment_id || `dep-${Date.now()}`,
+        deployment_id: res?.data?.deployment_id || values.cluster_id || `dep-${Date.now()}`,
         cluster_id: values.cluster_id,
         cluster_type: arch,
-        status: 'running',
-        progress: 0,
-        stage: STAGE_ORDER[0],
+        status,
+        progress: status === 'success' || status === 'completed' ? 100 : 0,
+        stage: status === 'success' || status === 'completed' ? STAGE_ORDER[4] : STAGE_ORDER[0],
         message: res?.data?.message || '部署已提交，等待后端开始执行',
         started_at: new Date().toISOString(),
       }
@@ -188,6 +192,27 @@ const ClusterDeploy: React.FC = () => {
     }
   }
 
+  const destroyDeployment = (record: DeployResult) => {
+    Modal.confirm({
+      title: `销毁集群 ${record.deployment_id}?`,
+      content: '销毁只清理平台纳管关系、拓扑和角色状态，不会停止或删除数据库服务。',
+      okText: '确认销毁',
+      cancelText: '取消',
+      onOk: async () => {
+        const res: any = await clusterDeployApi.destroy(record.deployment_id)
+        const next: DeployResult = {
+          ...record,
+          status: 'destroyed',
+          progress: 100,
+          message: res?.data?.message || '集群已销毁',
+          finished_at: new Date().toISOString(),
+        }
+        patchDeployment(next)
+        message.success('集群已销毁')
+      },
+    })
+  }
+
   const buildDeployPayload = (arch: ArchType, values: any) => {
     const base = {
       cluster_id: values.cluster_id,
@@ -196,6 +221,7 @@ const ClusterDeploy: React.FC = () => {
       repl_password: values.repl_password,
       mysql_user: credential.username,
       mysql_password: credential.password,
+      pseudo_mode: !!values.pseudo_mode,
     }
     if (arch === 'ha') {
       return {
@@ -233,7 +259,7 @@ const ClusterDeploy: React.FC = () => {
       master_host_id: values.master_host_id,
       replica_host_ids: values.replica_host_ids || [],
       bootstrap_node: { host: '', port: values.mysql_port || 3306 },
-      other_nodes: [],
+      other_nodes: values.replica_host_ids?.length ? [{ host: '', port: values.replica_port || values.mysql_port || 3306 }] : [],
       wsrep_port: values.wsrep_port || 4567,
     }
   }
@@ -255,6 +281,7 @@ const ClusterDeploy: React.FC = () => {
       width: 100,
       render: (status: string) => {
         if (status === 'success' || status === 'completed') return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
+        if (status === 'destroyed') return <Tag color="default">已销毁</Tag>
         if (status === 'failed') return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
         if (status === 'pending') return <Tag color="default">待开始</Tag>
         return <Tag color="processing" icon={<ReloadOutlined spin />}>进行中</Tag>
@@ -265,11 +292,20 @@ const ClusterDeploy: React.FC = () => {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
-      width: 200,
+      width: 180,
       render: (progress: number) => <Progress percent={progress} size="small" status={progress === 100 ? 'success' : 'active'} />,
     },
     { title: '信息', dataIndex: 'message', key: 'message' },
     { title: '开始时间', dataIndex: 'started_at', key: 'started_at', render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Button size="small" danger icon={<DeleteOutlined />} disabled={record.status === 'destroyed'} onClick={() => destroyDeployment(record)}>
+          销毁
+        </Button>
+      ),
+    },
   ]
 
   const renderForm = (
@@ -282,6 +318,9 @@ const ClusterDeploy: React.FC = () => {
     <Form form={form} layout="vertical" onFinish={onFinish}>
       <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
         <Input placeholder={`例如: ${arch}-cluster-01`} />
+      </Form.Item>
+      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue>
+        <Checkbox>伪集群演练模式</Checkbox>
       </Form.Item>
       <Form.Item name="master_host_id" label="主节点主机" rules={[{ required: true, message: '请选择主节点' }]}>
         <Select options={hostOptions} placeholder="选择主节点主机" />
@@ -301,10 +340,10 @@ const ClusterDeploy: React.FC = () => {
       <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
         <Input />
       </Form.Item>
-      <Form.Item name="repl_password" label="复制密码" rules={[{ required: true }]}>
+      <Form.Item name="repl_password" label="复制密码" rules={[{ required: true }]} initialValue="ReplPass#2026">
         <Input.Password />
       </Form.Item>
-      <Form.Item name="mysql_port" label="MySQL 端口" initialValue={3306}>
+      <Form.Item name="mysql_port" label="主节点端口" initialValue={3309}>
         <InputNumber min={1} max={65535} style={{ width: '100%' }} />
       </Form.Item>
       <Form.Item name="vip" label="VIP (可选)">
@@ -361,7 +400,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="replica_host_id" label="从节点主机" rules={[{ required: true, message: '请选择从节点' }]}>
                     <Select options={hostOptions} placeholder="选择从节点主机" />
                   </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3307}>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </>,
@@ -377,7 +416,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="manager_host_id" label="MHA Manager 主机" rules={[{ required: true }]}>
                     <Select options={hostOptions} placeholder="选择 Manager 主机" />
                   </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3306}>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </>,
@@ -392,7 +431,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
                     <Input />
                   </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3306}>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </>,
@@ -403,9 +442,14 @@ const ClusterDeploy: React.FC = () => {
               key: 'pxc',
               label: 'PXC 部署',
               children: renderForm('pxc', pxcForm,
-                <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
-                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                </Form.Item>,
+                <>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>,
                 (values) => runDeploy('pxc', values, clusterDeployApi.deployPXC),
               ),
             },

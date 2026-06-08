@@ -149,6 +149,8 @@ func main() {
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
 	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
+	topologyService := services.NewTopologyService(instanceRepo)
+	topologyController := controllers.NewTopologyController(topologyService)
 
 	healthCheckService := services.NewHealthCheckService(db, cfg.EncryptionKey)
 	healthCheckController := controllers.NewHealthCheckController(healthCheckService)
@@ -328,6 +330,7 @@ func main() {
 				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)
 				deployments.POST("/ha", middleware.RequirePermission("admin"), clusterDeployController.DeployHA)
 				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
+				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
 			}
 
 			switches := protected.Group("/switch")
@@ -337,6 +340,13 @@ func main() {
 				switches.POST("/single-to-pxc", switchController.SingleToPXC)
 				switches.POST("/cluster/role", switchController.SwitchRoleWithinCluster)
 				switches.GET("/cluster/:cluster_id/role-history", switchController.ListRoleSwitchHistory)
+			}
+
+			topology := protected.Group("/topology")
+			{
+				topology.GET("/instances/:id", topologyController.GetInstanceTopology)
+				topology.GET("/clusters/:cluster_id", topologyController.GetClusterTopology)
+				topology.GET("/clusters/:cluster_id/graph", topologyController.GetTopologyGraph)
 			}
 
 			ha := protected.Group("/ha")

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -184,6 +185,9 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 	}
 
 	result := s.buildResultSkeleton(req, clusterType, inst, hostInfo, currentRole, oldMasterID, startedAt)
+	if inst.Status.ReplicationStatus == "pseudo" {
+		return s.switchPseudoRole(ctx, req, result, clusterType, currentRole)
+	}
 
 	demotingFromMaster := isPrimaryRole(currentRole)
 	promotingToMaster := isPrimaryRole(req.TargetRole)
@@ -397,12 +401,12 @@ func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, n
 		}
 
 		config := map[string]interface{}{
-			"cluster_id":     clusterID,
-			"instance_id":    inst.ID,
-			"new_master_id":  newMasterID,
-			"old_master_id":  oldMasterID,
-			"target_role":    replicaRoleFor(clusterType),
-			"cluster_type":   clusterType,
+			"cluster_id":    clusterID,
+			"instance_id":   inst.ID,
+			"new_master_id": newMasterID,
+			"old_master_id": oldMasterID,
+			"target_role":   replicaRoleFor(clusterType),
+			"cluster_type":  clusterType,
 		}
 
 		_, err = s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-replica-rebuild", map[string]interface{}{
@@ -422,7 +426,83 @@ func (s *SwitchService) listClusterInstances(ctx context.Context, clusterID stri
 	if s.instRepo == nil {
 		return nil, nil
 	}
-	return s.instRepo.ListByClusterID(ctx, clusterID)
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	for i, inst := range instances {
+		full, err := s.instRepo.GetByID(ctx, inst.ID)
+		if err == nil {
+			instances[i] = full
+		}
+	}
+	return instances, nil
+}
+
+func (s *SwitchService) switchPseudoRole(ctx context.Context, req RoleSwitchRequest, result *RoleSwitchResult, clusterType, currentRole string) (*RoleSwitchResult, error) {
+	instances, err := s.listClusterInstances(ctx, req.ClusterID)
+	if err != nil {
+		return s.failedResultFromSkeleton(result, fmt.Sprintf("load pseudo cluster instances failed: %v", err)), nil
+	}
+	if len(instances) == 0 {
+		return s.failedResultFromSkeleton(result, "pseudo cluster has no managed instances"), nil
+	}
+
+	newMasterID := result.OldMasterID
+	if isPrimaryRole(req.TargetRole) {
+		newMasterID = req.InstanceID
+	}
+
+	replicaIDs := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		if inst.ID != newMasterID {
+			replicaIDs = append(replicaIDs, inst.ID)
+		}
+	}
+
+	slaveIDs, _ := json.Marshal(replicaIDs)
+	for _, inst := range instances {
+		role := replicaRoleFor(clusterType)
+		masterID := newMasterID
+		slaveIDText := ""
+
+		if inst.ID == req.InstanceID {
+			role = req.TargetRole
+		}
+		if inst.ID == newMasterID {
+			masterID = ""
+			slaveIDText = string(slaveIDs)
+		}
+
+		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			RunStatus:           defaultString(inst.Status.RunStatus, "running"),
+			HealthStatus:        defaultString(inst.Status.HealthStatus, "healthy"),
+			Role:                role,
+			ReplicationStatus:   "pseudo",
+			SecondsBehindMaster: 0,
+		}); err != nil {
+			return s.failedResultFromSkeleton(result, fmt.Sprintf("update pseudo instance status failed: %v", err)), nil
+		}
+		if err := s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       req.ClusterID,
+			MasterID:        masterID,
+			SlaveIDs:        slaveIDText,
+			ReplicationMode: clusterType,
+		}); err != nil {
+			return s.failedResultFromSkeleton(result, fmt.Sprintf("update pseudo topology failed: %v", err)), nil
+		}
+	}
+
+	result.Status = "completed"
+	result.CompletedAt = time.Now()
+	result.NewMasterID = newMasterID
+	if isPrimaryRole(req.TargetRole) {
+		result.RebuiltReplicas = replicaIDs
+	}
+	result.Message = fmt.Sprintf("pseudo role switched within %s cluster: %s -> %s", clusterType, currentRole, req.TargetRole)
+	s.recordHistory(ctx, result)
+	return result, nil
 }
 
 func (s *SwitchService) recordHistory(ctx context.Context, r *RoleSwitchResult) {
@@ -483,7 +563,7 @@ func (s *SwitchService) ListRoleSwitchHistory(ctx context.Context, clusterID str
 
 func isValidRoleForCluster(clusterType, role string) bool {
 	switch clusterType {
-	case "mha":
+	case "ha", "mha":
 		return role == "master" || role == "slave" || role == "replica"
 	case "mgr":
 		return role == "primary" || role == "secondary" || role == "primary_master"
@@ -500,7 +580,7 @@ func isPrimaryRole(role string) bool {
 
 func replicaRoleFor(clusterType string) string {
 	switch clusterType {
-	case "mha":
+	case "ha", "mha":
 		return "slave"
 	case "mgr":
 		return "secondary"

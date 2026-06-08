@@ -27,7 +27,7 @@ func (c *TopologyController) GetInstanceTopology(ctx *gin.Context) {
 }
 
 func (c *TopologyController) GetClusterTopology(ctx *gin.Context) {
-	clusterID := ctx.Param("id")
+	clusterID := ctx.Param("cluster_id")
 
 	topology, err := c.service.GetClusterTopology(ctx.Request.Context(), clusterID)
 	if err != nil {
@@ -39,7 +39,7 @@ func (c *TopologyController) GetClusterTopology(ctx *gin.Context) {
 }
 
 func (c *TopologyController) GetTopologyGraph(ctx *gin.Context) {
-	clusterID := ctx.Param("id")
+	clusterID := ctx.Param("cluster_id")
 
 	graph, err := c.service.BuildTopologyGraph(ctx.Request.Context(), clusterID)
 	if err != nil {
