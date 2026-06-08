@@ -79,9 +79,13 @@ const BackupManage: React.FC = () => {
       setRecords([])
       return
     }
+    await fetchRecordsFor(selectedInstance)
+  }
+
+  const fetchRecordsFor = async (instanceId: string) => {
     setLoading(true)
     try {
-      const res: any = await backupApi.listBackups(selectedInstance)
+      const res: any = await backupApi.listBackups(instanceId)
       setRecords(res?.data || [])
     } catch {
       setRecords([])
@@ -110,20 +114,44 @@ const BackupManage: React.FC = () => {
     try {
       const values = await form.validateFields()
       setSubmitting(true)
-      const res: any = await backupApi.executeBackup(selectedInstance, values.backup_type)
-      const data = res?.data || {}
-      if (data.status && data.status !== 'completed') {
-        throw new Error(data.message || 'backup task failed')
-      }
-      message.success('备份任务已提交')
+      await backupApi.createPolicy({
+        instance_id: selectedInstance,
+        backup_type: values.backup_type,
+        schedule: 'manual',
+        retention_days: 7,
+        storage_type: 'local',
+        storage_path: '/backup/mysql',
+        enabled: false,
+      })
+      message.success('备份任务已创建')
       setCreateOpen(false)
-      await fetchRecords()
+      setTab('policies')
+      await fetchPolicies()
     } catch (err: any) {
       if (!err?.response?.data?.message && err?.message) {
         message.error(err.message)
         return
       }
-      message.error(err?.response?.data?.message || '提交备份任务失败')
+      message.error(err?.response?.data?.message || '创建备份任务失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const executePolicy = async (policy: BackupPolicy) => {
+    setSubmitting(true)
+    try {
+      const res: any = await backupApi.executeBackup(policy.instance_id, policy.backup_type, policy.id)
+      const data = res?.data || {}
+      if (data.status && data.status !== 'completed') {
+        throw new Error(data.message || '备份任务执行失败')
+      }
+      message.success('备份执行完成')
+      setSelectedInstance(policy.instance_id)
+      setTab('records')
+      await fetchRecordsFor(policy.instance_id)
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err?.message || '备份执行失败')
     } finally {
       setSubmitting(false)
     }
@@ -203,7 +231,7 @@ const BackupManage: React.FC = () => {
       key: 'status',
       render: (status) => (
         <Tag color={status === 'completed' ? 'success' : status === 'running' ? 'processing' : 'error'}>
-          {status === 'completed' ? '已完成' : status === 'running' ? '运行中' : '失败'}
+          {formatStatus(status)}
         </Tag>
       ),
     },
@@ -221,8 +249,17 @@ const BackupManage: React.FC = () => {
     { title: '实例', dataIndex: 'instance_id', key: 'instance_id', render: instanceName },
     { title: '类型', dataIndex: 'backup_type', key: 'backup_type', render: (type) => <BackupTypeTag type={type} /> },
     { title: 'Cron', dataIndex: 'schedule', key: 'schedule' },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Button size="small" type="link" loading={submitting} onClick={() => executePolicy(record)}>
+          执行
+        </Button>
+      ),
+    },
     { title: '保留天数', dataIndex: 'retention_days', key: 'retention_days' },
-    { title: '存储', dataIndex: 'storage_path', key: 'storage_path' },
+    { title: '存储路径', dataIndex: 'storage_path', key: 'storage_path' },
     { title: '状态', dataIndex: 'enabled', key: 'enabled', render: (enabled) => <Tag color={enabled ? 'success' : 'default'}>{enabled ? '启用' : '禁用'}</Tag> },
   ]
 
@@ -247,7 +284,7 @@ const BackupManage: React.FC = () => {
             扫描已有备份
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            创建备份
+            创建备份任务
           </Button>
         </Space>
 
@@ -292,12 +329,12 @@ const BackupManage: React.FC = () => {
       </Card>
 
       <Modal
-        title="创建备份"
+        title="创建备份任务"
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={submitBackup}
         confirmLoading={submitting}
-        okText="启动"
+        okText="创建任务"
         cancelText="取消"
       >
         <Form form={form} layout="vertical">
@@ -362,7 +399,7 @@ const BackupManage: React.FC = () => {
         ]}
         width={860}
       >
-        {scannedAt && <div style={{ marginBottom: 8, color: '#8c8c8c' }}>扫描时间：{new Date(scannedAt).toLocaleString()}</div>}
+        {scannedAt && <div style={{ marginBottom: 8, color: '#8c8c8c' }}>扫描时间: {new Date(scannedAt).toLocaleString()}</div>}
         <Table
           rowKey="file_path"
           size="small"
@@ -373,7 +410,7 @@ const BackupManage: React.FC = () => {
             { title: '类型', dataIndex: 'backup_type', key: 'backup_type', render: (type) => <BackupTypeTag type={type} /> },
             { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', render: formatSize },
             { title: '路径', dataIndex: 'file_path', key: 'file_path', render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace' }}>{path}</span></Tooltip> },
-            { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', render: (managed) => <Tag color={managed ? 'success' : 'warning'}>{managed ? '已纳管' : '未纳管'}</Tag> },
+            { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
           ]}
         />
       </Modal>
@@ -385,6 +422,13 @@ const BackupTypeTag: React.FC<{ type: string }> = ({ type }) => {
   const text = type === 'full' ? '全量' : type === 'incremental' ? '增量' : type === 'logical' ? '逻辑' : type
   const color = type === 'full' ? 'blue' : type === 'incremental' ? 'green' : 'orange'
   return <Tag color={color}>{text}</Tag>
+}
+
+function formatStatus(status: string): string {
+  if (status === 'completed') return '已完成'
+  if (status === 'running') return '运行中'
+  if (status === 'failed') return '失败'
+  return status || '-'
 }
 
 function formatSize(bytes: number): string {

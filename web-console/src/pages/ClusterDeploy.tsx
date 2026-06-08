@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Card, Tabs, Form, Input, InputNumber, Select, Button, Space, message, Steps, Progress, Tag, Table, Empty, Alert, Modal, Descriptions,
+  Button, Card, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
-import { ClusterOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, type Host } from '../services/api'
 
-type ArchType = 'mha' | 'mgr' | 'pxc'
+type ArchType = 'ha' | 'mha' | 'mgr' | 'pxc'
 
 const DEFAULT_MYSQL_CREDENTIAL = {
   username: 'root',
@@ -14,12 +14,13 @@ const DEFAULT_MYSQL_CREDENTIAL = {
 }
 
 const DEFAULT_CREDENTIAL_ACK_KEY = 'dbops.clusterDeploy.defaultMysqlCredentialAck'
+const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证']
 
 interface DeployResult {
   deployment_id: string
   cluster_id: string
   cluster_type: ArchType
-  status: 'pending' | 'running' | 'success' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'completed' | 'failed'
   stage?: string
   progress: number
   message: string
@@ -27,11 +28,9 @@ interface DeployResult {
   finished_at?: string
 }
 
-const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证']
-
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
-  const [tab, setTab] = useState<ArchType>('mha')
+  const [tab, setTab] = useState<ArchType>('ha')
   const [submitting, setSubmitting] = useState(false)
   const [deployments, setDeployments] = useState<DeployResult[]>([])
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
@@ -42,6 +41,7 @@ const ClusterDeploy: React.FC = () => {
   const [oneTimeCredential, setOneTimeCredential] = useState<typeof DEFAULT_MYSQL_CREDENTIAL | null>(null)
   const pollRef = useRef<number | null>(null)
 
+  const [haForm] = Form.useForm()
   const [mhaForm] = Form.useForm()
   const [mgrForm] = Form.useForm()
   const [pxcForm] = Form.useForm()
@@ -59,11 +59,7 @@ const ClusterDeploy: React.FC = () => {
   const hostOptions = hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))
 
   const openCredentialModal = () => {
-    credentialForm.setFieldsValue({
-      username: credential.username,
-      password: '',
-      confirm_password: '',
-    })
+    credentialForm.setFieldsValue({ username: credential.username, password: '', confirm_password: '' })
     setCredentialModalOpen(true)
   }
 
@@ -72,13 +68,26 @@ const ClusterDeploy: React.FC = () => {
     setShowDefaultCredential(false)
   }
 
+  const showDeployNotes = () => {
+    Modal.info({
+      title: '集群部署操作说明',
+      content: (
+        <div>
+          <p>集群部署会在目标主机上安装或配置 MySQL 实例，并可能修改复制、服务和数据目录配置。</p>
+          <p>请先确认目标主机已完成环境检测，且 SSH 凭据、Agent 状态和回滚备份可用。</p>
+        </div>
+      ),
+      okText: '知道了',
+    })
+  }
+
   const submitCredentialChange = async () => {
     const values = await credentialForm.validateFields()
     Modal.confirm({
       title: '确认修改默认 MySQL 实例凭据?',
       content: (
         <div>
-          <p>修改后新密码只会在页面上显示一次。请确认已经准备好记录。</p>
+          <p>修改后新密码只会在页面上显示一次，请确认已准备好记录。</p>
           <Descriptions size="small" column={1} bordered>
             <Descriptions.Item label="用户名">{values.username}</Descriptions.Item>
             <Descriptions.Item label="新密码">{values.password}</Descriptions.Item>
@@ -107,7 +116,7 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const patchDeployment = (dep: DeployResult) => {
-    setDeployments((ds) => ds.map((d) => (d.deployment_id === dep.deployment_id ? dep : d)))
+    setDeployments((items) => items.map((item) => (item.deployment_id === dep.deployment_id ? dep : item)))
     setActiveDeployment((cur) => (cur && cur.deployment_id === dep.deployment_id ? dep : cur))
   }
 
@@ -130,35 +139,34 @@ const ClusterDeploy: React.FC = () => {
         }
         patchDeployment(next)
         const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
-        // P2: 之前 +1 让"环境检查"(index 0) → current=1 → Steps 高亮"安装二进制",
-        // 部署开始第一步就跳到第二步. 修: antd Steps.current 是 0-based, 直接用 stepIdx.
         if (stepIdx >= 0) setCurrentStep(stepIdx)
-        if (next.status === 'success' || next.status === 'failed' || attempts > 600) {
+        if (next.status === 'success' || next.status === 'completed' || next.status === 'failed' || attempts > 600) {
           stopPolling()
-          if (next.status === 'success') message.success(`${dep.cluster_type.toUpperCase()} 集群部署完成`)
+          if (next.status === 'success' || next.status === 'completed') message.success(`${dep.cluster_type.toUpperCase()} 集群部署完成`)
           else if (next.status === 'failed') message.error(`部署失败: ${next.message}`)
         }
       } catch {
-        // 静默失败, 下次重试
+        // Polling is retried until deployment reaches a terminal state.
       }
     }, 2000)
   }
 
-  const runDeploy = async (
-    arch: ArchType,
-    values: any,
-    apiCall: (data: any) => Promise<any>,
-  ) => {
+  const runDeploy = (arch: ArchType, values: any, apiCall: (data: any) => Promise<any>) => {
+    Modal.confirm({
+      title: `确认启动 ${arch.toUpperCase()} 集群部署?`,
+      content: '部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。',
+      okText: '确认部署',
+      cancelText: '取消',
+      onOk: () => doDeploy(arch, values, apiCall),
+    })
+  }
+
+  const doDeploy = async (arch: ArchType, values: any, apiCall: (data: any) => Promise<any>) => {
     setSubmitting(true)
     setCurrentStep(0)
     setActiveDeployment(null)
     try {
-      const res: any = await apiCall({
-        cluster_id: values.cluster_id,
-        ...values,
-        mysql_user: credential.username,
-        mysql_password: credential.password,
-      })
+      const res: any = await apiCall(buildDeployPayload(arch, values))
       const dep: DeployResult = {
         deployment_id: res?.data?.deployment_id || `dep-${Date.now()}`,
         cluster_id: values.cluster_id,
@@ -166,17 +174,67 @@ const ClusterDeploy: React.FC = () => {
         status: 'running',
         progress: 0,
         stage: STAGE_ORDER[0],
-        message: res?.data?.message || '部署已提交, 等待后端开始执行',
+        message: res?.data?.message || '部署已提交，等待后端开始执行',
         started_at: new Date().toISOString(),
       }
       setActiveDeployment(dep)
-      setDeployments((ds) => [dep, ...ds])
+      setDeployments((items) => [dep, ...items])
       message.success(`${arch.toUpperCase()} 集群部署任务已提交`)
       startPolling(dep)
     } catch (err: any) {
       message.error(`提交部署失败: ${err?.response?.data?.message || err?.message}`)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const buildDeployPayload = (arch: ArchType, values: any) => {
+    const base = {
+      cluster_id: values.cluster_id,
+      name: values.cluster_id,
+      repl_user: values.repl_user,
+      repl_password: values.repl_password,
+      mysql_user: credential.username,
+      mysql_password: credential.password,
+    }
+    if (arch === 'ha') {
+      return {
+        ...base,
+        master_host_id: values.master_host_id,
+        replica_host_id: values.replica_host_id,
+        master_port: values.mysql_port || 3306,
+        replica_port: values.replica_port || 3307,
+      }
+    }
+    if (arch === 'mha') {
+      return {
+        ...base,
+        master_host_id: values.master_host_id,
+        manager_host_id: values.manager_host_id,
+        replica_host_ids: values.replica_host_ids || [],
+        master_port: values.mysql_port || 3306,
+        replica_port: values.replica_port || values.mysql_port || 3306,
+        vip: values.vip || '',
+      }
+    }
+    if (arch === 'mgr') {
+      return {
+        ...base,
+        name: values.group_name || values.cluster_id,
+        master_host_id: values.master_host_id,
+        replica_host_ids: values.replica_host_ids || [],
+        primary_port: values.mysql_port || 3306,
+        replica_port: values.replica_port || values.mysql_port || 3306,
+        group_mode: 'single-primary',
+      }
+    }
+    return {
+      ...base,
+      master_host_id: values.master_host_id,
+      replica_host_ids: values.replica_host_ids || [],
+      bootstrap_node: { host: '', port: values.mysql_port || 3306 },
+      other_nodes: [],
+      wsrep_port: values.wsrep_port || 4567,
     }
   }
 
@@ -188,47 +246,38 @@ const ClusterDeploy: React.FC = () => {
       dataIndex: 'cluster_type',
       key: 'cluster_type',
       width: 100,
-      render: (t: ArchType) => <Tag color={t === 'mha' ? 'blue' : t === 'mgr' ? 'green' : 'orange'}>{t.toUpperCase()}</Tag>,
+      render: (type: ArchType) => <Tag color={type === 'ha' ? 'cyan' : type === 'mha' ? 'blue' : type === 'mgr' ? 'green' : 'orange'}>{type.toUpperCase()}</Tag>,
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (s: string) => {
-        if (s === 'success') return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
-        if (s === 'failed') return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
-        if (s === 'pending') return <Tag color="default">待开始</Tag>
+      render: (status: string) => {
+        if (status === 'success' || status === 'completed') return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
+        if (status === 'failed') return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
+        if (status === 'pending') return <Tag color="default">待开始</Tag>
         return <Tag color="processing" icon={<ReloadOutlined spin />}>进行中</Tag>
       },
     },
-    {
-      title: '当前阶段',
-      dataIndex: 'stage',
-      key: 'stage',
-      render: (s: string) => s || '-',
-    },
+    { title: '当前阶段', dataIndex: 'stage', key: 'stage', render: (stage: string) => stage || '-' },
     {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
       width: 200,
-      render: (p: number) => <Progress percent={p} size="small" status={p === 100 ? 'success' : 'active'} />,
+      render: (progress: number) => <Progress percent={progress} size="small" status={progress === 100 ? 'success' : 'active'} />,
     },
     { title: '信息', dataIndex: 'message', key: 'message' },
-    {
-      title: '开始时间',
-      dataIndex: 'started_at',
-      key: 'started_at',
-      render: (t: string) => (t ? new Date(t).toLocaleString() : '-'),
-    },
+    { title: '开始时间', dataIndex: 'started_at', key: 'started_at', render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
   ]
 
   const renderForm = (
     arch: ArchType,
     form: any,
     extraFields: React.ReactNode,
-    onFinish: (v: any) => void,
+    onFinish: (values: any) => void,
+    options?: { simpleReplica?: boolean },
   ) => (
     <Form form={form} layout="vertical" onFinish={onFinish}>
       <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
@@ -237,19 +286,18 @@ const ClusterDeploy: React.FC = () => {
       <Form.Item name="master_host_id" label="主节点主机" rules={[{ required: true, message: '请选择主节点' }]}>
         <Select options={hostOptions} placeholder="选择主节点主机" />
       </Form.Item>
-      <Form.Item
-        name="replica_host_ids"
-        label="从节点主机"
-        rules={[
-          { required: true, message: '请选择从节点' },
-          // P2: 显式 min 1 校验, 防止用户选 0 个直提交后端返 422.
-          {
-            validator: (_, v) => (Array.isArray(v) && v.length >= 1 ? Promise.resolve() : Promise.reject(new Error('至少选择 1 个从节点'))),
-          },
-        ]}
-      >
-        <Select mode="multiple" options={hostOptions} placeholder="至少选择 1 个从节点" maxTagCount={5} />
-      </Form.Item>
+      {!options?.simpleReplica && (
+        <Form.Item
+          name="replica_host_ids"
+          label="从节点主机"
+          rules={[
+            { required: true, message: '请选择从节点' },
+            { validator: (_, value) => (Array.isArray(value) && value.length >= 1 ? Promise.resolve() : Promise.reject(new Error('至少选择 1 个从节点'))) },
+          ]}
+        >
+          <Select mode="multiple" options={hostOptions} placeholder="至少选择 1 个从节点" maxTagCount={5} />
+        </Form.Item>
+      )}
       <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
         <Input />
       </Form.Item>
@@ -273,49 +321,25 @@ const ClusterDeploy: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="操作提示"
-        description="集群部署是不可逆的破坏性操作: 会在目标主机上安装 MySQL 二进制、初始化 datadir、修改系统配置。请确认已在测试环境验证, 并具备回滚方案 (快照/备份)。"
-      />
-      <Card title={<Space><ClusterOutlined /><span>集群部署</span></Space>}>
-        <Card
-          size="small"
-          title="默认创建的 MySQL 实例账号"
-          extra={<Button size="small" onClick={openCredentialModal}>修改</Button>}
-          style={{ marginBottom: 16 }}
-        >
+      <Card title={<Space><ClusterOutlined /><span>集群部署</span></Space>} extra={<Button onClick={showDeployNotes}>操作说明</Button>}>
+        <Card size="small" title="默认创建的 MySQL 实例账号" extra={<Button size="small" onClick={openCredentialModal}>修改</Button>} style={{ marginBottom: 16 }}>
           {showDefaultCredential && (
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message="首次默认凭据"
-              description={
-                <Space direction="vertical" size={4}>
-                  <span>用户名: <b>{credential.username}</b></span>
-                  <span>密码: <b>{credential.password}</b></span>
-                  <Button size="small" onClick={acknowledgeDefaultCredential}>我已保存, 隐藏默认密码</Button>
-                </Space>
-              }
-            />
+            <Space direction="vertical" size={8}>
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
+                <Descriptions.Item label="密码">{credential.password}</Descriptions.Item>
+              </Descriptions>
+              <Button size="small" onClick={acknowledgeDefaultCredential}>我已保存，隐藏默认密码</Button>
+            </Space>
           )}
           {oneTimeCredential && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message="新凭据仅显示一次"
-              description={
-                <Space direction="vertical" size={4}>
-                  <span>用户名: <b>{oneTimeCredential.username}</b></span>
-                  <span>密码: <b>{oneTimeCredential.password}</b></span>
-                  <Button size="small" danger onClick={() => setOneTimeCredential(null)}>我已保存, 立即隐藏</Button>
-                </Space>
-              }
-            />
+            <Space direction="vertical" size={8}>
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="用户名">{oneTimeCredential.username}</Descriptions.Item>
+                <Descriptions.Item label="密码">{oneTimeCredential.password}</Descriptions.Item>
+              </Descriptions>
+              <Button size="small" danger onClick={() => setOneTimeCredential(null)}>我已保存，立即隐藏</Button>
+            </Space>
           )}
           {!showDefaultCredential && !oneTimeCredential && (
             <Descriptions size="small" column={2}>
@@ -324,28 +348,55 @@ const ClusterDeploy: React.FC = () => {
             </Descriptions>
           )}
         </Card>
+
         <Tabs
           activeKey={tab}
-          onChange={(k) => setTab(k as ArchType)}
+          onChange={(key) => setTab(key as ArchType)}
           items={[
+            {
+              key: 'ha',
+              label: 'HA 主从',
+              children: renderForm('ha', haForm,
+                <>
+                  <Form.Item name="replica_host_id" label="从节点主机" rules={[{ required: true, message: '请选择从节点' }]}>
+                    <Select options={hostOptions} placeholder="选择从节点主机" />
+                  </Form.Item>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3307}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>,
+                (values) => runDeploy('ha', values, clusterDeployApi.deployHA),
+                { simpleReplica: true },
+              ),
+            },
             {
               key: 'mha',
               label: 'MHA 部署',
               children: renderForm('mha', mhaForm,
-                <Form.Item name="manager_host_id" label="MHA Manager 主机" rules={[{ required: true }]}>
-                  <Select options={hostOptions} placeholder="选择 Manager 主机" />
-                </Form.Item>,
-                (v) => runDeploy('mha', v, clusterDeployApi.deployMHA),
+                <>
+                  <Form.Item name="manager_host_id" label="MHA Manager 主机" rules={[{ required: true }]}>
+                    <Select options={hostOptions} placeholder="选择 Manager 主机" />
+                  </Form.Item>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3306}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>,
+                (values) => runDeploy('mha', values, clusterDeployApi.deployMHA),
               ),
             },
             {
               key: 'mgr',
               label: 'MGR 部署',
               children: renderForm('mgr', mgrForm,
-                <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
-                  <Input />
-                </Form.Item>,
-                (v) => runDeploy('mgr', v, clusterDeployApi.deployMGR),
+                <>
+                  <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="replica_port" label="从节点端口" initialValue={3306}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>,
+                (values) => runDeploy('mgr', values, clusterDeployApi.deployMGR),
               ),
             },
             {
@@ -355,7 +406,7 @@ const ClusterDeploy: React.FC = () => {
                 <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
                   <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                 </Form.Item>,
-                (v) => runDeploy('pxc', v, clusterDeployApi.deployPXC),
+                (values) => runDeploy('pxc', values, clusterDeployApi.deployPXC),
               ),
             },
           ]}
@@ -371,13 +422,7 @@ const ClusterDeploy: React.FC = () => {
         cancelText="取消"
         destroyOnClose
       >
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="修改需要二次确认"
-          description="保存后部署任务会使用新凭据创建 MySQL 实例。新密码确认后只显示一次。"
-        />
+        <p>保存后部署任务会使用新凭据创建 MySQL 实例。新密码确认后只显示一次。</p>
         <Form form={credentialForm} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input placeholder="例如: root" autoComplete="off" />
@@ -410,7 +455,7 @@ const ClusterDeploy: React.FC = () => {
           style={{ marginTop: 16 }}
           extra={
             <Space>
-              <Tag color={activeDeployment.status === 'success' ? 'success' : activeDeployment.status === 'failed' ? 'error' : 'processing'}>
+              <Tag color={activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'success' : activeDeployment.status === 'failed' ? 'error' : 'processing'}>
                 {activeDeployment.status}
               </Tag>
               {activeDeployment.finished_at && <span>完成于 {new Date(activeDeployment.finished_at).toLocaleString()}</span>}
@@ -421,11 +466,11 @@ const ClusterDeploy: React.FC = () => {
             current={currentStep}
             size="small"
             items={STAGE_ORDER.map((title) => ({ title }))}
-            status={activeDeployment.status === 'failed' ? 'error' : activeDeployment.status === 'success' ? 'finish' : 'process'}
+            status={activeDeployment.status === 'failed' ? 'error' : activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'finish' : 'process'}
           />
           <Progress
             percent={activeDeployment.progress}
-            status={activeDeployment.status === 'failed' ? 'exception' : activeDeployment.status === 'success' ? 'success' : 'active'}
+            status={activeDeployment.status === 'failed' ? 'exception' : activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'success' : 'active'}
             style={{ marginTop: 16 }}
           />
           <div style={{ marginTop: 8, color: '#666' }}>{activeDeployment.message}</div>

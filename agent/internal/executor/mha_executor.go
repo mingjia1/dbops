@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 	"time"
@@ -110,7 +111,7 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	if v, ok := config["master_host"].(string); ok {
 		mc.MasterHost = v
 	}
-	if v, ok := config["master_port"].(int); ok {
+	if v := configInt(config, "master_port"); v != 0 {
 		mc.MasterPort = v
 	}
 	if v, ok := config["vip"].(string); ok {
@@ -137,10 +138,10 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	if v, ok := config["mysql_password"].(string); ok {
 		mc.MySQLPassword = v
 	}
-	if v, ok := config["ping_interval"].(int); ok {
+	if v := configInt(config, "ping_interval"); v != 0 {
 		mc.PingInterval = v
 	}
-	if v, ok := config["ping_retry"].(int); ok {
+	if v := configInt(config, "ping_retry"); v != 0 {
 		mc.PingRetry = v
 	}
 	if v, ok := config["ssh_user"].(string); ok {
@@ -151,9 +152,24 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	}
 	if v, ok := config["slave_hosts"].([]string); ok {
 		mc.SlaveHosts = v
+	} else if hosts, ok := config["slave_hosts"].([]interface{}); ok {
+		for _, host := range hosts {
+			if s, ok := host.(string); ok {
+				mc.SlaveHosts = append(mc.SlaveHosts, s)
+			}
+		}
 	}
 	if v, ok := config["slave_ports"].([]int); ok {
 		mc.SlavePorts = v
+	} else if ports, ok := config["slave_ports"].([]interface{}); ok {
+		for _, port := range ports {
+			switch n := port.(type) {
+			case int:
+				mc.SlavePorts = append(mc.SlavePorts, n)
+			case float64:
+				mc.SlavePorts = append(mc.SlavePorts, int(n))
+			}
+		}
 	}
 
 	return mc
@@ -180,18 +196,12 @@ func (e *MHAExecutor) installMHANode(ctx context.Context, config MHAConfig) *Tas
 	allHosts := append([]string{config.MasterHost}, config.SlaveHosts...)
 
 	for i, host := range allHosts {
-		installCmd := exec.CommandContext(ctx, "ssh",
-			"-i", config.SSHPrivateKey,
-			"-o", "StrictHostKeyChecking=no",
-			fmt.Sprintf("%s@%s", config.SSHUser, host),
-			"yum install -y mha4mysql-node || apt-get install -y mha4mysql-node || echo 'MHA node already installed'",
-		)
-
-		if err := installCmd.Run(); err != nil {
+		installCmd := mhaShellCommand(ctx, host, config.SSHUser, config.SSHPrivateKey, "yum install -y mha4mysql-node || apt-get install -y mha4mysql-node; command -v save_binary_logs")
+		if out, err := installCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  10 + i*10,
-				Message:   fmt.Sprintf("Failed to install MHA node on %s: %v", host, err),
+				Message:   fmt.Sprintf("Failed to install MHA node on %s: %v, output: %s", host, err, strings.TrimSpace(string(out))),
 				Timestamp: time.Now(),
 			}
 		}
@@ -212,39 +222,49 @@ func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig)
 		config.ManagerUser, config.ManagerPass, config.ManagerUser,
 	)
 
-	allHosts := append([]string{config.MasterHost}, config.SlaveHosts...)
-	for _, host := range allHosts {
-		cmd := exec.CommandContext(ctx, "mysql",
-			"-h", host,
-			"-P", fmt.Sprintf("%d", config.MasterPort),
-			"-u", config.MySQLUser)
-		if config.MySQLPassword != "" {
-			cmd.Args = append(cmd.Args, "-p"+config.MySQLPassword)
+	allNodes := []struct {
+		host string
+		port int
+	}{{host: config.MasterHost, port: config.MasterPort}}
+	for i, host := range config.SlaveHosts {
+		port := config.MasterPort
+		if i < len(config.SlavePorts) && config.SlavePorts[i] != 0 {
+			port = config.SlavePorts[i]
 		}
-		cmd.Args = append(cmd.Args, "-e", createUserSQL)
-
-		if err := cmd.Run(); err != nil {
+		allNodes = append(allNodes, struct {
+			host string
+			port int
+		}{host: host, port: port})
+	}
+	for _, node := range allNodes {
+		cmd := mysqlExecCommand(ctx, node.host, node.port, config.MySQLUser, config.MySQLPassword, createUserSQL)
+		if out, err := cmd.CombinedOutput(); err != nil {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  35,
-				Message:   fmt.Sprintf("Failed to create MHA manager user on %s: %v", host, err),
+				Message:   fmt.Sprintf("Failed to create MHA manager user on %s:%d: %v, output: %s", node.host, node.port, err, strings.TrimSpace(string(out))),
 				Timestamp: time.Now(),
 			}
 		}
 	}
 
-	installManagerCmd := exec.CommandContext(ctx, "ssh",
-		"-i", config.SSHPrivateKey,
-		"-o", "StrictHostKeyChecking=no",
-		fmt.Sprintf("%s@%s", config.SSHUser, config.ManagerHost),
-		"yum install -y mha4mysql-manager || apt-get install -y mha4mysql-manager || echo 'MHA manager already installed'",
-	)
-
-	if err := installManagerCmd.Run(); err != nil {
+	installManagerCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "yum install -y mha4mysql-manager || apt-get install -y mha4mysql-manager; command -v masterha_check_ssh && command -v masterha_check_repl")
+	if out, err := installManagerCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  40,
-			Message:   fmt.Sprintf("Failed to install MHA manager: %v", err),
+			Message:   fmt.Sprintf("Failed to install MHA manager: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}
+	}
+
+	configContent := generateMHAAppConfig(config)
+	writeConfigCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, fmt.Sprintf("mkdir -p /etc/mha /var/log/mha/app1 && cat > /etc/mha/app1.cnf <<'EOF'\n%s\nEOF", configContent))
+	if out, err := writeConfigCmd.CombinedOutput(); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  45,
+			Message:   fmt.Sprintf("Failed to write MHA manager config: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -257,35 +277,51 @@ func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig)
 	}
 }
 
-func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfig) *TaskResult {
-	sshCmd := exec.CommandContext(ctx, "ssh",
-		"-i", config.SSHPrivateKey,
-		"-o", "StrictHostKeyChecking=no",
-		fmt.Sprintf("%s@%s", config.SSHUser, config.ManagerHost),
-		"masterha_check_ssh --conf=/etc/mha/app1.cnf",
-	)
+func generateMHAAppConfig(config MHAConfig) string {
+	var sb strings.Builder
+	sb.WriteString("[server default]\n")
+	sb.WriteString(fmt.Sprintf("manager_workdir=/var/log/mha/app1\n"))
+	sb.WriteString(fmt.Sprintf("manager_log=/var/log/mha/app1/manager.log\n"))
+	sb.WriteString(fmt.Sprintf("user=%s\n", config.ManagerUser))
+	sb.WriteString(fmt.Sprintf("password=%s\n", config.ManagerPass))
+	sb.WriteString(fmt.Sprintf("repl_user=%s\n", config.ReplUser))
+	sb.WriteString(fmt.Sprintf("repl_password=%s\n", config.ReplPass))
+	sb.WriteString(fmt.Sprintf("ssh_user=%s\n", config.SSHUser))
+	sb.WriteString(fmt.Sprintf("ping_interval=%d\n\n", config.PingInterval))
+	sb.WriteString("[server1]\n")
+	sb.WriteString(fmt.Sprintf("hostname=%s\n", config.MasterHost))
+	sb.WriteString(fmt.Sprintf("port=%d\n", config.MasterPort))
+	sb.WriteString("candidate_master=1\n")
+	for i, host := range config.SlaveHosts {
+		port := config.MasterPort
+		if i < len(config.SlavePorts) && config.SlavePorts[i] != 0 {
+			port = config.SlavePorts[i]
+		}
+		sb.WriteString(fmt.Sprintf("\n[server%d]\n", i+2))
+		sb.WriteString(fmt.Sprintf("hostname=%s\n", host))
+		sb.WriteString(fmt.Sprintf("port=%d\n", port))
+		sb.WriteString("candidate_master=1\n")
+	}
+	return sb.String()
+}
 
-	if err := sshCmd.Run(); err != nil {
+func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfig) *TaskResult {
+	sshCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "masterha_check_ssh --conf=/etc/mha/app1.cnf")
+	if out, err := sshCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  70,
-			Message:   fmt.Sprintf("MHA SSH check failed: %v", err),
+			Message:   fmt.Sprintf("MHA SSH check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
 
-	replCmd := exec.CommandContext(ctx, "ssh",
-		"-i", config.SSHPrivateKey,
-		"-o", "StrictHostKeyChecking=no",
-		fmt.Sprintf("%s@%s", config.SSHUser, config.ManagerHost),
-		"masterha_check_repl --conf=/etc/mha/app1.cnf",
-	)
-
-	if err := replCmd.Run(); err != nil {
+	replCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "masterha_check_repl --conf=/etc/mha/app1.cnf")
+	if out, err := replCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  85,
-			Message:   fmt.Sprintf("MHA replication check failed: %v", err),
+			Message:   fmt.Sprintf("MHA replication check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -297,6 +333,42 @@ func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfi
 			config.ManagerHost, config.MasterHost, config.MasterPort),
 		Timestamp: time.Now(),
 	}
+}
+
+func mhaShellCommand(ctx context.Context, host string, user string, privateKey string, command string) *exec.Cmd {
+	if isLocalHost(host) {
+		return exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	return exec.CommandContext(ctx, "ssh",
+		"-i", privateKey,
+		"-o", "StrictHostKeyChecking=no",
+		fmt.Sprintf("%s@%s", user, host),
+		command,
+	)
+}
+
+func isLocalHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip != nil && strings.EqualFold(ip.String(), host) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *MHAExecutor) CreateMHAManagerConfig(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {

@@ -5,7 +5,7 @@ import { triggerLogout } from './authEvents'
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 10000,
-  // HttpOnly cookie (auth_token) 跟随请求自动带, 不再单靠 Authorization header.
+  // HttpOnly cookie (auth_token) is sent automatically; Authorization is no longer the only auth path.
   withCredentials: true,
 })
 
@@ -28,8 +28,8 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      // P1: 之前只 removeItem('token'), 'user' 残留导致 Dashboard 仍读出 user
-      // 显示 "欢迎xxx", 业务上已经重定向到 /login 但前端 UI 不一致.
+      // P1: clear both token and user so Dashboard does not render stale user data
+      // after the request has already been redirected to /login.
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       triggerLogout()
@@ -38,7 +38,7 @@ api.interceptors.response.use(
     if (error.response?.status === 404) {
       return Promise.reject(error)
     }
-    const errMsg = error.response?.data?.message || error.message || '请求失败'
+    const errMsg = error.response?.data?.message || error.message || 'Request failed'
     message.error(errMsg)
     return Promise.reject(error)
   }
@@ -307,8 +307,8 @@ export const backupApi = {
   deletePolicy: (id: string) =>
     api.delete(`/backups/policies/${id}`),
 
-  executeBackup: (instanceId: string, backupType: string) =>
-    api.post('/backups', { instance_id: instanceId, backup_type: backupType }, { timeout: 300000 }),
+  executeBackup: (instanceId: string, backupType: string, policyId?: string) =>
+    api.post('/backups', { instance_id: instanceId, backup_type: backupType, policy_id: policyId }, { timeout: 300000 }),
 
   listBackups: (instanceId: string) =>
     api.get(`/backups?instance_id=${instanceId}`),
@@ -529,6 +529,7 @@ export const migrationApi = {
 }
 
 export const clusterDeployApi = {
+  deployHA: (data: any) => api.post('/deployments/ha', data),
   deployMHA: (data: any) => api.post('/deployments/mha', data),
   deployMGR: (data: any) => api.post('/deployments/mgr', data),
   deployPXC: (data: any) => api.post('/deployments/pxc', data),

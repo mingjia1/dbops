@@ -32,10 +32,10 @@ type HostService struct {
 
 func NewHostService(repo *repositories.HostRepository, encKey string) *HostService {
 	return &HostService{
-		repo:         repo,
-		encKey:       encKey,
-		testResults:  make(map[string]*HostTestResult),
-		scanResults:  make(map[string]*HostScanResult),
+		repo:        repo,
+		encKey:      encKey,
+		testResults: make(map[string]*HostTestResult),
+		scanResults: make(map[string]*HostScanResult),
 	}
 }
 
@@ -218,11 +218,11 @@ func (s *HostService) runConnectionTest(taskID string, host *models.Host) {
 
 	if err != nil {
 		result.Status = "failed"
-		result.Message = fmt.Sprintf("TCP连接失败: %v", err)
+		result.Message = fmt.Sprintf("TCP connection failed: %v", err)
 	} else {
 		conn.Close()
 		result.Status = "success"
-		result.Message = fmt.Sprintf("TCP端口可达 (延迟 %dms)", latency)
+		result.Message = fmt.Sprintf("TCP port is reachable (latency %dms)", latency)
 	}
 
 	s.taskMu.Lock()
@@ -265,13 +265,13 @@ type ScannedInstance struct {
 }
 
 type HostScanResult struct {
-	TaskID    string           `json:"task_id"`
-	HostID    string           `json:"host_id"`
-	Status    string           `json:"status"`
-	Message   string           `json:"message"`
+	TaskID    string            `json:"task_id"`
+	HostID    string            `json:"host_id"`
+	Status    string            `json:"status"`
+	Message   string            `json:"message"`
 	Instances []ScannedInstance `json:"instances"`
-	ScannedAt *time.Time       `json:"scanned_at,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	ScannedAt *time.Time        `json:"scanned_at,omitempty"`
+	Error     string            `json:"error,omitempty"`
 }
 
 type ScanInstancesRequest struct {
@@ -312,7 +312,7 @@ func (s *HostService) StartScanInstances(ctx context.Context, hostID string, req
 		TaskID:  taskID,
 		HostID:  hostID,
 		Status:  "pending",
-		Message: fmt.Sprintf("已加入扫描队列, 探测 %d 个端口", len(ports)),
+		Message: fmt.Sprintf("Added to scan queue; probing %d ports", len(ports)),
 	}
 	s.scanMu.Lock()
 	s.scanResults[taskID] = initial
@@ -340,7 +340,7 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 		TaskID:  taskID,
 		HostID:  host.ID,
 		Status:  "running",
-		Message: fmt.Sprintf("正在扫描 %d 个端口", len(ports)),
+		Message: fmt.Sprintf("Scanning %d ports", len(ports)),
 	}
 	s.scanMu.Lock()
 	s.scanResults[taskID] = result
@@ -383,7 +383,7 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 	result.ScannedAt = &now
 	result.Status = "success"
 	if len(scanned) == 0 {
-		result.Message = fmt.Sprintf("扫描完成, %d 个端口中未发现 MySQL 实例", len(ports))
+		result.Message = fmt.Sprintf("Scan completed; no MySQL instances found across %d ports", len(ports))
 	} else {
 		newCount := 0
 		for i := range scanned {
@@ -391,7 +391,7 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 				newCount++
 			}
 		}
-		result.Message = fmt.Sprintf("扫描完成, 发现 %d 个实例 (%d 个新发现, %d 个已纳管)", len(scanned), newCount, len(scanned)-newCount)
+		result.Message = fmt.Sprintf("Scan completed; found %d instances (%d new, %d already managed)", len(scanned), newCount, len(scanned)-newCount)
 	}
 
 	s.scanMu.Lock()

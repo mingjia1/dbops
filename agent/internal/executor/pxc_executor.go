@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 type PXCConfig struct {
 	ClusterName     string   `json:"cluster_name"`
 	Nodes           []string `json:"nodes"`
+	MySQLPort       int      `json:"mysql_port"`
 	WSREPPort       int      `json:"wsrep_port"`
 	SSTMethod       string   `json:"sst_method"`
 	ReplicateUser   string   `json:"replicate_user"`
@@ -55,6 +57,7 @@ type SplitBrainInfo struct {
 func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	pc := PXCConfig{
 		ClusterName:     "pxc-cluster",
+		MySQLPort:       3306,
 		WSREPPort:       4567,
 		SSTMethod:       "xtrabackup-v2",
 		ReplicateUser:   "sstuser",
@@ -71,9 +74,18 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	}
 	if v, ok := config["nodes"].([]string); ok {
 		pc.Nodes = v
+	} else if nodes, ok := config["nodes"].([]interface{}); ok {
+		for _, node := range nodes {
+			if s, ok := node.(string); ok {
+				pc.Nodes = append(pc.Nodes, s)
+			}
+		}
 	}
-	if v, ok := config["wsrep_port"].(int); ok {
+	if v := configInt(config, "wsrep_port"); v != 0 {
 		pc.WSREPPort = v
+	}
+	if v := configInt(config, "mysql_port"); v != 0 {
+		pc.MySQLPort = v
 	}
 	if v, ok := config["sst_method"].(string); ok {
 		pc.SSTMethod = v
@@ -90,7 +102,7 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	if v, ok := config["bootstrap"].(bool); ok {
 		pc.Bootstrap = v
 	}
-	if v, ok := config["wsrep_sst_port"].(int); ok {
+	if v := configInt(config, "wsrep_sst_port"); v != 0 {
 		pc.WSREPSSTPort = v
 	}
 	if v, ok := config["wsrep_ssl_enabled"].(bool); ok {
@@ -163,16 +175,27 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 	)
 
 	for i, node := range config.Nodes {
-		nodeCmd := exec.CommandContext(ctx, "mysql", "-h", node,
-			"-P", fmt.Sprintf("%d", config.WSREPPort),
-			"-u", "root", "-e", sstUserSQL)
-
-		if err := nodeCmd.Run(); err != nil {
+		pingCmd := exec.CommandContext(ctx, "mysqladmin", "-h", normalizeLocalMySQLHost(node), "-P", fmt.Sprintf("%d", config.MySQLPort), "-u", defaultString(config.MySQLUser, "root"), "ping")
+		if config.MySQLPassword != "" {
+			pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPassword)
+		}
+		if out, err := pingCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "failed",
 				Progress:  i * 30,
-				Message:   fmt.Sprintf("Failed to create SST user on node %s: %v", node, err),
+				Message:   fmt.Sprintf("PXC node %s:%d is not reachable before configuration: %v, output: %s", node, config.MySQLPort, err, strings.TrimSpace(string(out))),
+				Timestamp: time.Now(),
+			}, nil
+		}
+
+		nodeCmd := mysqlExecCommand(ctx, node, config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
+		if out, err := nodeCmd.CombinedOutput(); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  i * 30,
+				Message:   fmt.Sprintf("Failed to create SST user on node %s: %v, output: %s", node, err, strings.TrimSpace(string(out))),
 				Timestamp: time.Now(),
 			}, nil
 		}

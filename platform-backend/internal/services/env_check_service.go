@@ -84,7 +84,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 				Status:     "failed",
 				Passed:     false,
 				Value:      fmt.Sprintf("%s:%d", host.Host, agentPort),
-				Suggestion: "请确认 Agent 已在目标主机上启动（端口 9090）",
+				Suggestion: "Confirm that the Agent is running on the target host (port 9090)",
 			})
 			continue
 		}
@@ -154,7 +154,7 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 			Status:     "failed",
 			Passed:     false,
 			Value:      fmt.Sprintf("%s: %v", addr, err),
-			Suggestion: "确认 MySQL 已启动，且目标端口对 backend 可达",
+			Suggestion: "Confirm that MySQL is running and the target port is reachable from the backend",
 		})
 	} else {
 		_ = conn.Close()
@@ -180,11 +180,11 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		_ = item
 	}
 	for _, item := range []struct{ cat, name, suggestion string }{
-		{"hardware", "cpu_cores", "需要 Agent 端采集"},
-		{"hardware", "memory_size", "需要 Agent 端采集"},
-		{"hardware", "disk_space", "需要 Agent 端采集"},
-		{"os", "kernel_version", "需要 Agent 端采集"},
-		{"dependency", "libaio", "需要 Agent 端采集"},
+		{"hardware", "cpu_cores", "Agent-side collection is required"},
+		{"hardware", "memory_size", "Agent-side collection is required"},
+		{"hardware", "disk_space", "Agent-side collection is required"},
+		{"os", "kernel_version", "Agent-side collection is required"},
+		{"dependency", "libaio", "Agent-side collection is required"},
 	} {
 		results = append(results, CheckResult{
 			Category:   item.cat,
@@ -224,13 +224,51 @@ func agentSystemResults(data map[string]interface{}) []CheckResult {
 		key        string
 		suggestion string
 	}{
-		{"os", "os_release", "os_release", "Agent 未采集到操作系统发行版"},
-		{"os", "kernel_version", "kernel_version", "Agent 未采集到内核版本"},
-		{"hardware", "cpu_cores", "cpu_cores", "Agent 未采集到 CPU 核数"},
-		{"hardware", "memory_size", "memory_size", "Agent 未采集到内存信息"},
-		{"hardware", "disk_space", "disk_space", "Agent 未采集到磁盘信息"},
-		{"dependency", "libaio", "libaio", "请安装 libaio 依赖"},
+		{"os", "os_release", "os_release", "Agent did not collect the OS release"},
+		{"os", "kernel_version", "kernel_version", "Agent did not collect the kernel version"},
+		{"hardware", "cpu_cores", "cpu_cores", "Agent did not collect CPU core count"},
+		{"hardware", "memory_size", "memory_size", "Agent did not collect memory information"},
+		{"hardware", "disk_space", "disk_space", "Agent did not collect disk information"},
+		{"dependency", "libaio", "libaio", "Install the libaio dependency"},
 	}
+	items = append(items,
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "vm_swappiness", "vm_swappiness", "Agent did not collect vm.swappiness"},
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "vm_max_map_count", "vm_max_map_count", "Agent did not collect vm.max_map_count"},
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "fs_file_max", "fs_file_max", "Agent did not collect fs.file-max"},
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "net_core_somaxconn", "net_core_somaxconn", "Agent did not collect net.core.somaxconn"},
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "net_ipv4_tcp_tw_reuse", "net_ipv4_tcp_tw_reuse", "Agent did not collect net.ipv4.tcp_tw_reuse"},
+		struct {
+			category   string
+			name       string
+			key        string
+			suggestion string
+		}{"os", "net_ipv4_ip_local_port_range", "net_ipv4_ip_local_port_range", "Agent did not collect net.ipv4.ip_local_port_range"},
+	)
 	out := make([]CheckResult, 0, len(items))
 	for _, item := range items {
 		value := stringMapValue(data, item.key)

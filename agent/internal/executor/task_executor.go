@@ -59,18 +59,22 @@ type MasterSlaveConfig struct {
 	SlavePort     int    `json:"slave_port"`
 	ReplicateUser string `json:"replicate_user"`
 	ReplicatePass string `json:"replicate_pass"`
+	MySQLUser     string `json:"mysql_user"`
+	MySQLPass     string `json:"mysql_password"`
 	ServerID      int    `json:"server_id"`
 	DeployMode    string `json:"deploy_mode"`
 }
 
 type BackupConfig struct {
-	InstanceID string `json:"instance_id"`
-	BackupType string `json:"backup_type"`
-	TargetDir  string `json:"target_dir"`
-	MySQLHost  string `json:"mysql_host"`
-	MySQLPort  int    `json:"mysql_port"`
-	MySQLUser  string `json:"mysql_user"`
-	MySQLPass  string `json:"mysql_pass"`
+	InstanceID      string `json:"instance_id"`
+	BackupType      string `json:"backup_type"`
+	TargetDir       string `json:"target_dir"`
+	MySQLHost       string `json:"mysql_host"`
+	MySQLPort       int    `json:"mysql_port"`
+	MySQLUser       string `json:"mysql_user"`
+	MySQLPass       string `json:"mysql_pass"`
+	BaseBackupPath  string `json:"base_backup_path"`
+	BaseBackupLabel string `json:"base_backup_label"`
 }
 
 type RestoreConfig struct {
@@ -215,6 +219,12 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		"--daemonize",
 		"--datadir=" + dataDir,
 		"--port=" + fmt.Sprintf("%d", port),
+		"--server-id=" + fmt.Sprintf("%d", port),
+		"--log-bin=mysql-bin",
+		"--binlog-format=ROW",
+		"--gtid-mode=ON",
+		"--enforce-gtid-consistency=ON",
+		"--log-slave-updates=ON",
 		"--bind-address=0.0.0.0",
 		"--socket=" + filepath.Join(dataDir, "mysql.sock"),
 		"--pid-file=" + filepath.Join(dataDir, "mysql.pid"),
@@ -303,6 +313,7 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 		SlavePort:     3307,
 		ReplicateUser: "repl",
 		ReplicatePass: "repl123",
+		MySQLUser:     "root",
 		ServerID:      1,
 		DeployMode:    "async",
 	}
@@ -310,13 +321,13 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 	if v, ok := config["master_host"].(string); ok {
 		mc.MasterHost = v
 	}
-	if v, ok := config["master_port"].(int); ok {
+	if v := configInt(config, "master_port"); v != 0 {
 		mc.MasterPort = v
 	}
 	if v, ok := config["slave_host"].(string); ok {
 		mc.SlaveHost = v
 	}
-	if v, ok := config["slave_port"].(int); ok {
+	if v := configInt(config, "slave_port"); v != 0 {
 		mc.SlavePort = v
 	}
 	if v, ok := config["replicate_user"].(string); ok {
@@ -324,6 +335,15 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 	}
 	if v, ok := config["replicate_pass"].(string); ok {
 		mc.ReplicatePass = v
+	}
+	if v, ok := config["mysql_user"].(string); ok && v != "" {
+		mc.MySQLUser = v
+	}
+	if v, ok := config["mysql_password"].(string); ok {
+		mc.MySQLPass = v
+	}
+	if v, ok := config["mysql_pass"].(string); ok && mc.MySQLPass == "" {
+		mc.MySQLPass = v
 	}
 
 	return mc
@@ -336,28 +356,24 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-h", config.MasterHost,
-		"-P", fmt.Sprintf("%d", config.MasterPort),
-		"-u", "root", "-e", createUserSQL)
+	cmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, createUserSQL)
 
-	if err := cmd.Run(); err != nil {
+	if out, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  20,
-			Message:   fmt.Sprintf("Failed to create replication user on master: %v", err),
+			Message:   fmt.Sprintf("Failed to create replication user on master: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
 
-	serverIDCmd := exec.CommandContext(ctx, "mysql", "-h", config.MasterHost,
-		"-P", fmt.Sprintf("%d", config.MasterPort),
-		"-u", "root", "-e", "SET GLOBAL server_id=1; SET GLOBAL log_bin=ON;")
+	serverIDCmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, "SET GLOBAL server_id=1;")
 
-	if err := serverIDCmd.Run(); err != nil {
+	if out, err := serverIDCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  30,
-			Message:   fmt.Sprintf("Failed to configure master server_id: %v", err),
+			Message:   fmt.Sprintf("Failed to configure master server_id: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -371,16 +387,47 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 }
 
 func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveConfig) *TaskResult {
-	serverIDCmd := exec.CommandContext(ctx, "mysql", "-h", config.SlaveHost,
-		"-P", fmt.Sprintf("%d", config.SlavePort),
-		"-u", "root", "-e", fmt.Sprintf("SET GLOBAL server_id=%d;", config.ServerID+2))
+	serverIDCmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, fmt.Sprintf("SET GLOBAL server_id=%d;", config.ServerID+2))
 
-	if err := serverIDCmd.Run(); err != nil {
+	if out, err := serverIDCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  50,
-			Message:   fmt.Sprintf("Failed to set slave server_id: %v", err),
+			Message:   fmt.Sprintf("Failed to set slave server_id: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
+		}
+	}
+
+	masterStatusCmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, "SHOW MASTER STATUS;")
+	masterStatusOut, err := masterStatusCmd.CombinedOutput()
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  55,
+			Message:   fmt.Sprintf("Failed to read master status: %v, output: %s", err, strings.TrimSpace(string(masterStatusOut))),
+			Timestamp: time.Now(),
+		}
+	}
+	masterLogFile, masterLogPos := parseMasterStatus(string(masterStatusOut))
+	if masterLogFile == "" || masterLogPos == "" {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  55,
+			Message:   "Master binary log is not enabled or SHOW MASTER STATUS returned no position",
+			Timestamp: time.Now(),
+		}
+	}
+
+	resetCmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP SLAVE; RESET SLAVE ALL;")
+	if out, err := resetCmd.CombinedOutput(); err != nil {
+		output := strings.TrimSpace(string(out))
+		if !strings.Contains(output, "Slave is not configured") {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  58,
+				Message:   fmt.Sprintf("Failed to reset existing slave configuration: %v, output: %s", err, output),
+				Timestamp: time.Now(),
+			}
 		}
 	}
 
@@ -390,33 +437,31 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 			"MASTER_PORT=%d, "+
 			"MASTER_USER='%s', "+
 			"MASTER_PASSWORD='%s', "+
-			"MASTER_AUTO_POSITION=1;",
+			"MASTER_LOG_FILE='%s', "+
+			"MASTER_LOG_POS=%s;",
 		config.MasterHost, config.MasterPort,
 		config.ReplicateUser, config.ReplicatePass,
+		masterLogFile, masterLogPos,
 	)
 
-	changeCmd := exec.CommandContext(ctx, "mysql", "-h", config.SlaveHost,
-		"-P", fmt.Sprintf("%d", config.SlavePort),
-		"-u", "root", "-e", changeMasterSQL)
+	changeCmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, changeMasterSQL)
 
-	if err := changeCmd.Run(); err != nil {
+	if out, err := changeCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  60,
-			Message:   fmt.Sprintf("Failed to execute CHANGE MASTER TO: %v", err),
+			Message:   fmt.Sprintf("Failed to execute CHANGE MASTER TO: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
 
-	startCmd := exec.CommandContext(ctx, "mysql", "-h", config.SlaveHost,
-		"-P", fmt.Sprintf("%d", config.SlavePort),
-		"-u", "root", "-e", "START SLAVE;")
+	startCmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "START SLAVE;")
 
-	if err := startCmd.Run(); err != nil {
+	if out, err := startCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  70,
-			Message:   fmt.Sprintf("Failed to start slave: %v", err),
+			Message:   fmt.Sprintf("Failed to start slave: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -429,19 +474,28 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 	}
 }
 
+func parseMasterStatus(output string) (string, string) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.Contains(fields[0], ".") {
+			return fields[0], fields[1]
+		}
+	}
+	return "", ""
+}
+
 func (e *TaskExecutor) verifyReplication(ctx context.Context, config MasterSlaveConfig) *TaskResult {
 	time.Sleep(3 * time.Second)
 
-	cmd := exec.CommandContext(ctx, "mysql", "-h", config.SlaveHost,
-		"-P", fmt.Sprintf("%d", config.SlavePort),
-		"-u", "root", "-e", "SHOW SLAVE STATUS\\G")
+	cmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "SHOW SLAVE STATUS\\G")
 
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  90,
-			Message:   fmt.Sprintf("Failed to check slave status: %v", err),
+			Message:   fmt.Sprintf("Failed to check slave status: %v, output: %s", err, strings.TrimSpace(string(output))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -497,6 +551,12 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 	if v, ok := config["mysql_pass"].(string); ok {
 		bc.MySQLPass = v
 	}
+	if v, ok := config["base_backup_path"].(string); ok {
+		bc.BaseBackupPath = v
+	}
+	if v, ok := config["base_backup_label"].(string); ok {
+		bc.BaseBackupLabel = v
+	}
 
 	return bc
 }
@@ -505,6 +565,14 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 	// P0: 之前用 time.Now().Unix() 1 秒精度, 同秒并发会写同 dir 互相覆盖.
 	// 改 UnixNano 纳秒精度, 并发 backup 不可能撞.
 	if _, err := exec.LookPath("xtrabackup"); err != nil {
+		if config.BackupType == "incremental" {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   "incremental backup requires xtrabackup on target host",
+				Timestamp: time.Now(),
+			}, nil
+		}
 		return e.executeLogicalBackup(ctx, config, "xtrabackup not found, used logical full backup")
 	}
 	backupDir := fmt.Sprintf("%s/%s-%d", config.TargetDir, config.BackupType, time.Now().UnixNano())
@@ -525,6 +593,17 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		"--user="+config.MySQLUser,
 		"--password="+config.MySQLPass,
 	)
+	if config.BackupType == "incremental" {
+		if config.BaseBackupPath == "" {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   "incremental backup requires a completed full backup",
+				Timestamp: time.Now(),
+			}, nil
+		}
+		backupCmd.Args = append(backupCmd.Args, "--incremental-basedir="+config.BaseBackupPath)
+	}
 
 	// A3 part 1: --stream=xbstream 写到 stdout, 之前 Stdout=nil 把流扔了,
 	// sha256sum 必然拿不到文件, 然后假装 "checksum-unavailable" + 报 completed.
@@ -538,18 +617,20 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		}, nil
 	}
 
-	prepareCmd := exec.CommandContext(ctx, "xtrabackup",
-		"--prepare",
-		"--target-dir="+backupDir,
-	)
+	if config.BackupType != "incremental" {
+		prepareCmd := exec.CommandContext(ctx, "xtrabackup",
+			"--prepare",
+			"--target-dir="+backupDir,
+		)
 
-	if out, err := prepareCmd.CombinedOutput(); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  50,
-			Message:   fmt.Sprintf("Xtrabackup prepare failed: %v\n%s", err, strings.TrimSpace(string(out))),
-			Timestamp: time.Now(),
-		}, nil
+		if out, err := prepareCmd.CombinedOutput(); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  50,
+				Message:   fmt.Sprintf("Xtrabackup prepare failed: %v\n%s", err, strings.TrimSpace(string(out))),
+				Timestamp: time.Now(),
+			}, nil
+		}
 	}
 
 	if !isCompleteXtrabackupDir(backupDir) {
@@ -586,10 +667,12 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		Message:   fmt.Sprintf("Backup completed successfully. Path: %s, Checksum: %s", backupDir, checksum),
 		Timestamp: time.Now(),
 		Data: map[string]any{
-			"backup_path": backupDir,
-			"backup_type": config.BackupType,
-			"file_size":   sizeBytes,
-			"checksum":    checksum,
+			"backup_path":       backupDir,
+			"backup_type":       config.BackupType,
+			"base_backup_path":  config.BaseBackupPath,
+			"base_backup_label": config.BaseBackupLabel,
+			"file_size":         sizeBytes,
+			"checksum":          checksum,
 		},
 	}, nil
 }
@@ -801,6 +884,24 @@ func collectSystemInfo(ctx context.Context) map[string]any {
 	}
 	if out := commandOutput(ctx, "uname", "-r"); out != "" {
 		data["kernel_version"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n vm.swappiness 2>/dev/null"); out != "" {
+		data["vm_swappiness"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n vm.max_map_count 2>/dev/null"); out != "" {
+		data["vm_max_map_count"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n fs.file-max 2>/dev/null"); out != "" {
+		data["fs_file_max"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.core.somaxconn 2>/dev/null"); out != "" {
+		data["net_core_somaxconn"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null"); out != "" {
+		data["net_ipv4_tcp_tw_reuse"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.ip_local_port_range 2>/dev/null"); out != "" {
+		data["net_ipv4_ip_local_port_range"] = out
 	}
 	if out := commandOutput(ctx, "nproc"); out != "" {
 		data["cpu_cores"] = out
@@ -1347,6 +1448,7 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 
 	files := make([]BackupScanFile, 0)
 	seen := map[string]bool{}
+	seenBackups := map[string]bool{}
 	for _, dir := range dirs {
 		if dir == "" || seen[dir] {
 			continue
@@ -1361,7 +1463,7 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 			if err != nil {
 				continue
 			}
-			files = append(files, BackupScanFile{
+			files = appendBackupScanFile(files, seenBackups, BackupScanFile{
 				FileName:   filepath.Base(dir),
 				FilePath:   dir,
 				SizeBytes:  sizeBytes,
@@ -1394,7 +1496,7 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 				if err != nil {
 					return filepath.SkipDir
 				}
-				files = append(files, BackupScanFile{
+				files = appendBackupScanFile(files, seenBackups, BackupScanFile{
 					FileName:   entry.Name(),
 					FilePath:   path,
 					SizeBytes:  sizeBytes,
@@ -1416,7 +1518,7 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 			if err != nil || stat.Size() <= 0 {
 				return nil
 			}
-			files = append(files, BackupScanFile{
+			files = appendBackupScanFile(files, seenBackups, BackupScanFile{
 				FileName:   name,
 				FilePath:   path,
 				SizeBytes:  stat.Size(),
@@ -1444,6 +1546,15 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 	}, nil
 }
 
+func appendBackupScanFile(files []BackupScanFile, seen map[string]bool, item BackupScanFile) []BackupScanFile {
+	key := filepath.Clean(item.FilePath)
+	if seen[key] {
+		return files
+	}
+	seen[key] = true
+	return append(files, item)
+}
+
 func classifyBackupPath(path string, isDir bool) string {
 	lower := strings.ToLower(filepath.Base(path))
 	if strings.HasSuffix(lower, ".tmp") || strings.HasSuffix(lower, ".partial") || strings.HasSuffix(lower, ".incomplete") {
@@ -1458,8 +1569,6 @@ func classifyBackupPath(path string, isDir bool) string {
 	switch {
 	case strings.HasSuffix(lower, ".sql") || strings.HasSuffix(lower, ".sql.gz") || strings.HasSuffix(lower, ".dump"):
 		return "logical"
-	case strings.HasSuffix(lower, ".xbstream"):
-		return "full"
 	default:
 		return ""
 	}
@@ -1853,6 +1962,25 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func mysqlExecCommand(ctx context.Context, host string, port int, user string, password string, sql string) *exec.Cmd {
+	if user == "" {
+		user = "root"
+	}
+	host = normalizeLocalMySQLHost(host)
+	cmd := exec.CommandContext(ctx, "mysql", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-e", sql)
+	if password != "" {
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
+	}
+	return cmd
+}
+
+func normalizeLocalMySQLHost(host string) string {
+	if isLocalHost(host) {
+		return "127.0.0.1"
+	}
+	return host
 }
 
 func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string) error {

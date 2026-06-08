@@ -62,6 +62,22 @@ func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, response)
 }
 
+func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
+	var req services.DeployHARequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	response, err := c.service.DeployHA(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to deploy HA master-replica cluster", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}
+
 func (c *ClusterDeployController) GetDeploymentStatus(ctx *gin.Context) {
 	deploymentID := ctx.Param("id")
 

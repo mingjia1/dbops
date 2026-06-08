@@ -215,9 +215,9 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 		incompatibilities = append(incompatibilities, IncompatibilityItem{
 			Type:        "upgrade_path",
 			Level:       "error",
-			Description: fmt.Sprintf("升级路径 %s %s → %s %s 不被支持", sourceFlavor, sourceVersion, targetFlavor, targetVersion),
+			Description: fmt.Sprintf("Upgrade path %s %s to %s %s is not supported", sourceFlavor, sourceVersion, targetFlavor, targetVersion),
 			Impact:      reason,
-			Solution:    "请使用逻辑迁移 (logical migration) 跨大版本或跨 flavor, 或选择 catalog 中允许的目标版本",
+			Solution:    "Use logical migration for cross-major or cross-flavor upgrades, or select a target version allowed by the catalog",
 		})
 	}
 

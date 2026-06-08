@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -22,6 +21,7 @@ type MGRConfig struct {
 	DeployMode    string   `json:"deploy_mode"`
 	LocalAddress  string   `json:"local_address"`
 	LocalPort     int      `json:"local_port"`
+	MySQLPort     int      `json:"mysql_port"`
 	ServerID      int      `json:"server_id"`
 	PrimaryHost   string   `json:"primary_host"`
 	PrimaryPort   int      `json:"primary_port"`
@@ -45,6 +45,7 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 		ReplicatePass: "repl123",
 		DeployMode:    "single-primary",
 		LocalPort:     33061,
+		MySQLPort:     3306,
 		ServerID:      1,
 		PrimaryPort:   3306,
 		MySQLUser:     "root",
@@ -65,16 +66,19 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 	if v, ok := config["local_address"].(string); ok {
 		mc.LocalAddress = v
 	}
-	if v, ok := config["local_port"].(int); ok {
+	if v := configInt(config, "local_port"); v != 0 {
 		mc.LocalPort = v
 	}
-	if v, ok := config["server_id"].(int); ok {
+	if v := configInt(config, "mysql_port"); v != 0 {
+		mc.MySQLPort = v
+	}
+	if v := configInt(config, "server_id"); v != 0 {
 		mc.ServerID = v
 	}
 	if v, ok := config["primary_host"].(string); ok {
 		mc.PrimaryHost = v
 	}
-	if v, ok := config["primary_port"].(int); ok {
+	if v := configInt(config, "primary_port"); v != 0 {
 		mc.PrimaryPort = v
 	}
 	if v, ok := config["mysql_user"].(string); ok {
@@ -235,10 +239,7 @@ func (e *MGRExecutor) MonitorGroupStatus(ctx context.Context, req DeployTaskRequ
 func (e *MGRExecutor) installGroupReplicationPlugin(ctx context.Context, config MGRConfig) *TaskResult {
 	installSQL := "INSTALL PLUGIN group_replication SONAME 'group_replication.so';"
 
-	cmd := exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", installSQL)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, installSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(output), "already installed") {
@@ -274,21 +275,11 @@ func (e *MGRExecutor) configureMGRParameters(ctx context.Context, config MGRConf
 		"SET GLOBAL group_replication_single_primary_mode = ON;",
 		"SET GLOBAL group_replication_enforce_update_everywhere_checks = OFF;",
 		fmt.Sprintf("SET GLOBAL server_id = %d;", config.ServerID),
-		"SET GLOBAL log_bin = ON;",
-		"SET GLOBAL binlog_format = ROW;",
-		"SET GLOBAL binlog_checksum = NONE;",
-		"SET GLOBAL gtid_mode = ON;",
-		"SET GLOBAL enforce_gtid_consistency = ON;",
-		"SET GLOBAL master_info_repository = TABLE;",
-		"SET GLOBAL relay_log_info_repository = TABLE;",
 		"SET GLOBAL transaction_write_set_extraction = XXHASH64;",
 	}
 
 	for _, sql := range configSQLs {
-		cmd := exec.CommandContext(ctx, "mysql",
-			"-h", config.LocalAddress,
-			"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-			"-u", "root", "-e", sql)
+		cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, sql)
 
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return &TaskResult{
@@ -315,10 +306,7 @@ func (e *MGRExecutor) enableMultiPrimaryMode(ctx context.Context, config MGRConf
 	}
 
 	for _, sql := range configSQLs {
-		cmd := exec.CommandContext(ctx, "mysql",
-			"-h", config.LocalAddress,
-			"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-			"-u", "root", "-e", sql)
+		cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, sql)
 
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return &TaskResult{
@@ -340,10 +328,7 @@ func (e *MGRExecutor) enableMultiPrimaryMode(ctx context.Context, config MGRConf
 
 func (e *MGRExecutor) startGroupReplication(ctx context.Context, config MGRConfig) *TaskResult {
 	bootstrapSQL := "SET GLOBAL group_replication_bootstrap_group = ON;"
-	cmd := exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", bootstrapSQL)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, bootstrapSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -355,10 +340,7 @@ func (e *MGRExecutor) startGroupReplication(ctx context.Context, config MGRConfi
 	}
 
 	startSQL := "START GROUP_REPLICATION;"
-	cmd = exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", startSQL)
+	cmd = mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, startSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -370,10 +352,7 @@ func (e *MGRExecutor) startGroupReplication(ctx context.Context, config MGRConfi
 	}
 
 	unsetBootstrapSQL := "SET GLOBAL group_replication_bootstrap_group = OFF;"
-	cmd = exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", unsetBootstrapSQL)
+	cmd = mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, unsetBootstrapSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -396,10 +375,7 @@ func (e *MGRExecutor) startGroupReplication(ctx context.Context, config MGRConfi
 
 func (e *MGRExecutor) joinGroup(ctx context.Context, config MGRConfig) *TaskResult {
 	startSQL := "START GROUP_REPLICATION;"
-	cmd := exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", startSQL)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, startSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -423,10 +399,8 @@ func (e *MGRExecutor) joinGroup(ctx context.Context, config MGRConfig) *TaskResu
 func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]GroupMemberStatus, error) {
 	querySQL := "SELECT MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members;"
 
-	cmd := exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-N", "-e", querySQL)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, querySQL)
+	cmd.Args = append(cmd.Args[:len(cmd.Args)-2], "-N", cmd.Args[len(cmd.Args)-2], cmd.Args[len(cmd.Args)-1])
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -464,15 +438,11 @@ func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]
 func (e *MGRExecutor) bootstrapPrimaryNode(ctx context.Context, config MGRConfig) *TaskResult {
 	createUserSQL := fmt.Sprintf(
 		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
-			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%'; "+
-			"GRANT GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%';",
+			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
 		config.ReplicateUser, config.ReplicatePass,
-		config.ReplicateUser, config.ReplicateUser)
+		config.ReplicateUser)
 
-	cmd := exec.CommandContext(ctx, "mysql",
-		"-h", config.LocalAddress,
-		"-P", fmt.Sprintf("%d", config.LocalPort-61+3306),
-		"-u", "root", "-e", createUserSQL)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, createUserSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return &TaskResult{

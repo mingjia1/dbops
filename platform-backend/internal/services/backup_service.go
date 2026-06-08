@@ -43,6 +43,7 @@ type CreateBackupPolicyRequest struct {
 type ExecuteBackupRequest struct {
 	InstanceID string `json:"instance_id" binding:"required"`
 	BackupType string `json:"backup_type" binding:"required"`
+	PolicyID   string `json:"policy_id"`
 }
 
 type BackupTaskResult struct {
@@ -106,6 +107,14 @@ func (s *BackupService) ListPolicies(ctx context.Context, instanceID string) ([]
 }
 
 func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequest) (*BackupTaskResult, error) {
+	if req.PolicyID != "" {
+		policy, err := s.policyRepo.GetPolicyByID(ctx, req.PolicyID)
+		if err != nil {
+			return nil, err
+		}
+		req.InstanceID = policy.InstanceID
+		req.BackupType = policy.BackupType
+	}
 	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("instance not found: %w", err)
@@ -142,6 +151,21 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		"mysql_user":  conn.Username,
 		"mysql_pass":  password,
 	}
+	if req.BackupType == "incremental" {
+		base, err := s.policyRepo.LatestCompletedRecord(ctx, req.InstanceID, "full")
+		if err != nil || base.FilePath == "" {
+			return &BackupTaskResult{
+				InstanceID: req.InstanceID,
+				BackupType: req.BackupType,
+				Status:     "failed",
+				Message:    "Incremental backup requires at least one completed full backup",
+				StartedAt:  time.Now(),
+				CreatedAt:  time.Now(),
+			}, nil
+		}
+		config["base_backup_path"] = base.FilePath
+		config["base_backup_label"] = base.ID
+	}
 	taskID := fmt.Sprintf("backup-%d", time.Now().Unix())
 	now := time.Now()
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
@@ -161,6 +185,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		// 真实落库失败记录, 而不是悄无声息.
 		_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
 			InstanceID: req.InstanceID,
+			PolicyID:   req.PolicyID,
 			BackupType: req.BackupType,
 			StartedAt:  now,
 			Status:     "failed",
@@ -181,6 +206,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 
 	_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
 		InstanceID:  req.InstanceID,
+		PolicyID:    req.PolicyID,
 		BackupType:  req.BackupType,
 		StartedAt:   now,
 		CompletedAt: out.CompletedAt,
@@ -243,7 +269,7 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 		return nil, fmt.Errorf("agent backup scan failed: %w", err)
 	}
 
-	discovered := decodeDiscoveredBackups(result.Data)
+	discovered := dedupeDiscoveredBackups(decodeDiscoveredBackups(result.Data))
 	records, _ := s.policyRepo.ListRecords(ctx, instanceID, 1000, 0)
 	managed := make(map[string]string, len(records))
 	for _, record := range records {
@@ -264,6 +290,20 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 		}
 	}
 	return &BackupScanResult{Backups: discovered, ScannedAt: time.Now()}, nil
+}
+
+func dedupeDiscoveredBackups(items []DiscoveredBackup) []DiscoveredBackup {
+	seen := map[string]bool{}
+	out := make([]DiscoveredBackup, 0, len(items))
+	for _, item := range items {
+		key := filepath.Clean(item.FilePath)
+		if key == "." || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *BackupService) resolveAgentEndpoint(ctx context.Context, inst *models.Instance) (string, int, error) {

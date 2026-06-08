@@ -148,3 +148,25 @@ func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, l
 
 	return records, nil
 }
+
+func (r *BackupRepository) LatestCompletedRecord(ctx context.Context, instanceID, backupType string) (*models.BackupRecord, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	query := `
+		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at
+		FROM backup_records
+		WHERE instance_id = ? AND backup_type = ? AND status = 'completed' AND file_path <> ''
+		ORDER BY completed_at DESC, created_at DESC LIMIT 1
+	`
+	record := &models.BackupRecord{}
+	err := r.db.Pool.QueryRowContext(ctx, query, instanceID, backupType).Scan(
+		&record.ID, &record.PolicyID, &record.InstanceID, &record.BackupType,
+		&record.StartedAt, &record.CompletedAt, &record.Status, &record.FilePath,
+		&record.FileSize, &record.Checksum, &record.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
