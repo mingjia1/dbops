@@ -110,11 +110,19 @@ const BackupManage: React.FC = () => {
     try {
       const values = await form.validateFields()
       setSubmitting(true)
-      await backupApi.executeBackup(selectedInstance, values.backup_type)
+      const res: any = await backupApi.executeBackup(selectedInstance, values.backup_type)
+      const data = res?.data || {}
+      if (data.status && data.status !== 'completed') {
+        throw new Error(data.message || 'backup task failed')
+      }
       message.success('备份任务已提交')
       setCreateOpen(false)
-      fetchRecords()
+      await fetchRecords()
     } catch (err: any) {
+      if (!err?.response?.data?.message && err?.message) {
+        message.error(err.message)
+        return
+      }
       message.error(err?.response?.data?.message || '提交备份任务失败')
     } finally {
       setSubmitting(false)

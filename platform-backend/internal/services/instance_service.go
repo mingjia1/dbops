@@ -401,6 +401,9 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			"content":     req.Content,
 			"service":     req.Service,
 			"verb":        req.Verb,
+			"basedir":     conn.Basedir,
+			"datadir":     conn.Datadir,
+			"os_user":     conn.OSUser,
 		},
 	})
 	if err != nil {
@@ -531,6 +534,9 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 			"content":     req.Content,
 			"service":     req.Service,
 			"verb":        req.Verb,
+			"basedir":     conn.Basedir,
+			"datadir":     conn.Datadir,
+			"os_user":     conn.OSUser,
 		},
 	})
 	if err != nil {

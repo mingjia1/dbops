@@ -2,12 +2,16 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -483,6 +487,8 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 	}
 	if v, ok := config["mysql_port"].(int); ok {
 		bc.MySQLPort = v
+	} else if v, ok := config["mysql_port"].(float64); ok {
+		bc.MySQLPort = int(v)
 	}
 	if v, ok := config["mysql_user"].(string); ok {
 		bc.MySQLUser = v
@@ -498,6 +504,14 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 	// P0: 之前用 time.Now().Unix() 1 秒精度, 同秒并发会写同 dir 互相覆盖.
 	// 改 UnixNano 纳秒精度, 并发 backup 不可能撞.
 	backupDir := fmt.Sprintf("%s/%s-%d", config.TargetDir, config.BackupType, time.Now().UnixNano())
+	if err := os.MkdirAll(config.TargetDir, 0o755); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create backup root failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
 
 	backupCmd := exec.CommandContext(ctx, "xtrabackup",
 		"--backup",
@@ -506,40 +520,16 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		"--port="+fmt.Sprintf("%d", config.MySQLPort),
 		"--user="+config.MySQLUser,
 		"--password="+config.MySQLPass,
-		"--stream=xbstream",
-		"--compress",
 	)
 
 	// A3 part 1: --stream=xbstream 写到 stdout, 之前 Stdout=nil 把流扔了,
 	// sha256sum 必然拿不到文件, 然后假装 "checksum-unavailable" + 报 completed.
 	// 修: 把 xbstream 流到磁盘, sha256sum 才能算出真 hash.
-	backupFile := fmt.Sprintf("%s.xbstream", backupDir)
-	streamOut, err := os.Create(backupFile)
-	if err != nil {
+	if out, err := backupCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  0,
-			Message:   fmt.Sprintf("Failed to open backup file %s: %v", backupFile, err),
-			Timestamp: time.Now(),
-		}, nil
-	}
-	backupCmd.Stdout = streamOut
-	backupCmd.Stderr = os.Stderr
-
-	if err := backupCmd.Run(); err != nil {
-		_ = streamOut.Close()
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  0,
-			Message:   fmt.Sprintf("Xtrabackup backup failed: %v", err),
-			Timestamp: time.Now(),
-		}, nil
-	}
-	if err := streamOut.Close(); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  0,
-			Message:   fmt.Sprintf("Failed to close backup file %s: %v", backupFile, err),
+			Message:   fmt.Sprintf("Xtrabackup backup failed: %v\n%s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -549,33 +539,54 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		"--target-dir="+backupDir,
 	)
 
-	if err := prepareCmd.Run(); err != nil {
+	if out, err := prepareCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  50,
-			Message:   fmt.Sprintf("Xtrabackup prepare failed: %v", err),
+			Message:   fmt.Sprintf("Xtrabackup prepare failed: %v\n%s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}
 
-	checksumCmd := exec.CommandContext(ctx, "sha256sum", backupFile)
-	checksumOutput, err := checksumCmd.Output()
+	if !isCompleteXtrabackupDir(backupDir) {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   "xtrabackup completed but backup directory is incomplete: " + backupDir,
+			Timestamp: time.Now(),
+		}, nil
+	}
+	sizeBytes, err := pathSize(backupDir)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup size failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	checksum, err := checksumPath(backupDir)
 	if err != nil {
 		// 真没拿到 hash 时标 failed, 不能再假装 "checksum-unavailable" 然后 completed
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  80,
-			Message:   fmt.Sprintf("sha256sum failed: %v (backup file: %s)", err, backupFile),
+			Message:   fmt.Sprintf("calculate backup checksum failed: %v", err),
 			Timestamp: time.Now(),
 		}, nil
 	}
 
 	return &TaskResult{
-		Status:   "completed",
-		Progress: 100,
-		Message: fmt.Sprintf("Backup completed successfully. Path: %s, Checksum: %s",
-			backupDir, strings.TrimSpace(string(checksumOutput))),
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("Backup completed successfully. Path: %s, Checksum: %s", backupDir, checksum),
 		Timestamp: time.Now(),
+		Data: map[string]any{
+			"backup_path": backupDir,
+			"backup_type": config.BackupType,
+			"file_size":   sizeBytes,
+			"checksum":    checksum,
+		},
 	}, nil
 }
 
@@ -1202,17 +1213,64 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 		if err != nil || !info.IsDir() {
 			continue
 		}
-		_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil || entry.IsDir() {
+		if isCompleteXtrabackupDir(dir) {
+			sizeBytes, err := pathSize(dir)
+			if err != nil {
+				continue
+			}
+			files = append(files, BackupScanFile{
+				FileName:   filepath.Base(dir),
+				FilePath:   dir,
+				SizeBytes:  sizeBytes,
+				BackupType: classifyBackupPath(dir, true),
+				DetectedAt: time.Now(),
+				MTime:      info.ModTime(),
+			})
+			if len(files) >= 500 {
+				break
+			}
+			continue
+		}
+		root := dir
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
 				return nil
 			}
+			if entry.IsDir() {
+				if path == root {
+					return nil
+				}
+				if !isCompleteXtrabackupDir(path) {
+					return nil
+				}
+				sizeBytes, err := pathSize(path)
+				if err != nil {
+					return filepath.SkipDir
+				}
+				stat, err := entry.Info()
+				if err != nil {
+					return filepath.SkipDir
+				}
+				files = append(files, BackupScanFile{
+					FileName:   entry.Name(),
+					FilePath:   path,
+					SizeBytes:  sizeBytes,
+					BackupType: classifyBackupPath(path, true),
+					DetectedAt: time.Now(),
+					MTime:      stat.ModTime(),
+				})
+				if len(files) >= 500 {
+					return filepath.SkipAll
+				}
+				return filepath.SkipDir
+			}
 			name := entry.Name()
-			backupType := classifyBackupFile(name)
+			backupType := classifyBackupPath(path, false)
 			if backupType == "" {
 				return nil
 			}
 			stat, err := entry.Info()
-			if err != nil {
+			if err != nil || stat.Size() <= 0 {
 				return nil
 			}
 			files = append(files, BackupScanFile{
@@ -1243,17 +1301,119 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 	}, nil
 }
 
-func classifyBackupFile(name string) string {
-	lower := strings.ToLower(name)
+func classifyBackupPath(path string, isDir bool) string {
+	lower := strings.ToLower(filepath.Base(path))
+	if strings.HasSuffix(lower, ".tmp") || strings.HasSuffix(lower, ".partial") || strings.HasSuffix(lower, ".incomplete") {
+		return ""
+	}
+	if strings.Contains(lower, "incremental") || strings.Contains(lower, "-inc") || strings.Contains(lower, "_inc") {
+		return "incremental"
+	}
+	if isDir {
+		return "full"
+	}
 	switch {
 	case strings.HasSuffix(lower, ".sql") || strings.HasSuffix(lower, ".sql.gz") || strings.HasSuffix(lower, ".dump"):
 		return "logical"
-	case strings.HasSuffix(lower, ".xbstream") || strings.Contains(lower, "xtrabackup"):
+	case strings.HasSuffix(lower, ".xbstream"):
 		return "full"
-	case strings.Contains(lower, "incremental") || strings.Contains(lower, "inc"):
-		return "incremental"
 	default:
 		return ""
+	}
+}
+
+func isCompleteXtrabackupDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if !fileExists(filepath.Join(path, "xtrabackup_checkpoints")) || !fileExists(filepath.Join(path, "xtrabackup_info")) {
+		return false
+	}
+	return fileExists(filepath.Join(path, "backup-my.cnf")) || fileExists(filepath.Join(path, "xtrabackup_logfile"))
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func pathSize(path string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(path, func(p string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
+}
+
+func checksumPath(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return checksumFile(path)
+	}
+	files := make([]string, 0)
+	if err := filepath.WalkDir(path, func(p string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		files = append(files, p)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	sortStrings(files)
+	h := sha256.New()
+	for _, file := range files {
+		rel, _ := filepath.Rel(path, file)
+		_, _ = io.WriteString(h, rel+"\n")
+		sum, err := checksumFile(file)
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.WriteString(h, sum+"\n")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func checksumFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func sortStrings(items []string) {
+	for i := 1; i < len(items); i++ {
+		value := items[i]
+		j := i - 1
+		for j >= 0 && items[j] > value {
+			items[j+1] = items[j]
+			j--
+		}
+		items[j+1] = value
 	}
 }
 
@@ -1350,17 +1510,11 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		err = os.WriteFile(path, []byte(content), 0o600)
 		output = "config written: " + path
 	case "service_control":
-		service, _ := req.Config["service"].(string)
 		verb, _ := req.Config["verb"].(string)
-		if service == "" {
-			service = "mysqld"
-		}
 		if verb != "start" && verb != "stop" && verb != "restart" && verb != "status" {
 			return adminFailed(req.TaskID, "invalid service action"), nil
 		}
-		cmd := exec.CommandContext(ctx, "systemctl", verb, service)
-		out, runErr := cmd.CombinedOutput()
-		output, err = string(out), runErr
+		output, err = controlInstanceService(ctx, req.Config)
 	default:
 		return adminFailed(req.TaskID, "unsupported action: "+action), nil
 	}
@@ -1404,6 +1558,125 @@ func adminTarget(config map[string]interface{}) (string, int, string, string) {
 	}
 	pass, _ := config["target_pass"].(string)
 	return host, port, user, pass
+}
+
+func controlInstanceService(ctx context.Context, config map[string]interface{}) (string, error) {
+	verb, _ := config["verb"].(string)
+	basedir, _ := config["basedir"].(string)
+	datadir, _ := config["datadir"].(string)
+	osUser, _ := config["os_user"].(string)
+	port := configInt(config, "target_port")
+	if osUser == "" {
+		osUser = "mysql"
+	}
+	if datadir == "" {
+		return "", fmt.Errorf("datadir is required for instance-bound service control")
+	}
+	switch verb {
+	case "status":
+		if pid, ok := instancePID(datadir); ok && processMatchesDatadir(pid, datadir) {
+			return fmt.Sprintf("running pid=%d datadir=%s port=%d", pid, datadir, port), nil
+		}
+		return fmt.Sprintf("stopped datadir=%s port=%d", datadir, port), nil
+	case "stop":
+		return stopInstanceProcess(ctx, datadir)
+	case "start":
+		return startInstanceProcess(ctx, basedir, datadir, osUser, port)
+	case "restart":
+		stopOutput, stopErr := stopInstanceProcess(ctx, datadir)
+		if stopErr != nil {
+			return stopOutput, stopErr
+		}
+		startOutput, startErr := startInstanceProcess(ctx, basedir, datadir, osUser, port)
+		return strings.TrimSpace(stopOutput + "\n" + startOutput), startErr
+	default:
+		return "", fmt.Errorf("invalid service action")
+	}
+}
+
+func instancePID(datadir string) (int, bool) {
+	raw, err := os.ReadFile(filepath.Join(datadir, "mysql.pid"))
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+func processMatchesDatadir(pid int, datadir string) bool {
+	if pid <= 0 || datadir == "" {
+		return false
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	cmd := strings.ReplaceAll(string(cmdline), "\x00", " ")
+	return strings.Contains(cmd, datadir)
+}
+
+func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
+	pid, ok := instancePID(datadir)
+	if !ok {
+		return "already stopped: pid file not found", nil
+	}
+	if !processMatchesDatadir(pid, datadir) {
+		return "", fmt.Errorf("refuse to stop pid %d: process does not match datadir %s", pid, datadir)
+	}
+	if out, err := exec.CommandContext(ctx, "kill", "-TERM", fmt.Sprintf("%d", pid)).CombinedOutput(); err != nil {
+		return string(out), err
+	}
+	for i := 0; i < 30; i++ {
+		if !processMatchesDatadir(pid, datadir) {
+			return fmt.Sprintf("stopped pid=%d datadir=%s", pid, datadir), nil
+		}
+		time.Sleep(time.Second)
+	}
+	if out, err := exec.CommandContext(ctx, "kill", "-KILL", fmt.Sprintf("%d", pid)).CombinedOutput(); err != nil {
+		return string(out), err
+	}
+	return fmt.Sprintf("killed pid=%d datadir=%s", pid, datadir), nil
+}
+
+func startInstanceProcess(ctx context.Context, basedir, datadir, osUser string, port int) (string, error) {
+	if pid, ok := instancePID(datadir); ok && processMatchesDatadir(pid, datadir) {
+		return fmt.Sprintf("already running pid=%d datadir=%s", pid, datadir), nil
+	}
+	if basedir == "" {
+		return "", fmt.Errorf("basedir is required to start instance")
+	}
+	if port <= 0 {
+		return "", fmt.Errorf("target_port is required to start instance")
+	}
+	mysqld := filepath.Join(basedir, "bin", "mysqld")
+	if _, err := os.Stat(mysqld); err != nil {
+		return "", fmt.Errorf("mysqld not found at %s: %w", mysqld, err)
+	}
+	args := []string{
+		"--no-defaults",
+		"--daemonize",
+		"--basedir=" + basedir,
+		"--datadir=" + datadir,
+		"--port=" + fmt.Sprintf("%d", port),
+		"--bind-address=0.0.0.0",
+		"--socket=" + filepath.Join(datadir, "mysql.sock"),
+		"--pid-file=" + filepath.Join(datadir, "mysql.pid"),
+		"--log-error=" + filepath.Join(datadir, "error.log"),
+		"--user=" + osUser,
+	}
+	if out, err := exec.CommandContext(ctx, mysqld, args...).CombinedOutput(); err != nil {
+		return strings.TrimSpace(string(out)), err
+	}
+	for i := 0; i < 30; i++ {
+		if pid, ok := instancePID(datadir); ok && processMatchesDatadir(pid, datadir) {
+			return fmt.Sprintf("started pid=%d datadir=%s port=%d", pid, datadir, port), nil
+		}
+		time.Sleep(time.Second)
+	}
+	return "", fmt.Errorf("mysqld start command returned but instance did not become running for datadir %s", datadir)
 }
 
 func configInt(config map[string]interface{}, key string) int {

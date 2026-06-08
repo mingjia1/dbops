@@ -51,6 +51,7 @@ type BackupTaskResult struct {
 	BackupType  string    `json:"backup_type"`
 	TaskID      string    `json:"task_id"`
 	Status      string    `json:"status"`
+	Message     string    `json:"message,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at"`
 	FilePath    string    `json:"file_path"`
@@ -116,6 +117,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		host, err := s.hostRepo.GetByID(ctx, *inst.HostID)
 		if err == nil {
 			agentHost = host.Address
+			if host.AgentPort != 0 {
+				agentPort = host.AgentPort
+			}
 		}
 	}
 	if agentHost == "" {
@@ -153,6 +157,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	}
 	if err != nil {
 		out.Status = "failed"
+		out.Message = err.Error()
 		// 真实落库失败记录, 而不是悄无声息.
 		_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
 			InstanceID: req.InstanceID,
@@ -164,8 +169,15 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		return out, nil
 	}
 	out.Status = result.Status
+	out.Message = result.Message
 	out.CompletedAt = time.Now()
-	out.FilePath = result.Message
+	out.FilePath = stringValue(result.Data["backup_path"])
+	out.FileSize = int64Value(result.Data["file_size"])
+	out.Checksum = stringValue(result.Data["checksum"])
+	if out.FilePath == "" {
+		out.FilePath = stringValueFromMessage(result.Message)
+	}
+	out.Size = formatBytes(out.FileSize)
 
 	_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
 		InstanceID:  req.InstanceID,
@@ -174,6 +186,8 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		CompletedAt: out.CompletedAt,
 		Status:      out.Status,
 		FilePath:    out.FilePath,
+		FileSize:    out.FileSize,
+		Checksum:    out.Checksum,
 		CreatedAt:   now,
 	})
 	return out, nil
@@ -298,6 +312,19 @@ func stringValue(v interface{}) string {
 		return s
 	}
 	return ""
+}
+
+func stringValueFromMessage(message string) string {
+	const marker = "Path: "
+	idx := strings.Index(message, marker)
+	if idx < 0 {
+		return ""
+	}
+	value := strings.TrimSpace(message[idx+len(marker):])
+	if comma := strings.Index(value, ","); comma >= 0 {
+		value = strings.TrimSpace(value[:comma])
+	}
+	return value
 }
 
 func int64Value(v interface{}) int64 {
