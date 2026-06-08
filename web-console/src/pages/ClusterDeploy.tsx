@@ -1,12 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Card, Tabs, Form, Input, InputNumber, Select, Button, Space, message, Steps, Progress, Tag, Table, Empty, Alert,
+  Card, Tabs, Form, Input, InputNumber, Select, Button, Space, message, Steps, Progress, Tag, Table, Empty, Alert, Modal, Descriptions,
 } from 'antd'
 import { ClusterOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, type Host } from '../services/api'
 
 type ArchType = 'mha' | 'mgr' | 'pxc'
+
+const DEFAULT_MYSQL_CREDENTIAL = {
+  username: 'root',
+  password: 'Hcfc@DboOps#2024_80',
+}
+
+const DEFAULT_CREDENTIAL_ACK_KEY = 'dbops.clusterDeploy.defaultMysqlCredentialAck'
 
 interface DeployResult {
   deployment_id: string
@@ -29,14 +36,20 @@ const ClusterDeploy: React.FC = () => {
   const [deployments, setDeployments] = useState<DeployResult[]>([])
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
+  const [credential, setCredential] = useState(DEFAULT_MYSQL_CREDENTIAL)
+  const [credentialModalOpen, setCredentialModalOpen] = useState(false)
+  const [showDefaultCredential, setShowDefaultCredential] = useState(false)
+  const [oneTimeCredential, setOneTimeCredential] = useState<typeof DEFAULT_MYSQL_CREDENTIAL | null>(null)
   const pollRef = useRef<number | null>(null)
 
   const [mhaForm] = Form.useForm()
   const [mgrForm] = Form.useForm()
   const [pxcForm] = Form.useForm()
+  const [credentialForm] = Form.useForm()
 
   useEffect(() => {
     hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => {})
+    setShowDefaultCredential(localStorage.getItem(DEFAULT_CREDENTIAL_ACK_KEY) !== '1')
   }, [])
 
   useEffect(() => () => {
@@ -44,6 +57,47 @@ const ClusterDeploy: React.FC = () => {
   }, [])
 
   const hostOptions = hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))
+
+  const openCredentialModal = () => {
+    credentialForm.setFieldsValue({
+      username: credential.username,
+      password: '',
+      confirm_password: '',
+    })
+    setCredentialModalOpen(true)
+  }
+
+  const acknowledgeDefaultCredential = () => {
+    localStorage.setItem(DEFAULT_CREDENTIAL_ACK_KEY, '1')
+    setShowDefaultCredential(false)
+  }
+
+  const submitCredentialChange = async () => {
+    const values = await credentialForm.validateFields()
+    Modal.confirm({
+      title: '确认修改默认 MySQL 实例凭据?',
+      content: (
+        <div>
+          <p>修改后新密码只会在页面上显示一次。请确认已经准备好记录。</p>
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="用户名">{values.username}</Descriptions.Item>
+            <Descriptions.Item label="新密码">{values.password}</Descriptions.Item>
+          </Descriptions>
+        </div>
+      ),
+      okText: '确认修改',
+      cancelText: '取消',
+      onOk: () => {
+        const next = { username: values.username, password: values.password }
+        setCredential(next)
+        setOneTimeCredential(next)
+        setShowDefaultCredential(false)
+        localStorage.setItem(DEFAULT_CREDENTIAL_ACK_KEY, '1')
+        setCredentialModalOpen(false)
+        message.success('默认 MySQL 实例凭据已更新')
+      },
+    })
+  }
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -99,7 +153,12 @@ const ClusterDeploy: React.FC = () => {
     setCurrentStep(0)
     setActiveDeployment(null)
     try {
-      const res: any = await apiCall({ cluster_id: values.cluster_id, ...values })
+      const res: any = await apiCall({
+        cluster_id: values.cluster_id,
+        ...values,
+        mysql_user: credential.username,
+        mysql_password: credential.password,
+      })
       const dep: DeployResult = {
         deployment_id: res?.data?.deployment_id || `dep-${Date.now()}`,
         cluster_id: values.cluster_id,
@@ -222,6 +281,49 @@ const ClusterDeploy: React.FC = () => {
         description="集群部署是不可逆的破坏性操作: 会在目标主机上安装 MySQL 二进制、初始化 datadir、修改系统配置。请确认已在测试环境验证, 并具备回滚方案 (快照/备份)。"
       />
       <Card title={<Space><ClusterOutlined /><span>集群部署</span></Space>}>
+        <Card
+          size="small"
+          title="默认创建的 MySQL 实例账号"
+          extra={<Button size="small" onClick={openCredentialModal}>修改</Button>}
+          style={{ marginBottom: 16 }}
+        >
+          {showDefaultCredential && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="首次默认凭据"
+              description={
+                <Space direction="vertical" size={4}>
+                  <span>用户名: <b>{credential.username}</b></span>
+                  <span>密码: <b>{credential.password}</b></span>
+                  <Button size="small" onClick={acknowledgeDefaultCredential}>我已保存, 隐藏默认密码</Button>
+                </Space>
+              }
+            />
+          )}
+          {oneTimeCredential && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="新凭据仅显示一次"
+              description={
+                <Space direction="vertical" size={4}>
+                  <span>用户名: <b>{oneTimeCredential.username}</b></span>
+                  <span>密码: <b>{oneTimeCredential.password}</b></span>
+                  <Button size="small" danger onClick={() => setOneTimeCredential(null)}>我已保存, 立即隐藏</Button>
+                </Space>
+              }
+            />
+          )}
+          {!showDefaultCredential && !oneTimeCredential && (
+            <Descriptions size="small" column={2}>
+              <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
+              <Descriptions.Item label="密码">已隐藏</Descriptions.Item>
+            </Descriptions>
+          )}
+        </Card>
         <Tabs
           activeKey={tab}
           onChange={(k) => setTab(k as ArchType)}
@@ -259,6 +361,48 @@ const ClusterDeploy: React.FC = () => {
           ]}
         />
       </Card>
+
+      <Modal
+        title="修改默认 MySQL 实例账号"
+        open={credentialModalOpen}
+        onCancel={() => setCredentialModalOpen(false)}
+        onOk={submitCredentialChange}
+        okText="下一步确认"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="修改需要二次确认"
+          description="保存后部署任务会使用新凭据创建 MySQL 实例。新密码确认后只显示一次。"
+        />
+        <Form form={credentialForm} layout="vertical">
+          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
+            <Input placeholder="例如: root" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="password" label="新密码" rules={[{ required: true, min: 8, message: '请输入至少 8 位密码' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="确认新密码"
+            dependencies={['password']}
+            rules={[
+              { required: true, message: '请再次输入新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('password') === value) return Promise.resolve()
+                  return Promise.reject(new Error('两次输入的密码不一致'))
+                },
+              }),
+            ]}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {activeDeployment && (
         <Card

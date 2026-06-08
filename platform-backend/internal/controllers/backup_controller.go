@@ -30,6 +30,18 @@ func (c *BackupController) CreatePolicy(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, gin.H{"policy_id": policyID})
 }
 
+func (c *BackupController) ListPolicies(ctx *gin.Context) {
+	instanceID := ctx.Query("instance_id")
+
+	policies, err := c.service.ListPolicies(ctx.Request.Context(), instanceID)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to list backup policies", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, policies)
+}
+
 func (c *BackupController) ExecuteBackup(ctx *gin.Context) {
 	var req services.ExecuteBackupRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -48,7 +60,7 @@ func (c *BackupController) ExecuteBackup(ctx *gin.Context) {
 
 func (c *BackupController) ListBackups(ctx *gin.Context) {
 	instanceID := ctx.Query("instance_id")
-	
+
 	backups, err := c.service.ListBackups(ctx.Request.Context(), instanceID)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to list backups", err)
@@ -56,4 +68,22 @@ func (c *BackupController) ListBackups(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, backups)
+}
+
+func (c *BackupController) ScanBackups(ctx *gin.Context) {
+	var req struct {
+		InstanceID string `json:"instance_id" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.ScanBackups(ctx.Request.Context(), req.InstanceID)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to scan backups", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
 }

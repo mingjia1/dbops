@@ -138,7 +138,8 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 }
 
 func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models.InstanceVersion, error) {
-	if _, err := s.repo.GetByID(ctx, id); err != nil {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	conn, err := s.repo.GetConnection(ctx, id)
@@ -155,14 +156,22 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	if host == "" {
 		return nil, fmt.Errorf("instance %s has no host/port to probe", id)
 	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return nil, err
+	}
 	// PasswordEncrypted 是 AES-GCM 密文, agent 端自己解密再连 MySQL.
 	cfg := map[string]interface{}{
 		"target_host": host,
 		"target_port": port,
 		"target_user": conn.Username,
-		"target_pass": conn.PasswordEncrypted,
+		"target_pass": password,
 	}
-	result, err := s.agentClient.callAgent(ctx, host, 9090, "/agent/tasks/version-detect", map[string]interface{}{
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/version-detect", map[string]interface{}{
 		"task_id":     uuid.New().String(),
 		"instance_id": id,
 		"config":      cfg,
@@ -304,4 +313,98 @@ type DeployResult struct {
 	Status   string `json:"status"`
 	Progress int    `json:"progress"`
 	Message  string `json:"message"`
+}
+
+type InstanceAdminRequest struct {
+	Action     string `json:"action" binding:"required"`
+	Username   string `json:"username"`
+	UserHost   string `json:"user_host"`
+	Password   string `json:"password"`
+	Privileges string `json:"privileges"`
+	Scope      string `json:"scope"`
+	Pattern    string `json:"pattern"`
+	Name       string `json:"name"`
+	Value      string `json:"value"`
+	Path       string `json:"path"`
+	Content    string `json:"content"`
+	Service    string `json:"service"`
+	Verb       string `json:"verb"`
+}
+
+type InstanceAdminResult struct {
+	TaskID   string      `json:"task_id"`
+	Status   string      `json:"status"`
+	Message  string      `json:"message"`
+	Data     interface{} `json:"data,omitempty"`
+	Progress int         `json:"progress"`
+}
+
+func (s *InstanceService) AdminAction(ctx context.Context, id string, req InstanceAdminRequest) (*InstanceAdminResult, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id":     "instance-admin-" + uuid.New().String(),
+		"instance_id": id,
+		"config": map[string]interface{}{
+			"action":      req.Action,
+			"target_host": conn.Host,
+			"target_port": conn.Port,
+			"target_user": conn.Username,
+			"target_pass": password,
+			"username":    req.Username,
+			"user_host":   req.UserHost,
+			"password":    req.Password,
+			"privileges":  req.Privileges,
+			"scope":       req.Scope,
+			"pattern":     req.Pattern,
+			"name":        req.Name,
+			"value":       req.Value,
+			"path":        req.Path,
+			"content":     req.Content,
+			"service":     req.Service,
+			"verb":        req.Verb,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("instance admin call failed: %w", err)
+	}
+	return &InstanceAdminResult{
+		TaskID:   result.TaskID,
+		Status:   result.Status,
+		Message:  result.Message,
+		Data:     result.Data,
+		Progress: result.Progress,
+	}, nil
+}
+
+func (s *InstanceService) resolveAgentEndpoint(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection) (string, int, error) {
+	if instance.HostID != nil && *instance.HostID != "" {
+		host, err := s.hostRepo.GetByID(ctx, *instance.HostID)
+		if err == nil && host.Address != "" {
+			port := host.AgentPort
+			if port == 0 {
+				port = 9090
+			}
+			return host.Address, port, nil
+		}
+	}
+	if conn.Host == "" {
+		return "", 0, fmt.Errorf("cannot determine agent host")
+	}
+	return conn.Host, 9090, nil
 }

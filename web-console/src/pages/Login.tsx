@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Form, Input, Button, Tabs, App as AntApp } from 'antd'
-import { UserOutlined, LockOutlined, MailOutlined, AppleOutlined, CloudOutlined, SafetyCertificateOutlined, ThunderboltOutlined, ClusterOutlined } from '@ant-design/icons'
+import { UserOutlined, LockOutlined, MailOutlined, CloudOutlined, SafetyCertificateOutlined, ThunderboltOutlined, ClusterOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import { palette } from '../appTheme'
@@ -121,9 +121,6 @@ const Login: React.FC = () => {
         <div className="brand-orb brand-orb-2" />
         <div className="brand-orb brand-orb-3" />
         <div className="brand-content apple-fade-in">
-          <div className="brand-logo">
-            <AppleOutlined />
-          </div>
           <h1 className="brand-title">MySQL 运维平台</h1>
           <p className="brand-desc">企业级数据库全生命周期管理</p>
 
@@ -180,4 +177,3 @@ const Login: React.FC = () => {
 }
 
 export default Login
-

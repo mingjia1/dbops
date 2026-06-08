@@ -15,21 +15,23 @@ func NewMHAExecutor() *MHAExecutor {
 }
 
 type MHAConfig struct {
-	ManagerHost    string   `json:"manager_host"`
-	MasterHost     string   `json:"master_host"`
-	MasterPort     int      `json:"master_port"`
-	SlaveHosts     []string `json:"slave_hosts"`
-	SlavePorts     []int    `json:"slave_ports"`
-	VIP            string   `json:"vip"`
-	VIPInterface   string   `json:"vip_interface"`
-	ReplUser       string   `json:"repl_user"`
-	ReplPass       string   `json:"repl_pass"`
-	ManagerUser    string   `json:"manager_user"`
-	ManagerPass    string   `json:"manager_pass"`
-	PingInterval   int      `json:"ping_interval"`
-	PingRetry      int      `json:"ping_retry"`
-	SSHUser        string   `json:"ssh_user"`
-	SSHPrivateKey  string   `json:"ssh_private_key"`
+	ManagerHost   string   `json:"manager_host"`
+	MasterHost    string   `json:"master_host"`
+	MasterPort    int      `json:"master_port"`
+	SlaveHosts    []string `json:"slave_hosts"`
+	SlavePorts    []int    `json:"slave_ports"`
+	VIP           string   `json:"vip"`
+	VIPInterface  string   `json:"vip_interface"`
+	ReplUser      string   `json:"repl_user"`
+	ReplPass      string   `json:"repl_pass"`
+	ManagerUser   string   `json:"manager_user"`
+	ManagerPass   string   `json:"manager_pass"`
+	MySQLUser     string   `json:"mysql_user"`
+	MySQLPassword string   `json:"mysql_password"`
+	PingInterval  int      `json:"ping_interval"`
+	PingRetry     int      `json:"ping_retry"`
+	SSHUser       string   `json:"ssh_user"`
+	SSHPrivateKey string   `json:"ssh_private_key"`
 }
 
 type MHAManagerConfig struct {
@@ -48,22 +50,22 @@ type MHAManagerConfig struct {
 }
 
 type MHANodeConfig struct {
-	NodeHost       string `json:"node_host"`
-	NodePort       int    `json:"node_port"`
-	SSHUser        string `json:"ssh_user"`
-	SSHPrivateKey  string `json:"ssh_private_key"`
-	ReplUser       string `json:"repl_user"`
-	ReplPass       string `json:"repl_pass"`
-	InstallDir     string `json:"install_dir"`
+	NodeHost      string `json:"node_host"`
+	NodePort      int    `json:"node_port"`
+	SSHUser       string `json:"ssh_user"`
+	SSHPrivateKey string `json:"ssh_private_key"`
+	ReplUser      string `json:"repl_user"`
+	ReplPass      string `json:"repl_pass"`
+	InstallDir    string `json:"install_dir"`
 }
 
 type MasterFailureInfo struct {
-	MasterHost     string    `json:"master_host"`
-	MasterPort     int       `json:"master_port"`
-	FailureTime    time.Time `json:"failure_time"`
-	IsReachable    bool      `json:"is_reachable"`
-	MySQLAlive     bool      `json:"mysql_alive"`
-	ReplWorking    bool      `json:"repl_working"`
+	MasterHost  string    `json:"master_host"`
+	MasterPort  int       `json:"master_port"`
+	FailureTime time.Time `json:"failure_time"`
+	IsReachable bool      `json:"is_reachable"`
+	MySQLAlive  bool      `json:"mysql_alive"`
+	ReplWorking bool      `json:"repl_working"`
 }
 
 type FailoverResult struct {
@@ -95,6 +97,7 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 		ReplPass:      "repl123",
 		ManagerUser:   "mha_manager",
 		ManagerPass:   "mha123",
+		MySQLUser:     "root",
 		PingInterval:  3,
 		PingRetry:     3,
 		SSHUser:       "root",
@@ -127,6 +130,12 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	}
 	if v, ok := config["manager_pass"].(string); ok {
 		mc.ManagerPass = v
+	}
+	if v, ok := config["mysql_user"].(string); ok {
+		mc.MySQLUser = v
+	}
+	if v, ok := config["mysql_password"].(string); ok {
+		mc.MySQLPassword = v
 	}
 	if v, ok := config["ping_interval"].(int); ok {
 		mc.PingInterval = v
@@ -208,7 +217,11 @@ func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig)
 		cmd := exec.CommandContext(ctx, "mysql",
 			"-h", host,
 			"-P", fmt.Sprintf("%d", config.MasterPort),
-			"-u", "root", "-e", createUserSQL)
+			"-u", config.MySQLUser)
+		if config.MySQLPassword != "" {
+			cmd.Args = append(cmd.Args, "-p"+config.MySQLPassword)
+		}
+		cmd.Args = append(cmd.Args, "-e", createUserSQL)
 
 		if err := cmd.Run(); err != nil {
 			return &TaskResult{
@@ -278,9 +291,9 @@ func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfi
 	}
 
 	return &TaskResult{
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("MHA deployment validated. Manager: %s, Master: %s:%d", 
+		Status:   "completed",
+		Progress: 100,
+		Message: fmt.Sprintf("MHA deployment validated. Manager: %s, Master: %s:%d",
 			config.ManagerHost, config.MasterHost, config.MasterPort),
 		Timestamp: time.Now(),
 	}
@@ -337,16 +350,16 @@ func (e *MHAExecutor) CreateMHAManagerConfig(ctx context.Context, req DeployTask
 
 func (e *MHAExecutor) parseMHAManagerConfig(config map[string]interface{}) MHAManagerConfig {
 	mc := MHAManagerConfig{
-		ConfigFile:    "/etc/mha/app1.cnf",
-		ManagerHost:   "localhost",
-		MasterPort:    3306,
-		VIP:           "192.168.1.100",
-		VIPInterface:  "eth0",
-		ReplUser:      "repl",
-		ReplPass:      "repl123",
-		SSHUser:       "root",
-		WorkDir:       "/var/log/mha/app1",
-		PingInterval:  3,
+		ConfigFile:   "/etc/mha/app1.cnf",
+		ManagerHost:  "localhost",
+		MasterPort:   3306,
+		VIP:          "192.168.1.100",
+		VIPInterface: "eth0",
+		ReplUser:     "repl",
+		ReplPass:     "repl123",
+		SSHUser:      "root",
+		WorkDir:      "/var/log/mha/app1",
+		PingInterval: 3,
 	}
 
 	if v, ok := config["config_file"].(string); ok {
@@ -489,13 +502,13 @@ func (e *MHAExecutor) ConfigureMHANode(ctx context.Context, req DeployTaskReques
 
 func (e *MHAExecutor) parseMHANodeConfig(config map[string]interface{}) MHANodeConfig {
 	nc := MHANodeConfig{
-		NodeHost:       "localhost",
-		NodePort:       3306,
-		SSHUser:        "root",
-		SSHPrivateKey:  "/root/.ssh/id_rsa",
-		ReplUser:       "repl",
-		ReplPass:       "repl123",
-		InstallDir:     "/var/log/mha",
+		NodeHost:      "localhost",
+		NodePort:      3306,
+		SSHUser:       "root",
+		SSHPrivateKey: "/root/.ssh/id_rsa",
+		ReplUser:      "repl",
+		ReplPass:      "repl123",
+		InstallDir:    "/var/log/mha",
 	}
 
 	if v, ok := config["node_host"].(string); ok {
@@ -595,7 +608,7 @@ func (e *MHAExecutor) ExecuteFailover(ctx context.Context, req DeployTaskRequest
 	}
 
 	newMaster := e.extractNewMasterFromOutput(string(output))
-	
+
 	vipResult := e.SwitchVIP(ctx, config, config.MasterHost, newMaster)
 
 	return &FailoverResult{

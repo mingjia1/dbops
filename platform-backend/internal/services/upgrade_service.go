@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,9 @@ type UpgradeService struct {
 	// B3: 之前 4 个 Execute* 是写死返回, 不调 agent. 注入 AgentClient 后
 	// 真正派发到 agent 端 UpgradeExecutor.
 	agentClient *AgentClient
+	// P0: per-instance mutex 防止两个 admin 同时点同一实例的升级/迁移,
+	// 后跑的 dispatch 会写同 backupDir/同 importDir 互相覆盖.
+	locks sync.Map // map[instanceID]*sync.Mutex
 }
 
 func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient) *UpgradeService {
@@ -36,15 +40,15 @@ type PlanUpgradePathRequest struct {
 }
 
 type PlanUpgradePathResponse struct {
-	PlanID          string             `json:"plan_id"`
-	SourceVersion   string             `json:"source_version"`
-	SourceFlavor    string             `json:"source_flavor"`
-	TargetVersion   string             `json:"target_version"`
-	TargetFlavor    string             `json:"target_flavor"`
-	Strategy        string             `json:"strategy"`
-	UpgradePath     []UpgradeStepInfo  `json:"upgrade_path"`
-	EstimatedTime   int                `json:"estimated_time"`
-	RiskLevel       string             `json:"risk_level"`
+	PlanID           string            `json:"plan_id"`
+	SourceVersion    string            `json:"source_version"`
+	SourceFlavor     string            `json:"source_flavor"`
+	TargetVersion    string            `json:"target_version"`
+	TargetFlavor     string            `json:"target_flavor"`
+	Strategy         string            `json:"strategy"`
+	UpgradePath      []UpgradeStepInfo `json:"upgrade_path"`
+	EstimatedTime    int               `json:"estimated_time"`
+	RiskLevel        string            `json:"risk_level"`
 	PreCheckWarnings []string          `json:"pre_check_warnings"`
 }
 
@@ -101,15 +105,15 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 	}
 
 	plan := &models.UpgradePlan{
-		ID:             uuid.New().String(),
-		InstanceID:     req.InstanceID,
-		SourceVersion:  sourceVersion,
-		TargetVersion:  targetVersion,
-		Strategy:       req.Strategy,
-		Status:         "planned",
-		EstimatedTime:  estimatedTime,
-		RiskLevel:      riskLevel,
-		UpgradePath:    s.serializeSteps(steps),
+		ID:            uuid.New().String(),
+		InstanceID:    req.InstanceID,
+		SourceVersion: sourceVersion,
+		TargetVersion: targetVersion,
+		Strategy:      req.Strategy,
+		Status:        "planned",
+		EstimatedTime: estimatedTime,
+		RiskLevel:     riskLevel,
+		UpgradePath:   s.serializeSteps(steps),
 	}
 
 	response := &PlanUpgradePathResponse{
@@ -154,17 +158,17 @@ type CheckCompatibilityRequest struct {
 }
 
 type CheckCompatibilityResponse struct {
-	CheckID           string               `json:"check_id"`
-	InstanceID        string               `json:"instance_id"`
-	SourceVersion     string               `json:"source_version"`
-	SourceFlavor      string               `json:"source_flavor"`
-	TargetVersion     string               `json:"target_version"`
-	TargetFlavor      string               `json:"target_flavor"`
-	IsCompatible      bool                 `json:"is_compatible"`
-	WarningCount      int                  `json:"warning_count"`
-	ErrorCount        int                  `json:"error_count"`
+	CheckID           string                `json:"check_id"`
+	InstanceID        string                `json:"instance_id"`
+	SourceVersion     string                `json:"source_version"`
+	SourceFlavor      string                `json:"source_flavor"`
+	TargetVersion     string                `json:"target_version"`
+	TargetFlavor      string                `json:"target_flavor"`
+	IsCompatible      bool                  `json:"is_compatible"`
+	WarningCount      int                   `json:"warning_count"`
+	ErrorCount        int                   `json:"error_count"`
 	Incompatibilities []IncompatibilityItem `json:"incompatibilities"`
-	Recommendations   []string             `json:"recommendations"`
+	Recommendations   []string              `json:"recommendations"`
 }
 
 type IncompatibilityItem struct {
@@ -236,17 +240,17 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 	}
 
 	check := &models.CompatibilityCheck{
-		ID:               uuid.New().String(),
-		InstanceID:       req.InstanceID,
-		SourceVersion:    sourceVersion,
-		TargetVersion:    targetVersion,
-		CheckType:        "full",
-		Status:           "completed",
-		IsCompatible:     isCompatible,
-		WarningCount:     warningCount,
-		ErrorCount:       errorCount,
+		ID:                  uuid.New().String(),
+		InstanceID:          req.InstanceID,
+		SourceVersion:       sourceVersion,
+		TargetVersion:       targetVersion,
+		CheckType:           "full",
+		Status:              "completed",
+		IsCompatible:        isCompatible,
+		WarningCount:        warningCount,
+		ErrorCount:          errorCount,
 		IncompatibilityList: s.serializeIncompatibilities(incompatibilities),
-		CheckedAt:        time.Now(),
+		CheckedAt:           time.Now(),
 	}
 
 	_ = check
@@ -277,14 +281,14 @@ type ExecuteInPlaceUpgradeRequest struct {
 }
 
 type ExecuteInPlaceUpgradeResponse struct {
-	TaskID       string          `json:"task_id"`
-	PlanID       string          `json:"plan_id"`
-	InstanceID   string          `json:"instance_id"`
-	Status       string          `json:"status"`
-	CurrentStep  string          `json:"current_step"`
-	Progress     int             `json:"progress"`
-	StartedAt    time.Time       `json:"started_at"`
-	Steps        []UpgradeStepInfo `json:"steps"`
+	TaskID      string            `json:"task_id"`
+	PlanID      string            `json:"plan_id"`
+	InstanceID  string            `json:"instance_id"`
+	Status      string            `json:"status"`
+	CurrentStep string            `json:"current_step"`
+	Progress    int               `json:"progress"`
+	StartedAt   time.Time         `json:"started_at"`
+	Steps       []UpgradeStepInfo `json:"steps"`
 }
 
 func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteInPlaceUpgradeRequest) (*ExecuteInPlaceUpgradeResponse, error) {
@@ -292,7 +296,6 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
-
 	// Read source version from the instance — no hard-coded "5.7.40" anymore.
 	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
@@ -306,7 +309,7 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表, B8 端点能查, frontend 轮询可见.
 	taskID := s.createAndTrackTask("upgrade_in_place", req.InstanceID, req.PlanID)
-	s.dispatchAndTrack(taskID, instance, "in-place", targetVersion, map[string]interface{}{})
+	s.dispatchAndTrack(req.InstanceID, taskID, instance, "in-place", targetVersion, map[string]interface{}{})
 
 	response := &ExecuteInPlaceUpgradeResponse{
 		TaskID:      taskID,
@@ -323,25 +326,25 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 }
 
 type ExecuteLogicalMigrationRequest struct {
-	InstanceID      string `json:"instance_id" binding:"required"`
-	PlanID          string `json:"plan_id" binding:"required"`
-	TargetVersion   string `json:"target_version"`
-	TargetFlavor    string `json:"target_flavor"`
-	BackupEnabled   bool   `json:"backup_enabled"`
-	Parallelism     int    `json:"parallelism"`
-	BatchSize       int    `json:"batch_size"`
+	InstanceID    string `json:"instance_id" binding:"required"`
+	PlanID        string `json:"plan_id" binding:"required"`
+	TargetVersion string `json:"target_version"`
+	TargetFlavor  string `json:"target_flavor"`
+	BackupEnabled bool   `json:"backup_enabled"`
+	Parallelism   int    `json:"parallelism"`
+	BatchSize     int    `json:"batch_size"`
 }
 
 type ExecuteLogicalMigrationResponse struct {
-	TaskID       string          `json:"task_id"`
-	PlanID       string          `json:"plan_id"`
-	InstanceID   string          `json:"instance_id"`
-	Status       string          `json:"status"`
-	CurrentStep  string          `json:"current_step"`
-	Progress     int             `json:"progress"`
-	StartedAt    time.Time       `json:"started_at"`
-	Steps        []UpgradeStepInfo `json:"steps"`
-	DataStats    DataMigrationStats `json:"data_stats"`
+	TaskID      string             `json:"task_id"`
+	PlanID      string             `json:"plan_id"`
+	InstanceID  string             `json:"instance_id"`
+	Status      string             `json:"status"`
+	CurrentStep string             `json:"current_step"`
+	Progress    int                `json:"progress"`
+	StartedAt   time.Time          `json:"started_at"`
+	Steps       []UpgradeStepInfo  `json:"steps"`
+	DataStats   DataMigrationStats `json:"data_stats"`
 }
 
 type DataMigrationStats struct {
@@ -358,7 +361,6 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
-
 	if req.Parallelism == 0 {
 		req.Parallelism = 4
 	}
@@ -379,7 +381,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表.
 	taskID := s.createAndTrackTask("upgrade_logical", req.InstanceID, req.PlanID)
-	s.dispatchAndTrack(taskID, instance, "logical", targetVersion, map[string]interface{}{
+	s.dispatchAndTrack(req.InstanceID, taskID, instance, "logical", targetVersion, map[string]interface{}{
 		"parallelism":    req.Parallelism,
 		"batch_size":     req.BatchSize,
 		"backup_enabled": req.BackupEnabled,
@@ -410,30 +412,30 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 }
 
 type ExecuteRollingUpgradeRequest struct {
-	ClusterID      string `json:"cluster_id" binding:"required"`
-	PlanID         string `json:"plan_id" binding:"required"`
-	TargetVersion  string `json:"target_version" binding:"required"`
-	MaxInParallel  int    `json:"max_in_parallel"`
-	HealthCheckInterval int `json:"health_check_interval"`
+	ClusterID           string `json:"cluster_id" binding:"required"`
+	PlanID              string `json:"plan_id" binding:"required"`
+	TargetVersion       string `json:"target_version" binding:"required"`
+	MaxInParallel       int    `json:"max_in_parallel"`
+	HealthCheckInterval int    `json:"health_check_interval"`
 }
 
 type ExecuteRollingUpgradeResponse struct {
-	TaskID        string                 `json:"task_id"`
-	PlanID        string                 `json:"plan_id"`
-	ClusterID     string                 `json:"cluster_id"`
-	Status        string                 `json:"status"`
-	CurrentPhase  string                 `json:"current_phase"`
-	Progress      int                    `json:"progress"`
-	StartedAt     time.Time              `json:"started_at"`
-	Instances     []RollingUpgradeInstance `json:"instances"`
+	TaskID       string                   `json:"task_id"`
+	PlanID       string                   `json:"plan_id"`
+	ClusterID    string                   `json:"cluster_id"`
+	Status       string                   `json:"status"`
+	CurrentPhase string                   `json:"current_phase"`
+	Progress     int                      `json:"progress"`
+	StartedAt    time.Time                `json:"started_at"`
+	Instances    []RollingUpgradeInstance `json:"instances"`
 }
 
 type RollingUpgradeInstance struct {
-	InstanceID   string    `json:"instance_id"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	StartedAt    time.Time `json:"started_at"`
-	CompletedAt  time.Time `json:"completed_at"`
+	InstanceID  string    `json:"instance_id"`
+	Role        string    `json:"role"`
+	Status      string    `json:"status"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteRollingUpgradeRequest) (*ExecuteRollingUpgradeResponse, error) {
@@ -443,7 +445,6 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	if req.HealthCheckInterval == 0 {
 		req.HealthCheckInterval = 30
 	}
-
 	// B3: 之前是写死 instance-1 / instance-2 占位. 现在从 instRepo 查真实实例列表.
 	clusterInstances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
 	if err != nil {
@@ -471,7 +472,7 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	if s.agentClient != nil && len(clusterInstances) > 0 {
 		// rolling 升级 dispatch 用集群中第一个实例作为 anchor,
 		// agent 端会从 topology 解析其他节点. 走 fire-and-forget.
-		s.dispatchAndTrack(taskID, clusterInstances[0], "rolling", req.TargetVersion, map[string]interface{}{
+		s.dispatchAndTrack("cluster:"+req.ClusterID, taskID, clusterInstances[0], "rolling", req.TargetVersion, map[string]interface{}{
 			"max_in_parallel":       req.MaxInParallel,
 			"health_check_interval": req.HealthCheckInterval,
 			"cluster_id":            req.ClusterID,
@@ -493,21 +494,21 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 }
 
 type RollbackUpgradeRequest struct {
-	PlanID       string `json:"plan_id" binding:"required"`
-	InstanceID   string `json:"instance_id" binding:"required"`
-	BackupID     string `json:"backup_id"`
-	Force        bool   `json:"force"`
+	PlanID     string `json:"plan_id" binding:"required"`
+	InstanceID string `json:"instance_id" binding:"required"`
+	BackupID   string `json:"backup_id"`
+	Force      bool   `json:"force"`
 }
 
 type RollbackUpgradeResponse struct {
-	RollbackID   string          `json:"rollback_id"`
-	PlanID       string          `json:"plan_id"`
-	InstanceID   string          `json:"instance_id"`
-	Status       string          `json:"status"`
-	Progress     int             `json:"progress"`
-	StartedAt    time.Time       `json:"started_at"`
-	CompletedAt  time.Time       `json:"completed_at"`
-	Steps        []UpgradeStepInfo `json:"steps"`
+	RollbackID  string            `json:"rollback_id"`
+	PlanID      string            `json:"plan_id"`
+	InstanceID  string            `json:"instance_id"`
+	Status      string            `json:"status"`
+	Progress    int               `json:"progress"`
+	StartedAt   time.Time         `json:"started_at"`
+	CompletedAt time.Time         `json:"completed_at"`
+	Steps       []UpgradeStepInfo `json:"steps"`
 }
 
 func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgradeRequest) (*RollbackUpgradeResponse, error) {
@@ -515,7 +516,6 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
-
 	steps := []UpgradeStepInfo{
 		{Order: 1, Name: "Stop Instance", Type: "operation", Description: "Stop MySQL service"},
 		{Order: 2, Name: "Restore Data", Type: "restore", Description: "Restore from backup"},
@@ -526,7 +526,7 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 
 	// P0: 派发前落 task, B8 端点能查. 走 fire-and-forget.
 	taskID := s.createAndTrackTask("upgrade_rollback", req.InstanceID, req.PlanID)
-	s.dispatchAndTrack(taskID, instance, "rollback", "", map[string]interface{}{
+	s.dispatchAndTrack(req.InstanceID, taskID, instance, "rollback", "", map[string]interface{}{
 		"backup_id": req.BackupID,
 		"force":     req.Force,
 	})
@@ -546,31 +546,31 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 }
 
 type GenerateUpgradeReportRequest struct {
-	PlanID       string `json:"plan_id" binding:"required"`
-	ReportType   string `json:"report_type"`
+	PlanID     string `json:"plan_id" binding:"required"`
+	ReportType string `json:"report_type"`
 }
 
 type GenerateUpgradeReportResponse struct {
-	ReportID      string    `json:"report_id"`
-	PlanID        string    `json:"plan_id"`
-	ReportType    string    `json:"report_type"`
-	GeneratedAt   time.Time `json:"generated_at"`
-	Summary       string    `json:"summary"`
-	Details       string    `json:"details"`
-	Metrics       ReportMetrics `json:"metrics"`
-	Issues        []ReportIssue  `json:"issues"`
-	Recommendations []string    `json:"recommendations"`
+	ReportID        string        `json:"report_id"`
+	PlanID          string        `json:"plan_id"`
+	ReportType      string        `json:"report_type"`
+	GeneratedAt     time.Time     `json:"generated_at"`
+	Summary         string        `json:"summary"`
+	Details         string        `json:"details"`
+	Metrics         ReportMetrics `json:"metrics"`
+	Issues          []ReportIssue `json:"issues"`
+	Recommendations []string      `json:"recommendations"`
 }
 
 type ReportMetrics struct {
-	Duration         int     `json:"duration_seconds"`
-	DataTransferred  int64   `json:"data_transferred_bytes"`
-	TablesProcessed  int     `json:"tables_processed"`
-	RowsProcessed    int64   `json:"rows_processed"`
-	ErrorsEncountered int    `json:"errors_encountered"`
-	WarningsGenerated int    `json:"warnings_generated"`
-	AvgThroughput    float64 `json:"avg_throughput_mbps"`
-	PeakMemoryUsage  int64   `json:"peak_memory_usage_mb"`
+	Duration          int     `json:"duration_seconds"`
+	DataTransferred   int64   `json:"data_transferred_bytes"`
+	TablesProcessed   int     `json:"tables_processed"`
+	RowsProcessed     int64   `json:"rows_processed"`
+	ErrorsEncountered int     `json:"errors_encountered"`
+	WarningsGenerated int     `json:"warnings_generated"`
+	AvgThroughput     float64 `json:"avg_throughput_mbps"`
+	PeakMemoryUsage   int64   `json:"peak_memory_usage_mb"`
 }
 
 type ReportIssue struct {
@@ -644,7 +644,7 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 			AvgThroughput:     0,
 			PeakMemoryUsage:   0,
 		},
-		Issues:         issues,
+		Issues:          issues,
 		Recommendations: recommendations,
 	}, nil
 }
@@ -655,6 +655,13 @@ func firstInstanceID(insts []*models.Instance) string {
 		return ""
 	}
 	return insts[0].ID
+}
+
+// lockForInstance P0: 拿 / 创建 instance 专属 mutex. 串行化同实例的并发操作.
+// 用 sync.Map 装 mutex, 避免全局锁卡住所有 upgrade.
+func (s *UpgradeService) lockForInstance(id string) *sync.Mutex {
+	v, _ := s.locks.LoadOrStore(id, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // createAndTrackTask P0: 之前 upgrade 4 处 Execute* 调 dispatchUpgrade 前
@@ -689,8 +696,13 @@ func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID string)
 // 之前 dispatchUpgrade 是同步阻塞, frontend axios 10s timeout 一到就 5xx,
 // 但 agent 端 xtrabackup 还在跑没人管. 修: go func() 异步派, 失败/成功都更新 taskRepo 状态,
 // frontend 永远能 GET /api/v1/tasks/:id 拿真实进度.
-func (s *UpgradeService) dispatchAndTrack(taskID string, instance *models.Instance, upgradeType, targetVersion string, extraConfig map[string]interface{}) {
+func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *models.Instance, upgradeType, targetVersion string, extraConfig map[string]interface{}) {
 	go func() {
+		if lockKey != "" {
+			lock := s.lockForInstance(lockKey)
+			lock.Lock()
+			defer lock.Unlock()
+		}
 		if s.taskRepo != nil {
 			_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "running", 0)
 		}
@@ -781,31 +793,31 @@ func (s *UpgradeService) planRollingUpgradeSteps(source, target string) []Upgrad
 
 func (s *UpgradeService) generatePreCheckWarnings(instance *models.Instance, strategy string) []string {
 	warnings := []string{}
-	
+
 	warnings = append(warnings, "Ensure sufficient disk space for backup")
 	warnings = append(warnings, "Verify all applications are compatible with MySQL 8.0")
-	
+
 	if strategy == "inplace" {
 		warnings = append(warnings, "In-place upgrade cannot be rolled back automatically")
 		warnings = append(warnings, "Plan for extended downtime during upgrade")
 	}
-	
+
 	if strategy == "logical" {
 		warnings = append(warnings, "Ensure network bandwidth for data transfer")
 		warnings = append(warnings, "Verify target instance has sufficient storage")
 	}
-	
+
 	if strategy == "rolling" {
 		warnings = append(warnings, "Ensure cluster is healthy before proceeding")
 		warnings = append(warnings, "Monitor replication lag during upgrade")
 	}
-	
+
 	return warnings
 }
 
 func (s *UpgradeService) checkSQLModeCompatibility(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "sql_mode",
 		Level:       "warning",
@@ -813,7 +825,7 @@ func (s *UpgradeService) checkSQLModeCompatibility(source, target string) []Inco
 		Impact:      "Queries using this mode will fail",
 		Solution:    "Remove NO_AUTO_CREATE_USER from sql_mode setting",
 	})
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "sql_mode",
 		Level:       "info",
@@ -821,13 +833,13 @@ func (s *UpgradeService) checkSQLModeCompatibility(source, target string) []Inco
 		Impact:      "Existing queries may fail if they rely on implicit defaults",
 		Solution:    "Review and adjust sql_mode or update queries",
 	})
-	
+
 	return items
 }
 
 func (s *UpgradeService) checkDeprecatedFeatures(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "feature",
 		Level:       "warning",
@@ -835,7 +847,7 @@ func (s *UpgradeService) checkDeprecatedFeatures(source, target string) []Incomp
 		Impact:      "query_cache_size and related variables ignored",
 		Solution:    "Remove query cache settings from my.cnf",
 	})
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "feature",
 		Level:       "warning",
@@ -843,13 +855,13 @@ func (s *UpgradeService) checkDeprecatedFeatures(source, target string) []Incomp
 		Impact:      "Existing queries using JSON_APPEND will fail",
 		Solution:    "Update queries to use JSON_ARRAY_APPEND",
 	})
-	
+
 	return items
 }
 
 func (s *UpgradeService) checkCharacterSetCompatibility(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "charset",
 		Level:       "info",
@@ -857,13 +869,13 @@ func (s *UpgradeService) checkCharacterSetCompatibility(source, target string) [
 		Impact:      "New tables will use utf8mb4 by default",
 		Solution:    "Review character set requirements for applications",
 	})
-	
+
 	return items
 }
 
 func (s *UpgradeService) checkAuthenticationPlugin(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
-	
+
 	items = append(items, IncompatibilityItem{
 		Type:        "auth",
 		Level:       "warning",
@@ -871,7 +883,7 @@ func (s *UpgradeService) checkAuthenticationPlugin(source, target string) []Inco
 		Impact:      "Clients may need to update authentication method",
 		Solution:    "Update user accounts or configure mysql_native_password",
 	})
-	
+
 	return items
 }
 

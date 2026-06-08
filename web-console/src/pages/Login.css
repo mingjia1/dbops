@@ -35,22 +35,6 @@
   max-width: 520px;
 }
 
-.brand-logo {
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 24px;
-  background: linear-gradient(135deg, #1D1D1F 0%, #3A3A3C 100%);
-  border-radius: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 36px;
-  color: #fff;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
-  transition: transform 480ms cubic-bezier(0.5, 1.6, 0.4, 1);
-}
-.brand-logo:hover { transform: scale(1.04) rotate(-2deg); }
-
 .brand-title {
   font-size: 40px;
   font-weight: 700;

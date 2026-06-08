@@ -2,28 +2,33 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type EnvironmentCheckService struct {
 	hostRepo    *repositories.HostRepository
 	agentClient *AgentClient
+	encKey      string
 }
 
-func NewEnvironmentCheckService(hostRepo *repositories.HostRepository, agentClient *AgentClient) *EnvironmentCheckService {
+func NewEnvironmentCheckService(hostRepo *repositories.HostRepository, agentClient *AgentClient, encKey string) *EnvironmentCheckService {
 	return &EnvironmentCheckService{
 		hostRepo:    hostRepo,
 		agentClient: agentClient,
+		encKey:      encKey,
 	}
 }
 
 type EnvironmentCheckRequest struct {
-	Hosts []HostConfig `json:"hosts" binding:"required"`
+	Hosts   []HostConfig `json:"hosts"`
+	HostIDs []string     `json:"host_ids"`
 }
 
 type HostConfig struct {
@@ -50,6 +55,11 @@ type CheckResult struct {
 }
 
 func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCheckRequest) (*EnvironmentCheckResult, error) {
+	hosts, err := s.resolveHosts(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &EnvironmentCheckResult{
 		CheckID:   fmt.Sprintf("check-%d", time.Now().Unix()),
 		Status:    "running",
@@ -57,7 +67,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 		Results:   []CheckResult{},
 	}
 
-	for _, host := range req.Hosts {
+	for _, host := range hosts {
 		agentPort := 9090
 		agentResult := s.checkHost(host)
 		result.Results = append(result.Results, agentResult...)
@@ -70,7 +80,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 				Status:     "failed",
 				Passed:     false,
 				Value:      fmt.Sprintf("%s:%d", host.Host, agentPort),
-				Suggestion: "请确保 Agent 已在目标主机上启动 (端口 9090)",
+				Suggestion: "请确认 Agent 已在目标主机上启动（端口 9090）",
 			})
 			continue
 		}
@@ -89,13 +99,45 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	return result, nil
 }
 
-// checkHost B4: 之前 6 条检查全写死 Passed:true, 客户被假数据误导.
-// 修: TCP 端口可达性用 net.Dial 真探测; CPU/内存/磁盘/内核/依赖 标记 unknown (需要 agent
-// 真实采集, 当前 backend 没有 SSH 通道, 不能假报 passed).
+func (s *EnvironmentCheckService) resolveHosts(ctx context.Context, req EnvironmentCheckRequest) ([]HostConfig, error) {
+	if len(req.Hosts) > 0 {
+		return req.Hosts, nil
+	}
+	if len(req.HostIDs) == 0 {
+		return nil, errors.New("hosts or host_ids is required")
+	}
+	if s.hostRepo == nil {
+		return nil, errors.New("host repository is not configured")
+	}
+
+	hosts := make([]HostConfig, 0, len(req.HostIDs))
+	for _, id := range req.HostIDs {
+		host, err := s.hostRepo.GetByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get host %s: %w", id, err)
+		}
+		password, err := utils.Decrypt(host.SSHCredential, s.encKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt SSH credential for host %s: %w", host.Name, err)
+		}
+		if password == "" {
+			return nil, fmt.Errorf("host %s has no SSH credential; please edit the host and save SSH credential", host.Name)
+		}
+		hosts = append(hosts, HostConfig{
+			Host:     host.Address,
+			Port:     host.SSHPort,
+			Username: host.SSHUser,
+			Password: password,
+		})
+	}
+	return hosts, nil
+}
+
+// checkHost performs local reachability checks and leaves host metrics as unknown
+// when they require agent-side collection.
 func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 	results := []CheckResult{}
 
-	// 真探测: TCP 3306 可达
 	addr := net.JoinHostPort(host.Host, fmt.Sprintf("%d", host.Port))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
@@ -105,7 +147,7 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 			Status:     "failed",
 			Passed:     false,
 			Value:      fmt.Sprintf("%s: %v", addr, err),
-			Suggestion: "确认 MySQL 已启动且 3306 端口对 backend 可达",
+			Suggestion: "确认 MySQL 已启动，且目标端口对 backend 可达",
 		})
 	} else {
 		_ = conn.Close()
@@ -118,14 +160,12 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		})
 	}
 
-	// 硬件/OS/依赖 真探测需要 agent 走 SSH/sysfs, 当前 backend 没有 SSH,
-	// 标 unknown 让用户看到 "需要安装 agent 才有真实数据", 不再假报 passed.
 	for _, item := range []struct{ cat, name, suggestion string }{
-		{"hardware", "cpu_cores", "需要 agent 端采集"},
-		{"hardware", "memory_size", "需要 agent 端采集"},
-		{"hardware", "disk_space", "需要 agent 端采集"},
-		{"os", "kernel_version", "需要 agent 端采集"},
-		{"dependency", "libaio", "需要 agent 端采集"},
+		{"hardware", "cpu_cores", "需要 Agent 端采集"},
+		{"hardware", "memory_size", "需要 Agent 端采集"},
+		{"hardware", "disk_space", "需要 Agent 端采集"},
+		{"os", "kernel_version", "需要 Agent 端采集"},
+		{"dependency", "libaio", "需要 Agent 端采集"},
 	} {
 		results = append(results, CheckResult{
 			Category:   item.cat,
@@ -137,7 +177,6 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		})
 	}
 
-	// 本地 backend 的 runtime 信息 (仅供 debug, 不冒充目标主机)
 	_ = runtime.GOOS
 	_ = runtime.NumCPU()
 

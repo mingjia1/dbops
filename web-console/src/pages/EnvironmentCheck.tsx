@@ -1,10 +1,33 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Card, Form, Input, InputNumber, Button, Space, Table, Tag, message, Empty, Progress, Row, Col, Statistic, Radio, Alert, Spin,
+  Alert,
+  Button,
+  Card,
+  Col,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Progress,
+  Radio,
+  Row,
+  Space,
+  Spin,
+  Statistic,
+  Table,
+  Tag,
+  message,
 } from 'antd'
 import {
-  PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, DownloadOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  SettingOutlined, DesktopOutlined, ReloadOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  DesktopOutlined,
+  DownloadOutlined,
+  MinusCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { envCheckApi, hostApi, type Host } from '../services/api'
@@ -25,13 +48,15 @@ interface CheckResult {
   results: CheckItem[]
 }
 
+type Mode = 'from-hosts' | 'manual'
+
 const EnvironmentCheck: React.FC = () => {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<CheckResult | null>(null)
   const [hosts, setHosts] = useState<Host[]>([])
   const [hostsLoading, setHostsLoading] = useState(false)
-  const [mode, setMode] = useState<'from-hosts' | 'manual'>('from-hosts')
+  const [mode, setMode] = useState<Mode>('from-hosts')
   const [selectedHosts, setSelectedHosts] = useState<string[]>([])
 
   const fetchHosts = async () => {
@@ -51,26 +76,26 @@ const EnvironmentCheck: React.FC = () => {
   }, [])
 
   const onFinish = async () => {
-    let payload: { hosts: { host: string; port: number; username: string; password: string }[] } = { hosts: [] }
+    let payload: {
+      hosts?: { host: string; port: number; username: string; password: string }[]
+      host_ids?: string[]
+    } = {}
 
     if (mode === 'from-hosts') {
       if (selectedHosts.length === 0) {
         message.warning('请至少选择一台主机')
         return
       }
-      const okHosts = hosts.filter((h) => selectedHosts.includes(h.id) && h.status === 'success')
+      const okHosts = hosts.filter((host) => selectedHosts.includes(host.id) && host.status === 'success')
       if (okHosts.length === 0) {
-        message.warning('所选主机均未通过可用性检测, 请先在主机管理中点击"测试连接"')
+        message.warning('所选主机均未通过可用性检测，请先在主机管理中测试连接')
         return
       }
-      // F4: 之前 "从主机列表" 模式提交时 password='', SSH 必败.
-      // 现在: 平台没有存凭据, 必须切到 "手动输入" 模式, 不再假装能跑.
-      message.warning('"从主机列表" 模式需要主机存有 SSH 凭据, 当前 UI 未提供凭据录入. 请切换到 "手动输入" 模式填入 SSH 密码.')
-      return
+      payload = { host_ids: okHosts.map((host) => host.id) }
     } else {
       const values = await form.validateFields()
       if (!values.hosts || values.hosts.length === 0) {
-        message.warning('请至少添加一个主机')
+        message.warning('请至少添加一台主机')
         return
       }
       payload = { hosts: values.hosts }
@@ -80,9 +105,9 @@ const EnvironmentCheck: React.FC = () => {
     try {
       const res: any = await envCheckApi.execute(payload)
       setResult(res?.data || null)
-      message.success('环境检测完成')
+      message.success('环境检查完成')
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '环境检测失败')
+      message.error(err?.response?.data?.message || '环境检查失败')
     } finally {
       setSubmitting(false)
     }
@@ -94,10 +119,10 @@ const EnvironmentCheck: React.FC = () => {
       const res: any = await envCheckApi.export(result.check_id, 'json')
       const blob = new Blob([JSON.stringify(res?.data || res, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${result.check_id}.json`
-      a.click()
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${result.check_id}.json`
+      link.click()
       URL.revokeObjectURL(url)
       message.success('导出成功')
     } catch (err: any) {
@@ -119,37 +144,35 @@ const EnvironmentCheck: React.FC = () => {
         </Tag>
       ),
     },
-    { title: '当前值', dataIndex: 'value', key: 'value', width: 200 },
+    { title: '当前值', dataIndex: 'value', key: 'value', width: 240 },
     { title: '建议', dataIndex: 'suggestion', key: 'suggestion' },
   ]
 
   const total = result?.results.length || 0
-  const passed = result?.results.filter((r) => r.passed).length || 0
+  const passed = result?.results.filter((item) => item.passed).length || 0
   const failed = total - passed
   const score = total > 0 ? Math.round((passed / total) * 100) : 0
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: 24 }}>
       <Card
         title={
           <Space>
             <SettingOutlined />
-            <span>环境检测</span>
+            <span>环境检查</span>
           </Space>
         }
         extra={
           <Radio.Group
             value={mode}
-            onChange={(e) => setMode(e.target.value)}
+            onChange={(event) => setMode(event.target.value)}
             optionType="button"
             buttonStyle="solid"
           >
             <Radio.Button value="from-hosts">
               <DesktopOutlined /> 从主机列表
             </Radio.Button>
-            <Radio.Button value="manual">
-              手动输入
-            </Radio.Button>
+            <Radio.Button value="manual">手动输入</Radio.Button>
           </Radio.Group>
         }
       >
@@ -160,8 +183,10 @@ const EnvironmentCheck: React.FC = () => {
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description={
                   <div>
-                    <div style={{ marginBottom: 8 }}>暂无主机, 请先在"主机与实例 → 主机管理"中添加</div>
-                    <Button type="primary" onClick={() => window.history.back()}>返回主机管理</Button>
+                    <div style={{ marginBottom: 8 }}>暂无主机，请先在“主机管理”中添加</div>
+                    <Button type="primary" onClick={() => window.history.back()}>
+                      返回
+                    </Button>
                   </div>
                 }
               />
@@ -174,9 +199,9 @@ const EnvironmentCheck: React.FC = () => {
                   message="提示"
                   description={
                     <div>
-                      <div>• 平台将使用主机管理中已配置的 SSH 用户与凭据, 你无需再次输入。</div>
-                      <div>• 只有<span style={{ color: '#3f8600' }}> <b>可用</b> </span>状态的主机可以参与检测, 不可用主机将被跳过。</div>
-                      <div>• 检测会 SSH 登录到目标主机执行 MySQL 部署前检查 (磁盘、内核、依赖等)。</div>
+                      <div>平台会使用主机管理中已保存的 SSH 用户和凭据，前端不会读取或展示密码。</div>
+                      <div>只有状态为“可用”的主机可以参与检查，不可用主机会被跳过。</div>
+                      <div>如提示缺少 SSH 凭据，请编辑该主机并重新保存 SSH 密码或密钥。</div>
                     </div>
                   }
                 />
@@ -188,8 +213,8 @@ const EnvironmentCheck: React.FC = () => {
                   rowSelection={{
                     selectedRowKeys: selectedHosts,
                     onChange: (keys) => setSelectedHosts(keys as string[]),
-                    getCheckboxProps: (r: Host) => ({
-                      disabled: r.status !== 'success',
+                    getCheckboxProps: (host: Host) => ({
+                      disabled: host.status !== 'success',
                     }),
                   }}
                   columns={[
@@ -197,17 +222,22 @@ const EnvironmentCheck: React.FC = () => {
                     {
                       title: '地址',
                       key: 'address',
-                      render: (_, r) => `${r.address}:${r.ssh_port}`,
+                      render: (_, host) => `${host.address}:${host.ssh_port}`,
                     },
                     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
-                    { title: '操作系统', dataIndex: 'os_type', key: 'os_type', render: (v) => (v || '-').toUpperCase() },
+                    {
+                      title: '操作系统',
+                      dataIndex: 'os_type',
+                      key: 'os_type',
+                      render: (value) => (value || '-').toUpperCase(),
+                    },
                     {
                       title: '状态',
                       dataIndex: 'status',
                       key: 'status',
-                      render: (s: string) => (
-                        <Tag color={s === 'success' ? 'success' : s === 'failed' ? 'error' : 'default'}>
-                          {s === 'success' ? '可用' : s === 'failed' ? '不可用' : '未检测'}
+                      render: (status: string) => (
+                        <Tag color={status === 'success' ? 'success' : status === 'failed' ? 'error' : 'default'}>
+                          {status === 'success' ? '可用' : status === 'failed' ? '不可用' : '未检测'}
                         </Tag>
                       ),
                     },
@@ -215,8 +245,12 @@ const EnvironmentCheck: React.FC = () => {
                 />
                 <div style={{ marginTop: 16, textAlign: 'right' }}>
                   <Space>
-                    <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
-                    <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
+                    <span style={{ color: '#8c8c8c' }}>
+                      已选 {selectedHosts.length} / {hosts.length} 台
+                    </span>
+                    <Button icon={<ReloadOutlined />} onClick={fetchHosts}>
+                      刷新
+                    </Button>
                     <Button
                       type="primary"
                       icon={<PlayCircleOutlined />}
@@ -224,7 +258,7 @@ const EnvironmentCheck: React.FC = () => {
                       loading={submitting}
                       disabled={selectedHosts.length === 0}
                     >
-                      启动环境检测
+                      启动环境检查
                     </Button>
                   </Space>
                 </div>
@@ -243,23 +277,48 @@ const EnvironmentCheck: React.FC = () => {
                 <>
                   {fields.map(({ key, name, ...restField }) => (
                     <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
-                      <Form.Item {...restField} name={[name, 'host']} rules={[{ required: true, message: '主机IP/域名' }]} style={{ width: 220, marginBottom: 0 }}>
-                        <Input placeholder="主机IP/域名" />
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'host']}
+                        rules={[{ required: true, message: '请输入主机 IP 或域名' }]}
+                        style={{ width: 220, marginBottom: 0 }}
+                      >
+                        <Input placeholder="主机 IP / 域名" />
                       </Form.Item>
-                      <Form.Item {...restField} name={[name, 'port']} rules={[{ required: true }]} style={{ width: 120, marginBottom: 0 }}>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'port']}
+                        rules={[{ required: true, message: '请输入 SSH 端口' }]}
+                        style={{ width: 120, marginBottom: 0 }}
+                      >
                         <InputNumber min={1} max={65535} placeholder="SSH 端口" style={{ width: '100%' }} />
                       </Form.Item>
-                      <Form.Item {...restField} name={[name, 'username']} rules={[{ required: true, message: '用户名' }]} style={{ width: 160, marginBottom: 0 }}>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'username']}
+                        rules={[{ required: true, message: '请输入 SSH 用户名' }]}
+                        style={{ width: 160, marginBottom: 0 }}
+                      >
                         <Input placeholder="SSH 用户名" />
                       </Form.Item>
-                      <Form.Item {...restField} name={[name, 'password']} rules={[{ required: true, message: '密码' }]} style={{ width: 200, marginBottom: 0 }}>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'password']}
+                        rules={[{ required: true, message: '请输入 SSH 密码' }]}
+                        style={{ width: 220, marginBottom: 0 }}
+                      >
                         <Input.Password placeholder="SSH 密码" autoComplete="new-password" />
                       </Form.Item>
                       <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f' }} />
                     </Space>
                   ))}
                   <Form.Item>
-                    <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ host: '', port: 22, username: 'root', password: '' })} block>
+                    <Button
+                      type="dashed"
+                      icon={<PlusOutlined />}
+                      onClick={() => add({ host: '', port: 22, username: 'root', password: '' })}
+                      block
+                    >
                       添加主机
                     </Button>
                   </Form.Item>
@@ -268,7 +327,7 @@ const EnvironmentCheck: React.FC = () => {
             </Form.List>
             <Form.Item>
               <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
-                启动环境检测
+                启动环境检查
               </Button>
             </Form.Item>
           </Form>
@@ -278,15 +337,31 @@ const EnvironmentCheck: React.FC = () => {
       {result && (
         <>
           <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-            <Col span={6}><Card><Statistic title="检测ID" value={result.check_id} valueStyle={{ fontSize: 14 }} /></Card></Col>
-            <Col span={6}><Card><Statistic title="总检查项" value={total} /></Card></Col>
-            <Col span={6}><Card><Statistic title="通过" value={passed} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-            <Col span={6}><Card><Statistic title="失败" value={failed} valueStyle={{ color: '#cf1322' }} /></Card></Col>
+            <Col span={6}>
+              <Card>
+                <Statistic title="检查 ID" value={result.check_id} valueStyle={{ fontSize: 14 }} />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic title="总检查项" value={total} />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic title="通过" value={passed} valueStyle={{ color: '#3f8600' }} />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic title="失败" value={failed} valueStyle={{ color: '#cf1322' }} />
+              </Card>
+            </Col>
           </Row>
 
           <Card
             style={{ marginTop: 16 }}
-            title={`环境评分: ${score} / 100`}
+            title={`环境评分：${score} / 100`}
             extra={
               <Button icon={<DownloadOutlined />} onClick={handleExport}>
                 导出报告
@@ -296,10 +371,10 @@ const EnvironmentCheck: React.FC = () => {
             <Progress percent={score} status={score >= 80 ? 'success' : score >= 60 ? 'active' : 'exception'} />
           </Card>
 
-          <Card style={{ marginTop: 16 }} title="检测结果明细">
+          <Card style={{ marginTop: 16 }} title="检查结果明细">
             <Table
               columns={columns}
-              dataSource={result.results.map((r, i) => ({ ...r, key: `${r.category}-${r.name}-${i}` }))}
+              dataSource={result.results.map((item, index) => ({ ...item, key: `${item.category}-${item.name}-${index}` }))}
               pagination={false}
               size="small"
             />
@@ -309,7 +384,7 @@ const EnvironmentCheck: React.FC = () => {
 
       {!result && (
         <Card style={{ marginTop: 16 }}>
-          <Empty description="请选择主机并启动环境检测" />
+          <Empty description="请选择主机并启动环境检查" />
         </Card>
       )}
     </div>

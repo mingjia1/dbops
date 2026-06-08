@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-agent/internal/executor"
 	"github.com/monkeycode/mysql-ops-agent/internal/collector"
+	"github.com/monkeycode/mysql-ops-agent/internal/executor"
 	"github.com/monkeycode/mysql-ops-agent/pkg/config"
 	"github.com/monkeycode/mysql-ops-agent/pkg/logger"
 )
@@ -93,6 +93,22 @@ func main() {
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 
+			tasks.POST("/backup-scan", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteBackupScan(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Backup scan failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
 			tasks.POST("/restore", func(c *gin.Context) {
 				var req executor.DeployTaskRequest
 				if err := c.ShouldBindJSON(&req); err != nil {
@@ -103,6 +119,22 @@ func main() {
 				result, err := taskExecutor.ExecuteRestore(c.Request.Context(), req)
 				if err != nil {
 					c.JSON(500, gin.H{"code": 500, "message": "Execution failed"})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			tasks.POST("/instance-admin", func(c *gin.Context) {
+				var req executor.DeployTaskRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result, err := taskExecutor.ExecuteInstanceAdmin(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Instance admin failed"})
 					return
 				}
 

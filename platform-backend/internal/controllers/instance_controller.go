@@ -115,3 +115,21 @@ func (c *InstanceController) Deploy(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, result)
 }
+
+func (c *InstanceController) AdminAction(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	var req services.InstanceAdminRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.AdminAction(ctx.Request.Context(), id, req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to execute instance admin action", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}

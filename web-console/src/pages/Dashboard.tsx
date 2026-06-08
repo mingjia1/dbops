@@ -136,10 +136,10 @@ const Dashboard: React.FC = () => {
         </div>
       </Header>
       <Layout>
-        <Sider width={220} className="dashboard-sider" theme="dark">
+        <Sider width={220} className="dashboard-sider" theme={themeMode}>
           <Menu
             mode="inline"
-            theme="dark"
+            theme={themeMode}
             selectedKeys={[selectedKey]}
             openKeys={openKeys}
             items={menuItems.map((item: any) => {

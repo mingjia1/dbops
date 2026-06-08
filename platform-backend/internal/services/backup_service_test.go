@@ -7,6 +7,7 @@ import (
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,7 +21,15 @@ func newTestBackupService() *BackupService {
 	hostID := "host-001"
 	_ = hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "test-host", Address: "192.168.1.100"})
 	_ = instRepo.Create(context.Background(), &models.Instance{ID: "instance-001", Name: "instance-001", HostID: &hostID})
-	return NewBackupService(hostRepo, instRepo, backupRepo, newTestAgentClient())
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	_ = instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-001",
+		Host:              "192.168.1.100",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	})
+	return NewBackupService(hostRepo, instRepo, backupRepo, newTestAgentClient(), "test-encryption-key")
 }
 
 func TestNewBackupService(t *testing.T) {

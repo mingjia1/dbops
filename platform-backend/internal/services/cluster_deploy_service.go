@@ -53,6 +53,8 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		"repl_user":      s.defaults.ReplicationUser,
 		"repl_pass":      s.defaults.ReplicationPass,
 		"ssh_user":       s.defaults.SSHUser,
+		"mysql_user":     req.MySQLUser,
+		"mysql_password": req.MySQLPassword,
 		"ping_interval":  3,
 		"ping_retry":     3,
 	}
@@ -125,17 +127,19 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		isPrimary := i == 0
 		deployMode := "mgr"
 		config := map[string]interface{}{
-			"deploy_mode":     deployMode,
-			"group_name":      req.Name,
-			"group_seeds":     groupSeeds,
-			"local_address":   node.Host,
-			"local_port":      33061,
-			"server_id":       i + 1,
-			"primary_host":    req.PrimaryHost,
-			"primary_port":    req.PrimaryPort,
-			"replicate_user":  s.defaults.ReplicationUser,
-			"replicate_pass":  s.defaults.ReplicationPass,
-			"bootstrap":       isPrimary,
+			"deploy_mode":    deployMode,
+			"group_name":     req.Name,
+			"group_seeds":    groupSeeds,
+			"local_address":  node.Host,
+			"local_port":     33061,
+			"server_id":      i + 1,
+			"primary_host":   req.PrimaryHost,
+			"primary_port":   req.PrimaryPort,
+			"replicate_user": s.defaults.ReplicationUser,
+			"replicate_pass": s.defaults.ReplicationPass,
+			"mysql_user":     req.MySQLUser,
+			"mysql_password": req.MySQLPassword,
+			"bootstrap":      isPrimary,
 		}
 
 		agentPort := 9090
@@ -190,15 +194,17 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	}
 
 	bootstrapConfig := map[string]interface{}{
-		"deploy_mode":     "pxc",
-		"cluster_name":    req.Name,
-		"bootstrap":       true,
-		"nodes":           []string{req.BootstrapNode.Host},
-		"wsrep_port":      4567,
-		"sst_method":      "xtrabackup-v2",
-		"replicate_user":  s.defaults.SSTUser,
-		"replicate_pass":  s.defaults.SSTPass,
-		"data_dir":        "/var/lib/mysql",
+		"deploy_mode":    "pxc",
+		"cluster_name":   req.Name,
+		"bootstrap":      true,
+		"nodes":          []string{req.BootstrapNode.Host},
+		"wsrep_port":     4567,
+		"sst_method":     "xtrabackup-v2",
+		"replicate_user": s.defaults.SSTUser,
+		"replicate_pass": s.defaults.SSTPass,
+		"mysql_user":     req.MySQLUser,
+		"mysql_password": req.MySQLPassword,
+		"data_dir":       "/var/lib/mysql",
 	}
 
 	agentPort := 9090
@@ -240,6 +246,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"sst_method":     "xtrabackup-v2",
 			"replicate_user": s.defaults.SSTUser,
 			"replicate_pass": s.defaults.SSTPass,
+			"mysql_user":     req.MySQLUser,
+			"mysql_password": req.MySQLPassword,
 			"data_dir":       "/var/lib/mysql",
 		}
 		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
@@ -290,30 +298,36 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 }
 
 type DeployMHARequest struct {
-	Name         string            `json:"name" binding:"required"`
-	MasterHost   string            `json:"master_host" binding:"required"`
-	MasterPort   int               `json:"master_port" binding:"required"`
-	SlaveHosts   []SlaveNode       `json:"slave_hosts" binding:"required"`
-	VIP          string            `json:"vip" binding:"required"`
-	ManagerHost  string            `json:"manager_host" binding:"required"`
-	ConfigParams map[string]string `json:"config_params"`
+	Name          string            `json:"name" binding:"required"`
+	MasterHost    string            `json:"master_host" binding:"required"`
+	MasterPort    int               `json:"master_port" binding:"required"`
+	SlaveHosts    []SlaveNode       `json:"slave_hosts" binding:"required"`
+	VIP           string            `json:"vip" binding:"required"`
+	ManagerHost   string            `json:"manager_host" binding:"required"`
+	MySQLUser     string            `json:"mysql_user"`
+	MySQLPassword string            `json:"mysql_password"`
+	ConfigParams  map[string]string `json:"config_params"`
 }
 
 type DeployMGRRequest struct {
-	Name           string          `json:"name" binding:"required"`
-	PrimaryHost    string          `json:"primary_host" binding:"required"`
-	PrimaryPort    int             `json:"primary_port" binding:"required"`
-	SecondaryHosts []SecondaryNode `json:"secondary_hosts" binding:"required"`
-	GroupMode      string          `json:"group_mode" binding:"required"`
+	Name           string            `json:"name" binding:"required"`
+	PrimaryHost    string            `json:"primary_host" binding:"required"`
+	PrimaryPort    int               `json:"primary_port" binding:"required"`
+	SecondaryHosts []SecondaryNode   `json:"secondary_hosts" binding:"required"`
+	GroupMode      string            `json:"group_mode" binding:"required"`
+	MySQLUser      string            `json:"mysql_user"`
+	MySQLPassword  string            `json:"mysql_password"`
 	ConfigParams   map[string]string `json:"config_params"`
 }
 
 type DeployPXCRequest struct {
-	Name         string        `json:"name" binding:"required"`
-	BootstrapNode BootstrapNode `json:"bootstrap_node" binding:"required"`
-	OtherNodes   []PXCNode     `json:"other_nodes" binding:"required"`
-	SSLEnabled   bool          `json:"ssl_enabled"`
-	ConfigParams map[string]string `json:"config_params"`
+	Name          string            `json:"name" binding:"required"`
+	BootstrapNode BootstrapNode     `json:"bootstrap_node" binding:"required"`
+	OtherNodes    []PXCNode         `json:"other_nodes" binding:"required"`
+	SSLEnabled    bool              `json:"ssl_enabled"`
+	MySQLUser     string            `json:"mysql_user"`
+	MySQLPassword string            `json:"mysql_password"`
+	ConfigParams  map[string]string `json:"config_params"`
 }
 
 type SlaveNode struct {

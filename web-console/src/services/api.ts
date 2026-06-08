@@ -141,6 +141,23 @@ export const instanceApi = {
 
   deploy: (id: string) =>
     api.post(`/instances/${id}/deploy`),
+
+  adminAction: (id: string, data: {
+    action: string
+    username?: string
+    user_host?: string
+    password?: string
+    privileges?: string
+    scope?: string
+    pattern?: string
+    name?: string
+    value?: string
+    path?: string
+    content?: string
+    service?: string
+    verb?: string
+  }) =>
+    api.post(`/instances/${id}/admin-action`, data),
 }
 
 export interface Host {
@@ -250,7 +267,7 @@ export interface HostScanResult {
 }
 
 export const envCheckApi = {
-  execute: (data: { hosts: { host: string; port: number; username: string; password: string }[] }) =>
+  execute: (data: { hosts?: { host: string; port: number; username: string; password: string }[]; host_ids?: string[] }) =>
     api.post('/env-checks', data),
   
   get: (checkId: string) =>
@@ -294,7 +311,7 @@ export const backupApi = {
     api.delete(`/backups/${id}`),
 
   scan: (instanceId: string) =>
-    api.post(`/backups/scan`, { instance_id: instanceId }),
+    api.post('/backups/scan', { instance_id: instanceId }),
 }
 
 export interface DiscoveredBackup {

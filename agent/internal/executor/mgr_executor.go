@@ -15,25 +15,27 @@ func NewMGRExecutor() *MGRExecutor {
 }
 
 type MGRConfig struct {
-	GroupName      string   `json:"group_name"`
-	GroupSeeds     []string `json:"group_seeds"`
-	ReplicateUser  string   `json:"replicate_user"`
-	ReplicatePass  string   `json:"replicate_pass"`
-	DeployMode     string   `json:"deploy_mode"`
-	LocalAddress   string   `json:"local_address"`
-	LocalPort      int      `json:"local_port"`
-	ServerID       int      `json:"server_id"`
-	PrimaryHost    string   `json:"primary_host"`
-	PrimaryPort    int      `json:"primary_port"`
+	GroupName     string   `json:"group_name"`
+	GroupSeeds    []string `json:"group_seeds"`
+	ReplicateUser string   `json:"replicate_user"`
+	ReplicatePass string   `json:"replicate_pass"`
+	DeployMode    string   `json:"deploy_mode"`
+	LocalAddress  string   `json:"local_address"`
+	LocalPort     int      `json:"local_port"`
+	ServerID      int      `json:"server_id"`
+	PrimaryHost   string   `json:"primary_host"`
+	PrimaryPort   int      `json:"primary_port"`
+	MySQLUser     string   `json:"mysql_user"`
+	MySQLPassword string   `json:"mysql_password"`
 }
 
 type GroupMemberStatus struct {
-	MemberID       string `json:"member_id"`
-	MemberHost     string `json:"member_host"`
-	MemberPort     int    `json:"member_port"`
-	MemberState    string `json:"member_state"`
-	MemberRole     string `json:"member_role"`
-	Primary        bool   `json:"primary"`
+	MemberID    string `json:"member_id"`
+	MemberHost  string `json:"member_host"`
+	MemberPort  int    `json:"member_port"`
+	MemberState string `json:"member_state"`
+	MemberRole  string `json:"member_role"`
+	Primary     bool   `json:"primary"`
 }
 
 func parseMGRConfig(config map[string]interface{}) MGRConfig {
@@ -45,6 +47,7 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 		LocalPort:     33061,
 		ServerID:      1,
 		PrimaryPort:   3306,
+		MySQLUser:     "root",
 	}
 
 	if v, ok := config["group_name"].(string); ok {
@@ -73,6 +76,12 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 	}
 	if v, ok := config["primary_port"].(int); ok {
 		mc.PrimaryPort = v
+	}
+	if v, ok := config["mysql_user"].(string); ok {
+		mc.MySQLUser = v
+	}
+	if v, ok := config["mysql_password"].(string); ok {
+		mc.MySQLPassword = v
 	}
 	if seeds, ok := config["group_seeds"].([]interface{}); ok {
 		for _, s := range seeds {
@@ -109,10 +118,10 @@ func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTask
 	}
 
 	return &TaskResult{
-		TaskID:    req.TaskID,
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("MGR single-primary cluster deployed successfully. Group: %s, Primary: %s:%d",
+		TaskID:   req.TaskID,
+		Status:   "completed",
+		Progress: 100,
+		Message: fmt.Sprintf("MGR single-primary cluster deployed successfully. Group: %s, Primary: %s:%d",
 			config.GroupName, config.LocalAddress, config.LocalPort-61+3306),
 		Timestamp: time.Now(),
 	}, nil
@@ -142,10 +151,10 @@ func (e *MGRExecutor) DeployMGRMultiPrimary(ctx context.Context, req DeployTaskR
 	}
 
 	return &TaskResult{
-		TaskID:    req.TaskID,
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("MGR multi-primary cluster deployed successfully. Group: %s",
+		TaskID:   req.TaskID,
+		Status:   "completed",
+		Progress: 100,
+		Message: fmt.Sprintf("MGR multi-primary cluster deployed successfully. Group: %s",
 			config.GroupName),
 		Timestamp: time.Now(),
 	}, nil
@@ -170,10 +179,10 @@ func (e *MGRExecutor) ConfigureGroupMember(ctx context.Context, req DeployTaskRe
 	}
 
 	return &TaskResult{
-		TaskID:    req.TaskID,
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("Group member configured and joined successfully. ServerID: %d, Group: %s",
+		TaskID:   req.TaskID,
+		Status:   "completed",
+		Progress: 100,
+		Message: fmt.Sprintf("Group member configured and joined successfully. ServerID: %d, Group: %s",
 			config.ServerID, config.GroupName),
 		Timestamp: time.Now(),
 	}, nil
@@ -214,10 +223,10 @@ func (e *MGRExecutor) MonitorGroupStatus(ctx context.Context, req DeployTaskRequ
 	}
 
 	return &TaskResult{
-		TaskID:    req.TaskID,
-		Status:    overallStatus,
-		Progress:  100,
-		Message:   fmt.Sprintf("Group status monitored. Members: %d/%d healthy. Details: %s",
+		TaskID:   req.TaskID,
+		Status:   overallStatus,
+		Progress: 100,
+		Message: fmt.Sprintf("Group status monitored. Members: %d/%d healthy. Details: %s",
 			healthyCount, len(statusList), strings.Join(memberInfo, "; ")),
 		Timestamp: time.Now(),
 	}, nil

@@ -63,6 +63,42 @@ func (r *BackupRepository) GetPolicyByID(ctx context.Context, id string) (*model
 	return policy, nil
 }
 
+func (r *BackupRepository) ListPolicies(ctx context.Context, instanceID string, limit, offset int) ([]models.BackupPolicy, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	query := `
+		SELECT id, instance_id, backup_type, schedule, retention_days, storage_type, storage_path, enabled, created_at, updated_at
+		FROM backup_policies
+	`
+	args := []interface{}{}
+	if instanceID != "" {
+		query += ` WHERE instance_id = ?`
+		args = append(args, instanceID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list backup policies: %w", err)
+	}
+	defer rows.Close()
+
+	policies := make([]models.BackupPolicy, 0)
+	for rows.Next() {
+		var policy models.BackupPolicy
+		if err := rows.Scan(
+			&policy.ID, &policy.InstanceID, &policy.BackupType, &policy.Schedule, &policy.RetentionDays,
+			&policy.StorageType, &policy.StoragePath, &policy.Enabled, &policy.CreatedAt, &policy.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+	return policies, rows.Err()
+}
+
 func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.BackupRecord) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")

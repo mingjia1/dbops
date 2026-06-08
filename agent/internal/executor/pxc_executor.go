@@ -19,6 +19,8 @@ type PXCConfig struct {
 	Bootstrap       bool     `json:"bootstrap"`
 	WSREPSSTPort    int      `json:"wsrep_sst_port"`
 	WSREPSSLEnabled bool     `json:"wsrep_ssl_enabled"`
+	MySQLUser       string   `json:"mysql_user"`
+	MySQLPassword   string   `json:"mysql_password"`
 }
 
 type GaleraConfig struct {
@@ -26,28 +28,28 @@ type GaleraConfig struct {
 	WSREPNodeAddress    string `json:"wsrep_node_address"`
 	WSREPNodeName       string `json:"wsrep_node_name"`
 	WSREPSSTMethod      string `json:"wsrep_sst_method"`
-	WSREPProvider        string `json:"wsrep_provider"`
+	WSREPProvider       string `json:"wsrep_provider"`
 	GCacheSize          string `json:"gcache_size"`
 	GCachePageSize      string `json:"gcache_page_size"`
 	GCacheKeepPagesSize string `json:"gcache_keep_pages_size"`
 }
 
 type PXCSyncStatus struct {
-	ClusterSize      int    `json:"cluster_size"`
-	ClusterStatus    string `json:"cluster_status"`
-	LocalIndex       int    `json:"local_index"`
-	LocalState       string `json:"local_state"`
-	Ready            bool   `json:"ready"`
-	FlowControlPaused bool  `json:"flow_control_paused"`
-	InnoDBBufferPool string `json:"innodb_buffer_pool"`
+	ClusterSize       int    `json:"cluster_size"`
+	ClusterStatus     string `json:"cluster_status"`
+	LocalIndex        int    `json:"local_index"`
+	LocalState        string `json:"local_state"`
+	Ready             bool   `json:"ready"`
+	FlowControlPaused bool   `json:"flow_control_paused"`
+	InnoDBBufferPool  string `json:"innodb_buffer_pool"`
 }
 
 type SplitBrainInfo struct {
-	Detected       bool     `json:"detected"`
-	IsolatedNodes  []string `json:"isolated_nodes"`
-	ActiveNodes    []string `json:"active_nodes"`
-	QuorumStatus   string   `json:"quorum_status"`
-	PrimaryComponent bool   `json:"primary_component"`
+	Detected         bool     `json:"detected"`
+	IsolatedNodes    []string `json:"isolated_nodes"`
+	ActiveNodes      []string `json:"active_nodes"`
+	QuorumStatus     string   `json:"quorum_status"`
+	PrimaryComponent bool     `json:"primary_component"`
 }
 
 func parsePXCConfig(config map[string]interface{}) PXCConfig {
@@ -61,6 +63,7 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 		Bootstrap:       false,
 		WSREPSSTPort:    4444,
 		WSREPSSLEnabled: false,
+		MySQLUser:       "root",
 	}
 
 	if v, ok := config["cluster_name"].(string); ok {
@@ -92,6 +95,12 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	}
 	if v, ok := config["wsrep_ssl_enabled"].(bool); ok {
 		pc.WSREPSSLEnabled = v
+	}
+	if v, ok := config["mysql_user"].(string); ok {
+		pc.MySQLUser = v
+	}
+	if v, ok := config["mysql_password"].(string); ok {
+		pc.MySQLPassword = v
 	}
 
 	return pc
@@ -406,10 +415,10 @@ func (e *TaskExecutor) MonitorPXCSync(ctx context.Context, nodeHost string, node
 
 func (e *TaskExecutor) DetectSplitBrain(ctx context.Context, nodeHost string, nodePort int) (*SplitBrainInfo, error) {
 	splitInfo := &SplitBrainInfo{
-		Detected:        false,
-		IsolatedNodes:   []string{},
-		ActiveNodes:     []string{},
-		QuorumStatus:    "unknown",
+		Detected:         false,
+		IsolatedNodes:    []string{},
+		ActiveNodes:      []string{},
+		QuorumStatus:     "unknown",
 		PrimaryComponent: false,
 	}
 

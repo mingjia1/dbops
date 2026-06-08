@@ -5,22 +5,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+const testEnvCheckKey = "test-encryption-key"
 
 func newTestEnvCheckCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 2*time.Second)
 }
 
+func newTestEnvCheckService(tctx context.Context) *EnvironmentCheckService {
+	return NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient(), testEnvCheckKey)
+}
+
 func TestNewEnvironmentCheckService(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 	assert.NotNil(t, service)
 }
 
 func TestEnvironmentCheck_Execute(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 
 	req := EnvironmentCheckRequest{
 		Hosts: []HostConfig{
@@ -32,8 +41,6 @@ func TestEnvironmentCheck_Execute(t *testing.T) {
 	defer cancel()
 	result, err := service.Execute(ctx, req)
 
-	// 没有真实 agent 部署在 127.0.0.1:1 时, agent 探测会快速失败, result 里至少含
-	// 一条 "agent_connectivity failed" 记录, 整体 status 仍为 completed.
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.NotEmpty(t, result.CheckID)
@@ -42,7 +49,7 @@ func TestEnvironmentCheck_Execute(t *testing.T) {
 
 func TestEnvironmentCheck_Execute_MultipleHosts(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 
 	req := EnvironmentCheckRequest{
 		Hosts: []HostConfig{
@@ -59,9 +66,39 @@ func TestEnvironmentCheck_Execute_MultipleHosts(t *testing.T) {
 	assert.NotEmpty(t, result.Results)
 }
 
+func TestEnvironmentCheck_ResolveHostIDsUsesStoredCredential(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestHostRepo(ctx)
+	credential, err := utils.Encrypt("stored-password", testEnvCheckKey)
+	require.NoError(t, err)
+	require.NoError(t, repo.Create(ctx, &models.Host{
+		ID:            "host-with-credential",
+		Name:          "host-with-credential",
+		Address:       "10.0.0.8",
+		SSHPort:       2222,
+		SSHUser:       "dbadmin",
+		SSHAuthMethod: "password",
+		SSHCredential: credential,
+		AgentPort:     9090,
+		OSType:        "linux",
+	}))
+
+	service := NewEnvironmentCheckService(repo, newTestAgentClient(), testEnvCheckKey)
+	hosts, err := service.resolveHosts(ctx, EnvironmentCheckRequest{
+		HostIDs: []string{"host-with-credential"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, hosts, 1)
+	assert.Equal(t, "10.0.0.8", hosts[0].Host)
+	assert.Equal(t, 2222, hosts[0].Port)
+	assert.Equal(t, "dbadmin", hosts[0].Username)
+	assert.Equal(t, "stored-password", hosts[0].Password)
+}
+
 func TestEnvironmentCheck_GetByID(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
@@ -75,7 +112,7 @@ func TestEnvironmentCheck_GetByID(t *testing.T) {
 
 func TestEnvironmentCheck_checkHost(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 
 	host := HostConfig{Host: "127.0.0.1", Port: 1, Username: "root", Password: "password"}
 	results := service.checkHost(host)
@@ -84,7 +121,6 @@ func TestEnvironmentCheck_checkHost(t *testing.T) {
 	for _, r := range results {
 		assert.NotEmpty(t, r.Category)
 		assert.NotEmpty(t, r.Name)
-		// B4: 真实探测后状态可能是 passed/failed/unknown, 不再硬要求 true.
 		assert.NotEmpty(t, r.Status)
 		assert.NotEmpty(t, r.Value)
 	}
@@ -104,6 +140,9 @@ func TestEnvironmentCheckRequest_Fields(t *testing.T) {
 
 	req.Hosts = []HostConfig{{Host: "host1"}, {Host: "host2"}}
 	assert.Len(t, req.Hosts, 2)
+
+	req.HostIDs = []string{"host-1", "host-2"}
+	assert.Len(t, req.HostIDs, 2)
 }
 
 func TestEnvironmentCheckResult_Fields(t *testing.T) {
@@ -136,7 +175,7 @@ func TestCheckResult_Fields(t *testing.T) {
 
 func TestCheckResult_DifferentCategories(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
 
@@ -167,7 +206,6 @@ func TestCheckResult_DifferentCategories(t *testing.T) {
 		}
 	}
 
-	// checkHost 返回 3 hardware + 1 os + 1 network + 1 dependency = 6; agent 项会因不可达为 1.
 	assert.Equal(t, 3, hardwareCount)
 	assert.Equal(t, 1, osCount)
 	assert.Equal(t, 1, networkCount)
@@ -177,7 +215,7 @@ func TestCheckResult_DifferentCategories(t *testing.T) {
 
 func TestCheckResult_AllPassed(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
 
@@ -188,13 +226,10 @@ func TestCheckResult_AllPassed(t *testing.T) {
 	assert.NoError(t, err)
 	for _, r := range result.Results {
 		if r.Category == "agent" {
-			// 不可达时 agent 探测应失败.
 			assert.False(t, r.Passed)
 		} else if r.Name == "port_reachable" {
-			// B4: TCP 真实探测, 端口 1 必失败.
 			assert.False(t, r.Passed)
 		} else {
-			// B4: 硬件/os/依赖 需要 agent 端采集, 标 unknown 而不是假装 passed.
 			assert.Equal(t, "unknown", r.Status)
 			assert.False(t, r.Passed)
 		}
@@ -203,13 +238,13 @@ func TestCheckResult_AllPassed(t *testing.T) {
 
 func TestEnvironmentCheck_EmptyHosts(t *testing.T) {
 	tctx := context.Background()
-	service := NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient())
+	service := newTestEnvCheckService(tctx)
 
 	req := EnvironmentCheckRequest{Hosts: []HostConfig{}}
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
 	result, err := service.Execute(ctx, req)
 
-	assert.NoError(t, err)
-	assert.Empty(t, result.Results)
+	assert.Error(t, err)
+	assert.Nil(t, result)
 }

@@ -77,9 +77,10 @@ func (r *InstanceRepository) CreateConnection(ctx context.Context, conn *models.
 		conn.ID = uuid.New().String()
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `
-		INSERT INTO instance_connections (id, instance_id, host, port, username, password_encrypted, ssl_enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO instance_connections (id, instance_id, host, port, username, password_encrypted, ssl_enabled, basedir, datadir, os_user, package_url, version_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		conn.ID, conn.InstanceID, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, conn.SSLEnabled,
+		conn.Basedir, conn.Datadir, conn.OSUser, conn.PackageURL, conn.VersionID,
 	)
 	return err
 }
@@ -89,10 +90,14 @@ func (r *InstanceRepository) GetConnection(ctx context.Context, instanceID strin
 		return nil, fmt.Errorf("database not initialized")
 	}
 	row := r.db.Pool.QueryRowContext(ctx, `
-		SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled
+		SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled,
+			COALESCE(basedir,''), COALESCE(datadir,''), COALESCE(os_user,''), COALESCE(package_url,''), COALESCE(version_id,'')
 		FROM instance_connections WHERE instance_id = ?`, instanceID)
 	conn := &models.InstanceConnection{}
-	if err := row.Scan(&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled); err != nil {
+	if err := row.Scan(
+		&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled,
+		&conn.Basedir, &conn.Datadir, &conn.OSUser, &conn.PackageURL, &conn.VersionID,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("connection not found for instance %s", instanceID)
 		}
@@ -170,6 +175,13 @@ func (r *InstanceRepository) GetByID(ctx context.Context, id string) (*models.In
 	// 加载 instance_topologies (master_id 等), 否则依赖 topology 推导的角色关系会丢失.
 	if topology, err := r.GetTopology(ctx, id); err == nil {
 		instance.Topology = *topology
+	}
+	if conn, err := r.GetConnection(ctx, id); err == nil {
+		instance.Connection = *conn
+		instance.Connection.PasswordEncrypted = ""
+	}
+	if version, err := r.GetVersion(ctx, id); err == nil {
+		instance.Version = *version
 	}
 	return instance, nil
 }

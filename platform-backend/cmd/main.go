@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/controllers"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -81,20 +82,20 @@ func main() {
 	}
 
 	var userRepo *repositories.UserRepository
-userRepo = repositories.NewUserRepository(db)
-authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-authController := controllers.NewAuthController(authService)
+	userRepo = repositories.NewUserRepository(db)
+	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
+	authController := controllers.NewAuthController(authService)
 
-// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
-if created, username, plain, err := authService.SeedAdminIfEmpty(context.Background()); err != nil {
-	logInstance.Warn("Failed to seed admin user: " + err.Error())
-} else if created {
-	logInstance.Info("================================================================")
-	logInstance.Info(" Seeded initial admin user (please change password on first login):")
-	logInstance.Info("   username: " + username)
-	logInstance.Info("   password: " + plain)
-	logInstance.Info("================================================================")
-}
+	// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
+	if created, username, plain, err := authService.SeedAdminIfEmpty(context.Background()); err != nil {
+		logInstance.Warn("Failed to seed admin user: " + err.Error())
+	} else if created {
+		logInstance.Info("================================================================")
+		logInstance.Info(" Seeded initial admin user (please change password on first login):")
+		logInstance.Info("   username: " + username)
+		logInstance.Info("   password: " + plain)
+		logInstance.Info("================================================================")
+	}
 
 	instanceRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
@@ -114,11 +115,11 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 	hostService.SetInstanceRepo(instanceRepo)
 	hostController := controllers.NewHostController(hostService)
 
-	envCheckService := services.NewEnvironmentCheckService(hostRepo, agentClient)
+	envCheckService := services.NewEnvironmentCheckService(hostRepo, agentClient, cfg.EncryptionKey)
 	envCheckController := controllers.NewEnvironmentCheckController(envCheckService)
 
 	backupRepo := repositories.NewBackupRepository(db)
-	backupService := services.NewBackupService(hostRepo, instanceRepo, backupRepo, agentClient)
+	backupService := services.NewBackupService(hostRepo, instanceRepo, backupRepo, agentClient, cfg.EncryptionKey)
 	backupController := controllers.NewBackupController(backupService)
 
 	clickhouse, err := storage.NewClickHouse(cfg.ClickHouseURL)
@@ -265,6 +266,8 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 				instances.DELETE("/:id", middleware.RequirePermission("admin"), instanceController.Delete)
 				instances.POST("/:id/detect-version", middleware.RequirePermission("admin"), instanceController.DetectVersion)
 				instances.POST("/:id/deploy", middleware.RequirePermission("admin"), instanceController.Deploy)
+				instances.POST("/:id/admin", middleware.RequirePermission("admin"), instanceController.AdminAction)
+				instances.POST("/:id/admin-action", middleware.RequirePermission("admin"), instanceController.AdminAction)
 			}
 
 			hosts := protected.Group("/hosts")
@@ -291,7 +294,9 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 			backups := protected.Group("/backups")
 			{
 				// B2: 备份策略创建是 admin 操作.
+				backups.GET("/policies", backupController.ListPolicies)
 				backups.POST("/policies", middleware.RequirePermission("admin"), backupController.CreatePolicy)
+				backups.POST("/scan", middleware.RequirePermission("admin"), backupController.ScanBackups)
 				backups.POST("", middleware.RequirePermission("admin"), backupController.ExecuteBackup)
 				backups.GET("", backupController.ListBackups)
 			}
@@ -365,7 +370,7 @@ if created, username, plain, err := authService.SeedAdminIfEmpty(context.Backgro
 				versions.GET("/:id", versionController.GetOne)
 			}
 
-migrations := protected.Group("/migrations")
+			migrations := protected.Group("/migrations")
 			{
 				migrations.GET("", migrationController.List)
 				migrations.POST("/physical", migrationController.ExecutePhysical)

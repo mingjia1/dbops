@@ -137,3 +137,32 @@
 }
 .user-pill:hover { background: rgba(120, 120, 128, 0.16); }
 .user-pill .ant-avatar { background: linear-gradient(135deg, #0071E3, #5856D6) !important; }
+
+:root[data-theme="dark"] .dashboard-header {
+  background: rgba(28, 28, 30, 0.86) !important;
+}
+
+:root[data-theme="dark"] .dashboard-sider {
+  background: rgba(28, 28, 30, 0.92) !important;
+}
+
+:root[data-theme="dark"] .dashboard-sider .ant-menu-item,
+:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-title {
+  color: rgba(245, 245, 247, 0.76) !important;
+}
+
+:root[data-theme="dark"] .dashboard-sider .ant-menu-item:hover,
+:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-title:hover,
+:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  color: #F5F5F7 !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+:root[data-theme="dark"] .dashboard-sider .ant-menu-sub .ant-menu-item {
+  color: rgba(245, 245, 247, 0.62) !important;
+}
+
+:root[data-theme="dark"] .dashboard-sider .ant-menu-sub .ant-menu-item-selected {
+  background: rgba(10, 132, 255, 0.18) !important;
+  color: #64D2FF !important;
+}
