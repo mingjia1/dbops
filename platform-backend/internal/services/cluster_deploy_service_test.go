@@ -275,6 +275,102 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	require.Equal(t, "failed", deployment.Status)
 }
 
+func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name        string
+		clusterID   string
+		clusterType string
+		deploy      func(*ClusterDeployService) (*DeployResponse, error)
+	}{
+		{
+			name:        "ha",
+			clusterID:   "ha-no-agent",
+			clusterType: "ha",
+			deploy: func(service *ClusterDeployService) (*DeployResponse, error) {
+				return service.DeployHA(ctx, DeployHARequest{
+					ClusterID:     "ha-no-agent",
+					Name:          "ha-no-agent",
+					MasterHost:    "10.0.0.11",
+					ReplicaHost:   "10.0.0.12",
+					MasterPort:    3306,
+					ReplicaPort:   3307,
+					MySQLUser:     "root",
+					MySQLPassword: "rootpass",
+				})
+			},
+		},
+		{
+			name:        "mha",
+			clusterID:   "mha-no-agent",
+			clusterType: "mha",
+			deploy: func(service *ClusterDeployService) (*DeployResponse, error) {
+				return service.DeployMHA(ctx, DeployMHARequest{
+					ClusterID:   "mha-no-agent",
+					Name:        "mha-no-agent",
+					ManagerHost: "10.0.0.10",
+					MasterHost:  "10.0.0.11",
+					MasterPort:  3306,
+					SlaveHosts:  []SlaveNode{{Host: "10.0.0.12", Port: 3307}},
+				})
+			},
+		},
+		{
+			name:        "mgr",
+			clusterID:   "mgr-no-agent",
+			clusterType: "mgr",
+			deploy: func(service *ClusterDeployService) (*DeployResponse, error) {
+				return service.DeployMGR(ctx, DeployMGRRequest{
+					ClusterID:      "mgr-no-agent",
+					Name:           "mgr-no-agent",
+					PrimaryHost:    "10.0.0.11",
+					PrimaryPort:    3306,
+					SecondaryHosts: []SecondaryNode{{Host: "10.0.0.12", Port: 3307}},
+					MySQLUser:      "root",
+					MySQLPassword:  "rootpass",
+				})
+			},
+		},
+		{
+			name:        "pxc",
+			clusterID:   "pxc-no-agent",
+			clusterType: "pxc",
+			deploy: func(service *ClusterDeployService) (*DeployResponse, error) {
+				return service.DeployPXC(ctx, DeployPXCRequest{
+					ClusterID:     "pxc-no-agent",
+					Name:          "pxc-no-agent",
+					BootstrapNode: BootstrapNode{Host: "10.0.0.11", Port: 3306},
+					OtherNodes:    []PXCNode{{Host: "10.0.0.12", Port: 3307}},
+					MySQLUser:     "root",
+					MySQLPassword: "rootpass",
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newTestDB()
+			hostRepo := repositories.NewHostRepository(db)
+			instRepo := repositories.NewInstanceRepository(db)
+			clusterRepo := repositories.NewClusterDeployRepository(db)
+			service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, nil, config.ClusterDefaults{})
+
+			resp, err := tt.deploy(service)
+
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			require.Equal(t, tt.clusterID, resp.DeploymentID)
+			require.Equal(t, tt.clusterType, resp.ClusterType)
+			require.Equal(t, "failed", resp.Status)
+			require.Contains(t, resp.Message, "agent client not configured")
+			deployment, err := clusterRepo.GetByID(ctx, tt.clusterID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", deployment.Status)
+		})
+	}
+}
+
 func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	ctx := context.Background()
 	primaryServer := httptest.NewServer(clusterDeployOKHandler(t))

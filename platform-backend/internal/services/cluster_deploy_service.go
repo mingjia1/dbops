@@ -108,6 +108,9 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		agentPort = 9090
 	}
 
+	if s.agentClient == nil {
+		return s.failDeployment(ctx, deployment, "mha", req.Name, "agent client not configured"), nil
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
@@ -208,6 +211,9 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		}
 
 		agentPort := defaultInt(node.AgentPort, 9090)
+		if s.agentClient == nil {
+			return s.failDeployment(ctx, deployment, "mgr", req.Name, "agent client not configured"), nil
+		}
 		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
@@ -296,6 +302,9 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	}
 
 	agentPort := defaultInt(req.BootstrapNode.AgentPort, 9090)
+	if s.agentClient == nil {
+		return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
+	}
 	result, err := s.agentClient.callAgent(ctx, req.BootstrapNode.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
@@ -340,6 +349,9 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"data_dir":       fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(node.Port, 3306)),
 		}
 		nodeAgentPort := defaultInt(node.AgentPort, 9090)
+		if s.agentClient == nil {
+			return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
+		}
 		result, err := s.agentClient.callAgent(ctx, node.Host, nodeAgentPort, "/agent/tasks/deploy", map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
@@ -423,6 +435,9 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 	agentPort := req.MasterAgentPort
 	if agentPort == 0 {
 		agentPort = 9090
+	}
+	if s.agentClient == nil {
+		return s.failDeployment(ctx, deployment, "ha", req.Name, "agent client not configured"), nil
 	}
 	result, err := s.agentClient.callAgent(ctx, req.MasterHost, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 		"task_id":     deployment.ID,
@@ -524,6 +539,26 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}, nil
+}
+
+func (s *ClusterDeployService) failDeployment(ctx context.Context, deployment *models.ClusterDeployment, clusterType, name, message string) *DeployResponse {
+	if deployment != nil {
+		_ = s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+		return &DeployResponse{
+			DeploymentID: deployment.ID,
+			ClusterType:  clusterType,
+			Name:         name,
+			Status:       "failed",
+			Message:      message,
+			CreatedAt:    deployment.CreatedAt,
+		}
+	}
+	return &DeployResponse{
+		ClusterType: clusterType,
+		Name:        name,
+		Status:      "failed",
+		Message:     message,
+	}
 }
 
 func (s *ClusterDeployService) deploymentNodes(ctx context.Context, clusterID string) []DeployNode {
