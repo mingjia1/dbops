@@ -233,7 +233,9 @@ func (s *HostService) Create(ctx context.Context, req CreateHostRequest) (*model
 		return nil, err
 	}
 	go func(hostID string) {
-		_, _ = s.AgentAction(context.Background(), hostID, HostAgentActionRequest{Action: "install"})
+		actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
+		defer cancel()
+		_, _ = s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: "install"})
 	}(host.ID)
 	return host, nil
 }

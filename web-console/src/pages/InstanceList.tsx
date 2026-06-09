@@ -40,6 +40,8 @@ const isHealthCheckSuccess = (task: any) => {
 
 const getHealthCheckTask = (res: any) => res?.data || res
 
+const getHealthCheckErrorTask = (err: any) => err?.response?.data?.data || err?.data || null
+
 const formatHealthCheckFailure = (instanceName: string, task: any, fallback: string) => {
   const parts = [
     `${instanceName}: ${task?.message || fallback}`,
@@ -50,7 +52,7 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
 }
 
 const formatHealthCheckSummary = (ok: number, failed: number) =>
-  `\u68c0\u6d4b\u7ed3\u679c\uff1a\u901a\u8fc7 ${ok} \u4e2a\uff0c\u672a\u901a\u8fc7 ${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u6309\u5931\u8d25\u5904\u7406\u3002`
+  `\u68c0\u6d4b\u5931\u8d25\uff1a\u6210\u529f ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u6309\u5931\u8d25\u5904\u7406\u3002`
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -204,13 +206,13 @@ const InstanceList: React.FC = () => {
         }
       } catch (err: any) {
         failed += 1
-        const task = err?.response?.data?.data
+        const task = getHealthCheckErrorTask(err)
         failedRows.push(formatHealthCheckFailure(instance.name, task, err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'))
       }
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5931\u8d25',
+        title: ok > 0 ? `\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25\uff1a\u6210\u529f ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a` : `\u4e00\u952e\u68c0\u6d4b\u5931\u8d25\uff1a\u5931\u8d25 ${failed} \u4e2a`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             <div>{formatHealthCheckSummary(ok, failed)}</div>

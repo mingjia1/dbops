@@ -43,6 +43,48 @@ const statusColor = (status?: string) => {
   return 'default'
 }
 
+const parseSlaveIds = (value?: string) => {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : []
+  } catch {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+}
+
+const inferEdgesFromInstances = (clusterInstances: Instance[]): TopologyEdge[] => {
+  const ids = new Set(clusterInstances.map((item) => item.id))
+  const edgeKeys = new Set<string>()
+  const edges: TopologyEdge[] = []
+  const addEdge = (sourceId?: string, targetId?: string, label?: string) => {
+    if (!sourceId || !targetId || !ids.has(sourceId) || !ids.has(targetId)) return
+    const key = `${sourceId}->${targetId}`
+    if (edgeKeys.has(key)) return
+    edgeKeys.add(key)
+    edges.push({
+      source_id: sourceId,
+      target_id: targetId,
+      type: 'replication',
+      label: label || 'replication',
+    })
+  }
+  clusterInstances.forEach((instance) => {
+    const mode = instance.topology?.replication_mode || instance.status?.replication_status || 'replication'
+    addEdge(instance.topology?.master_id, instance.id, mode)
+    parseSlaveIds(instance.topology?.slave_ids).forEach((slaveId) => addEdge(instance.id, slaveId, mode))
+  })
+  if (edges.length > 0 || clusterInstances.length <= 1) return edges
+
+  const primary = clusterInstances.find((instance) => primaryRoles.has(instance.status?.role || '')) || clusterInstances[0]
+  clusterInstances.forEach((instance) => {
+    if (instance.id !== primary.id) {
+      addEdge(primary.id, instance.id, primary.topology?.replication_mode || instance.topology?.replication_mode || 'replication')
+    }
+  })
+  return edges
+}
+
 const TopologyView: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
   const [graphs, setGraphs] = useState<Record<string, ClusterGraph>>({})
@@ -119,10 +161,13 @@ const TopologyView: React.FC = () => {
     const width = 920
     const height = Math.max(180, Math.ceil(nodes.length / 4) * 150)
     const positions = new Map<string, { x: number; y: number }>()
-    nodes.forEach((node, index) => {
+    let primaryIndex = 0
+    let replicaIndex = 0
+    nodes.forEach((node) => {
       const isPrimary = primaryRoles.has(node.role)
-      const x = isPrimary ? 140 : 360 + (index % 3) * 180
-      const y = isPrimary ? 80 : 70 + Math.floor(index / 3) * 130
+      const slot = isPrimary ? primaryIndex++ : replicaIndex++
+      const x = isPrimary ? 90 + (slot % 2) * 180 : 360 + (slot % 3) * 180
+      const y = isPrimary ? 70 + Math.floor(slot / 2) * 130 : 70 + Math.floor(slot / 3) * 130
       positions.set(node.id, { x, y })
     })
 
@@ -212,9 +257,10 @@ const TopologyView: React.FC = () => {
                 status: i.status?.health_status || i.status?.run_status || 'unknown',
                 cluster_id: clusterId,
               }))
+              const edges = graph?.edges?.length ? graph.edges : inferEdgesFromInstances(clusterInstances)
               return (
                 <Card key={clusterId} size="small" title={<Space><ApartmentOutlined />{clusterId}<Tag>{graph?.mode || 'unknown'}</Tag></Space>}>
-                  {renderTopologyGraph(nodes, graph?.edges || [])}
+                  {renderTopologyGraph(nodes, edges)}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
                     {nodes.map((node) => (
                       <div key={node.id} style={{ width: 220, minHeight: 92, border: '1px solid #d9d9d9', borderRadius: 6, padding: 12 }}>
@@ -237,7 +283,7 @@ const TopologyView: React.FC = () => {
                       { title: '目标节点', dataIndex: 'target_id', key: 'target_id' },
                       { title: '关系', dataIndex: 'label', key: 'label', render: (v) => <Tag>{v || 'replication'}</Tag> },
                     ]}
-                    dataSource={(graph?.edges || []).map((edge, index) => ({ ...edge, key: `${edge.source_id}-${edge.target_id}-${index}` }))}
+                    dataSource={edges.map((edge, index) => ({ ...edge, key: `${edge.source_id}-${edge.target_id}-${index}` }))}
                     locale={{ emptyText: '暂无复制关系' }}
                   />
                 </Card>
