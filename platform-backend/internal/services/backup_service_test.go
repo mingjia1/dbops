@@ -345,6 +345,67 @@ func TestExecuteBackupUsesPolicyStoragePathAsTargetDir(t *testing.T) {
 	assert.Equal(t, "/data/custom-backups", payload.Config["target_dir"])
 }
 
+func TestExecuteIncrementalBackupUsesFullBackupReturnedAsSuccess(t *testing.T) {
+	var calls []backupAgentRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/backup", r.URL.Path)
+		var payload backupAgentRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		calls = append(calls, payload)
+		w.Header().Set("Content-Type", "application/json")
+		if len(calls) == 1 {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-full-success","status":"success","progress":100,"message":"full backup ok","data":{"backup_path":"/backup/mysql/full-success.xbstream","file_size":1024}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-inc-success","status":"completed","progress":100,"message":"incremental backup ok","data":{"backup_path":"/backup/mysql/inc-success.xbstream","file_size":512}}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-success-base"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-success-base", Name: "instance-success-base", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-success-base",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	full, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{InstanceID: "instance-success-base", BackupType: "full"})
+	require.NoError(t, err)
+	require.NotNil(t, full)
+	assert.Equal(t, "completed", full.Status)
+	assert.Equal(t, "/backup/mysql/full-success.xbstream", full.FilePath)
+
+	incremental, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{InstanceID: "instance-success-base", BackupType: "incremental"})
+	require.NoError(t, err)
+	require.NotNil(t, incremental)
+	assert.Equal(t, "completed", incremental.Status)
+	require.Len(t, calls, 2)
+	assert.Equal(t, "/backup/mysql/full-success.xbstream", calls[1].Config["base_backup_path"])
+
+	records, err := service.ListBackups(context.Background(), "instance-success-base")
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, "completed", records[0].Status)
+	assert.Equal(t, "completed", records[1].Status)
+}
+
 func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {
 	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-001","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"},{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"}]}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +462,49 @@ func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) 
 	records, err = service.ListBackups(context.Background(), "instance-scan")
 	assert.NoError(t, err)
 	assert.Len(t, records, 1)
+}
+
+func TestScanBackupsAgentFailedStatusDoesNotCreateRecords(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/agent/tasks/backup-scan", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"scan-failed","status":"failed","progress":100,"message":"backup directory is not readable","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full"}]}}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-scan-failed"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "scan-agent", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-scan-failed", Name: "instance-scan-failed", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-scan-failed",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	result, err := service.ScanBackups(context.Background(), "instance-scan-failed")
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "backup directory is not readable")
+	records, listErr := service.ListBackups(context.Background(), "instance-scan-failed")
+	require.NoError(t, listErr)
+	assert.Empty(t, records)
 }
 
 func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {

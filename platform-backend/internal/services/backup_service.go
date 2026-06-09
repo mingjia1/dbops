@@ -240,7 +240,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		s.auditBackupExecution(ctx, out, "failed")
 		return out, nil
 	}
-	out.Status = result.Status
+	out.Status = normalizeBackupAgentStatus(result.Status)
 	out.Message = result.Message
 	if isTerminalBackupStatus(out.Status) {
 		out.CompletedAt = time.Now()
@@ -297,7 +297,7 @@ func (s *BackupService) auditBackup(ctx context.Context, operation, action, reso
 }
 
 func backupAuditResult(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch normalizeBackupAgentStatus(status) {
 	case "failed", "error", "timeout", "cancelled", "canceled":
 		return "failed"
 	default:
@@ -306,7 +306,7 @@ func backupAuditResult(status string) string {
 }
 
 func isTerminalBackupStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch normalizeBackupAgentStatus(status) {
 	case "completed", "success", "succeeded", "ok", "failed", "error", "timeout", "cancelled", "canceled":
 		return true
 	default:
@@ -315,11 +315,24 @@ func isTerminalBackupStatus(status string) bool {
 }
 
 func isActiveBackupStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch normalizeBackupAgentStatus(status) {
 	case "pending", "running", "submitted", "accepted", "queued":
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeBackupAgentStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "succeeded", "ok", "completed":
+		return "completed"
+	case "failed", "error", "timeout", "cancelled", "canceled", "unhealthy":
+		return "failed"
+	case "pending", "running", "submitted", "accepted", "queued":
+		return strings.ToLower(strings.TrimSpace(status))
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
 	}
 }
 
@@ -383,7 +396,7 @@ func (s *BackupService) refreshActiveBackupRecords(ctx context.Context, records 
 		if err != nil || result == nil {
 			continue
 		}
-		records[i].Status = result.Status
+		records[i].Status = normalizeBackupAgentStatus(result.Status)
 		records[i].Message = result.Message
 		if path := stringValue(result.Data["backup_path"]); path != "" {
 			records[i].FilePath = path
@@ -394,7 +407,7 @@ func (s *BackupService) refreshActiveBackupRecords(ctx context.Context, records 
 		if checksum := stringValue(result.Data["checksum"]); checksum != "" {
 			records[i].Checksum = checksum
 		}
-		if isTerminalBackupStatus(result.Status) && records[i].CompletedAt.IsZero() {
+		if isTerminalBackupStatus(records[i].Status) && records[i].CompletedAt.IsZero() {
 			records[i].CompletedAt = time.Now()
 		}
 		_ = s.policyRepo.UpdateRecord(context.Background(), &records[i])
@@ -423,6 +436,15 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent backup scan failed: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("agent backup scan failed: empty result")
+	}
+	if normalizeBackupAgentStatus(result.Status) == "failed" {
+		if result.Message != "" {
+			return nil, fmt.Errorf("agent backup scan failed: %s", result.Message)
+		}
+		return nil, fmt.Errorf("agent backup scan failed")
 	}
 
 	discovered := dedupeDiscoveredBackups(decodeDiscoveredBackups(result.Data))
@@ -539,7 +561,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 	if err != nil {
 		out.Message = err.Error()
 	} else {
-		out.Status = result.Status
+		out.Status = normalizeBackupAgentStatus(result.Status)
 		out.Message = result.Message
 		if isTerminalBackupStatus(out.Status) {
 			out.CompletedAt = time.Now()
