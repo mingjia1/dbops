@@ -134,6 +134,7 @@ func (s *BackupService) ListPolicies(ctx context.Context, instanceID string) ([]
 }
 
 func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequest) (*BackupTaskResult, error) {
+	targetDir := "/backup/mysql"
 	if req.PolicyID != "" {
 		policy, err := s.policyRepo.GetPolicyByID(ctx, req.PolicyID)
 		if err != nil {
@@ -141,6 +142,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		}
 		req.InstanceID = policy.InstanceID
 		req.BackupType = policy.BackupType
+		if strings.TrimSpace(policy.StoragePath) != "" {
+			targetDir = strings.TrimSpace(policy.StoragePath)
+		}
 	}
 	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
@@ -174,7 +178,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	now := time.Now()
 	config := map[string]interface{}{
 		"backup_type": req.BackupType,
-		"target_dir":  "/backup/mysql",
+		"target_dir":  targetDir,
 		"mysql_host":  conn.Host,
 		"mysql_port":  conn.Port,
 		"mysql_user":  conn.Username,

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type backupAgentRequest struct {
+	TaskID     string                 `json:"task_id"`
+	InstanceID string                 `json:"instance_id"`
+	Config     map[string]interface{} `json:"config"`
+}
 
 // newTestBackupService 创建一个共享 db 的 BackupService — hostRepo / instRepo /
 // backupRepo 都连同一 Database, 这样 backup_policies 外键能正确指向 instances 行.
@@ -216,6 +223,61 @@ func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	assert.Equal(t, "/backup/mysql/full.xbstream", backups[0].FilePath)
 	assert.True(t, result.CompletedAt.IsZero())
 	assert.True(t, backups[0].CompletedAt.IsZero())
+}
+
+func TestExecuteBackupUsesPolicyStoragePathAsTargetDir(t *testing.T) {
+	var payload backupAgentRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/backup", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-policy","status":"completed","progress":100,"message":"backup completed","data":{"backup_path":"/data/custom-backups/full.xbstream","file_size":1024}}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-policy-path"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-policy-path", Name: "instance-policy-path", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-policy-path",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+	policyID, err := service.CreatePolicy(context.Background(), CreateBackupPolicyRequest{
+		InstanceID:    "instance-policy-path",
+		BackupType:    "full",
+		Schedule:      "manual",
+		RetentionDays: 7,
+		StorageType:   "local",
+		StoragePath:   "/data/custom-backups",
+		Enabled:       false,
+	})
+	require.NoError(t, err)
+
+	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{PolicyID: policyID})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.Equal(t, "instance-policy-path", payload.InstanceID)
+	assert.Equal(t, "full", payload.Config["backup_type"])
+	assert.Equal(t, "/data/custom-backups", payload.Config["target_dir"])
 }
 
 func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {
