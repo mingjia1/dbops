@@ -643,16 +643,53 @@ func decodeDiscoveredBackups(data map[string]interface{}) []DiscoveredBackup {
 		if !ok {
 			continue
 		}
-		out = append(out, DiscoveredBackup{
+		backup := DiscoveredBackup{
 			FileName:   stringValue(m["file_name"]),
 			FilePath:   stringValue(m["file_path"]),
 			SizeBytes:  int64Value(m["size_bytes"]),
-			BackupType: stringValue(m["backup_type"]),
+			BackupType: normalizeDiscoveredBackupType(stringValue(m["backup_type"])),
 			DetectedAt: timeValue(m["detected_at"], time.Now()),
 			MTime:      timeValue(m["mtime"], time.Now()),
-		})
+		}
+		if backup.FileName == "" && backup.FilePath != "" {
+			backup.FileName = filepath.Base(filepath.Clean(backup.FilePath))
+		}
+		if backup.BackupType == "" {
+			backup.BackupType = inferDiscoveredBackupType(backup.FileName, backup.FilePath)
+		}
+		if !isCompleteDiscoveredBackup(backup) {
+			continue
+		}
+		out = append(out, backup)
 	}
 	return out
+}
+
+func isCompleteDiscoveredBackup(item DiscoveredBackup) bool {
+	return strings.TrimSpace(item.FilePath) != "" && normalizeDiscoveredBackupType(item.BackupType) != ""
+}
+
+func normalizeDiscoveredBackupType(backupType string) string {
+	switch strings.ToLower(strings.TrimSpace(backupType)) {
+	case "full", "incremental", "logical":
+		return strings.ToLower(strings.TrimSpace(backupType))
+	default:
+		return ""
+	}
+}
+
+func inferDiscoveredBackupType(parts ...string) string {
+	text := strings.ToLower(strings.Join(parts, " "))
+	switch {
+	case strings.Contains(text, "incremental"), strings.Contains(text, "inc-"), strings.Contains(text, "_inc"):
+		return "incremental"
+	case strings.Contains(text, "logical"), strings.Contains(text, "dump"), strings.HasSuffix(text, ".sql"), strings.HasSuffix(text, ".sql.gz"):
+		return "logical"
+	case strings.Contains(text, "full"), strings.Contains(text, ".xbstream"), strings.Contains(text, ".xtrabackup"):
+		return "full"
+	default:
+		return ""
+	}
 }
 
 func stringValue(v interface{}) string {
