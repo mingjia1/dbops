@@ -28,9 +28,9 @@ func TestDSNForConnection_DecryptsPassword(t *testing.T) {
 		encryptionKey: key,
 	}
 	conn := &models.InstanceConnection{
-		Host:               "10.1.81.41",
-		Port:               3307,
-		Username:           "root",
+		Host:              "10.1.81.41",
+		Port:              3307,
+		Username:          "root",
 		PasswordEncrypted: encrypted,
 	}
 
@@ -64,9 +64,9 @@ func TestDSNForConnection_EscapesSpecialChars(t *testing.T) {
 		encryptionKey: key,
 	}
 	conn := &models.InstanceConnection{
-		Host:               "10.1.81.41",
-		Port:               3307,
-		Username:           "root",
+		Host:              "10.1.81.41",
+		Port:              3307,
+		Username:          "root",
 		PasswordEncrypted: encrypted,
 	}
 
@@ -85,5 +85,14 @@ func TestDSNForConnection_EscapesSpecialChars(t *testing.T) {
 	last := matches[len(matches)-1]
 	if !strings.Contains(last, "10.1.81.41:3307") {
 		t.Errorf("DSN host:port got polluted by password; last tcp()=%s, full dsn=%s", last, dsn)
+	}
+}
+
+func TestPrioritizeManualCandidate(t *testing.T) {
+	got := prioritizeManualCandidate("slave-2", []string{"slave-1", "slave-2", "slave-3"})
+
+	want := []string{"slave-2", "slave-1", "slave-3"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected candidate order: got %v want %v", got, want)
 	}
 }

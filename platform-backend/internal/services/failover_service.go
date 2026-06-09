@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -217,8 +218,25 @@ func (s *FailoverService) ExecuteManualFailover(ctx context.Context, req Failove
 	if req.NewMasterID == "" {
 		return nil, fmt.Errorf("new_master_id is required for manual failover")
 	}
+	req.Config.CandidateMasterIDs = prioritizeManualCandidate(req.NewMasterID, req.Config.CandidateMasterIDs)
 
 	return s.ExecuteAutoFailover(ctx, req)
+}
+
+func prioritizeManualCandidate(newMasterID string, candidates []string) []string {
+	newMasterID = strings.TrimSpace(newMasterID)
+	if newMasterID == "" {
+		return candidates
+	}
+	out := []string{newMasterID}
+	for _, id := range candidates {
+		id = strings.TrimSpace(id)
+		if id == "" || id == newMasterID {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string) (*MasterInfo, error) {
