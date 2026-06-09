@@ -677,6 +677,56 @@ func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {
 	assert.NotZero(t, result.CompletedAt)
 }
 
+func TestRestoreBackupWithoutAgentClientReturnsFailedResultAndWritesRestoreRecord(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "restore-no-agent-host"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "restore-no-agent-host", Address: "127.0.0.1", AgentPort: 9090}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "restore-no-agent-instance", Name: "restore-no-agent-instance", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "restore-no-agent-instance",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	require.NoError(t, backupRepo.CreateRecord(context.Background(), &models.BackupRecord{
+		InstanceID:  "restore-no-agent-instance",
+		BackupType:  "full",
+		TaskID:      "backup-completed-no-agent",
+		StartedAt:   time.Now().Add(-time.Hour),
+		CompletedAt: time.Now().Add(-30 * time.Minute),
+		Status:      "completed",
+		FilePath:    "/backup/mysql/full-no-agent",
+		CreatedAt:   time.Now(),
+	}))
+	records, err := backupRepo.ListRecords(context.Background(), "restore-no-agent-instance", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	service := NewBackupService(hostRepo, instRepo, backupRepo, nil, "test-encryption-key")
+
+	result, err := service.RestoreBackup(context.Background(), RestoreBackupRequest{
+		BackupID:         records[0].ID,
+		TargetInstanceID: "restore-no-agent-instance",
+		TargetType:       "in-place",
+		ConfirmOverwrite: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+	var count int
+	var status string
+	require.NoError(t, db.Pool.QueryRowContext(context.Background(), `SELECT COUNT(*), COALESCE(MAX(status), '') FROM restore_records WHERE backup_id = ?`, records[0].ID).Scan(&count, &status))
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "failed", status)
+}
+
 func TestDeleteBackupRecordRemovesRecord(t *testing.T) {
 	service := newTestBackupService()
 	ctx := context.Background()

@@ -553,23 +553,8 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 	if err != nil {
 		return nil, err
 	}
-	if s.agentClient == nil {
-		return nil, fmt.Errorf("agent client not configured")
-	}
 	taskID := fmt.Sprintf("restore-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
 	startedAt := time.Now()
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/restore", map[string]interface{}{
-		"task_id":     taskID,
-		"instance_id": req.TargetInstanceID,
-		"config": map[string]interface{}{
-			"backup_path": backup.FilePath,
-			"mysql_host":  conn.Host,
-			"mysql_port":  conn.Port,
-			"mysql_user":  conn.Username,
-			"mysql_pass":  password,
-			"target_type": req.TargetType,
-		},
-	})
 	out := &RestoreBackupResult{
 		BackupID:         req.BackupID,
 		TargetInstanceID: req.TargetInstanceID,
@@ -577,13 +562,29 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 		Status:           "failed",
 		StartedAt:        startedAt,
 	}
-	if err != nil {
-		out.Message = err.Error()
+	if s.agentClient == nil {
+		out.Message = "agent client not configured"
 	} else {
-		out.Status = normalizeBackupAgentStatus(result.Status)
-		out.Message = result.Message
-		if isTerminalBackupStatus(out.Status) {
-			out.CompletedAt = time.Now()
+		result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/restore", map[string]interface{}{
+			"task_id":     taskID,
+			"instance_id": req.TargetInstanceID,
+			"config": map[string]interface{}{
+				"backup_path": backup.FilePath,
+				"mysql_host":  conn.Host,
+				"mysql_port":  conn.Port,
+				"mysql_user":  conn.Username,
+				"mysql_pass":  password,
+				"target_type": req.TargetType,
+			},
+		})
+		if err != nil {
+			out.Message = err.Error()
+		} else {
+			out.Status = normalizeBackupAgentStatus(result.Status)
+			out.Message = result.Message
+			if isTerminalBackupStatus(out.Status) {
+				out.CompletedAt = time.Now()
+			}
 		}
 	}
 	restoreRecord := &models.RestoreRecord{
