@@ -148,6 +148,7 @@ var InitialSchema = []string{
 		started_at TIMESTAMP NULL,
 		completed_at TIMESTAMP NULL,
 		status VARCHAR(32) DEFAULT 'pending',
+		message TEXT,
 		file_path VARCHAR(512),
 		file_size BIGINT,
 		checksum VARCHAR(128),
@@ -510,6 +511,7 @@ var schemaSQLite = []string{
 		started_at TIMESTAMP,
 		completed_at TIMESTAMP,
 		status TEXT DEFAULT 'pending',
+		message TEXT,
 		file_path TEXT,
 		file_size INTEGER,
 		checksum TEXT,
@@ -729,6 +731,7 @@ var schemaSQLite = []string{
 	`ALTER TABLE instance_connections ADD COLUMN package_url VARCHAR(1024) DEFAULT ''`,
 	`ALTER TABLE instance_connections ADD COLUMN version_id VARCHAR(64) DEFAULT ''`,
 	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE backup_records ADD COLUMN message TEXT`,
 	// P1: 之前 SwitchService.history 是 in-memory map, 后端重启就丢,
 	// ListRoleSwitchHistory 返空. 现在持久化到 role_switch_history 表.
 	`CREATE TABLE IF NOT EXISTS role_switch_history (

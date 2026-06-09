@@ -76,6 +76,12 @@ func TestExecuteBackup(t *testing.T) {
 	assert.NotEmpty(t, result.TaskID)
 	assert.NotZero(t, result.StartedAt)
 	assert.Equal(t, "failed", result.Status)
+
+	backups, err := service.ListBackups(context.Background(), "instance-001")
+	assert.NoError(t, err)
+	assert.Len(t, backups, 1)
+	assert.Equal(t, "failed", backups[0].Status)
+	assert.Equal(t, "full", backups[0].BackupType)
 }
 
 func TestListBackups(t *testing.T) {

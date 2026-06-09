@@ -183,12 +183,13 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		out.Status = "failed"
 		out.Message = err.Error()
 		// 真实落库失败记录, 而不是悄无声息.
-		_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
+		_ = s.createRecord(&models.BackupRecord{
 			InstanceID: req.InstanceID,
 			PolicyID:   req.PolicyID,
 			BackupType: req.BackupType,
 			StartedAt:  now,
 			Status:     "failed",
+			Message:    out.Message,
 			CreatedAt:  now,
 		})
 		return out, nil
@@ -204,19 +205,26 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	}
 	out.Size = formatBytes(out.FileSize)
 
-	_ = s.policyRepo.CreateRecord(ctx, &models.BackupRecord{
+	_ = s.createRecord(&models.BackupRecord{
 		InstanceID:  req.InstanceID,
 		PolicyID:    req.PolicyID,
 		BackupType:  req.BackupType,
 		StartedAt:   now,
 		CompletedAt: out.CompletedAt,
 		Status:      out.Status,
+		Message:     out.Message,
 		FilePath:    out.FilePath,
 		FileSize:    out.FileSize,
 		Checksum:    out.Checksum,
 		CreatedAt:   now,
 	})
 	return out, nil
+}
+
+func (s *BackupService) createRecord(record *models.BackupRecord) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.policyRepo.CreateRecord(ctx, record)
 }
 
 // ListBackups P0-4: 真实从 backup_records 读, 不再返回空.
@@ -233,6 +241,7 @@ func (s *BackupService) ListBackups(ctx context.Context, instanceID string) ([]B
 			BackupType:  r.BackupType,
 			TaskID:      r.ID,
 			Status:      r.Status,
+			Message:     r.Message,
 			StartedAt:   r.StartedAt,
 			CompletedAt: r.CompletedAt,
 			FilePath:    r.FilePath,
@@ -340,8 +349,8 @@ func decodeDiscoveredBackups(data map[string]interface{}) []DiscoveredBackup {
 			FilePath:   stringValue(m["file_path"]),
 			SizeBytes:  int64Value(m["size_bytes"]),
 			BackupType: stringValue(m["backup_type"]),
-			DetectedAt: time.Now(),
-			MTime:      time.Now(),
+			DetectedAt: timeValue(m["detected_at"], time.Now()),
+			MTime:      timeValue(m["mtime"], time.Now()),
 		})
 	}
 	return out
@@ -378,6 +387,21 @@ func int64Value(v interface{}) int64 {
 	default:
 		return 0
 	}
+}
+
+func timeValue(v interface{}, fallback time.Time) time.Time {
+	if t, ok := v.(time.Time); ok {
+		return t
+	}
+	if s, ok := v.(string); ok && s != "" {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t
+		}
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t
+		}
+	}
+	return fallback
 }
 
 func formatBytes(bytes int64) string {

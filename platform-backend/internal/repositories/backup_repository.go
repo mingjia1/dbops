@@ -104,15 +104,19 @@ func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.Back
 		return fmt.Errorf("database not available")
 	}
 	record.ID = uuid.New().String()
+	var policyID interface{} = record.PolicyID
+	if record.PolicyID == "" {
+		policyID = nil
+	}
 
 	query := `
-		INSERT INTO backup_records (id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO backup_records (id, policy_id, instance_id, backup_type, started_at, completed_at, status, message, file_path, file_size, checksum, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.Pool.ExecContext(ctx, query,
-		record.ID, record.PolicyID, record.InstanceID, record.BackupType, record.StartedAt, record.CompletedAt,
-		record.Status, record.FilePath, record.FileSize, record.Checksum, record.CreatedAt)
+		record.ID, policyID, record.InstanceID, record.BackupType, record.StartedAt, record.CompletedAt,
+		record.Status, record.Message, record.FilePath, record.FileSize, record.Checksum, record.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create backup record: %w", err)
@@ -126,7 +130,7 @@ func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, l
 		return nil, fmt.Errorf("database not available")
 	}
 	query := `
-		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at
+		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, COALESCE(message, ''), file_path, file_size, checksum, created_at
 		FROM backup_records WHERE instance_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 
@@ -139,9 +143,13 @@ func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, l
 	var records []models.BackupRecord
 	for rows.Next() {
 		var record models.BackupRecord
-		if err := rows.Scan(&record.ID, &record.PolicyID, &record.InstanceID, &record.BackupType,
-			&record.StartedAt, &record.CompletedAt, &record.Status, &record.FilePath, &record.FileSize, &record.Checksum, &record.CreatedAt); err != nil {
+		var policyID sql.NullString
+		if err := rows.Scan(&record.ID, &policyID, &record.InstanceID, &record.BackupType,
+			&record.StartedAt, &record.CompletedAt, &record.Status, &record.Message, &record.FilePath, &record.FileSize, &record.Checksum, &record.CreatedAt); err != nil {
 			return nil, err
+		}
+		if policyID.Valid {
+			record.PolicyID = policyID.String
 		}
 		records = append(records, record)
 	}
@@ -154,19 +162,23 @@ func (r *BackupRepository) LatestCompletedRecord(ctx context.Context, instanceID
 		return nil, fmt.Errorf("database not available")
 	}
 	query := `
-		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, file_path, file_size, checksum, created_at
+		SELECT id, policy_id, instance_id, backup_type, started_at, completed_at, status, COALESCE(message, ''), file_path, file_size, checksum, created_at
 		FROM backup_records
 		WHERE instance_id = ? AND backup_type = ? AND status = 'completed' AND file_path <> ''
 		ORDER BY completed_at DESC, created_at DESC LIMIT 1
 	`
 	record := &models.BackupRecord{}
+	var policyID sql.NullString
 	err := r.db.Pool.QueryRowContext(ctx, query, instanceID, backupType).Scan(
-		&record.ID, &record.PolicyID, &record.InstanceID, &record.BackupType,
-		&record.StartedAt, &record.CompletedAt, &record.Status, &record.FilePath,
+		&record.ID, &policyID, &record.InstanceID, &record.BackupType,
+		&record.StartedAt, &record.CompletedAt, &record.Status, &record.Message, &record.FilePath,
 		&record.FileSize, &record.Checksum, &record.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if policyID.Valid {
+		record.PolicyID = policyID.String
 	}
 	return record, nil
 }

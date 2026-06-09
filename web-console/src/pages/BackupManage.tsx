@@ -30,6 +30,7 @@ interface BackupRecord {
   instance_id: string
   backup_type: string
   status: string
+  message?: string
   size: string
   file_path: string
   created_at: string
@@ -234,6 +235,13 @@ const BackupManage: React.FC = () => {
           {formatStatus(status)}
         </Tag>
       ),
+    },
+    {
+      title: '信息',
+      dataIndex: 'message',
+      key: 'message',
+      ellipsis: true,
+      render: (text) => text ? <Tooltip title={text}>{text}</Tooltip> : '-',
     },
     { title: '大小', dataIndex: 'size', key: 'size' },
     {
