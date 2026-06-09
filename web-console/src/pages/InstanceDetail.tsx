@@ -32,6 +32,35 @@ interface AdminRow {
   [key: string]: string
 }
 
+const isFailedTaskStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isSuccessTaskStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
+
+const isActiveTaskStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['pending', 'running', 'submitted', 'accepted', 'queued'].includes(normalized)
+}
+
+const formatTaskMessage = (result: any, fallback: string) => {
+  const parts = [
+    result?.message || fallback,
+    result?.status ? `status=${result.status}` : '',
+    result?.task_id ? `task_id=${result.task_id}` : '',
+  ].filter(Boolean)
+  return parts.join(' | ')
+}
+
+const formatBatchRows = (rows: any[]) =>
+  rows
+    .map((row: any) => `${row?.name || row?.instance_id || '-'}:${row?.port || '-'} ${row?.status || 'unknown'}${row?.message ? ` - ${row.message}` : ''}`)
+    .join('\n')
+
 const InstanceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -83,14 +112,30 @@ const InstanceDetail: React.FC = () => {
     try {
       const response: any = await instanceApi.adminAction(id, payload)
       const result = response?.data
-      if (result?.status === 'failed') {
-        message.error(result?.message || '操作失败')
+      if (isFailedTaskStatus(result?.status)) {
+        Modal.error({
+          title: '\u64cd\u4f5c\u5931\u8d25',
+          content: formatTaskMessage(result, '\u64cd\u4f5c\u5931\u8d25'),
+        })
+      } else if (isActiveTaskStatus(result?.status)) {
+        Modal.info({
+          title: '\u4efb\u52a1\u5df2\u63d0\u4ea4',
+          content: formatTaskMessage(result, '\u4efb\u52a1\u5df2\u63d0\u4ea4\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0\u67e5\u770b\u7ed3\u679c'),
+        })
+      } else if (!result?.status || isSuccessTaskStatus(result?.status)) {
+        message.success('\u64cd\u4f5c\u5b8c\u6210')
       } else {
-        message.success('操作完成')
+        Modal.warning({
+          title: '\u64cd\u4f5c\u72b6\u6001\u672a\u786e\u8ba4',
+          content: formatTaskMessage(result, '\u540e\u7aef\u8fd4\u56de\u4e86\u672a\u8bc6\u522b\u7684\u72b6\u6001\uff0c\u8bf7\u5237\u65b0\u540e\u786e\u8ba4\u7ed3\u679c'),
+        })
       }
       return result
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '操作失败')
+      Modal.error({
+        title: '\u64cd\u4f5c\u5931\u8d25',
+        content: err?.response?.data?.message || err?.message || '\u64cd\u4f5c\u5931\u8d25',
+      })
       return null
     } finally {
       setAdminLoading(false)
@@ -143,13 +188,35 @@ const InstanceDetail: React.FC = () => {
             update_stored: true,
           })
           const result = response?.data
-          if (result?.status === 'completed') {
+          const rows = result?.data?.rows || []
+          if (isSuccessTaskStatus(result?.status)) {
             message.success('批量密码修改完成')
+          } else if (isFailedTaskStatus(result?.status)) {
+            Modal.error({
+              title: '批量密码修改失败',
+              content: (
+                <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  <div>{formatTaskMessage(result, '批量密码修改失败')}</div>
+                  {rows.length > 0 && <div style={{ marginTop: 12 }}>{formatBatchRows(rows)}</div>}
+                </div>
+              ),
+            })
           } else {
-            message.warning(result?.message || '部分实例修改失败')
+            Modal.warning({
+              title: '批量密码修改状态未确认',
+              content: (
+                <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  <div>{formatTaskMessage(result, '批量密码修改状态未确认')}</div>
+                  {rows.length > 0 && <div style={{ marginTop: 12 }}>{formatBatchRows(rows)}</div>}
+                </div>
+              ),
+            })
           }
         } catch (err: any) {
-          message.error(err?.response?.data?.message || '批量密码修改失败')
+          Modal.error({
+            title: '批量密码修改失败',
+            content: err?.response?.data?.message || err?.message || '批量密码修改失败',
+          })
         } finally {
           setAdminLoading(false)
         }
