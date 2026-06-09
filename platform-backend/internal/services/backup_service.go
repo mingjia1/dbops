@@ -18,15 +18,21 @@ type BackupService struct {
 	instRepo    *repositories.InstanceRepository
 	policyRepo  *repositories.BackupRepository
 	agentClient *AgentClient
+	auditSvc    *AuditService
 	encKey      string
 }
 
-func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, policyRepo *repositories.BackupRepository, agentClient *AgentClient, encKey string) *BackupService {
+func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, policyRepo *repositories.BackupRepository, agentClient *AgentClient, encKey string, auditSvc ...*AuditService) *BackupService {
+	var audit *AuditService
+	if len(auditSvc) > 0 {
+		audit = auditSvc[0]
+	}
 	return &BackupService{
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		policyRepo:  policyRepo,
 		agentClient: agentClient,
+		auditSvc:    audit,
 		encKey:      encKey,
 	}
 }
@@ -100,6 +106,8 @@ func (s *BackupService) CreatePolicy(ctx context.Context, req CreateBackupPolicy
 	if err := s.policyRepo.CreatePolicy(ctx, policy); err != nil {
 		return "", err
 	}
+	s.auditBackup(ctx, "create_backup_policy", "create", "backup_policy", policy.ID, "success", "",
+		fmt.Sprintf("instance_id=%s backup_type=%s schedule=%s storage=%s:%s", policy.InstanceID, policy.BackupType, policy.Schedule, policy.StorageType, policy.StoragePath))
 	return policy.ID, nil
 }
 
@@ -176,6 +184,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 				Message:    out.Message,
 				CreatedAt:  now,
 			})
+			s.auditBackupExecution(ctx, out, "failed")
 			return out, nil
 		}
 		config["base_backup_path"] = base.FilePath
@@ -206,6 +215,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			Message:    out.Message,
 			CreatedAt:  now,
 		})
+		s.auditBackupExecution(ctx, out, "failed")
 		return out, nil
 	}
 	out.Status = result.Status
@@ -233,7 +243,42 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		Checksum:    out.Checksum,
 		CreatedAt:   now,
 	})
+	s.auditBackupExecution(ctx, out, backupAuditResult(out.Status))
 	return out, nil
+}
+
+func (s *BackupService) auditBackupExecution(ctx context.Context, result *BackupTaskResult, auditResult string) {
+	if result == nil {
+		return
+	}
+	details := fmt.Sprintf("instance_id=%s backup_type=%s task_id=%s status=%s file_path=%s message=%s",
+		result.InstanceID, result.BackupType, result.TaskID, result.Status, result.FilePath, result.Message)
+	s.auditBackup(ctx, "execute_backup", "execute", "backup_record", result.TaskID, auditResult, result.Message, details)
+}
+
+func (s *BackupService) auditBackup(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details string) {
+	if s.auditSvc == nil {
+		return
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    operation,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Action:       action,
+		Details:      details,
+		Result:       result,
+		ErrorMsg:     errorMsg,
+	})
+}
+
+func backupAuditResult(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "timeout", "cancelled", "canceled":
+		return "failed"
+	default:
+		return "success"
+	}
 }
 
 func (s *BackupService) createRecord(record *models.BackupRecord) error {

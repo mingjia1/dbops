@@ -119,7 +119,7 @@ func main() {
 	envCheckController := controllers.NewEnvironmentCheckController(envCheckService)
 
 	backupRepo := repositories.NewBackupRepository(db)
-	backupService := services.NewBackupService(hostRepo, instanceRepo, backupRepo, agentClient, cfg.EncryptionKey)
+	backupService := services.NewBackupService(hostRepo, instanceRepo, backupRepo, agentClient, cfg.EncryptionKey, auditService)
 	backupController := controllers.NewBackupController(backupService)
 
 	clickhouse, err := storage.NewClickHouse(cfg.ClickHouseURL)

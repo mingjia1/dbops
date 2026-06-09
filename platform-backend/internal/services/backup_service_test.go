@@ -19,10 +19,17 @@ import (
 // newTestBackupService 创建一个共享 db 的 BackupService — hostRepo / instRepo /
 // backupRepo 都连同一 Database, 这样 backup_policies 外键能正确指向 instances 行.
 func newTestBackupService() *BackupService {
+	service, _ := newTestBackupServiceWithAudit()
+	return service
+}
+
+func newTestBackupServiceWithAudit() (*BackupService, *repositories.AuditLogRepository) {
 	db := newTestDB()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	backupRepo := repositories.NewBackupRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	hostID := "host-001"
 	_ = hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "test-host", Address: "192.168.1.100"})
 	_ = instRepo.Create(context.Background(), &models.Instance{ID: "instance-001", Name: "instance-001", HostID: &hostID})
@@ -34,7 +41,7 @@ func newTestBackupService() *BackupService {
 		Username:          "root",
 		PasswordEncrypted: password,
 	})
-	return NewBackupService(hostRepo, instRepo, backupRepo, newTestAgentClient(), "test-encryption-key")
+	return NewBackupService(hostRepo, instRepo, backupRepo, newTestAgentClient(), "test-encryption-key", auditSvc), auditRepo
 }
 
 func TestNewBackupService(t *testing.T) {
@@ -60,6 +67,30 @@ func TestCreatePolicy(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, policyID)
+}
+
+func TestCreatePolicyWritesAuditLog(t *testing.T) {
+	service, auditRepo := newTestBackupServiceWithAudit()
+	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
+
+	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
+		InstanceID:    "instance-001",
+		BackupType:    "full",
+		Schedule:      "0 2 * * *",
+		RetentionDays: 7,
+		StorageType:   "local",
+		StoragePath:   "/backup",
+		Enabled:       true,
+	})
+
+	assert.NoError(t, err)
+	logs, err := auditRepo.ListByResource(context.Background(), "backup_policy", policyID, 10, 0)
+	assert.NoError(t, err)
+	assert.Len(t, logs, 1)
+	assert.Equal(t, "backup-user", logs[0].UserID)
+	assert.Equal(t, "create_backup_policy", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "backup_type=full")
 }
 
 func TestExecuteBackup(t *testing.T) {
@@ -111,6 +142,27 @@ func TestExecuteIncrementalBackupWithoutFullBaseCreatesFailedRecord(t *testing.T
 	assert.Equal(t, "incremental", backups[0].BackupType)
 	assert.Equal(t, result.TaskID, backups[0].TaskID)
 	assert.Contains(t, backups[0].Message, "completed full backup")
+}
+
+func TestExecuteBackupWritesAuditLogForFailedIncremental(t *testing.T) {
+	service, auditRepo := newTestBackupServiceWithAudit()
+	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
+
+	result, err := service.ExecuteBackup(ctx, ExecuteBackupRequest{
+		InstanceID: "instance-001",
+		BackupType: "incremental",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	logs, err := auditRepo.ListByResource(context.Background(), "backup_record", result.TaskID, 10, 0)
+	assert.NoError(t, err)
+	assert.Len(t, logs, 1)
+	assert.Equal(t, "backup-user", logs[0].UserID)
+	assert.Equal(t, "execute_backup", logs[0].Operation)
+	assert.Equal(t, "failed", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "backup_type=incremental")
+	assert.Contains(t, logs[0].ErrorMsg, "completed full backup")
 }
 
 func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
