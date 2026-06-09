@@ -162,7 +162,20 @@ const ParameterTemplateList: React.FC = () => {
         require_restart: values.require_restart,
       })
       const result = res?.data || {}
-      message.success(`已应用 ${result.applied || 0} 个参数，失败 ${result.failed || 0} 个`)
+      const failed = result.failed || 0
+      const applied = result.applied || 0
+      if (failed > 0) {
+        const rows = (result.results || [])
+          .filter((row: any) => row.status !== 'completed' && row.status !== 'success')
+          .map((row: any) => `${row.name || '-'}=${row.value || ''}: ${row.message || row.status || 'failed'}`)
+          .join('\n')
+        Modal.warning({
+          title: `参数模板应用存在失败：成功 ${applied} 个，失败 ${failed} 个`,
+          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{rows || '存在失败参数，但接口未返回失败明细'}</div>,
+        })
+      } else {
+        message.success(`参数模板已应用：成功 ${applied} 个`)
+      }
       setApplyOpen(false)
     } finally {
       setSubmitting(false)
