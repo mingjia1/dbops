@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -141,7 +144,27 @@ func (c *InstanceController) HealthCheck(ctx *gin.Context) {
 		return
 	}
 
+	if isFailedInstanceTaskStatus(result.Status) {
+		ctx.JSON(200, utils.Response{
+			Code:      424,
+			Message:   "health check failed",
+			Data:      result,
+			Timestamp: time.Now(),
+			TraceID:   ctx.GetString("trace_id"),
+		})
+		return
+	}
+
 	utils.SuccessResponse(ctx, result)
+}
+
+func isFailedInstanceTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "unhealthy", "timeout", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *InstanceController) AdminAction(ctx *gin.Context) {

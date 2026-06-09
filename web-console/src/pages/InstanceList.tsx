@@ -38,6 +38,8 @@ const isHealthCheckSuccess = (task: any) => {
   return isSuccessfulTaskStatus(task.status)
 }
 
+const getHealthCheckTask = (res: any) => res?.data || res
+
 const formatHealthCheckFailure = (instanceName: string, task: any, fallback: string) => {
   const parts = [
     `${instanceName}: ${task?.message || fallback}`,
@@ -190,7 +192,7 @@ const InstanceList: React.FC = () => {
     for (const instance of selected) {
       try {
         const res: any = await instanceApi.healthCheck(instance.id)
-        const task = res?.data
+        const task = getHealthCheckTask(res)
         if (!isHealthCheckSuccess(task)) {
           failed += 1
           failedRows.push(formatHealthCheckFailure(instance.name, task, 'health check failed'))
@@ -207,7 +209,7 @@ const InstanceList: React.FC = () => {
         title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5931\u8d25',
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-            <div>{`\u68c0\u6d4b\u672a\u901a\u8fc7\uff1a${failed} \u4e2a\uff0c\u901a\u8fc7\uff1a${ok} \u4e2a\u3002Agent \u8fde\u63a5\u5931\u8d25\u6216\u8fd4\u56de failed \u5747\u4f1a\u8ba1\u5165\u5931\u8d25\u3002`}</div>
+            <div>{`\u68c0\u6d4b\u5931\u8d25\uff1a${failed} \u4e2a\uff0c\u6210\u529f\uff1a${ok} \u4e2a\u3002Agent \u8fde\u63a5\u5931\u8d25\u6216\u8fd4\u56de failed \u5747\u4f1a\u8ba1\u5165\u5931\u8d25\uff0c\u4e0d\u4f1a\u6309\u6210\u529f\u5904\u7406\u3002`}</div>
             <Divider style={{ margin: '12px 0' }} />
             {failedRows.join('\n')}
           </div>

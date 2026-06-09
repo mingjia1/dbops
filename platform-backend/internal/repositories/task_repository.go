@@ -73,17 +73,35 @@ func (r *TaskRepository) GetByID(ctx context.Context, id string) (*models.Task, 
 }
 
 func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status string, progress int) error {
+	return r.UpdateStatusWithMessage(ctx, id, status, progress, "")
+}
+
+func (r *TaskRepository) UpdateStatusWithMessage(ctx context.Context, id string, status string, progress int, message string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
 	now := time.Now()
+	message = strings.TrimSpace(message)
+	if message != "" {
+		if existing, err := r.GetByID(ctx, id); err == nil && strings.TrimSpace(existing.ErrorMessage) != "" {
+			if strings.HasPrefix(existing.ErrorMessage, "plan:") {
+				message = existing.ErrorMessage + "\n" + message
+			}
+		}
+	}
 	if status == "completed" || status == "success" || status == "failed" || status == "cancelled" || status == "canceled" {
 		query := `
 			UPDATE tasks
 			SET status = ?, progress = ?, completed_at = ?
-			WHERE id = ?
 		`
-		_, err := r.db.Pool.ExecContext(ctx, query, status, progress, FormatTime(now), id)
+		args := []interface{}{status, progress, FormatTime(now)}
+		if message != "" {
+			query += `, error_message = ?`
+			args = append(args, message)
+		}
+		query += ` WHERE id = ?`
+		args = append(args, id)
+		_, err := r.db.Pool.ExecContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("failed to update task status: %w", err)
 		}
@@ -94,7 +112,16 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status str
 		SET status = ?, progress = ?, started_at = COALESCE(started_at, ?)
 		WHERE id = ?
 	`
-	_, err := r.db.Pool.ExecContext(ctx, query, status, progress, FormatTime(now), id)
+	args := []interface{}{status, progress, FormatTime(now), id}
+	if message != "" {
+		query = `
+			UPDATE tasks
+			SET status = ?, progress = ?, started_at = COALESCE(started_at, ?), error_message = ?
+			WHERE id = ?
+		`
+		args = []interface{}{status, progress, FormatTime(now), message, id}
+	}
+	_, err := r.db.Pool.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update task status: %w", err)
 	}

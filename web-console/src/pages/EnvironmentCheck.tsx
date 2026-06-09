@@ -64,7 +64,7 @@ const isSubmittedAgentStatus = (status?: string) => {
 const getRequestErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
   if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
-    return `${fallback}: request timed out before the platform confirmed task submission. Check Agent Management or refresh the host list for the latest status; if the host stays unavailable, verify SSH connectivity and saved SSH credentials.`
+    return `${fallback}: 提交请求超时，平台未能确认 Agent 安装任务是否已入队。请到 Agent 管理或刷新主机列表查看最终状态；如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
   }
   return raw
 }
@@ -132,7 +132,7 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 15000)
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 30000)
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))

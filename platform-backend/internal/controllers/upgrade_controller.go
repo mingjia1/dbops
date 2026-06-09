@@ -188,12 +188,7 @@ func mapUpgradeHistoryItem(task models.Task) UpgradeHistoryItem {
 	if startTime.IsZero() {
 		startTime = task.CreatedAt
 	}
-	message := task.ErrorMessage
-	planID := ""
-	if strings.HasPrefix(message, "plan:") {
-		planID = strings.TrimPrefix(message, "plan:")
-		message = ""
-	}
+	planID, message := splitUpgradeTaskMessage(task.ErrorMessage)
 	return UpgradeHistoryItem{
 		ID:          task.ID,
 		TaskType:    task.TaskType,
@@ -208,6 +203,19 @@ func mapUpgradeHistoryItem(task models.Task) UpgradeHistoryItem {
 		CreatedAt:   task.CreatedAt,
 		CompletedAt: task.CompletedAt,
 	}
+}
+
+func splitUpgradeTaskMessage(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "plan:") {
+		return "", raw
+	}
+	parts := strings.SplitN(raw, "\n", 2)
+	planID := strings.TrimSpace(strings.TrimPrefix(parts[0], "plan:"))
+	if len(parts) == 1 {
+		return planID, ""
+	}
+	return planID, strings.TrimSpace(parts[1])
 }
 
 func inferUpgradeStage(task models.Task) string {

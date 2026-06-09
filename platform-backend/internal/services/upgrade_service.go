@@ -681,12 +681,13 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 		duration = int(task.CompletedAt.Sub(task.StartedAt).Seconds())
 	}
 
+	_, taskMessage := splitUpgradeTaskMessage(task.ErrorMessage)
 	issues := []ReportIssue{}
 	if task.Status == "failed" {
 		issues = append(issues, ReportIssue{
 			Severity:    "error",
 			Type:        "execution",
-			Description: task.ErrorMessage,
+			Description: taskMessage,
 			Timestamp:   task.CompletedAt.Format(time.RFC3339),
 			Resolved:    false,
 		})
@@ -704,7 +705,7 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 		ReportType:  req.ReportType,
 		GeneratedAt: time.Now(),
 		Summary:     fmt.Sprintf("Upgrade task %s: status=%s, progress=%d%%", task.ID, task.Status, task.Progress),
-		Details:     fmt.Sprintf("Started %s, completed %s. %s", task.StartedAt.Format(time.RFC3339), task.CompletedAt.Format(time.RFC3339), task.ErrorMessage),
+		Details:     fmt.Sprintf("Started %s, completed %s. %s", task.StartedAt.Format(time.RFC3339), task.CompletedAt.Format(time.RFC3339), taskMessage),
 		Metrics: ReportMetrics{
 			Duration:          duration,
 			DataTransferred:   0,
@@ -718,6 +719,19 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 		Issues:          issues,
 		Recommendations: recommendations,
 	}, nil
+}
+
+func splitUpgradeTaskMessage(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "plan:") {
+		return "", raw
+	}
+	parts := strings.SplitN(raw, "\n", 2)
+	planID := strings.TrimSpace(strings.TrimPrefix(parts[0], "plan:"))
+	if len(parts) == 1 {
+		return planID, ""
+	}
+	return planID, strings.TrimSpace(parts[1])
 }
 
 // firstInstanceID 拿到集群第一个实例的 ID, 没有则返空串.
@@ -779,14 +793,14 @@ func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *mode
 		}
 		if s.agentClient == nil {
 			if s.taskRepo != nil {
-				_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "failed", 0)
+				_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, "failed", 0, "agent client not configured")
 			}
 			return
 		}
 		_, err := s.dispatchUpgrade(context.Background(), instance, taskID, upgradeType, targetVersion, extraConfig)
 		if err != nil {
 			if s.taskRepo != nil {
-				_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "failed", 0)
+				_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, "failed", 0, err.Error())
 			}
 			return
 		}
