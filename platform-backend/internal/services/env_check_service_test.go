@@ -124,6 +124,32 @@ func TestEnvironmentCheck_checkHost(t *testing.T) {
 		assert.NotEmpty(t, r.Status)
 		assert.NotEmpty(t, r.Value)
 	}
+	assert.Contains(t, results[0].Suggestion, "SSH")
+}
+
+func TestEnvironmentCheckExecuteWithoutAgentClientReturnsFailedAgentCheck(t *testing.T) {
+	service := NewEnvironmentCheckService(nil, nil, testEnvCheckKey)
+
+	ctx, cancel := newTestEnvCheckCtx()
+	defer cancel()
+	result, err := service.Execute(ctx, EnvironmentCheckRequest{
+		Hosts: []HostConfig{{Host: "127.0.0.1", Port: 1, Username: "root", Password: "password"}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	var agentCheck *CheckResult
+	for i := range result.Results {
+		if result.Results[i].Category == "agent" && result.Results[i].Name == "agent_connectivity" {
+			agentCheck = &result.Results[i]
+			break
+		}
+	}
+	require.NotNil(t, agentCheck)
+	assert.False(t, agentCheck.Passed)
+	assert.Equal(t, "failed", agentCheck.Status)
+	assert.Contains(t, agentCheck.Suggestion, "Agent client is not configured")
 }
 
 func TestHostConfig_Fields(t *testing.T) {

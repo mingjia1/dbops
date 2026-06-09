@@ -77,6 +77,18 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 		agentResult := s.checkHost(host)
 		result.Results = append(result.Results, agentResult...)
 
+		if s.agentClient == nil {
+			result.Results = append(result.Results, CheckResult{
+				Category:   "agent",
+				Name:       "agent_connectivity",
+				Status:     "failed",
+				Passed:     false,
+				Value:      fmt.Sprintf("%s:%d", host.Host, agentPort),
+				Suggestion: "Backend Agent client is not configured; configure DBOPS_AGENT_TOKEN and restart the backend if Agent auth is required",
+			})
+			continue
+		}
+
 		healthResult, err := s.agentClient.ExecuteHealthCheck(ctx, host.Host, agentPort, "")
 		if err != nil {
 			result.Results = append(result.Results, CheckResult{
@@ -155,7 +167,7 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 			Status:     "failed",
 			Passed:     false,
 			Value:      fmt.Sprintf("%s: %v", addr, err),
-			Suggestion: "Confirm that MySQL is running and the target port is reachable from the backend",
+			Suggestion: "Confirm that SSH is reachable from the backend on the configured host port",
 		})
 	} else {
 		_ = conn.Close()
