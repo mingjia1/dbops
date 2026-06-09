@@ -165,7 +165,7 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 10000)
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true)
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))

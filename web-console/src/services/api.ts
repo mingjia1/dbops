@@ -10,7 +10,7 @@ const api = axios.create({
 })
 
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
-const agentSubmitTimeoutMs = 10000
+const agentSubmitTimeoutMs = 30000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
 
 const rejectBusinessError = (res: any) => {

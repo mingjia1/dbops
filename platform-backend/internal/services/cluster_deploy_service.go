@@ -173,7 +173,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
-	allHosts := append([]SecondaryNode{{Host: req.PrimaryHost, Port: req.PrimaryPort}}, req.SecondaryHosts...)
+	allHosts := append([]SecondaryNode{{Host: req.PrimaryHost, Port: req.PrimaryPort, AgentPort: req.PrimaryAgentPort}}, req.SecondaryHosts...)
 	localPorts := make([]int, len(allHosts))
 	for i := range allHosts {
 		localPorts[i] = 33061 + i
@@ -207,7 +207,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			"bootstrap":      isPrimary,
 		}
 
-		agentPort := 9090
+		agentPort := defaultInt(node.AgentPort, 9090)
 		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
@@ -295,7 +295,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		"data_dir":       fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(req.BootstrapNode.Port, 3306)),
 	}
 
-	agentPort := 9090
+	agentPort := defaultInt(req.BootstrapNode.AgentPort, 9090)
 	result, err := s.agentClient.callAgent(ctx, req.BootstrapNode.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
@@ -339,7 +339,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"mysql_password": req.MySQLPassword,
 			"data_dir":       fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(node.Port, 3306)),
 		}
-		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
+		nodeAgentPort := defaultInt(node.AgentPort, 9090)
+		result, err := s.agentClient.callAgent(ctx, node.Host, nodeAgentPort, "/agent/tasks/deploy", map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
 			"config":      joinConfig,
@@ -679,6 +680,7 @@ type DeployMGRRequest struct {
 	SecondaryHostIDs []string          `json:"replica_host_ids"`
 	PrimaryHost      string            `json:"primary_host"`
 	PrimaryPort      int               `json:"primary_port"`
+	PrimaryAgentPort int               `json:"primary_agent_port"`
 	ReplicaPort      int               `json:"replica_port"`
 	SecondaryHosts   []SecondaryNode   `json:"secondary_hosts"`
 	GroupMode        string            `json:"group_mode"`
@@ -726,18 +728,21 @@ type SlaveNode struct {
 }
 
 type SecondaryNode struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	AgentPort int    `json:"agent_port"`
 }
 
 type BootstrapNode struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	AgentPort int    `json:"agent_port"`
 }
 
 type PXCNode struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	AgentPort int    `json:"agent_port"`
 }
 
 type DeployResponse struct {
@@ -954,6 +959,9 @@ func (s *ClusterDeployService) resolveMGRRequestHosts(ctx context.Context, req *
 	}
 	if primary.Address != "" {
 		req.PrimaryHost = primary.Address
+		if req.PrimaryAgentPort == 0 {
+			req.PrimaryAgentPort = primary.AgentPort
+		}
 	}
 	if req.PrimaryPort == 0 {
 		req.PrimaryPort = 3306
@@ -964,7 +972,7 @@ func (s *ClusterDeployService) resolveMGRRequestHosts(ctx context.Context, req *
 			if err != nil {
 				return err
 			}
-			req.SecondaryHosts = append(req.SecondaryHosts, SecondaryNode{Host: host.Address, Port: req.PrimaryPort})
+			req.SecondaryHosts = append(req.SecondaryHosts, SecondaryNode{Host: host.Address, Port: req.PrimaryPort, AgentPort: host.AgentPort})
 		}
 	}
 	if req.ReplicaPort != 0 {
@@ -988,6 +996,9 @@ func (s *ClusterDeployService) resolvePXCRequestHosts(ctx context.Context, req *
 	}
 	if bootstrap.Address != "" {
 		req.BootstrapNode.Host = bootstrap.Address
+		if req.BootstrapNode.AgentPort == 0 {
+			req.BootstrapNode.AgentPort = bootstrap.AgentPort
+		}
 	}
 	if req.BootstrapNode.Port == 0 {
 		req.BootstrapNode.Port = 3306
@@ -1004,7 +1015,7 @@ func (s *ClusterDeployService) resolvePXCRequestHosts(ctx context.Context, req *
 			if idx < len(req.OtherNodes) && req.OtherNodes[idx].Port != 0 {
 				port = req.OtherNodes[idx].Port
 			}
-			resolved = append(resolved, PXCNode{Host: host.Address, Port: port})
+			resolved = append(resolved, PXCNode{Host: host.Address, Port: port, AgentPort: host.AgentPort})
 		}
 		req.OtherNodes = resolved
 	}

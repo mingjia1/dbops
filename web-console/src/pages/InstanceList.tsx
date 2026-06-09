@@ -52,7 +52,7 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
 }
 
 const formatHealthCheckSummary = (ok: number, failed: number) =>
-  `检测未通过：通过 ${ok} 个，失败 ${failed} 个。后端返回 failed/error/timeout，或 Agent 端口拒绝连接时，页面按失败处理。`
+  `检测未通过：通过 ${ok} 个，失败 ${failed} 个。Agent 端口拒绝连接、Agent 返回 failed/error/timeout、或后端 code 非 200 都按失败处理。`
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -212,7 +212,7 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? `一键检测未通过：通过 ${ok} 个，失败 ${failed} 个` : `一键检测失败：失败 ${failed} 个`,
+        title: ok > 0 ? `一键检测未通过：通过 ${ok} 个，失败 ${failed} 个` : `一键检测失败：${failed} 个实例未通过`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             <div>{formatHealthCheckSummary(ok, failed)}</div>

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -272,4 +273,123 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	deployment, err := clusterRepo.GetByID(ctx, "mha-error-cluster")
 	require.NoError(t, err)
 	require.Equal(t, "failed", deployment.Status)
+}
+
+func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
+	ctx := context.Background()
+	primaryServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer primaryServer.Close()
+	secondaryServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer secondaryServer.Close()
+	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
+	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-primary-host", Name: "mgr-primary-host", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-secondary-host", Name: "mgr-secondary-host", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
+	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-primary-inst", "mgr-primary-host", primaryHost, 3306)
+	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-secondary-inst", "mgr-secondary-host", secondaryHost, 3307)
+
+	resp, err := service.DeployMGR(ctx, DeployMGRRequest{
+		ClusterID:        "mgr-agent-port",
+		Name:             "mgr-agent-port",
+		PrimaryHostID:    "mgr-primary-host",
+		SecondaryHostIDs: []string{"mgr-secondary-host"},
+		PrimaryPort:      3306,
+		ReplicaPort:      3307,
+		MySQLUser:        "root",
+		MySQLPassword:    "rootpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "completed", resp.Status)
+	deployment, err := clusterRepo.GetByID(ctx, "mgr-agent-port")
+	require.NoError(t, err)
+	require.Equal(t, "completed", deployment.Status)
+}
+
+func TestDeployPXCUsesResolvedAgentPorts(t *testing.T) {
+	ctx := context.Background()
+	bootstrapServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer bootstrapServer.Close()
+	joinServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer joinServer.Close()
+	bootstrapHost, bootstrapAgentPort := splitTestServerHostPort(t, bootstrapServer.URL)
+	joinHost, joinAgentPort := splitTestServerHostPort(t, joinServer.URL)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-bootstrap-host", Name: "pxc-bootstrap-host", Address: bootstrapHost, SSHPort: 22, SSHUser: "root", AgentPort: bootstrapAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-join-host", Name: "pxc-join-host", Address: joinHost, SSHPort: 22, SSHUser: "root", AgentPort: joinAgentPort}))
+	createClusterDeployManagedInstance(t, ctx, instRepo, "pxc-bootstrap-inst", "pxc-bootstrap-host", bootstrapHost, 3306)
+	createClusterDeployManagedInstance(t, ctx, instRepo, "pxc-join-inst", "pxc-join-host", joinHost, 3307)
+
+	resp, err := service.DeployPXC(ctx, DeployPXCRequest{
+		ClusterID:       "pxc-agent-port",
+		Name:            "pxc-agent-port",
+		BootstrapHostID: "pxc-bootstrap-host",
+		OtherHostIDs:    []string{"pxc-join-host"},
+		BootstrapNode:   BootstrapNode{Port: 3306},
+		OtherNodes:      []PXCNode{{Port: 3307}},
+		MySQLUser:       "root",
+		MySQLPassword:   "rootpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "completed", resp.Status)
+	deployment, err := clusterRepo.GetByID(ctx, "pxc-agent-port")
+	require.NoError(t, err)
+	require.Equal(t, "completed", deployment.Status)
+}
+
+func clusterDeployOKHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "cluster-deploy-test",
+				"status":   "completed",
+				"progress": 100,
+				"message":  "deployed",
+			},
+		})
+	}
+}
+
+func splitTestServerHostPort(t *testing.T, rawURL string) (string, int) {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	host, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	return host, port
+}
+
+func createClusterDeployManagedInstance(t *testing.T, ctx context.Context, repo *repositories.InstanceRepository, id, hostID, host string, port int) {
+	t.Helper()
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: id, Name: id, HostID: &hostID}))
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, repo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID:        id,
+		Host:              host,
+		Port:              port,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
 }
