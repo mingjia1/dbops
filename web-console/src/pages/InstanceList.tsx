@@ -33,6 +33,11 @@ const isSuccessfulTaskStatus = (status?: string) => {
   return ['success', 'succeeded', 'healthy', 'ok', 'completed'].includes(normalized)
 }
 
+const isHealthCheckSuccess = (task: any) => {
+  if (!task || isFailedTaskStatus(task.status)) return false
+  return isSuccessfulTaskStatus(task.status)
+}
+
 const formatHealthCheckFailure = (instanceName: string, task: any, fallback: string) => {
   const parts = [
     `${instanceName}: ${task?.message || fallback}`,
@@ -186,7 +191,7 @@ const InstanceList: React.FC = () => {
       try {
         const res: any = await instanceApi.healthCheck(instance.id)
         const task = res?.data
-        if (!task || isFailedTaskStatus(task.status) || !isSuccessfulTaskStatus(task.status)) {
+        if (!isHealthCheckSuccess(task)) {
           failed += 1
           failedRows.push(formatHealthCheckFailure(instance.name, task, 'health check failed'))
         } else {
