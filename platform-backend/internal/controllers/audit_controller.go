@@ -2,10 +2,10 @@ package controllers
 
 import (
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
@@ -26,6 +26,8 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 	action := ctx.Query("action")
 	resourceType := ctx.Query("resource_type")
 	resourceID := ctx.Query("resource_id")
+	startDate := ctx.Query("start_date")
+	endDate := ctx.Query("end_date")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil {
@@ -37,43 +39,34 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 		offset = 0
 	}
 
-	var auditLogs []models.AuditLog
 	if userID == "" {
 		userID = userAlias
 	}
 
-	if action != "" {
-		auditLogs, err = c.service.ListAuditLogs(ctx.Request.Context(), 500, 0)
-		if err == nil {
-			filtered := make([]models.AuditLog, 0, len(auditLogs))
-			actionLower := strings.ToLower(action)
-			userLower := strings.ToLower(userID)
-			for _, item := range auditLogs {
-				if userLower != "" && !strings.Contains(strings.ToLower(item.UserID), userLower) {
-					continue
-				}
-				if !strings.Contains(strings.ToLower(item.Action), actionLower) && !strings.Contains(strings.ToLower(item.Operation), actionLower) {
-					continue
-				}
-				filtered = append(filtered, item)
-			}
-			if offset < len(filtered) {
-				end := offset + limit
-				if end > len(filtered) {
-					end = len(filtered)
-				}
-				auditLogs = filtered[offset:end]
-			} else {
-				auditLogs = []models.AuditLog{}
-			}
-		}
-	} else if userID != "" {
-		auditLogs, err = c.service.ListAuditLogsByUser(ctx.Request.Context(), userID, limit, offset)
-	} else if resourceType != "" && resourceID != "" {
-		auditLogs, err = c.service.ListAuditLogsByResource(ctx.Request.Context(), resourceType, resourceID, limit, offset)
-	} else {
-		auditLogs, err = c.service.ListAuditLogs(ctx.Request.Context(), limit, offset)
+	filter := repositories.AuditLogFilter{
+		UserID:       userID,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
 	}
+	if startDate != "" {
+		t, parseErr := parseAuditTime(startDate, false)
+		if parseErr != nil {
+			utils.BadRequestResponse(ctx, "Invalid start_date")
+			return
+		}
+		filter.StartTime = &t
+	}
+	if endDate != "" {
+		t, parseErr := parseAuditTime(endDate, true)
+		if parseErr != nil {
+			utils.BadRequestResponse(ctx, "Invalid end_date")
+			return
+		}
+		filter.EndTime = &t
+	}
+
+	auditLogs, err := c.service.ListAuditLogsFiltered(ctx.Request.Context(), filter, limit, offset)
 
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to list audit logs", err)
@@ -109,4 +102,18 @@ func (c *AuditController) CreateAuditLog(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, auditLog)
+}
+
+func parseAuditTime(value string, endOfDay bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if endOfDay {
+		return t.Add(24*time.Hour - time.Nanosecond), nil
+	}
+	return t, nil
 }

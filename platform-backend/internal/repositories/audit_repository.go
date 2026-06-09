@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,6 +160,77 @@ func (r *AuditLogRepository) ListByResource(ctx context.Context, resourceType, r
 	}
 
 	return auditLogs, nil
+}
+
+type AuditLogFilter struct {
+	UserID       string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	StartTime    *time.Time
+	EndTime      *time.Time
+}
+
+func (r *AuditLogRepository) ListFiltered(ctx context.Context, filter AuditLogFilter, limit, offset int) ([]models.AuditLog, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	where := make([]string, 0, 6)
+	args := make([]interface{}, 0, 8)
+	if filter.UserID != "" {
+		where = append(where, "LOWER(user_id) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.UserID)+"%")
+	}
+	if filter.Action != "" {
+		where = append(where, "(LOWER(action) LIKE ? OR LOWER(operation) LIKE ?)")
+		action := "%" + strings.ToLower(filter.Action) + "%"
+		args = append(args, action, action)
+	}
+	if filter.ResourceType != "" {
+		where = append(where, "resource_type = ?")
+		args = append(args, filter.ResourceType)
+	}
+	if filter.ResourceID != "" {
+		where = append(where, "resource_id = ?")
+		args = append(args, filter.ResourceID)
+	}
+	if filter.StartTime != nil {
+		where = append(where, "created_at >= ?")
+		args = append(args, filter.StartTime.UTC())
+	}
+	if filter.EndTime != nil {
+		where = append(where, "created_at <= ?")
+		args = append(args, filter.EndTime.UTC())
+	}
+
+	query := `
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		FROM audit_logs
+	`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list filtered audit logs: %w", err)
+	}
+	defer rows.Close()
+
+	auditLogs := make([]models.AuditLog, 0)
+	for rows.Next() {
+		var log models.AuditLog
+		if err := rows.Scan(&log.ID, &log.UserID, &log.Operation, &log.ResourceType, &log.ResourceID,
+			&log.Action, &log.Details, &log.Result, &log.ErrorMsg, &log.IPAddress,
+			&log.UserAgent, &log.CreatedAt); err != nil {
+			return nil, err
+		}
+		auditLogs = append(auditLogs, log)
+	}
+	return auditLogs, rows.Err()
 }
 
 type ApprovalRequestRepository struct {
