@@ -56,6 +56,14 @@ const isFailedAgentStatus = (status?: string) => {
   return normalized !== 'success'
 }
 
+const getRequestErrorMessage = (err: any, fallback: string) => {
+  const raw = err?.response?.data?.message || err?.message || fallback
+  if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
+    return `${fallback}：请求超时。请确认主机 SSH 可连接、SSH 凭据正确，并稍后刷新主机或 Agent 状态。`
+  }
+  return raw
+}
+
 const EnvironmentCheck: React.FC = () => {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
@@ -141,7 +149,7 @@ const EnvironmentCheck: React.FC = () => {
     } catch (err: any) {
       Modal.error({
         title: 'Agent 安装请求失败',
-        content: err?.response?.data?.message || err?.message || '请求失败',
+        content: getRequestErrorMessage(err, 'Agent 安装请求失败'),
       })
     } finally {
       setSubmitting(false)

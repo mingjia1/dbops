@@ -27,7 +27,8 @@ import (
 const (
 	agentSSHCommandTimeout = 30 * time.Second
 	agentUploadTimeout     = 90 * time.Second
-	agentActionTimeout     = 4 * time.Minute
+	agentActionTimeout     = 170 * time.Second
+	agentBatchTimeout      = 180 * time.Second
 )
 
 type HostService struct {
@@ -328,9 +329,9 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 		Total: len(req.HostIDs),
 		Rows:  make([]HostAgentActionResult, 0, len(req.HostIDs)),
 	}
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
+	resultCh := make(chan HostAgentActionResult, len(req.HostIDs))
 	for _, hostID := range req.HostIDs {
 		hostID := hostID
 		wg.Add(1)
@@ -345,17 +346,74 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 			if err != nil {
 				row = &HostAgentActionResult{HostID: hostID, Action: req.Action, Status: "failed", Message: err.Error()}
 			}
-			mu.Lock()
+			resultCh <- *row
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	completed := make(map[string]struct{}, len(req.HostIDs))
+	completedCount := 0
+	timeout := time.NewTimer(agentBatchTimeout)
+	defer timeout.Stop()
+
+	for completedCount < len(req.HostIDs) {
+		select {
+		case row := <-resultCh:
+			completed[row.HostID] = struct{}{}
+			completedCount++
 			if row.Status == "success" {
 				result.Success++
 			} else {
 				result.Failed++
 			}
-			result.Rows = append(result.Rows, *row)
-			mu.Unlock()
-		}()
+			result.Rows = append(result.Rows, row)
+		case <-done:
+			for completedCount < len(req.HostIDs) {
+				row := <-resultCh
+				completed[row.HostID] = struct{}{}
+				completedCount++
+				if row.Status == "success" {
+					result.Success++
+				} else {
+					result.Failed++
+				}
+				result.Rows = append(result.Rows, row)
+			}
+		case <-timeout.C:
+			for _, hostID := range req.HostIDs {
+				if _, ok := completed[hostID]; ok {
+					continue
+				}
+				result.Failed++
+				result.Rows = append(result.Rows, HostAgentActionResult{
+					HostID:  hostID,
+					Action:  req.Action,
+					Status:  "failed",
+					Message: fmt.Sprintf("agent %s timed out after %s", req.Action, agentBatchTimeout),
+				})
+			}
+			return result, nil
+		case <-ctx.Done():
+			for _, hostID := range req.HostIDs {
+				if _, ok := completed[hostID]; ok {
+					continue
+				}
+				result.Failed++
+				result.Rows = append(result.Rows, HostAgentActionResult{
+					HostID:  hostID,
+					Action:  req.Action,
+					Status:  "failed",
+					Message: ctx.Err().Error(),
+				})
+			}
+			return result, nil
+		}
 	}
-	wg.Wait()
 	return result, nil
 }
 

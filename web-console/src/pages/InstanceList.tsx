@@ -28,6 +28,11 @@ const isFailedTaskStatus = (status?: string) => {
   return ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(normalized)
 }
 
+const isSuccessfulTaskStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['success', 'succeeded', 'healthy', 'ok', 'completed'].includes(normalized)
+}
+
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -172,7 +177,7 @@ const InstanceList: React.FC = () => {
       try {
         const res: any = await instanceApi.healthCheck(instance.id)
         const task = res?.data
-        if (!task || isFailedTaskStatus(task.status)) {
+        if (!task || isFailedTaskStatus(task.status) || !isSuccessfulTaskStatus(task.status)) {
           failed += 1
           failedRows.push(`${instance.name}: ${task?.message || '检测失败'}`)
         } else {
@@ -185,7 +190,7 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.warning({
-        title: `检测完成，成功 ${ok} 个，失败 ${failed} 个`,
+        title: ok > 0 ? `检测部分失败，成功 ${ok} 个，失败 ${failed} 个` : `检测失败，成功 ${ok} 个，失败 ${failed} 个`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             {failedRows.join('\n')}
