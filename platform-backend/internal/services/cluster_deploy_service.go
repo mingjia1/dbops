@@ -125,7 +125,7 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		}, nil
 	}
 
-	status := result.Status
+	status := normalizeDeployStatus(result.Status)
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
 	if isSuccessfulDeployStatus(status) {
 		if err := s.syncClusterManagement(ctx, "mha", deployment.ID, append([]pseudoNode{
@@ -224,7 +224,8 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 				CreatedAt:    deployment.CreatedAt,
 			}, nil
 		}
-		if result.Status == "failed" {
+		status := normalizeDeployStatus(result.Status)
+		if isFailedDeployStatus(status) {
 			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -311,7 +312,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			CreatedAt:    deployment.CreatedAt,
 		}, nil
 	}
-	if result.Status == "failed" {
+	if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -343,7 +344,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"instance_id": "",
 			"config":      joinConfig,
 		})
-		if err != nil || result.Status == "failed" {
+		if err != nil || isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
 			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 			msg := "PXC cluster partially deployed (bootstrap OK, some nodes failed)"
 			if err != nil {
@@ -510,7 +511,7 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
 		return nil, err
 	}
-	if err := s.repo.Delete(ctx, clusterID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, clusterID, "destroyed"); err != nil {
 		return nil, err
 	}
 	return &DeployResponse{
@@ -919,7 +920,9 @@ func (s *ClusterDeployService) resolveMHARequestHosts(ctx context.Context, req *
 	}
 	if manager.Address != "" {
 		req.ManagerHost = manager.Address
-		req.ManagerAgentPort = manager.AgentPort
+		if req.ManagerAgentPort == 0 {
+			req.ManagerAgentPort = manager.AgentPort
+		}
 	}
 	if req.MasterPort == 0 {
 		req.MasterPort = 3306
@@ -1030,7 +1033,9 @@ func (s *ClusterDeployService) resolveHARequestHosts(ctx context.Context, req *D
 	}
 	if master.Address != "" {
 		req.MasterHost = master.Address
-		req.MasterAgentPort = master.AgentPort
+		if req.MasterAgentPort == 0 {
+			req.MasterAgentPort = master.AgentPort
+		}
 	}
 	if replica.Address != "" {
 		req.ReplicaHost = replica.Address
@@ -1048,15 +1053,25 @@ func (s *ClusterDeployService) resolveHARequestHosts(ctx context.Context, req *D
 }
 
 func normalizeDeployStatus(status string) string {
-	if status == "completed" {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "success", "succeeded", "ok":
 		return "success"
+	case "failed", "error", "timeout", "cancelled", "canceled", "unhealthy":
+		return "failed"
+	case "partial", "partial_success":
+		return "partial"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
 	}
-	return status
 }
 
 func isSuccessfulDeployStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "success", "completed", "succeeded", "ok":
+	return normalizeDeployStatus(status) == "success"
+}
+
+func isFailedDeployStatus(status string) bool {
+	switch normalizeDeployStatus(status) {
+	case "failed", "partial":
 		return true
 	default:
 		return false

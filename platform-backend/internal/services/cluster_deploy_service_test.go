@@ -169,6 +169,12 @@ func TestDestroyClusterWritesAuditLog(t *testing.T) {
 	require.Equal(t, "destroy_cluster", logs[0].Operation)
 	require.Equal(t, "destroy", logs[0].Action)
 	require.Equal(t, "success", logs[0].Result)
+
+	deployments, err := service.ListDeployments(ctx, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, deployments, 1)
+	require.Equal(t, "destroy-audit-cluster", deployments[0].DeploymentID)
+	require.Equal(t, "destroyed", deployments[0].Status)
 }
 
 func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
@@ -216,4 +222,54 @@ func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
 	require.Equal(t, "10.0.0.21", deployments[0].Nodes[0].Host)
 	require.Equal(t, 3306, deployments[0].Nodes[0].Port)
 	require.Equal(t, "primary", deployments[0].Nodes[0].Role)
+}
+
+func TestNormalizeDeployStatusMapsAgentFailureStatuses(t *testing.T) {
+	require.Equal(t, "success", normalizeDeployStatus("completed"))
+	require.Equal(t, "success", normalizeDeployStatus("ok"))
+	require.Equal(t, "failed", normalizeDeployStatus("error"))
+	require.Equal(t, "failed", normalizeDeployStatus("timeout"))
+	require.Equal(t, "failed", normalizeDeployStatus("unhealthy"))
+	require.Equal(t, "partial", normalizeDeployStatus("partial_success"))
+}
+
+func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-error","status":"error","progress":100,"message":"agent deploy error"}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	agentHost, agentPortText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(agentPortText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+
+	resp, err := service.DeployMHA(ctx, DeployMHARequest{
+		ClusterID:        "mha-error-cluster",
+		Name:             "mha-error-cluster",
+		ManagerHost:      agentHost,
+		ManagerAgentPort: agentPort,
+		MasterHost:       "10.0.0.31",
+		MasterPort:       3306,
+		SlaveHosts:       []SlaveNode{{Host: "10.0.0.32", Port: 3306}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "failed", resp.Status)
+	require.Contains(t, resp.Message, "agent deploy error")
+	deployment, err := clusterRepo.GetByID(ctx, "mha-error-cluster")
+	require.NoError(t, err)
+	require.Equal(t, "failed", deployment.Status)
 }
