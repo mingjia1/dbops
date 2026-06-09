@@ -757,7 +757,10 @@ func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.I
 	if s.agentClient == nil {
 		return nil, fmt.Errorf("agent client not configured")
 	}
-	host, port := resolveAgentHost(ctx, instance, s.instanceRepo, nil, 9090)
+	host, port, err := resolveAgentHost(ctx, instance, s.instanceRepo, nil, 9090)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := map[string]interface{}{
 		"task_id":        taskID,

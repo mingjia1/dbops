@@ -168,18 +168,22 @@ const MigrationManage: React.FC = () => {
     config: JSON.stringify(values),
   })
 
-  const taskFromResult = (values: any, strategy: 'physical' | 'replication' | 'gtid', res: any): MigrationTask => ({
-    id: res?.data?.task_id || res?.data?.id || `mig-${Date.now()}`,
-    migration_type: strategy,
-    strategy,
-    source_instance: values.source_instance,
-    target_instance: values.target_instance,
-    source_instance_id: values.source_instance,
-    target_instance_id: values.target_instance,
-    status: res?.data?.status || 'migrating',
-    progress: typeof res?.data?.progress === 'number' ? res.data.progress : 0,
-    started_at: res?.data?.started_at || new Date().toISOString(),
-  })
+  const taskFromResult = (values: any, strategy: 'physical' | 'replication' | 'gtid', res: any): MigrationTask | null => {
+    const taskId = res?.data?.task_id || res?.data?.id
+    if (!taskId) return null
+    return {
+      id: taskId,
+      migration_type: strategy,
+      strategy,
+      source_instance: values.source_instance,
+      target_instance: values.target_instance,
+      source_instance_id: values.source_instance,
+      target_instance_id: values.target_instance,
+      status: res?.data?.status || 'migrating',
+      progress: typeof res?.data?.progress === 'number' ? res.data.progress : 0,
+      started_at: res?.data?.started_at || new Date().toISOString(),
+    }
+  }
 
   const handlePhysicalMigration = async (values: any) => {
     setLoading(true)
@@ -187,7 +191,8 @@ const MigrationManage: React.FC = () => {
       // F2: 后端失败时直接 message.error + return, 不再塞假 task 进列表
       const res: any = await migrationApi.createPhysical(buildCreatePayload(values, 'physical'))
       const task = taskFromResult(values, 'physical', res)
-      setMigrationTasks([task, ...migrationTasks])
+      if (!task) throw new Error('migration API did not return task_id')
+      await loadData()
       setActiveMigration(task)
       message.success('物理迁移任务已启动')
       setProgressDetails([
@@ -208,7 +213,8 @@ const MigrationManage: React.FC = () => {
       // F2: 同上, 不再吞错
       const res: any = await migrationApi.createReplication(buildCreatePayload(values, 'replication'))
       const task = taskFromResult(values, 'replication', res)
-      setMigrationTasks([task, ...migrationTasks])
+      if (!task) throw new Error('migration API did not return task_id')
+      await loadData()
       setActiveMigration(task)
       message.success('复制迁移任务已启动')
       setProgressDetails([
@@ -229,7 +235,8 @@ const MigrationManage: React.FC = () => {
       // F2: 同上
       const res: any = await migrationApi.createGTID(buildCreatePayload(values, 'gtid'))
       const task = taskFromResult(values, 'gtid', res)
-      setMigrationTasks([task, ...migrationTasks])
+      if (!task) throw new Error('migration API did not return task_id')
+      await loadData()
       setActiveMigration(task)
       message.success('GTID迁移任务已启动')
       setProgressDetails([

@@ -25,24 +25,37 @@ func NewMigrationService(repo *repositories.MigrationRepository, instRepo *repos
 	}
 }
 
-// resolveAgentHost P1-5: 仿 switch_service 模式, 从 instance → host 拿到真实 agent 地址和端口.
-func resolveAgentHost(ctx context.Context, inst *models.Instance, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, defaultPort int) (string, int) {
+// resolveAgentHost returns the concrete agent endpoint for an instance.
+// It must never silently fall back to localhost: that can dispatch migration
+// or upgrade work to the backend machine instead of the managed MySQL host.
+func resolveAgentHost(ctx context.Context, inst *models.Instance, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, defaultPort int) (string, int, error) {
 	if inst == nil {
-		return "localhost", defaultPort
+		return "", 0, fmt.Errorf("cannot resolve agent endpoint: instance is nil")
 	}
-	if inst.HostID == nil || *inst.HostID == "" {
-		// 没有 host 关联时退回到 instance.Connection.Host (但仍有可能不是 agent)
-		return "localhost", defaultPort
+	if inst.HostID != nil && *inst.HostID != "" && hostRepo != nil {
+		host, err := hostRepo.GetByID(ctx, *inst.HostID)
+		if err != nil || host == nil {
+			return "", 0, fmt.Errorf("cannot resolve agent endpoint: host %s not found", *inst.HostID)
+		}
+		if host.Address == "" {
+			return "", 0, fmt.Errorf("cannot resolve agent endpoint: host %s has no address", *inst.HostID)
+		}
+		port := defaultPort
+		if host.AgentPort > 0 {
+			port = host.AgentPort
+		}
+		return host.Address, port, nil
 	}
-	host, err := hostRepo.GetByID(ctx, *inst.HostID)
-	if err != nil || host == nil {
-		return "localhost", defaultPort
+	if inst.Connection.Host != "" {
+		return inst.Connection.Host, defaultPort, nil
 	}
-	port := defaultPort
-	if host.AgentPort > 0 {
-		port = host.AgentPort
+	if instRepo != nil {
+		conn, err := instRepo.GetConnection(ctx, inst.ID)
+		if err == nil && conn != nil && conn.Host != "" {
+			return conn.Host, defaultPort, nil
+		}
 	}
-	return host.Address, port
+	return "", 0, fmt.Errorf("cannot resolve agent endpoint for instance %s: no host association or connection host", inst.ID)
 }
 
 type CreateMigrationTaskRequest struct {
@@ -97,9 +110,19 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		"target_instance_id": task.TargetInstanceID,
 	}
 
-	// P1-5: 用 instance → host → 真实 agent 地址, 不再写死 localhost.
+	// Resolve the real managed host agent. Do not dispatch migration to localhost.
 	sourceInstFull, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
-	agentHost, agentPort := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
+	agentHost, agentPort, err := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
+	if err != nil {
+		s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
+		return &MigrationTaskResult{
+			TaskID:    taskID,
+			Status:    models.MigrationStatusFailed,
+			Strategy:  strategy,
+			StartedAt: now,
+			Progress:  0,
+		}, nil
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.SourceInstanceID,
@@ -152,7 +175,7 @@ func (s *MigrationService) OrchestrateMigration(ctx context.Context, taskID stri
 }
 
 func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID string) (*models.MigrationProgress, error) {
-	// B10: silent 吞 err 改为显式: task 不存在直接 404, 不要用假 Progress 误导前端.
+	// Missing tasks must return an explicit error instead of fake progress.
 	task, err := s.repo.GetByID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("task not found: %w", err)
@@ -164,7 +187,10 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	if err != nil {
 		return nil, fmt.Errorf("source instance not found: %w", err)
 	}
-	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	if err != nil {
+		return nil, err
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.SourceInstanceID,
@@ -184,7 +210,7 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	}, nil
 }
 
-// VerifyMigration P0-4: 真实调 Agent 拿校验结果, 不再写死 1000000 行一致.
+// VerifyMigration calls Agent for real verification results.
 func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (*models.MigrationVerification, error) {
 	task, err := s.repo.GetByID(ctx, taskID)
 	if err != nil || task == nil {
@@ -194,7 +220,15 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	if err != nil || inst == nil {
 		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
 	}
-	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	if err != nil {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		return &models.MigrationVerification{
+			TaskID:     taskID,
+			VerifiedAt: time.Now(),
+			Errors:     []string{err.Error()},
+		}, nil
+	}
 	result, callErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-verify", map[string]interface{}{
 		"task_id":            taskID,
 		"source_instance_id": task.SourceInstanceID,
@@ -248,7 +282,14 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	if err != nil || inst == nil {
 		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
 	}
-	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	if err != nil {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		return &models.MigrationSwitchResult{
+			TaskID: taskID,
+			Status: "failed",
+		}, nil
+	}
 	_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusSwitching, task.Progress)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-switch", map[string]interface{}{
 		"task_id":     taskID,

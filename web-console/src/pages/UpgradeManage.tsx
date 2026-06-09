@@ -171,18 +171,10 @@ const UpgradeManage: React.FC = () => {
       message.success('原地升级任务已提交')
       setInPlaceOpen(false)
       inPlaceForm.resetFields()
-      setHistory((items) => [{
-        id: res?.data?.task_id || `upgrade-${Date.now()}`,
-        instance_id: values.instance_id,
-        instance_name: findInstance(values.instance_id)?.name || values.instance_id,
-        upgrade_type: 'in_place',
-        source_version: detectedVersion(findInstance(values.instance_id)),
-        target_version: values.target_version,
-        status: res?.data?.status || 'running',
-        progress: res?.data?.progress || 0,
-        stage: res?.data?.current_step,
-        start_time: new Date().toISOString(),
-      }, ...items])
+      if (!res?.data?.task_id && !res?.data?.id) {
+        throw new Error('upgrade API did not return task_id')
+      }
+      loadData()
     } catch (err: any) {
       message.error(err?.response?.data?.message || err?.message || '升级任务提交失败')
     } finally {

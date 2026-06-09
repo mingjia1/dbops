@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMigrationService_CreateTask(t *testing.T) {
@@ -91,4 +93,45 @@ func TestMigrationService_VerifyMigration(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestResolveAgentHostDoesNotFallbackToLocalhost(t *testing.T) {
+	host, port, err := resolveAgentHost(context.Background(), &models.Instance{ID: "inst-no-host"}, nil, nil, 9090)
+	require.Error(t, err)
+	assert.Empty(t, host)
+	assert.Zero(t, port)
+	assert.NotContains(t, err.Error(), "localhost")
+}
+
+func TestResolveAgentHostUsesConnectionHostWhenNoHostRepo(t *testing.T) {
+	host, port, err := resolveAgentHost(context.Background(), &models.Instance{
+		ID: "inst-conn",
+		Connection: models.InstanceConnection{
+			Host: "10.1.81.41",
+		},
+	}, nil, nil, 9090)
+	require.NoError(t, err)
+	assert.Equal(t, "10.1.81.41", host)
+	assert.Equal(t, 9090, port)
+}
+
+func TestResolveAgentHostUsesManagedHostPort(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	host := &models.Host{
+		ID:        "host-agent",
+		Name:      "agent-host",
+		Address:   "10.1.81.41",
+		AgentPort: 19090,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}
+	require.NoError(t, hostRepo.Create(ctx, host))
+	hostID := host.ID
+
+	resolvedHost, port, err := resolveAgentHost(ctx, &models.Instance{ID: "inst-host", HostID: &hostID}, nil, hostRepo, 9090)
+	require.NoError(t, err)
+	assert.Equal(t, "10.1.81.41", resolvedHost)
+	assert.Equal(t, 19090, port)
 }
