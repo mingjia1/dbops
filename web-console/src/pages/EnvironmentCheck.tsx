@@ -74,10 +74,15 @@ const formatTimeoutLabel = (err: any) => {
   return '前端请求超时'
 }
 
+const isTimeoutError = (err: any) => {
+  const raw = err?.response?.data?.message || err?.message || ''
+  return err?.code === 'ECONNABORTED' || /timeout|timed?\s*out/i.test(raw)
+}
+
 const getAgentSubmitErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
-  if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
-    return `${fallback}: 提交请求在 ${formatTimeoutLabel(err)} 内未返回。安装 Agent 按后台任务提交，这里只确认提交结果；请到 Agent 管理或刷新主机列表查看最终状态。如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
+  if (isTimeoutError(err)) {
+    return `Agent 安装提交状态未知：提交请求在 ${formatTimeoutLabel(err)} 内未返回。Agent 安装按主机后台任务执行；请刷新主机列表或到 Agent 管理确认最终状态。如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
   }
   return raw
 }
@@ -186,8 +191,9 @@ const EnvironmentCheck: React.FC = () => {
       }
       fetchHosts()
     } catch (err: any) {
-      Modal.error({
-        title: 'Agent 安装请求失败',
+      const timedOut = isTimeoutError(err)
+      Modal[timedOut ? 'warning' : 'error']({
+        title: timedOut ? 'Agent 安装提交状态未知' : 'Agent 安装请求失败',
         content: getAgentSubmitErrorMessage(err, 'Agent 安装请求失败'),
       })
     } finally {

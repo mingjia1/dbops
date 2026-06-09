@@ -50,7 +50,7 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
 }
 
 const formatHealthCheckSummary = (ok: number, failed: number) =>
-  `\u901a\u8fc7\uff1a${ok} \u4e2a\uff0c\u672a\u901a\u8fc7\uff1a${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u4f1a\u6309\u68c0\u6d4b\u5931\u8d25\u5904\u7406\u3002`
+  `\u68c0\u6d4b\u7ed3\u679c\uff1a\u901a\u8fc7 ${ok} \u4e2a\uff0c\u672a\u901a\u8fc7 ${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u6309\u5931\u8d25\u5904\u7406\u3002`
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -210,7 +210,7 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u672a\u901a\u8fc7' : '\u4e00\u952e\u68c0\u6d4b\u5168\u90e8\u672a\u901a\u8fc7',
+        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5931\u8d25',
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             <div>{formatHealthCheckSummary(ok, failed)}</div>
