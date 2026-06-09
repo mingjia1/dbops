@@ -2,6 +2,11 @@ package services
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -70,6 +75,70 @@ func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testin
 	require.Equal(t, "pxc-ui", replica.ClusterID)
 	require.Equal(t, "secondary", replica.Status.Role)
 	require.Equal(t, "inst-a", replica.Topology.MasterID)
+}
+
+func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"ha-sync","status":"completed","progress":100,"message":"ha deployed"}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	agentHost, agentPortText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(agentPortText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-master", Name: "host-master", Address: agentHost, SSHPort: 22, SSHUser: "root", AgentPort: agentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-replica", Name: "host-replica", Address: agentHost, SSHPort: 22, SSHUser: "root", AgentPort: agentPort}))
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	createManagedInstance := func(id, name, hostID string, port int) {
+		require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, Name: name, HostID: &hostID}))
+		require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+			InstanceID:        id,
+			Host:              agentHost,
+			Port:              port,
+			Username:          "root",
+			PasswordEncrypted: password,
+		}))
+	}
+	createManagedInstance("ha-master", "ha-master", "host-master", 3306)
+	createManagedInstance("ha-replica", "ha-replica", "host-replica", 3307)
+
+	resp, err := service.DeployHA(ctx, DeployHARequest{
+		ClusterID:     "ha-real-sync",
+		Name:          "ha-real-sync",
+		MasterHostID:  "host-master",
+		ReplicaHostID: "host-replica",
+		MasterPort:    3306,
+		ReplicaPort:   3307,
+		MySQLUser:     "root",
+		MySQLPassword: "rootpass",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "success", resp.Status)
+	master, err := instRepo.GetByID(ctx, "ha-master")
+	require.NoError(t, err)
+	require.Equal(t, "ha-real-sync", master.ClusterID)
+	require.Equal(t, "master", master.Status.Role)
+	require.Contains(t, master.Topology.SlaveIDs, "ha-replica")
+	replica, err := instRepo.GetByID(ctx, "ha-replica")
+	require.NoError(t, err)
+	require.Equal(t, "ha-real-sync", replica.ClusterID)
+	require.Equal(t, "slave", replica.Status.Role)
+	require.Equal(t, "ha-master", replica.Topology.MasterID)
 }
 
 func TestDestroyClusterWritesAuditLog(t *testing.T) {

@@ -127,6 +127,21 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 
 	status := result.Status
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
+	if isSuccessfulDeployStatus(status) {
+		if err := s.syncClusterManagement(ctx, "mha", deployment.ID, append([]pseudoNode{
+			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
+		}, slavePseudoNodes(req.SlaveHosts, "slave")...)); err != nil {
+			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
+			return &DeployResponse{
+				DeploymentID: deployment.ID,
+				ClusterType:  "mha",
+				Name:         req.Name,
+				Status:       "partial",
+				Message:      fmt.Sprintf("MHA deployed but management sync failed: %v", err),
+				CreatedAt:    deployment.CreatedAt,
+			}, nil
+		}
+	}
 
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
@@ -346,6 +361,19 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	}
 
 	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	if err := s.syncClusterManagement(ctx, "pxc", deployment.ID, append([]pseudoNode{
+		{Host: req.BootstrapNode.Host, Port: defaultInt(req.BootstrapNode.Port, 3306), Role: "primary"},
+	}, pxcPseudoNodes(req.OtherNodes, "secondary")...)); err != nil {
+		s.repo.UpdateStatus(ctx, deployment.ID, "partial")
+		return &DeployResponse{
+			DeploymentID: deployment.ID,
+			ClusterType:  "pxc",
+			Name:         req.Name,
+			Status:       "partial",
+			Message:      fmt.Sprintf("PXC deployed but management sync failed: %v", err),
+			CreatedAt:    deployment.CreatedAt,
+		}, nil
+	}
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "pxc",
@@ -412,6 +440,22 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 	}
 	status := normalizeDeployStatus(result.Status)
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
+	if isSuccessfulDeployStatus(status) {
+		if err := s.syncClusterManagement(ctx, "ha", deployment.ID, []pseudoNode{
+			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
+			{Host: req.ReplicaHost, Port: req.ReplicaPort, Role: "slave"},
+		}); err != nil {
+			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
+			return &DeployResponse{
+				DeploymentID: deployment.ID,
+				ClusterType:  "ha",
+				Name:         req.Name,
+				Status:       "partial",
+				Message:      fmt.Sprintf("HA deployed but management sync failed: %v", err),
+				CreatedAt:    deployment.CreatedAt,
+			}, nil
+		}
+	}
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "ha",
@@ -1008,6 +1052,15 @@ func normalizeDeployStatus(status string) string {
 		return "success"
 	}
 	return status
+}
+
+func isSuccessfulDeployStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "completed", "succeeded", "ok":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultString(v, fallback string) string {
