@@ -73,3 +73,28 @@ func TestBatchAgentActionForcesLongRunningActionsAsync(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, "submitted", result.Rows[0].Status)
 }
+
+func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
+	ctx := context.Background()
+	repo := repositories.NewHostRepository(newTestDB())
+	host := &models.Host{
+		ID:        "host-single-async-agent",
+		Name:      "single-async-agent-host",
+		Address:   "10.255.255.1",
+		SSHPort:   22,
+		SSHUser:   "root",
+		AgentPort: 9090,
+	}
+	require.NoError(t, repo.Create(ctx, host))
+
+	service := NewHostService(repo, "test-encryption-key")
+	started := time.Now()
+	result, err := service.SubmitAgentAction(ctx, host.ID, HostAgentActionRequest{Action: "install"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, time.Since(started) < time.Second, "single async agent install should return before SSH execution")
+	assert.Equal(t, "submitted", result.Status)
+	assert.Equal(t, "install", result.Action)
+	assert.Equal(t, host.ID, result.HostID)
+}

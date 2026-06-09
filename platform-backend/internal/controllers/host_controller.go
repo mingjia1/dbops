@@ -109,6 +109,16 @@ func (c *HostController) AgentAction(ctx *gin.Context) {
 		return
 	}
 
+	if services.IsLongRunningAgentAction(req.Action) {
+		result, err := c.service.SubmitAgentAction(ctx.Request.Context(), id, req)
+		if err != nil {
+			utils.InternalServerErrorResponse(ctx, "Failed to submit host agent action", err)
+			return
+		}
+		utils.SuccessResponse(ctx, result)
+		return
+	}
+
 	result, err := c.service.AgentAction(ctx.Request.Context(), id, req)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to execute host agent action", err)

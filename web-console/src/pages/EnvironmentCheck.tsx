@@ -139,7 +139,7 @@ const EnvironmentCheck: React.FC = () => {
       const submittedRows = rows.filter((row: any) => isSubmittedAgentStatus(row.status))
       if ((data?.failed || 0) > 0 || failedRows.length > 0) {
         Modal.warning({
-          title: `Agent 安装完成：成功 ${data?.success ?? 0} 个，失败 ${data?.failed ?? failedRows.length} 个`,
+          title: `Agent 安装提交存在失败：已提交 ${data?.success ?? submittedRows.length} 个，失败 ${data?.failed ?? failedRows.length} 个`,
           content: (
             <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
               {failedRows

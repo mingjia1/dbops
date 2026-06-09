@@ -124,13 +124,51 @@ type BatchHostAgentActionResult struct {
 	Rows    []HostAgentActionResult `json:"rows"`
 }
 
-func isLongRunningAgentAction(action string) bool {
+func IsLongRunningAgentAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "install", "add", "update", "modify", "restart":
 		return true
 	default:
 		return false
 	}
+}
+
+func (s *HostService) SubmitAgentAction(ctx context.Context, hostID string, req HostAgentActionRequest) (*HostAgentActionResult, error) {
+	host, err := s.repo.GetByID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	port := req.AgentPort
+	if port == 0 {
+		port = host.AgentPort
+	}
+	if port == 0 {
+		port = 9090
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "status"
+	}
+	result := &HostAgentActionResult{
+		HostID:    host.ID,
+		HostName:  host.Name,
+		Address:   host.Address,
+		AgentPort: port,
+		Action:    action,
+		Status:    "submitted",
+		Message:   "agent action submitted; refresh host status later",
+	}
+	go func(id string, port int) {
+		actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
+		defer cancel()
+		row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action, AgentPort: port})
+		if err != nil {
+			_ = s.repo.UpdateStatus(context.Background(), id, "failed")
+			return
+		}
+		s.updateAgentActionHostStatus(row)
+	}(host.ID, port)
+	return result, nil
 }
 
 type UpdateHostRequest struct {
@@ -337,7 +375,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 }
 
 func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentActionRequest) (*BatchHostAgentActionResult, error) {
-	if isLongRunningAgentAction(req.Action) {
+	if IsLongRunningAgentAction(req.Action) {
 		req.Async = true
 	}
 	result := &BatchHostAgentActionResult{
@@ -351,7 +389,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 			action = "status"
 		}
 		for _, hostID := range req.HostIDs {
-			host, err := s.repo.GetByID(ctx, hostID)
+			row, err := s.SubmitAgentAction(ctx, hostID, HostAgentActionRequest{Action: action, AgentPort: req.AgentPort})
 			if err != nil {
 				result.Failed++
 				result.Rows = append(result.Rows, HostAgentActionResult{
@@ -362,33 +400,8 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 				})
 				continue
 			}
-			port := req.AgentPort
-			if port == 0 {
-				port = host.AgentPort
-			}
-			if port == 0 {
-				port = 9090
-			}
 			result.Success++
-			result.Rows = append(result.Rows, HostAgentActionResult{
-				HostID:    host.ID,
-				HostName:  host.Name,
-				Address:   host.Address,
-				AgentPort: port,
-				Action:    action,
-				Status:    "submitted",
-				Message:   "agent action submitted; refresh host status later",
-			})
-			go func(id string, port int) {
-				actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
-				defer cancel()
-				row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action, AgentPort: port})
-				if err != nil {
-					_ = s.repo.UpdateStatus(context.Background(), id, "failed")
-					return
-				}
-				s.updateAgentActionHostStatus(row)
-			}(host.ID, port)
+			result.Rows = append(result.Rows, *row)
 		}
 		return result, nil
 	}

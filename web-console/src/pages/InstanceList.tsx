@@ -204,10 +204,10 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5168\u90e8\u5931\u8d25',
+        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u672a\u901a\u8fc7' : '\u4e00\u952e\u68c0\u6d4b\u5168\u90e8\u672a\u901a\u8fc7',
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-            <div>{`\u672c\u6b21\u68c0\u6d4b\u672a\u5168\u90e8\u901a\u8fc7\uff1a\u901a\u8fc7 ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a`}</div>
+            <div>{`\u672c\u6b21\u68c0\u6d4b\u672a\u901a\u8fc7\uff1a\u901a\u8fc7 ${ok} \u4e2a\uff0c\u672a\u901a\u8fc7 ${failed} \u4e2a`}</div>
             <Divider style={{ margin: '12px 0' }} />
             {failedRows.join('\n')}
           </div>
