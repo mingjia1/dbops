@@ -416,14 +416,29 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if err != nil {
 		return nil, err
 	}
+	if s.agentClient == nil {
+		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
+		return &InstanceAdminResult{
+			TaskID:   "health-check-" + uuid.New().String(),
+			Status:   "failed",
+			Message:  "agent client not configured",
+			Progress: 100,
+		}, nil
+	}
 	result, err := s.agentClient.ExecuteHealthCheck(ctx, agentHost, agentPort, id)
 	if err != nil {
+		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 		return &InstanceAdminResult{
 			TaskID:   "health-check-" + uuid.New().String(),
 			Status:   "failed",
 			Message:  err.Error(),
 			Progress: 100,
 		}, nil
+	}
+	if isFailedTaskStatus(result.Status) {
+		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
+	} else if isSuccessfulTaskStatus(result.Status) {
+		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
 	}
 	return &InstanceAdminResult{
 		TaskID:   result.TaskID,
@@ -432,6 +447,40 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+func (s *InstanceService) updateInstanceHealthStatus(ctx context.Context, instanceID, health string) error {
+	status := &models.InstanceStatus{
+		InstanceID:          instanceID,
+		RunStatus:           "unknown",
+		HealthStatus:        health,
+		Role:                "",
+		ReplicationStatus:   "",
+		SecondsBehindMaster: -1,
+	}
+	if existing, err := s.repo.GetStatus(ctx, instanceID); err == nil && existing != nil {
+		status = existing
+		status.HealthStatus = health
+	}
+	return s.repo.UpsertStatus(ctx, instanceID, status)
+}
+
+func isFailedTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "unhealthy", "timeout", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSuccessfulTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "succeeded", "healthy", "ok", "completed":
+		return true
+	default:
+		return false
+	}
 }
 
 type CreateInstanceRequest struct {

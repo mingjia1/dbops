@@ -163,3 +163,63 @@ func TestInstanceDeployWritesFailedAuditLogOnPasswordDecryptFailure(t *testing.T
 	assert.Equal(t, "failed", logs[0].Result)
 	assert.Contains(t, logs[0].ErrorMsg, "illegal base64")
 }
+
+func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/health-check", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "health-check-test",
+				"status":   "failed",
+				"progress": 100,
+				"message":  "agent refused connection",
+			},
+		})
+	}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	hostID := "health-host"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{
+		ID:        hostID,
+		Name:      "health-host",
+		Address:   u.Hostname(),
+		AgentPort: agentPort,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}))
+	instanceID := "health-instance"
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{
+		ID:     instanceID,
+		Name:   "health-instance",
+		HostID: &hostID,
+	}))
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        instanceID,
+		Host:              "10.1.81.41",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewInstanceService(instRepo, hostRepo, taskRepo, NewAgentClient(""), nil, "test-encryption-key")
+
+	result, err := service.HealthCheck(context.Background(), instanceID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	status, err := instRepo.GetStatus(context.Background(), instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, "unhealthy", status.HealthStatus)
+}

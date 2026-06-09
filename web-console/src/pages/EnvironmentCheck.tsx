@@ -64,7 +64,7 @@ const isSubmittedAgentStatus = (status?: string) => {
 const getRequestErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
   if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
-    return `${fallback}: request timed out. The install request is submitted asynchronously; refresh host or Agent status later. If it still fails, verify SSH connectivity and saved SSH credentials.`
+    return `${fallback}: request timed out before the platform confirmed task submission. Check Agent Management or refresh the host list for the latest status; if the host stays unavailable, verify SSH connectivity and saved SSH credentials.`
   }
   return raw
 }
@@ -150,8 +150,8 @@ const EnvironmentCheck: React.FC = () => {
         })
       } else if (data?.async || submittedRows.length > 0) {
         Modal.info({
-          title: `Agent installation submitted: ${submittedRows.length || selectedHosts.length} host(s)`,
-          content: 'The platform is installing Agent in the background. Refresh the host list or Agent status later to confirm the final result.',
+          title: `Agent 安装任务已提交：${submittedRows.length || selectedHosts.length} 台主机`,
+          content: '平台会在后台执行安装。这里仅表示任务已提交，不代表安装成功；请稍后刷新主机列表或 Agent 管理查看最终状态。',
         })
       } else {
         message.success(`Agent 安装完成：成功 ${data?.success ?? 0}`)
