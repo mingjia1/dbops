@@ -71,6 +71,34 @@ func (r *ClusterDeployRepository) GetByID(ctx context.Context, id string) (*mode
 	return r.getByIDInDB(ctx, id)
 }
 
+func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) ([]models.ClusterDeployment, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	query := `SELECT id, cluster_type, name, status, created_at, updated_at FROM cluster_deployments ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments: %w", err)
+	}
+	defer rows.Close()
+
+	deployments := make([]models.ClusterDeployment, 0)
+	for rows.Next() {
+		var dep models.ClusterDeployment
+		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status, &dep.CreatedAt, &dep.UpdatedAt); err != nil {
+			return nil, err
+		}
+		deployments = append(deployments, dep)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return deployments, nil
+}
+
 func (r *ClusterDeployRepository) getByIDInMemory(id string) (*models.ClusterDeployment, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

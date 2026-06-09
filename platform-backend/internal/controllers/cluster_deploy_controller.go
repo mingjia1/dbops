@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -84,6 +86,25 @@ func (c *ClusterDeployController) GetDeploymentStatus(ctx *gin.Context) {
 	response, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
 	if err != nil {
 		utils.NotFoundResponse(ctx, "Deployment not found")
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}
+
+func (c *ClusterDeployController) List(ctx *gin.Context) {
+	limit, err := strconv.Atoi(ctx.DefaultQuery("limit", "20"))
+	if err != nil || limit <= 0 {
+		limit = 20
+	}
+	offset, err := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	response, err := c.service.ListDeployments(ctx.Request.Context(), limit, offset)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to list cluster deployments", err)
 		return
 	}
 

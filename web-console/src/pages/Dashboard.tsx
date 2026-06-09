@@ -60,14 +60,21 @@ const Dashboard: React.FC = () => {
     { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
     { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
     { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
-    { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
-    { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
     { key: '/dashboard/upgrade', icon: <SwapOutlined />, label: '升级管理' },
     { key: '/dashboard/migration', icon: <PartitionOutlined />, label: '数据迁移' },
     { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
-    { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
     { key: '/dashboard/approvals', icon: <SafetyOutlined />, label: '审批管理' },
     { key: '/dashboard/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
+    {
+      key: '/dashboard/system',
+      icon: <SettingOutlined />,
+      label: '系统管理',
+      children: [
+        { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
+        { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
+        { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
+      ],
+    },
   ]
 
   const selectedKey = (() => {

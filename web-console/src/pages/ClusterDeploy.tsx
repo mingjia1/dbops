@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
+  Button, Card, Checkbox, Collapse, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { clusterDeployApi, hostApi, type Host } from '../services/api'
+import { clusterDeployApi, hostApi, instanceApi, type Host, type Instance } from '../services/api'
 
 type ArchType = 'ha' | 'mha' | 'mgr' | 'pxc'
 
@@ -30,8 +30,10 @@ interface DeployResult {
 
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
+  const [instances, setInstances] = useState<Instance[]>([])
   const [tab, setTab] = useState<ArchType>('ha')
   const [submitting, setSubmitting] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [deployments, setDeployments] = useState<DeployResult[]>([])
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
@@ -49,6 +51,8 @@ const ClusterDeploy: React.FC = () => {
 
   useEffect(() => {
     hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => {})
+    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
+    loadDeployments()
     setShowDefaultCredential(localStorage.getItem(DEFAULT_CREDENTIAL_ACK_KEY) !== '1')
   }, [])
 
@@ -57,6 +61,41 @@ const ClusterDeploy: React.FC = () => {
   }, [])
 
   const hostOptions = hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))
+
+  const normalizeDeployment = (data: any): DeployResult => ({
+    deployment_id: data.deployment_id || data.id,
+    cluster_id: data.cluster_id || data.deployment_id || data.id,
+    cluster_type: data.cluster_type,
+    status: data.status || 'pending',
+    progress: data.status === 'success' || data.status === 'completed' || data.status === 'destroyed' ? 100 : 0,
+    stage: data.stage,
+    message: data.message || '',
+    started_at: data.started_at || data.created_at,
+    finished_at: data.finished_at || data.updated_at,
+  })
+
+  const loadDeployments = async () => {
+    setHistoryLoading(true)
+    try {
+      const res: any = await clusterDeployApi.list(100, 0)
+      setDeployments((Array.isArray(res?.data) ? res.data : []).map(normalizeDeployment))
+    } catch {
+      setDeployments([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const deploymentNodes = (record: DeployResult) => {
+    const clusterID = record.cluster_id || record.deployment_id
+    return instances
+      .filter((inst) => inst.cluster_id === clusterID)
+      .map((inst) => {
+        const endpoint = `${inst.connection?.host || inst.host || '-'}:${inst.connection?.port || inst.port || '-'}`
+        const role = inst.status?.role || '-'
+        return `${inst.name} (${endpoint}, ${role})`
+      })
+  }
 
   const openCredentialModal = () => {
     credentialForm.setFieldsValue({ username: credential.username, password: '', confirm_password: '' })
@@ -139,6 +178,7 @@ const ClusterDeploy: React.FC = () => {
           finished_at: data.finished_at,
         }
         patchDeployment(next)
+        if (next.status === 'success' || next.status === 'completed' || next.status === 'failed') loadDeployments()
         const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
         if (stepIdx >= 0) setCurrentStep(stepIdx)
         if (next.status === 'success' || next.status === 'completed' || next.status === 'failed' || attempts > 600) {
@@ -183,6 +223,7 @@ const ClusterDeploy: React.FC = () => {
       }
       setActiveDeployment(dep)
       setDeployments((items) => [dep, ...items])
+      loadDeployments()
       message.success(`${arch.toUpperCase()} 集群部署任务已提交`)
       startPolling(dep)
     } catch (err: any) {
@@ -208,6 +249,7 @@ const ClusterDeploy: React.FC = () => {
           finished_at: new Date().toISOString(),
         }
         patchDeployment(next)
+        loadDeployments()
         message.success('集群已销毁')
       },
     })
@@ -296,6 +338,19 @@ const ClusterDeploy: React.FC = () => {
       render: (progress: number) => <Progress percent={progress} size="small" status={progress === 100 ? 'success' : 'active'} />,
     },
     { title: '信息', dataIndex: 'message', key: 'message' },
+    {
+      title: '节点信息',
+      key: 'nodes',
+      render: (_, record) => {
+        const nodes = deploymentNodes(record)
+        if (nodes.length === 0) return '-'
+        return (
+          <Space direction="vertical" size={2}>
+            {nodes.map((node) => <span key={node}>{node}</span>)}
+          </Space>
+        )
+      },
+    },
     { title: '开始时间', dataIndex: 'started_at', key: 'started_at', render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
     {
       title: '操作',
@@ -360,7 +415,22 @@ const ClusterDeploy: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Card title={<Space><ClusterOutlined /><span>集群部署</span></Space>} extra={<Button onClick={showDeployNotes}>操作说明</Button>}>
+      <Card title="部署历史" style={{ marginBottom: 16 }}>
+        {deployments.length === 0 ? (
+          <Empty description="暂无部署记录" />
+        ) : (
+          <Table columns={columns} dataSource={deployments} rowKey="deployment_id" loading={historyLoading} />
+        )}
+      </Card>
+
+      <Collapse
+        defaultActiveKey={[]}
+        items={[{
+          key: 'deploy',
+          label: <Space><ClusterOutlined /><span>集群部署</span></Space>,
+          extra: <Button size="small" onClick={(e) => { e.stopPropagation(); showDeployNotes() }}>操作说明</Button>,
+          children: (
+            <>
         <Card size="small" title="默认创建的 MySQL 实例账号" extra={<Button size="small" onClick={openCredentialModal}>修改</Button>} style={{ marginBottom: 16 }}>
           {showDefaultCredential && (
             <Space direction="vertical" size={8}>
@@ -455,7 +525,10 @@ const ClusterDeploy: React.FC = () => {
             },
           ]}
         />
-      </Card>
+            </>
+          ),
+        }]}
+      />
 
       <Modal
         title="修改默认 MySQL 实例账号"
@@ -520,14 +593,6 @@ const ClusterDeploy: React.FC = () => {
           <div style={{ marginTop: 8, color: '#666' }}>{activeDeployment.message}</div>
         </Card>
       )}
-
-      <Card title="部署历史" style={{ marginTop: 16 }}>
-        {deployments.length === 0 ? (
-          <Empty description="暂无部署记录" />
-        ) : (
-          <Table columns={columns} dataSource={deployments} rowKey="deployment_id" />
-        )}
-      </Card>
     </div>
   )
 }

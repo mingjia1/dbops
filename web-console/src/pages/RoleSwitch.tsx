@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react'
-import { Card, Form, Select, Button, Space, message, Table, Tag, Result } from 'antd'
-import { RetweetOutlined, HistoryOutlined } from '@ant-design/icons'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Alert, Button, Card, Descriptions, Form, Result, Select, Space, Table, Tag, message } from 'antd'
+import { HistoryOutlined, RetweetOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { roleSwitchApi, instanceApi, type Instance } from '../services/api'
+import { instanceApi, roleSwitchApi, type Instance } from '../services/api'
 
 interface SwitchResult {
+  id?: string
   cluster_id: string
   instance_id: string
   old_role: string
@@ -23,10 +24,19 @@ const TARGET_ROLES: Record<string, string[]> = {
   pxc: ['primary', 'secondary'],
 }
 
+const normalizeArch = (value?: string) => {
+  const v = (value || '').toLowerCase()
+  if (['ha', 'mha', 'mgr', 'pxc'].includes(v)) return v
+  if (v === 'master-slave' || v === 'replication') return 'ha'
+  return ''
+}
+
+const instanceArch = (instance: Instance) =>
+  normalizeArch(instance.status?.replication_status || instance.topology?.replication_mode)
+
 const RoleSwitch: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
   const [clusterId, setClusterId] = useState<string | undefined>(undefined)
-  const [archType, setArchType] = useState<string>('mha')
   const [targetRole, setTargetRole] = useState<string | undefined>(undefined)
   const [selectedInstance, setSelectedInstance] = useState<string | undefined>(undefined)
   const [submitting, setSubmitting] = useState(false)
@@ -35,15 +45,34 @@ const RoleSwitch: React.FC = () => {
   const [form] = Form.useForm()
 
   useEffect(() => {
-    instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
+    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
   }, [])
+
+  const clusters = useMemo(() => {
+    const grouped = new Map<string, Instance[]>()
+    instances.forEach((inst) => {
+      if (!inst.cluster_id) return
+      grouped.set(inst.cluster_id, [...(grouped.get(inst.cluster_id) || []), inst])
+    })
+    return Array.from(grouped.entries()).map(([id, items]) => {
+      const arch = instanceArch(items.find((item) => instanceArch(item)) || items[0])
+      return { id, arch, items }
+    }).filter((item) => item.arch)
+  }, [instances])
+
+  const selectedCluster = clusters.find((item) => item.id === clusterId)
+  const selectedArch = selectedCluster?.arch || ''
+  const clusterInstances = useMemo(
+    () => instances.filter((i) => i.cluster_id === clusterId && instanceArch(i) === selectedArch),
+    [instances, clusterId, selectedArch],
+  )
+  const selected = clusterInstances.find((item) => item.id === selectedInstance)
 
   const fetchHistory = async (cid: string) => {
     setHistoryLoading(true)
     try {
       const res: any = await roleSwitchApi.history(cid)
-      const list: SwitchResult[] = Array.isArray(res?.data) ? res.data : []
-      setHistory(list)
+      setHistory(Array.isArray(res?.data) ? res.data : [])
     } catch {
       setHistory([])
     } finally {
@@ -55,11 +84,21 @@ const RoleSwitch: React.FC = () => {
     if (clusterId) fetchHistory(clusterId)
   }, [clusterId])
 
-  const clusterInstances = instances.filter((i) => i.cluster_id === clusterId)
+  const onClusterChange = (value: string) => {
+    setClusterId(value)
+    setSelectedInstance(undefined)
+    setTargetRole(undefined)
+    form.setFieldsValue({ instance_id: undefined, target_role: undefined })
+  }
 
   const onSubmit = async () => {
-    if (!clusterId || !selectedInstance || !targetRole) {
-      message.warning('请填写完整信息')
+    if (!clusterId || !selectedInstance || !targetRole || !selectedArch) {
+      message.warning('请先选择集群、目标实例和目标角色')
+      return
+    }
+    const inst = instances.find((item) => item.id === selectedInstance)
+    if (!inst || inst.cluster_id !== clusterId || instanceArch(inst) !== selectedArch) {
+      message.error('目标实例必须属于当前集群且架构一致')
       return
     }
     setSubmitting(true)
@@ -87,9 +126,9 @@ const RoleSwitch: React.FC = () => {
       key: 'role_change',
       render: (_, r) => (
         <Space>
-          <Tag>{r.old_role}</Tag>
+          <Tag>{r.old_role || '-'}</Tag>
           <span>→</span>
-          <Tag color="blue">{r.new_role}</Tag>
+          <Tag color="blue">{r.new_role || '-'}</Tag>
         </Space>
       ),
     },
@@ -106,59 +145,55 @@ const RoleSwitch: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Card
-        title={
-          <Space>
-            <RetweetOutlined />
-            <span>集群内角色切换</span>
-          </Space>
-        }
-      >
-        <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
+      <Card title={<Space><RetweetOutlined /><span>集群内角色切换</span></Space>}>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="角色切换只允许在同一个集群、同一种高可用架构内执行。选择集群后，架构会自动锁定。"
+        />
+        <Form form={form} layout="vertical" style={{ maxWidth: 760 }}>
           <Form.Item label="集群ID" required>
             <Select
               placeholder="选择集群"
               value={clusterId}
-              onChange={(v: string) => {
-                setClusterId(v)
-                setSelectedInstance(undefined)
-                form.setFieldsValue({ instance_id: undefined })
-              }}
-              options={Array.from(
-                new Set(instances.map((i) => i.cluster_id).filter(Boolean)),
-              ).map((c) => ({ value: c as string, label: c as string }))}
+              onChange={onClusterChange}
+              options={clusters.map((c) => ({ value: c.id, label: `${c.id} (${c.arch.toUpperCase()})` }))}
             />
           </Form.Item>
-          <Form.Item label="架构类型" required>
-            <Select
-              value={archType}
-              // P2: 之前从 MHA 切到 MGR, targetRole 仍是 "master" (MHA 角色),
-              // 后端校验失败. 架构类型变化时清空 targetRole.
-              onChange={(v) => { setArchType(v); setTargetRole(undefined) }}
-              options={[
-                { value: 'ha', label: 'HA (master/slave)' },
-                { value: 'mha', label: 'MHA (master/slave)' },
-                { value: 'mgr', label: 'MGR (primary/secondary)' },
-                { value: 'pxc', label: 'PXC (primary/secondary)' },
-              ]}
-            />
+          <Form.Item label="架构类型">
+            {selectedArch ? <Tag color="blue">{selectedArch.toUpperCase()}</Tag> : <span>-</span>}
           </Form.Item>
           <Form.Item label="目标实例" required>
             <Select
-              placeholder="选择实例"
+              placeholder="选择当前集群内实例"
               disabled={!clusterId}
               value={selectedInstance}
-              onChange={setSelectedInstance}
-              options={clusterInstances.map((i) => ({ value: i.id, label: i.name }))}
+              onChange={(value) => {
+                setSelectedInstance(value)
+                setTargetRole(undefined)
+                form.setFieldsValue({ target_role: undefined })
+              }}
+              options={clusterInstances.map((i) => ({
+                value: i.id,
+                label: `${i.name} (${i.connection?.host || i.host || '-'}:${i.connection?.port || i.port || '-'})`,
+              }))}
             />
           </Form.Item>
+          {selected && (
+            <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="当前角色">{selected.status?.role || '-'}</Descriptions.Item>
+              <Descriptions.Item label="高可用架构">{selectedArch.toUpperCase()}</Descriptions.Item>
+              <Descriptions.Item label="复制状态">{selected.status?.replication_status || selected.topology?.replication_mode || '-'}</Descriptions.Item>
+            </Descriptions>
+          )}
           <Form.Item label="目标角色" required>
             <Select
               placeholder="选择目标角色"
-              disabled={!archType}
+              disabled={!selectedArch}
               value={targetRole}
               onChange={setTargetRole}
-              options={(TARGET_ROLES[archType] || []).map((r) => ({ value: r, label: r }))}
+              options={(TARGET_ROLES[selectedArch] || []).map((r) => ({ value: r, label: r }))}
             />
           </Form.Item>
           <Form.Item>
@@ -175,24 +210,14 @@ const RoleSwitch: React.FC = () => {
         </Form>
       </Card>
 
-      <Card
-        style={{ marginTop: 16 }}
-        title={
-          <Space>
-            <HistoryOutlined />
-            <span>切换历史</span>
-          </Space>
-        }
-      >
+      <Card style={{ marginTop: 16 }} title={<Space><HistoryOutlined /><span>切换历史</span></Space>}>
         {!clusterId ? (
           <Result title="请先选择集群" subTitle="选择集群后查看角色切换历史" />
         ) : (
           <Table
             columns={historyColumns}
             dataSource={history}
-            // P2: 之前 rowKey="occurred_at" 同秒会重复, React 报 duplicate key warn;
-            // 改用后端返的 id (uuid).
-            rowKey="id"
+            rowKey={(row) => row.id || `${row.instance_id}-${row.occurred_at}`}
             loading={historyLoading}
             locale={{ emptyText: '暂无切换记录' }}
           />

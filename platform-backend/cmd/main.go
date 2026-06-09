@@ -330,6 +330,7 @@ func main() {
 				deployments.POST("/mgr", middleware.RequirePermission("admin"), clusterDeployController.DeployMGR)
 				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)
 				deployments.POST("/ha", middleware.RequirePermission("admin"), clusterDeployController.DeployHA)
+				deployments.GET("", clusterDeployController.List)
 				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
 				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
 			}

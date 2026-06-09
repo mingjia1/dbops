@@ -680,6 +680,7 @@ export const migrationApi = {
 }
 
 export const clusterDeployApi = {
+  list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
   deployHA: (data: any) => api.post('/deployments/ha', data),
   deployMHA: (data: any) => api.post('/deployments/mha', data),
   deployMGR: (data: any) => api.post('/deployments/mgr', data),

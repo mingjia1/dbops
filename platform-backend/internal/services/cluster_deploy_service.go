@@ -424,6 +424,24 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 	}, nil
 }
 
+func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offset int) ([]DeployResponse, error) {
+	deployments, err := s.repo.List(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	responses := make([]DeployResponse, 0, len(deployments))
+	for _, dep := range deployments {
+		responses = append(responses, DeployResponse{
+			DeploymentID: dep.ID,
+			ClusterType:  dep.ClusterType,
+			Name:         dep.Name,
+			Status:       dep.Status,
+			CreatedAt:    dep.CreatedAt,
+		})
+	}
+	return responses, nil
+}
+
 func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (*DeployResponse, error) {
 	dep, err := s.repo.GetByID(ctx, clusterID)
 	if err != nil {
