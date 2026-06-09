@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -14,14 +15,20 @@ type MigrationService struct {
 	instRepo    *repositories.InstanceRepository
 	hostRepo    *repositories.HostRepository
 	agentClient *AgentClient
+	auditSvc    *AuditService
 }
 
-func NewMigrationService(repo *repositories.MigrationRepository, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, agentClient *AgentClient) *MigrationService {
+func NewMigrationService(repo *repositories.MigrationRepository, instRepo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, agentClient *AgentClient, auditSvc ...*AuditService) *MigrationService {
+	var audit *AuditService
+	if len(auditSvc) > 0 {
+		audit = auditSvc[0]
+	}
 	return &MigrationService{
 		repo:        repo,
 		instRepo:    instRepo,
 		hostRepo:    hostRepo,
 		agentClient: agentClient,
+		auditSvc:    audit,
 	}
 }
 
@@ -86,6 +93,8 @@ func (s *MigrationService) CreateTask(ctx context.Context, req CreateMigrationTa
 	if err := s.repo.Create(ctx, task); err != nil {
 		return "", fmt.Errorf("failed to create migration task: %w", err)
 	}
+	s.auditMigration(ctx, "create_migration_task", "create", task.ID, "success", "",
+		fmt.Sprintf("name=%s source_instance_id=%s target_instance_id=%s strategy=%s", task.Name, task.SourceInstanceID, task.TargetInstanceID, task.Strategy))
 	return task.ID, nil
 }
 
@@ -115,13 +124,15 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	agentHost, agentPort, err := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
-		return &MigrationTaskResult{
+		out := &MigrationTaskResult{
 			TaskID:    taskID,
 			Status:    models.MigrationStatusFailed,
 			Strategy:  strategy,
 			StartedAt: now,
 			Progress:  0,
-		}, nil
+		}
+		s.auditMigrationExecution(ctx, task, out, err.Error())
+		return out, nil
 	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
@@ -130,13 +141,15 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	})
 	if err != nil {
 		s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
-		return &MigrationTaskResult{
+		out := &MigrationTaskResult{
 			TaskID:    taskID,
 			Status:    models.MigrationStatusFailed,
 			Strategy:  strategy,
 			StartedAt: now,
 			Progress:  0,
-		}, nil
+		}
+		s.auditMigrationExecution(ctx, task, out, err.Error())
+		return out, nil
 	}
 
 	status := models.MigrationStatusCompleted
@@ -145,13 +158,15 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	}
 	s.repo.UpdateStatus(ctx, taskID, status, result.Progress)
 
-	return &MigrationTaskResult{
+	out := &MigrationTaskResult{
 		TaskID:    taskID,
 		Status:    status,
 		Strategy:  strategy,
 		StartedAt: now,
 		Progress:  result.Progress,
-	}, nil
+	}
+	s.auditMigrationExecution(ctx, task, out, result.Message)
+	return out, nil
 }
 
 func (s *MigrationService) ExecutePhysicalMigration(ctx context.Context, taskID string) (*MigrationTaskResult, error) {
@@ -285,10 +300,12 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
-		return &models.MigrationSwitchResult{
+		out := &models.MigrationSwitchResult{
 			TaskID: taskID,
 			Status: "failed",
-		}, nil
+		}
+		s.auditMigrationSwitch(ctx, task, out, err.Error())
+		return out, nil
 	}
 	_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusSwitching, task.Progress)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-switch", map[string]interface{}{
@@ -298,10 +315,12 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	})
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
-		return &models.MigrationSwitchResult{
+		out := &models.MigrationSwitchResult{
 			TaskID: taskID,
 			Status: "failed",
-		}, nil
+		}
+		s.auditMigrationSwitch(ctx, task, out, err.Error())
+		return out, nil
 	}
 	status := models.MigrationStatusFailed
 	progress := task.Progress
@@ -311,12 +330,14 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	}
 	_ = s.repo.UpdateStatus(ctx, taskID, status, progress)
 
-	return &models.MigrationSwitchResult{
+	out := &models.MigrationSwitchResult{
 		TaskID:             taskID,
 		Status:             result.Status,
 		SwitchedAt:         time.Now(),
 		ApplicationUpdated: result.Status == "success",
-	}, nil
+	}
+	s.auditMigrationSwitch(ctx, task, out, result.Message)
+	return out, nil
 }
 
 func (s *MigrationService) GetTask(ctx context.Context, taskID string) (*models.MigrationTask, error) {
@@ -341,5 +362,60 @@ func (s *MigrationService) ListTasks(ctx context.Context, instanceID string) ([]
 }
 
 func (s *MigrationService) CancelTask(ctx context.Context, taskID string) error {
-	return s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusCancelled, 0)
+	err := s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusCancelled, 0)
+	if err == nil {
+		s.auditMigration(ctx, "cancel_migration_task", "cancel", taskID, "success", "",
+			fmt.Sprintf("task_id=%s status=%s", taskID, models.MigrationStatusCancelled))
+	}
+	return err
+}
+
+func (s *MigrationService) auditMigrationExecution(ctx context.Context, task *models.MigrationTask, result *MigrationTaskResult, message string) {
+	if task == nil || result == nil {
+		return
+	}
+	details := fmt.Sprintf("task_id=%s source_instance_id=%s target_instance_id=%s strategy=%s status=%s progress=%d message=%s",
+		task.ID, task.SourceInstanceID, task.TargetInstanceID, result.Strategy, result.Status, result.Progress, message)
+	s.auditMigration(ctx, "execute_migration", "execute", task.ID, migrationAuditResult(string(result.Status)), migrationAuditError(string(result.Status), message), details)
+}
+
+func (s *MigrationService) auditMigrationSwitch(ctx context.Context, task *models.MigrationTask, result *models.MigrationSwitchResult, message string) {
+	if task == nil || result == nil {
+		return
+	}
+	details := fmt.Sprintf("task_id=%s source_instance_id=%s target_instance_id=%s status=%s application_updated=%t message=%s",
+		task.ID, task.SourceInstanceID, task.TargetInstanceID, result.Status, result.ApplicationUpdated, message)
+	s.auditMigration(ctx, "switch_migration", "switch", task.ID, migrationAuditResult(result.Status), migrationAuditError(result.Status, message), details)
+}
+
+func (s *MigrationService) auditMigration(ctx context.Context, operation, action, resourceID, result, errorMsg, details string) {
+	if s.auditSvc == nil {
+		return
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    operation,
+		ResourceType: "migration_task",
+		ResourceID:   resourceID,
+		Action:       action,
+		Details:      details,
+		Result:       result,
+		ErrorMsg:     errorMsg,
+	})
+}
+
+func migrationAuditResult(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "timeout", "cancelled", "canceled":
+		return "failed"
+	default:
+		return "success"
+	}
+}
+
+func migrationAuditError(status, message string) string {
+	if migrationAuditResult(status) != "failed" {
+		return ""
+	}
+	return message
 }

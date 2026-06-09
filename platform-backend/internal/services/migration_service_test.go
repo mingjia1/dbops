@@ -135,3 +135,113 @@ func TestResolveAgentHostUsesManagedHostPort(t *testing.T) {
 	assert.Equal(t, "10.1.81.41", resolvedHost)
 	assert.Equal(t, 19090, port)
 }
+
+func TestMigrationService_CreateTaskWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "auditor-001")
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	service := NewMigrationService(migrationRepo, repositories.NewInstanceRepository(db), repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
+
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "audit migration",
+		SourceInstanceID: "source-audit",
+		TargetInstanceID: "target-audit",
+		Strategy:         models.MigrationStrategyPhysical,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, taskID)
+	logs, err := auditRepo.ListByResource(context.Background(), "migration_task", taskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "auditor-001", logs[0].UserID)
+	assert.Equal(t, "create_migration_task", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "source_instance_id=source-audit")
+}
+
+func TestMigrationService_CancelTaskWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "auditor-002")
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	service := NewMigrationService(migrationRepo, repositories.NewInstanceRepository(db), repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
+
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "cancel audit migration",
+		SourceInstanceID: "source-cancel",
+		TargetInstanceID: "target-cancel",
+		Strategy:         models.MigrationStrategyGTID,
+	})
+	require.NoError(t, err)
+
+	err = service.CancelTask(ctx, taskID)
+
+	require.NoError(t, err)
+	logs, err := auditRepo.ListByResource(context.Background(), "migration_task", taskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, "cancel_migration_task", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+}
+
+func TestMigrationService_ExecuteFailureWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "auditor-003")
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	service := NewMigrationService(migrationRepo, instanceRepo, repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
+
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "execute failure audit migration",
+		SourceInstanceID: "source-missing-endpoint",
+		TargetInstanceID: "target-missing-endpoint",
+		Strategy:         models.MigrationStrategyPhysical,
+	})
+	require.NoError(t, err)
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "source-missing-endpoint"}))
+
+	result, err := service.ExecutePhysicalMigration(ctx, taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusFailed, result.Status)
+	logs, err := auditRepo.ListByResource(context.Background(), "migration_task", taskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, "execute_migration", logs[0].Operation)
+	assert.Equal(t, "failed", logs[0].Result)
+	assert.Contains(t, logs[0].ErrorMsg, "cannot resolve agent endpoint")
+}
+
+func TestMigrationService_SwitchFailureWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "auditor-004")
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	service := NewMigrationService(migrationRepo, instanceRepo, repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
+
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "switch failure audit migration",
+		SourceInstanceID: "source-switch",
+		TargetInstanceID: "target-missing-endpoint",
+		Strategy:         models.MigrationStrategyReplication,
+	})
+	require.NoError(t, err)
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "target-missing-endpoint"}))
+
+	result, err := service.ExecuteSwitch(ctx, taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	logs, err := auditRepo.ListByResource(context.Background(), "migration_task", taskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, "switch_migration", logs[0].Operation)
+	assert.Equal(t, "failed", logs[0].Result)
+	assert.Contains(t, logs[0].ErrorMsg, "cannot resolve agent endpoint")
+}

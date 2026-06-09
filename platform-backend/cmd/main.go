@@ -165,7 +165,7 @@ func main() {
 	versionController := controllers.NewVersionController(versionCatalog)
 
 	migrationRepo := repositories.NewMigrationRepository(db)
-	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient)
+	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient, auditService)
 
 	switchHistoryRepo := repositories.NewRoleSwitchHistoryRepository(db)
 	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo)
