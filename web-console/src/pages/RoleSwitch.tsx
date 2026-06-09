@@ -7,14 +7,18 @@ import { instanceApi, roleSwitchApi, type Instance } from '../services/api'
 interface SwitchResult {
   id?: string
   cluster_id: string
+  cluster_type?: string
   instance_id: string
+  instance_host?: string
   old_role: string
   new_role: string
   status: string
   message: string
   old_master_id: string
   new_master_id: string
-  occurred_at: string
+  occurred_at?: string
+  started_at?: string
+  completed_at?: string
 }
 
 const TARGET_ROLES: Record<string, string[]> = {
@@ -119,7 +123,15 @@ const RoleSwitch: React.FC = () => {
   }
 
   const historyColumns: ColumnsType<SwitchResult> = [
-    { title: '时间', dataIndex: 'occurred_at', key: 'occurred_at' },
+    {
+      title: '时间',
+      key: 'time',
+      render: (_, r) => {
+        const time = r.occurred_at || r.completed_at || r.started_at
+        return time ? new Date(time).toLocaleString() : '-'
+      },
+    },
+    { title: '架构', dataIndex: 'cluster_type', key: 'cluster_type', render: (v) => v ? <Tag>{String(v).toUpperCase()}</Tag> : '-' },
     { title: '实例', dataIndex: 'instance_id', key: 'instance_id' },
     {
       title: '角色变化',
@@ -217,7 +229,7 @@ const RoleSwitch: React.FC = () => {
           <Table
             columns={historyColumns}
             dataSource={history}
-            rowKey={(row) => row.id || `${row.instance_id}-${row.occurred_at}`}
+            rowKey={(row) => row.id || `${row.instance_id}-${row.completed_at || row.started_at || row.message}`}
             loading={historyLoading}
             locale={{ emptyText: '暂无切换记录' }}
           />

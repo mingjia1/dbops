@@ -166,9 +166,9 @@ func TestSwitchRoleWithinCluster_PromoteMHASlaveToMaster(t *testing.T) {
 	require.NoError(t, instRepo.Update(ctx, inst))
 
 	req := RoleSwitchRequest{
-		ClusterID:  "cluster-1",
-		InstanceID: "inst-new-master",
-		TargetRole: "master",
+		ClusterID:   "cluster-1",
+		InstanceID:  "inst-new-master",
+		TargetRole:  "master",
 		OldMasterID: "inst-old-master",
 	}
 
@@ -708,9 +708,13 @@ func TestSwitchRoleWithinCluster_AmbiguousOldMaster(t *testing.T) {
 		OldMasterID: "different-master",
 	}
 	result, err := svc.SwitchRoleWithinCluster(ctx, req)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "failed", result.Status)
-	assert.Contains(t, result.Message, "cannot demote and promote")
+	assert.Contains(t, result.Message, "ambiguous old_master_id")
+	history, historyErr := svc.ListRoleSwitchHistory(ctx, "c1", 10)
+	require.NoError(t, historyErr)
+	require.Len(t, history, 1)
+	assert.Equal(t, "failed", history[0].Status)
 }
 
 // --- TDD: nil pointer for inst.HostID returns error ---

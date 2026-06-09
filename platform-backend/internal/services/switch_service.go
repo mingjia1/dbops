@@ -145,31 +145,41 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 
 	clusterType, err := s.detectClusterType(ctx, req.ClusterID)
 	if err != nil {
-		return s.failedResult(req, "", "unknown", startedAt, fmt.Sprintf("failed to detect cluster architecture: %v", err)), nil
+		result := s.failedResult(req, "", "unknown", startedAt, fmt.Sprintf("failed to detect cluster architecture: %v", err))
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	if !isValidRoleForCluster(clusterType, req.TargetRole) {
-		return s.failedResult(req, clusterType, "unknown", startedAt,
-			fmt.Sprintf("target role %q is not valid for cluster architecture %q", req.TargetRole, clusterType)), nil
+		result := s.failedResult(req, clusterType, "unknown", startedAt,
+			fmt.Sprintf("target role %q is not valid for cluster architecture %q", req.TargetRole, clusterType))
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
-		return s.failedResult(req, clusterType, "unknown", startedAt, fmt.Sprintf("instance not found: %v", err)), nil
+		result := s.failedResult(req, clusterType, "unknown", startedAt, fmt.Sprintf("instance not found: %v", err))
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	if inst.ClusterID == "" || inst.ClusterID != req.ClusterID {
-		return s.failedResult(req, clusterType, "unknown", startedAt, "instance does not belong to the specified cluster"), nil
+		result := s.failedResult(req, clusterType, "unknown", startedAt, "instance does not belong to the specified cluster")
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	hostInfo, err := s.resolveAgentHost(ctx, inst)
 	if err != nil {
-		return s.failedResult(req, clusterType, "unknown", startedAt, err.Error()), nil
+		result := s.failedResult(req, clusterType, "unknown", startedAt, err.Error())
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	currentRole, oldMasterID := s.guessCurrentRole(inst, clusterType)
 	if currentRole == req.TargetRole {
-		return &RoleSwitchResult{
+		result := &RoleSwitchResult{
 			ClusterID:    req.ClusterID,
 			ClusterType:  clusterType,
 			InstanceID:   req.InstanceID,
@@ -181,7 +191,9 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 			Message:      "instance is already in the target role",
 			StartedAt:    startedAt,
 			CompletedAt:  time.Now(),
-		}, nil
+		}
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	result := s.buildResultSkeleton(req, clusterType, inst, hostInfo, currentRole, oldMasterID, startedAt)
@@ -193,8 +205,9 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 	promotingToMaster := isPrimaryRole(req.TargetRole)
 
 	if promotingToMaster && demotingFromMaster && req.InstanceID != req.OldMasterID && req.OldMasterID != "" {
-		return s.failedResultFromSkeleton(result, "cannot demote and promote the same instance within one role switch"),
-			fmt.Errorf("ambiguous old_master_id: %s vs instance %s", req.OldMasterID, req.InstanceID)
+		result = s.failedResultFromSkeleton(result, fmt.Sprintf("ambiguous old_master_id: %s vs instance %s", req.OldMasterID, req.InstanceID))
+		s.recordHistory(ctx, result)
+		return result, nil
 	}
 
 	if promotingToMaster {
