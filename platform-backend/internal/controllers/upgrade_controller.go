@@ -1,7 +1,11 @@
 package controllers
 
 import (
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -116,7 +120,22 @@ func (c *UpgradeController) RollbackUpgrade(ctx *gin.Context) {
 }
 
 func (c *UpgradeController) ListHistory(ctx *gin.Context) {
-	utils.SuccessResponse(ctx, []interface{}{})
+	limit, offset := parsePagination(ctx)
+	tasks, err := c.taskRepo.ListByTypes(ctx.Request.Context(), []string{
+		"upgrade_in_place",
+		"upgrade_logical",
+		"upgrade_rolling",
+		"upgrade_rollback",
+	}, limit, offset)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to list upgrade history", err)
+		return
+	}
+	history := make([]UpgradeHistoryItem, 0, len(tasks))
+	for _, task := range tasks {
+		history = append(history, mapUpgradeHistoryItem(task))
+	}
+	utils.SuccessResponse(ctx, history)
 }
 
 func (c *UpgradeController) GetUpgradeByID(ctx *gin.Context) {
@@ -147,4 +166,61 @@ func (c *UpgradeController) GenerateUpgradeReport(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, result)
+}
+
+type UpgradeHistoryItem struct {
+	ID          string    `json:"id"`
+	TaskType    string    `json:"task_type"`
+	UpgradeType string    `json:"upgrade_type"`
+	PlanID      string    `json:"plan_id,omitempty"`
+	InstanceID  string    `json:"instance_id"`
+	Status      string    `json:"status"`
+	Progress    int       `json:"progress"`
+	Stage       string    `json:"stage,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	StartTime   time.Time `json:"start_time"`
+	CreatedAt   time.Time `json:"created_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+}
+
+func mapUpgradeHistoryItem(task models.Task) UpgradeHistoryItem {
+	startTime := task.StartedAt
+	if startTime.IsZero() {
+		startTime = task.CreatedAt
+	}
+	message := task.ErrorMessage
+	planID := ""
+	if strings.HasPrefix(message, "plan:") {
+		planID = strings.TrimPrefix(message, "plan:")
+		message = ""
+	}
+	return UpgradeHistoryItem{
+		ID:          task.ID,
+		TaskType:    task.TaskType,
+		UpgradeType: strings.TrimPrefix(task.TaskType, "upgrade_"),
+		PlanID:      planID,
+		InstanceID:  task.InstanceID,
+		Status:      task.Status,
+		Progress:    task.Progress,
+		Stage:       inferUpgradeStage(task),
+		Message:     message,
+		StartTime:   startTime,
+		CreatedAt:   task.CreatedAt,
+		CompletedAt: task.CompletedAt,
+	}
+}
+
+func inferUpgradeStage(task models.Task) string {
+	switch task.Status {
+	case "pending":
+		return "queued"
+	case "running":
+		return "executing"
+	case "completed", "success":
+		return "completed"
+	case "failed":
+		return "failed"
+	default:
+		return task.Status
+	}
 }

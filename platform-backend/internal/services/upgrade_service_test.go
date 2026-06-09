@@ -326,6 +326,31 @@ func TestUpgradeService_Original_ExecuteRollingUpgrade(t *testing.T) {
 	assert.Equal(t, "running", resp.Status)
 }
 
+func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+
+	resp, err := service.ExecuteRollingUpgrade(context.Background(), ExecuteRollingUpgradeRequest{
+		ClusterID:     "cluster-history",
+		PlanID:        "plan-history",
+		TargetVersion: "8.0.36",
+	})
+
+	assert.NoError(t, err)
+	task, err := taskRepo.GetByID(context.Background(), resp.TaskID)
+	assert.NoError(t, err)
+	assert.Equal(t, resp.TaskID, task.ID)
+	assert.Equal(t, "upgrade_rolling", task.TaskType)
+
+	tasks, err := taskRepo.ListByTypes(context.Background(), []string{"upgrade_rolling"}, 10, 0)
+	assert.NoError(t, err)
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, resp.TaskID, tasks[0].ID)
+}
+
 func TestUpgradeService_Original_GenerateUpgradeReport(t *testing.T) {
 	// B3: GenerateUpgradeReport 现在真用 taskRepo.GetByID. 共享 sqlite test DB.
 	db := newTestDB()
