@@ -85,6 +85,29 @@ func TestExecuteBackup(t *testing.T) {
 	assert.Equal(t, result.TaskID, backups[0].TaskID)
 }
 
+func TestExecuteIncrementalBackupWithoutFullBaseCreatesFailedRecord(t *testing.T) {
+	service := newTestBackupService()
+
+	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{
+		InstanceID: "instance-001",
+		BackupType: "incremental",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.NotEmpty(t, result.TaskID)
+	assert.Contains(t, result.Message, "completed full backup")
+
+	backups, err := service.ListBackups(context.Background(), "instance-001")
+	assert.NoError(t, err)
+	assert.Len(t, backups, 1)
+	assert.Equal(t, "failed", backups[0].Status)
+	assert.Equal(t, "incremental", backups[0].BackupType)
+	assert.Equal(t, result.TaskID, backups[0].TaskID)
+	assert.Contains(t, backups[0].Message, "completed full backup")
+}
+
 func TestListBackups(t *testing.T) {
 	service := newTestBackupService()
 

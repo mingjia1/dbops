@@ -141,6 +141,8 @@ const BackupManage: React.FC = () => {
 
   const executePolicy = async (policy: BackupPolicy) => {
     setSubmitting(true)
+    setSelectedInstance(policy.instance_id)
+    setTab('records')
     try {
       const res: any = await backupApi.executeBackup(policy.instance_id, policy.backup_type, policy.id)
       const data = res?.data || {}
@@ -148,12 +150,10 @@ const BackupManage: React.FC = () => {
         throw new Error(data.message || '备份任务执行失败')
       }
       message.success('备份执行完成')
-      setSelectedInstance(policy.instance_id)
-      setTab('records')
-      await fetchRecordsFor(policy.instance_id)
     } catch (err: any) {
       message.error(err?.response?.data?.message || err?.message || '备份执行失败')
     } finally {
+      await fetchRecordsFor(policy.instance_id)
       setSubmitting(false)
     }
   }

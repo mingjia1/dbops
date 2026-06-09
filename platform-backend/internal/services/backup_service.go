@@ -144,6 +144,8 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
 	}
 
+	taskID := fmt.Sprintf("backup-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
+	now := time.Now()
 	config := map[string]interface{}{
 		"backup_type": req.BackupType,
 		"target_dir":  "/backup/mysql",
@@ -155,20 +157,30 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	if req.BackupType == "incremental" {
 		base, err := s.policyRepo.LatestCompletedRecord(ctx, req.InstanceID, "full")
 		if err != nil || base.FilePath == "" {
-			return &BackupTaskResult{
+			out := &BackupTaskResult{
 				InstanceID: req.InstanceID,
 				BackupType: req.BackupType,
+				TaskID:     taskID,
 				Status:     "failed",
 				Message:    "Incremental backup requires at least one completed full backup",
-				StartedAt:  time.Now(),
-				CreatedAt:  time.Now(),
-			}, nil
+				StartedAt:  now,
+				CreatedAt:  now,
+			}
+			_ = s.createRecord(&models.BackupRecord{
+				InstanceID: req.InstanceID,
+				PolicyID:   req.PolicyID,
+				BackupType: req.BackupType,
+				TaskID:     taskID,
+				StartedAt:  now,
+				Status:     "failed",
+				Message:    out.Message,
+				CreatedAt:  now,
+			})
+			return out, nil
 		}
 		config["base_backup_path"] = base.FilePath
 		config["base_backup_label"] = base.ID
 	}
-	taskID := fmt.Sprintf("backup-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
-	now := time.Now()
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": req.InstanceID,
