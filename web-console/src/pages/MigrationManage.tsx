@@ -18,6 +18,15 @@ interface MigrationTask {
   error_message?: string
 }
 
+const isFailedMigrationStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isCompletedMigrationStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
 interface MigrationProgress {
   stage: string
   progress: number
@@ -265,27 +274,32 @@ const MigrationManage: React.FC = () => {
 
   const handleSwitch = async (taskId: string) => {
     Modal.confirm({
-      title: '确认切换',
-      content: '切换操作将把业务流量切到目标实例, 会导致短暂不可用, 请确认已通知业务方。',
-      okText: '确认切换',
+      title: '\u786e\u8ba4\u5207\u6362',
+      content: '\u5207\u6362\u64cd\u4f5c\u4f1a\u628a\u4e1a\u52a1\u6d41\u91cf\u5207\u5230\u76ee\u6807\u5b9e\u4f8b\uff0c\u53ef\u80fd\u5bfc\u81f4\u77ed\u6682\u4e0d\u53ef\u7528\uff0c\u8bf7\u786e\u8ba4\u5df2\u901a\u77e5\u4e1a\u52a1\u65b9\u3002',
+      okText: '\u786e\u8ba4\u5207\u6362',
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
-          await migrationApi.switchover(taskId)
+          const res: any = await migrationApi.switchover(taskId)
+          const data = res?.data || res
           await loadData()
-          message.success('切换完成')
+          if (isFailedMigrationStatus(data?.status)) {
+            message.error(data?.message || '\u8fc1\u79fb\u5207\u6362\u5931\u8d25')
+          } else if (isCompletedMigrationStatus(data?.status)) {
+            message.success(data?.message || '\u8fc1\u79fb\u5207\u6362\u5b8c\u6210')
+          } else {
+            message.info(data?.message || '\u8fc1\u79fb\u5207\u6362\u5df2\u63d0\u4ea4\uff0c\u8bf7\u5237\u65b0\u4efb\u52a1\u72b6\u6001')
+          }
         } catch (err: any) {
           if (err?.response?.status === 404) {
-            message.error('迁移切换接口不存在或任务不存在')
-            return;
-          } else {
-            message.error(err?.response?.data?.message || '切换失败')
+            message.error('\u8fc1\u79fb\u5207\u6362\u63a5\u53e3\u4e0d\u5b58\u5728\u6216\u4efb\u52a1\u4e0d\u5b58\u5728')
+            return
           }
+          message.error(err?.response?.data?.message || '\u5207\u6362\u5931\u8d25')
         }
       },
     })
   }
-
   const handleCancel = (taskId: string) => {
     Modal.confirm({
       title: '确认取消迁移',

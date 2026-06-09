@@ -21,6 +21,15 @@ interface SwitchResult {
   completed_at?: string
 }
 
+const isFailedSwitchStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isCompletedSwitchStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
 const TARGET_ROLES: Record<string, string[]> = {
   ha: ['master', 'slave'],
   mha: ['master', 'slave'],
@@ -97,12 +106,12 @@ const RoleSwitch: React.FC = () => {
 
   const onSubmit = async () => {
     if (!clusterId || !selectedInstance || !targetRole || !selectedArch) {
-      message.warning('请先选择集群、目标实例和目标角色')
+      message.warning('\u8bf7\u5148\u9009\u62e9\u96c6\u7fa4\u3001\u76ee\u6807\u5b9e\u4f8b\u548c\u76ee\u6807\u89d2\u8272')
       return
     }
     const inst = instances.find((item) => item.id === selectedInstance)
     if (!inst || inst.cluster_id !== clusterId || instanceArch(inst) !== selectedArch) {
-      message.error('目标实例必须属于当前集群且架构一致')
+      message.error('\u76ee\u6807\u5b9e\u4f8b\u5fc5\u987b\u5c5e\u4e8e\u5f53\u524d\u96c6\u7fa4\u4e14\u67b6\u6784\u4e00\u81f4')
       return
     }
     setSubmitting(true)
@@ -113,15 +122,20 @@ const RoleSwitch: React.FC = () => {
         target_role: targetRole,
       })
       const data = res?.data || res
-      message.success(`切换${data?.status === 'completed' ? '成功' : '已记录'}: ${data?.message || ''}`)
+      if (isFailedSwitchStatus(data?.status)) {
+        message.error(data?.message || '\u89d2\u8272\u5207\u6362\u5931\u8d25')
+      } else if (isCompletedSwitchStatus(data?.status)) {
+        message.success(data?.message || '\u89d2\u8272\u5207\u6362\u6210\u529f')
+      } else {
+        message.info(data?.message || '\u89d2\u8272\u5207\u6362\u5df2\u8bb0\u5f55\uff0c\u8bf7\u67e5\u770b\u5386\u53f2\u72b6\u6001')
+      }
       fetchHistory(clusterId)
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '切换失败')
+      message.error(err?.response?.data?.message || '\u89d2\u8272\u5207\u6362\u5931\u8d25')
     } finally {
       setSubmitting(false)
     }
   }
-
   const historyColumns: ColumnsType<SwitchResult> = [
     {
       title: '时间',
