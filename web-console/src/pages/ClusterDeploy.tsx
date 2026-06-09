@@ -210,11 +210,14 @@ const ClusterDeploy: React.FC = () => {
     setActiveDeployment(null)
     try {
       const res: any = await apiCall(buildDeployPayload(arch, values))
+      if (!res?.data?.deployment_id && !res?.data?.id) {
+        throw new Error('backend did not return deployment_id')
+      }
       const status = res?.data?.status || 'running'
       const dep: DeployResult = {
-        deployment_id: res?.data?.deployment_id || values.cluster_id || `dep-${Date.now()}`,
-        cluster_id: values.cluster_id,
-        cluster_type: arch,
+        deployment_id: res?.data?.deployment_id || res?.data?.id,
+        cluster_id: res?.data?.cluster_id || values.cluster_id || res?.data?.deployment_id || res?.data?.id,
+        cluster_type: res?.data?.cluster_type || arch,
         status,
         progress: status === 'success' || status === 'completed' ? 100 : 0,
         stage: status === 'success' || status === 'completed' ? STAGE_ORDER[4] : STAGE_ORDER[0],
@@ -222,8 +225,7 @@ const ClusterDeploy: React.FC = () => {
         started_at: new Date().toISOString(),
       }
       setActiveDeployment(dep)
-      setDeployments((items) => [dep, ...items])
-      loadDeployments()
+      await loadDeployments()
       message.success(`${arch.toUpperCase()} 集群部署任务已提交`)
       startPolling(dep)
     } catch (err: any) {

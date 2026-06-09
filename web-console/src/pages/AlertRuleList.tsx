@@ -37,6 +37,11 @@ interface AlertHistory {
   message: string
 }
 
+const requirePersistedEntity = <T extends { id?: string }>(data: T | undefined, label: string): T & { id: string } => {
+  if (!data?.id) throw new Error(`${label} response did not include id`)
+  return data as T & { id: string }
+}
+
 // F1: 删 MOCK_RULES / MOCK_CHANNELS / MOCK_HISTORIES 三组 2024-01-15 假数据.
 // 之前 catch 回落 mock, 后端 down 时用户看到假告警, 还以为是真数据. 现在失败 message.error, 列表留空.
 
@@ -82,12 +87,12 @@ const NotificationChannelsSection: React.FC<{
     try {
       if (editingChannel) {
         const res: any = await alertApi.updateChannel(editingChannel.id, values)
-        const updated = res?.data || { ...editingChannel, ...values }
+        const updated = requirePersistedEntity<NotificationChannel>(res?.data, 'notification channel')
         onChange(channels.map(c => c.id === editingChannel.id ? updated : c))
         message.success('更新通知渠道成功')
       } else {
         const res: any = await alertApi.createChannel(values)
-        const created = res?.data || { id: `channel-${Date.now()}`, ...values, created_at: new Date().toISOString() }
+        const created = requirePersistedEntity<NotificationChannel>(res?.data, 'notification channel')
         onChange([...channels, created])
         message.success('创建通知渠道成功')
       }
@@ -257,17 +262,12 @@ const AlertRuleList: React.FC = () => {
     try {
       if (editingRule) {
         const res: any = await alertApi.updateRule(editingRule.id, values)
-        const updated = res?.data || { ...editingRule, ...values, updated_at: new Date().toISOString() }
+        const updated = requirePersistedEntity<AlertRule>(res?.data, 'alert rule')
         setAlertRules(alertRules.map(r => r.id === editingRule.id ? updated : r))
         message.success('更新告警规则成功')
       } else {
         const res: any = await alertApi.createRule(values)
-        const created = res?.data || {
-          id: `rule-${Date.now()}`,
-          ...values,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }
+        const created = requirePersistedEntity<AlertRule>(res?.data, 'alert rule')
         setAlertRules([...alertRules, created])
         message.success('创建告警规则成功')
       }
