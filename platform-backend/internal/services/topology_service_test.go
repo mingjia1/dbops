@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -189,4 +190,40 @@ func TestTopologyService_BuildTopologyGraphUsesPersistedStatusAndMode(t *testing
 	assert.Equal(t, "unhealthy", byID["topo-replica"].Status)
 	require.Len(t, graph.Edges, 1)
 	assert.Equal(t, "semisync", graph.Edges[0].Label)
+}
+
+func TestTopologyService_GetClusterTopologyUsesClusterQueryBeyondFirstPage(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	repo := repositories.NewInstanceRepository(db)
+	service := NewTopologyService(repo)
+	targetClusterID := "cluster-target-beyond-page"
+
+	for i := 0; i < 120; i++ {
+		require.NoError(t, repo.Create(ctx, &models.Instance{
+			ID:        fmt.Sprintf("noise-%03d", i),
+			Name:      fmt.Sprintf("noise-%03d", i),
+			ClusterID: "noise-cluster",
+		}))
+	}
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "target-master", Name: "target-master", ClusterID: targetClusterID}))
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "target-replica", Name: "target-replica", ClusterID: targetClusterID}))
+	require.NoError(t, repo.UpsertStatus(ctx, "target-master", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, repo.UpsertStatus(ctx, "target-replica", &models.InstanceStatus{Role: "replica", HealthStatus: "healthy"}))
+	require.NoError(t, repo.UpsertTopology(ctx, "target-replica", &models.InstanceTopology{
+		ClusterID:       targetClusterID,
+		MasterID:        "target-master",
+		ReplicationMode: "async",
+	}))
+
+	topology, err := service.GetClusterTopology(ctx, targetClusterID)
+
+	require.NoError(t, err)
+	require.Len(t, topology.Instances, 2)
+	ids := map[string]bool{}
+	for _, inst := range topology.Instances {
+		ids[inst.InstanceID] = true
+	}
+	assert.True(t, ids["target-master"])
+	assert.True(t, ids["target-replica"])
 }

@@ -7,7 +7,6 @@ import (
 	"log"
 	"strings"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
 
@@ -91,24 +90,17 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 }
 
 func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID string) (*ClusterTopologyResponse, error) {
-	instances, err := s.repo.List(ctx, 100, 0)
+	instances, err := s.repo.ListByClusterID(ctx, clusterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list instances: %w", err)
+		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
 	}
 
-	var clusterInstances []models.Instance
-	for _, inst := range instances {
-		if inst.ClusterID == clusterID {
-			clusterInstances = append(clusterInstances, inst)
-		}
-	}
-
-	if len(clusterInstances) == 0 {
+	if len(instances) == 0 {
 		return nil, fmt.Errorf("cluster not found or has no instances")
 	}
 
 	var topologyInstances []InstanceTopologyResponse
-	for _, inst := range clusterInstances {
+	for _, inst := range instances {
 		topologyInst, err := s.GetInstanceTopology(ctx, inst.ID)
 		if err != nil {
 			continue
