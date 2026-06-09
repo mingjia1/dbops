@@ -215,6 +215,64 @@ func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	assert.Equal(t, "/backup/mysql/full.xbstream", backups[0].FilePath)
 }
 
+func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {
+	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-001","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"},{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"}]}}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/agent/tasks/backup-scan", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(scanPayload))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	assert.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	assert.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	assert.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-scan"
+	assert.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "scan-agent", Address: hostAddr, AgentPort: agentPort}))
+	assert.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-scan", Name: "instance-scan", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	assert.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-scan",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	result, err := service.ScanBackups(context.Background(), "instance-scan")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Len(t, result.Backups, 1)
+	assert.True(t, result.Backups[0].AlreadyManaged)
+	assert.NotEmpty(t, result.Backups[0].ManagedBackupID)
+	records, err := service.ListBackups(context.Background(), "instance-scan")
+	assert.NoError(t, err)
+	assert.Len(t, records, 1)
+	assert.Equal(t, "completed", records[0].Status)
+	assert.Equal(t, "full", records[0].BackupType)
+	assert.Equal(t, "/backup/mysql/full-001", records[0].FilePath)
+
+	second, err := service.ScanBackups(context.Background(), "instance-scan")
+
+	assert.NoError(t, err)
+	assert.Len(t, second.Backups, 1)
+	assert.True(t, second.Backups[0].AlreadyManaged)
+	records, err = service.ListBackups(context.Background(), "instance-scan")
+	assert.NoError(t, err)
+	assert.Len(t, records, 1)
+}
+
 func TestListBackups(t *testing.T) {
 	service := newTestBackupService()
 

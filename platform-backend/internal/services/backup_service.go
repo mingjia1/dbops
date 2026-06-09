@@ -362,6 +362,37 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 			discovered[i].ManagedBackupID = id
 		}
 	}
+	for i := range discovered {
+		if discovered[i].AlreadyManaged || discovered[i].FilePath == "" || discovered[i].BackupType == "" {
+			continue
+		}
+		now := time.Now()
+		record := &models.BackupRecord{
+			InstanceID:  instanceID,
+			BackupType:  discovered[i].BackupType,
+			TaskID:      "backup-scan-" + uuid.NewString(),
+			StartedAt:   discovered[i].MTime,
+			CompletedAt: discovered[i].MTime,
+			Status:      "completed",
+			Message:     "discovered by backup scan",
+			FilePath:    discovered[i].FilePath,
+			FileSize:    discovered[i].SizeBytes,
+			CreatedAt:   now,
+		}
+		if record.StartedAt.IsZero() {
+			record.StartedAt = now
+		}
+		if record.CompletedAt.IsZero() {
+			record.CompletedAt = record.StartedAt
+		}
+		if err := s.policyRepo.CreateRecord(ctx, record); err != nil {
+			return nil, fmt.Errorf("failed to register scanned backup %s: %w", discovered[i].FilePath, err)
+		}
+		discovered[i].AlreadyManaged = true
+		discovered[i].ManagedBackupID = record.ID
+		managed[record.FilePath] = record.ID
+		managed[filepath.Base(record.FilePath)] = record.ID
+	}
 	return &BackupScanResult{Backups: discovered, ScannedAt: time.Now()}, nil
 }
 
