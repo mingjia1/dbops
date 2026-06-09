@@ -208,11 +208,11 @@ func (r *ApprovalRequestRepository) GetByID(ctx context.Context, id string) (*mo
 
 	approvalRequest := &models.ApprovalRequest{}
 	var (
-		approverID    sql.NullString
-		approvalCmt   sql.NullString
-		expiresAt     sql.NullTime
-		updatedAt     sql.NullTime
-		approvedAt    sql.NullTime
+		approverID  sql.NullString
+		approvalCmt sql.NullString
+		expiresAt   sql.NullTime
+		updatedAt   sql.NullTime
+		approvedAt  sql.NullTime
 	)
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
 		&approvalRequest.ID, &approvalRequest.RequesterID, &approverID, &approvalRequest.OperationType,
@@ -315,13 +315,20 @@ func (r *ApprovalRequestRepository) Update(ctx context.Context, approvalRequest 
 		WHERE id = ?
 	`
 
-	_, err := r.db.Pool.ExecContext(ctx, query,
+	res, err := r.db.Pool.ExecContext(ctx, query,
 		approvalRequest.ApproverID, approvalRequest.ApprovalStatus,
 		approvalRequest.ApprovalComment, approvalRequest.UpdatedAt, approvalRequest.ApprovedAt,
 		approvalRequest.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update approval request: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check approval request update result: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("approval request not found")
 	}
 
 	return nil
@@ -331,21 +338,28 @@ func (r *ApprovalRequestRepository) Delete(ctx context.Context, id string) error
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available in standalone mode")
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM approval_requests WHERE id = ?`, id)
+	res, err := r.db.Pool.ExecContext(ctx, `DELETE FROM approval_requests WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete approval request: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check approval request delete result: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("approval request not found")
 	}
 	return nil
 }
 
 func scanApprovalRequest(rows *sql.Rows) (*models.ApprovalRequest, error) {
 	var (
-		req          models.ApprovalRequest
-		approverID   sql.NullString
-		approvalCmt  sql.NullString
-		expiresAt    sql.NullTime
-		updatedAt    sql.NullTime
-		approvedAt   sql.NullTime
+		req         models.ApprovalRequest
+		approverID  sql.NullString
+		approvalCmt sql.NullString
+		expiresAt   sql.NullTime
+		updatedAt   sql.NullTime
+		approvedAt  sql.NullTime
 	)
 	if err := rows.Scan(
 		&req.ID, &req.RequesterID, &approverID, &req.OperationType,

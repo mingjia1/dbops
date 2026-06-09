@@ -1,7 +1,10 @@
 package controllers
 
 import (
+	"errors"
 	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
@@ -93,7 +96,7 @@ func (c *ApprovalController) ApproveRequest(ctx *gin.Context) {
 
 	approvalRequest, err := c.service.ApproveRequest(ctx.Request.Context(), id, approverID, req.Comment)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to approve request", err)
+		respondApprovalError(ctx, err, "Failed to approve request")
 		return
 	}
 
@@ -112,7 +115,7 @@ func (c *ApprovalController) RejectRequest(ctx *gin.Context) {
 
 	approvalRequest, err := c.service.RejectRequest(ctx.Request.Context(), id, approverID, req.Comment)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to reject request", err)
+		respondApprovalError(ctx, err, "Failed to reject request")
 		return
 	}
 
@@ -121,4 +124,15 @@ func (c *ApprovalController) RejectRequest(ctx *gin.Context) {
 
 type ApproveRejectRequest struct {
 	Comment string `json:"comment"`
+}
+
+func respondApprovalError(ctx *gin.Context, err error, fallback string) {
+	switch {
+	case errors.Is(err, services.ErrApprovalNotPending):
+		utils.ErrorResponse(ctx, 400, "Approval request is not pending", err)
+	case strings.Contains(strings.ToLower(err.Error()), "not found"):
+		utils.NotFoundResponse(ctx, "Approval request not found")
+	default:
+		utils.InternalServerErrorResponse(ctx, fallback, err)
+	}
 }

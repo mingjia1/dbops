@@ -2,11 +2,15 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
+
+var ErrApprovalNotPending = errors.New("approval request is not in pending status")
 
 type ApprovalService struct {
 	approvalRepo *repositories.ApprovalRequestRepository
@@ -37,6 +41,18 @@ func (s *ApprovalService) CreateApprovalRequest(ctx context.Context, req CreateA
 	if err := s.approvalRepo.Create(ctx, approvalRequest); err != nil {
 		return nil, fmt.Errorf("failed to create approval request: %w", err)
 	}
+	if err := s.createAuditLog(ctx, &models.AuditLog{
+		UserID:       req.RequesterID,
+		Operation:    "create_approval_request",
+		ResourceType: "approval_request",
+		ResourceID:   approvalRequest.ID,
+		Action:       "create",
+		Details:      fmt.Sprintf("%s:%s", req.ResourceType, req.ResourceID),
+		Result:       "success",
+		CreatedAt:    approvalRequest.CreatedAt,
+	}); err != nil {
+		return nil, err
+	}
 
 	return approvalRequest, nil
 }
@@ -60,7 +76,7 @@ func (s *ApprovalService) ApproveRequest(ctx context.Context, id, approverID, co
 	}
 
 	if approvalRequest.ApprovalStatus != "pending" {
-		return nil, fmt.Errorf("approval request is not in pending status")
+		return nil, ErrApprovalNotPending
 	}
 
 	now := time.Now()
@@ -83,7 +99,9 @@ func (s *ApprovalService) ApproveRequest(ctx context.Context, id, approverID, co
 		Result:       "success",
 		CreatedAt:    now,
 	}
-	s.auditRepo.Create(ctx, auditLog)
+	if err := s.createAuditLog(ctx, auditLog); err != nil {
+		return nil, err
+	}
 
 	return approvalRequest, nil
 }
@@ -95,7 +113,7 @@ func (s *ApprovalService) RejectRequest(ctx context.Context, id, approverID, com
 	}
 
 	if approvalRequest.ApprovalStatus != "pending" {
-		return nil, fmt.Errorf("approval request is not in pending status")
+		return nil, ErrApprovalNotPending
 	}
 
 	now := time.Now()
@@ -118,9 +136,24 @@ func (s *ApprovalService) RejectRequest(ctx context.Context, id, approverID, com
 		Result:       "success",
 		CreatedAt:    now,
 	}
-	s.auditRepo.Create(ctx, auditLog)
+	if err := s.createAuditLog(ctx, auditLog); err != nil {
+		return nil, err
+	}
 
 	return approvalRequest, nil
+}
+
+func (s *ApprovalService) createAuditLog(ctx context.Context, auditLog *models.AuditLog) error {
+	if s.auditRepo == nil {
+		return nil
+	}
+	if auditLog.CreatedAt.IsZero() {
+		auditLog.CreatedAt = time.Now()
+	}
+	if err := s.auditRepo.Create(ctx, auditLog); err != nil {
+		return fmt.Errorf("failed to create approval audit log: %w", err)
+	}
+	return nil
 }
 
 type CreateApprovalRequestRequest struct {
