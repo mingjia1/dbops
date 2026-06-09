@@ -82,6 +82,7 @@ func TestExecuteBackup(t *testing.T) {
 	assert.Len(t, backups, 1)
 	assert.Equal(t, "failed", backups[0].Status)
 	assert.Equal(t, "full", backups[0].BackupType)
+	assert.Equal(t, result.TaskID, backups[0].TaskID)
 }
 
 func TestListBackups(t *testing.T) {

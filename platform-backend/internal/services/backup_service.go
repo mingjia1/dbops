@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -166,7 +167,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		config["base_backup_path"] = base.FilePath
 		config["base_backup_label"] = base.ID
 	}
-	taskID := fmt.Sprintf("backup-%d", time.Now().Unix())
+	taskID := fmt.Sprintf("backup-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
 	now := time.Now()
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
 		"task_id":     taskID,
@@ -187,6 +188,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			InstanceID: req.InstanceID,
 			PolicyID:   req.PolicyID,
 			BackupType: req.BackupType,
+			TaskID:     taskID,
 			StartedAt:  now,
 			Status:     "failed",
 			Message:    out.Message,
@@ -209,6 +211,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		InstanceID:  req.InstanceID,
 		PolicyID:    req.PolicyID,
 		BackupType:  req.BackupType,
+		TaskID:      taskID,
 		StartedAt:   now,
 		CompletedAt: out.CompletedAt,
 		Status:      out.Status,
@@ -235,11 +238,15 @@ func (s *BackupService) ListBackups(ctx context.Context, instanceID string) ([]B
 	}
 	out := make([]BackupTaskResult, 0, len(records))
 	for _, r := range records {
+		taskID := r.TaskID
+		if taskID == "" {
+			taskID = r.ID
+		}
 		out = append(out, BackupTaskResult{
 			ID:          r.ID,
 			InstanceID:  r.InstanceID,
 			BackupType:  r.BackupType,
-			TaskID:      r.ID,
+			TaskID:      taskID,
 			Status:      r.Status,
 			Message:     r.Message,
 			StartedAt:   r.StartedAt,

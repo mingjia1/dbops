@@ -24,6 +24,7 @@ type BackupRecord struct {
 	PolicyID    string    `json:"policy_id"`
 	InstanceID  string    `json:"instance_id"`
 	BackupType  string    `json:"backup_type"`
+	TaskID      string    `json:"task_id"`
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at"`
 	Status      string    `json:"status"`
