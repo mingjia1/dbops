@@ -70,13 +70,19 @@ const summarizeCheckFailures = (items: CheckItem[]) =>
 
 const formatTimeoutLabel = (err: any) => {
   const configured = err?.config?.timeout
-  if (typeof configured === 'number' && configured > 0) return `${configured}ms`
+  if (typeof configured === 'number' && configured > 0) return configured >= 1000 ? `${Math.round(configured / 1000)}s` : `${configured}ms`
+  const raw = err?.response?.data?.message || err?.message || ''
+  const match = raw.match(/time\s+(\d+)ms\s+out/i)
+  if (match) {
+    const ms = Number(match[1])
+    if (Number.isFinite(ms) && ms > 0) return ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${ms}ms`
+  }
   return '请求超时'
 }
 
 const isTimeoutError = (err: any) => {
   const raw = err?.response?.data?.message || err?.message || ''
-  return err?.code === 'ECONNABORTED' || /timeout|timed?\s*out/i.test(raw)
+  return err?.code === 'ECONNABORTED' || /timeout|timed?\s*out|time\s+\d+ms\s+out/i.test(raw)
 }
 
 const getAgentSubmitErrorMessage = (err: any, fallback: string) => {

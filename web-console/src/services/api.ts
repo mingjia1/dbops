@@ -13,6 +13,13 @@ const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelle
 const agentSubmitTimeoutMs = 10000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
 
+export const extractTaskPayload = (value: any): any => {
+  if (!value || typeof value !== 'object') return value
+  if (typeof value.status === 'string') return value
+  if (value.data && typeof value.data === 'object') return extractTaskPayload(value.data)
+  return value
+}
+
 const rejectBusinessError = (res: any) => {
   if (res && typeof res.code === 'number' && res.code !== 200) {
     return Promise.reject({
@@ -24,11 +31,12 @@ const rejectBusinessError = (res: any) => {
 }
 
 const rejectFailedTaskData = (res: any) => {
-  const status = String(res?.data?.status || '').toLowerCase()
+  const task = extractTaskPayload(res)
+  const status = String(task?.status || '').toLowerCase()
   if (failedTaskStatuses.includes(status)) {
     return Promise.reject({
       response: { data: res },
-      message: res?.data?.message || res?.message || 'Task failed',
+      message: task?.message || res?.message || 'Task failed',
     })
   }
   return res

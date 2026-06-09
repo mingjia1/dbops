@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Alert, Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd'
 import { CheckCircleOutlined, DatabaseOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
+import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
 const parseBatchInstances = (text: string) => {
   const trimmed = text.trim()
@@ -38,9 +38,9 @@ const isHealthCheckSuccess = (task: any) => {
   return isSuccessfulTaskStatus(task.status)
 }
 
-const getHealthCheckTask = (res: any) => res?.data || res
+const getHealthCheckTask = (res: any) => extractTaskPayload(res)
 
-const getHealthCheckErrorTask = (err: any) => err?.response?.data?.data || err?.data || null
+const getHealthCheckErrorTask = (err: any) => extractTaskPayload(err?.response?.data || err?.data || null)
 
 const formatHealthCheckFailure = (instanceName: string, task: any, fallback: string) => {
   const parts = [
