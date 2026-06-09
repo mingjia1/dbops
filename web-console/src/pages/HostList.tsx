@@ -5,6 +5,8 @@ import { DatabaseOutlined, DesktopOutlined, PlusOutlined, ReloadOutlined, ScanOu
 import type { ColumnsType } from 'antd/es/table'
 import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
 
+const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+
 const parseBatchHosts = (text: string) => {
   const trimmed = text.trim()
   if (!trimmed) return []
@@ -159,11 +161,35 @@ const HostList: React.FC = () => {
       message.warning('请先选择主机')
       return
     }
-    const res: any = await hostApi.batchAgentAction(hostIds, action)
-    message.success(`Agent ${action} 完成，成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`)
+    const asyncAction = longRunningAgentActions.has(action)
+    const res: any = await hostApi.batchAgentAction(hostIds, action, asyncAction)
+    const rows = res?.data?.rows || []
+    if (asyncAction || res?.data?.async) {
+      Modal.info({
+        title: `Agent ${action} 任务已提交`,
+        content: `已提交 ${rows.length || hostIds.length} 台主机，平台会在后台执行。请稍后刷新主机或 Agent 状态查看最终结果。`,
+      })
+    } else if ((res?.data?.failed ?? 0) > 0) {
+      Modal.warning({
+        title: `Agent ${action} 完成：成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`,
+        content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{rows.map((row: any) => `${row.host_name || row.host_id}: ${row.message || row.status}`).join('\n')}</div>,
+      })
+    } else {
+      message.success(`Agent ${action} 成功：${res?.data?.success ?? 0} 个`)
+    }
+    fetchHosts()
   }
 
   const handleAgentAction = async (host: Host, action: string) => {
+    if (longRunningAgentActions.has(action)) {
+      const res: any = await hostApi.batchAgentAction([host.id], action, true)
+      Modal.info({
+        title: `Agent ${action} 任务已提交`,
+        content: res?.data?.rows?.[0]?.message || '平台会在后台执行该 Agent 操作，请稍后刷新状态。',
+      })
+      fetchHosts()
+      return
+    }
     const res: any = await hostApi.agentAction(host.id, action)
     const data = res?.data
     if (data?.status === 'success') {

@@ -110,9 +110,10 @@ type HostAgentActionResult struct {
 }
 
 type BatchHostAgentActionRequest struct {
-	HostIDs []string `json:"host_ids" binding:"required"`
-	Action  string   `json:"action" binding:"required"`
-	Async   bool     `json:"async"`
+	HostIDs   []string `json:"host_ids" binding:"required"`
+	Action    string   `json:"action" binding:"required"`
+	Async     bool     `json:"async"`
+	AgentPort int      `json:"agent_port"`
 }
 
 type BatchHostAgentActionResult struct {
@@ -349,7 +350,10 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 				})
 				continue
 			}
-			port := host.AgentPort
+			port := req.AgentPort
+			if port == 0 {
+				port = host.AgentPort
+			}
 			if port == 0 {
 				port = 9090
 			}
@@ -363,16 +367,16 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 				Status:    "submitted",
 				Message:   "agent action submitted; refresh host status later",
 			})
-			go func(id string) {
+			go func(id string, port int) {
 				actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
 				defer cancel()
-				row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action})
+				row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action, AgentPort: port})
 				if err != nil {
 					_ = s.repo.UpdateStatus(context.Background(), id, "failed")
 					return
 				}
 				s.updateAgentActionHostStatus(row)
-			}(host.ID)
+			}(host.ID, port)
 		}
 		return result, nil
 	}
@@ -389,7 +393,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 
 			actionCtx, cancel := context.WithTimeout(ctx, agentActionTimeout)
 			defer cancel()
-			row, err := s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: req.Action})
+			row, err := s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: req.Action, AgentPort: req.AgentPort})
 			if err != nil {
 				row = &HostAgentActionResult{HostID: hostID, Action: req.Action, Status: "failed", Message: err.Error()}
 			}

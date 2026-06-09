@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Button, Card, Form, InputNumber, message, Select, Space, Table, Tag } from 'antd'
+import { Button, Card, Form, InputNumber, message, Modal, Select, Space, Table, Tag } from 'antd'
 import { CloudServerOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { hostApi, type Host } from '../services/api'
@@ -13,6 +13,8 @@ const actionOptions = [
   { value: 'delete', label: '删除 Agent' },
   { value: 'status', label: '检查状态' },
 ]
+
+const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
 
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
@@ -45,7 +47,8 @@ const AgentManage: React.FC = () => {
     }
     setRunning(true)
     try {
-      if (values.agent_port) {
+      const asyncAction = longRunningAgentActions.has(values.action)
+      if (values.agent_port && !asyncAction) {
         const resultRows = []
         for (const hostId of hostIds) {
           const res: any = await hostApi.agentAction(hostId, values.action, values.agent_port)
@@ -54,9 +57,22 @@ const AgentManage: React.FC = () => {
         setRows(resultRows)
         message.success(`Agent ${values.action} 执行完成`)
       } else {
-        const res: any = await hostApi.batchAgentAction(hostIds, values.action)
-        setRows(res?.data?.rows || [])
-        message.success(`Agent ${values.action} 完成，成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`)
+        const res: any = await hostApi.batchAgentAction(hostIds, values.action, asyncAction, values.agent_port)
+        const resultRows = res?.data?.rows || []
+        setRows(resultRows)
+        if (asyncAction || res?.data?.async) {
+          Modal.info({
+            title: `Agent ${values.action} 任务已提交`,
+            content: `已提交 ${resultRows.length || hostIds.length} 台主机，平台会在后台执行。请稍后刷新主机或 Agent 状态查看最终结果。`,
+          })
+        } else if ((res?.data?.failed ?? 0) > 0) {
+          Modal.warning({
+            title: `Agent ${values.action} 完成：成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`,
+            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{resultRows.map((row: any) => `${row.host_name || row.host_id}: ${row.message || row.status}`).join('\n')}</div>,
+          })
+        } else {
+          message.success(`Agent ${values.action} 成功：${res?.data?.success ?? 0} 个`)
+        }
       }
       fetchHosts()
     } finally {

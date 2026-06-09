@@ -199,7 +199,7 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? `检测部分失败，成功 ${ok} 个，失败 ${failed} 个` : `检测失败，成功 ${ok} 个，失败 ${failed} 个`,
+        title: ok > 0 ? `检测部分失败：成功 ${ok} 个，失败 ${failed} 个` : `检测失败：成功 ${ok} 个，失败 ${failed} 个`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             {failedRows.join('\n')}
@@ -207,7 +207,7 @@ const InstanceList: React.FC = () => {
         ),
       })
     } else {
-      message.success(`检测完成，成功 ${ok} 个`)
+      message.success(`检测成功：${ok} 个`)
     }
     fetchInstances()
   }
