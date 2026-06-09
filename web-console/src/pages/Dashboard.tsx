@@ -19,6 +19,7 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([])
 
   useEffect(() => {
     try {
@@ -92,7 +93,7 @@ const Dashboard: React.FC = () => {
   // 用户深链接到 /dashboard/hosts/:id 或 /dashboard/instances 后,
   // antd Menu 4+ 不会自动展开 parent group (需要受控 openKeys).
   // 修: 根据当前 path 反推应该展开的 parent, 用 openKeys (受控).
-  const openKeys = (() => {
+  const routeOpenKeys = (() => {
     for (const m of menuItems) {
       if ((m as any).children) {
         const hit = (m as any).children.find((c: any) => location.pathname.startsWith(c.key))
@@ -101,6 +102,10 @@ const Dashboard: React.FC = () => {
     }
     return ['/dashboard/resources']
   })()
+
+  useEffect(() => {
+    setManualOpenKeys(routeOpenKeys)
+  }, [location.pathname])
 
   const userMenu = {
     items: [
@@ -148,7 +153,8 @@ const Dashboard: React.FC = () => {
             mode="inline"
             theme={themeMode}
             selectedKeys={[selectedKey]}
-            openKeys={openKeys}
+            openKeys={manualOpenKeys}
+            onOpenChange={(keys) => setManualOpenKeys(keys)}
             items={menuItems.map((item: any) => {
               if (item.children) {
                 return {

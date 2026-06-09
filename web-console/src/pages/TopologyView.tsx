@@ -115,6 +115,62 @@ const TopologyView: React.FC = () => {
     },
   ]
 
+  const renderTopologyGraph = (nodes: TopologyNode[], edges: TopologyEdge[]) => {
+    const width = 920
+    const height = Math.max(180, Math.ceil(nodes.length / 4) * 150)
+    const positions = new Map<string, { x: number; y: number }>()
+    nodes.forEach((node, index) => {
+      const isPrimary = primaryRoles.has(node.role)
+      const x = isPrimary ? 140 : 360 + (index % 3) * 180
+      const y = isPrimary ? 80 : 70 + Math.floor(index / 3) * 130
+      positions.set(node.id, { x, y })
+    })
+
+    return (
+      <div style={{ width: '100%', overflowX: 'auto', marginBottom: 16 }}>
+        <svg width={width} height={height} style={{ minWidth: width, border: '1px solid #f0f0f0', borderRadius: 6, background: 'var(--page-bg, #fff)' }}>
+          <defs>
+            <marker id="topology-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#8c8c8c" />
+            </marker>
+          </defs>
+          {edges.map((edge, index) => {
+            const source = positions.get(edge.source_id)
+            const target = positions.get(edge.target_id)
+            if (!source || !target) return null
+            return (
+              <g key={`${edge.source_id}-${edge.target_id}-${index}`}>
+                <line
+                  x1={source.x + 82}
+                  y1={source.y + 30}
+                  x2={target.x - 12}
+                  y2={target.y + 30}
+                  stroke="#8c8c8c"
+                  strokeWidth={2}
+                  markerEnd="url(#topology-arrow)"
+                />
+                <text x={(source.x + target.x) / 2 + 30} y={(source.y + target.y) / 2 + 22} fontSize="12" fill="#595959">
+                  {edge.label || edge.type || 'replication'}
+                </text>
+              </g>
+            )
+          })}
+          {nodes.map((node) => {
+            const pos = positions.get(node.id) || { x: 0, y: 0 }
+            const color = primaryRoles.has(node.role) ? '#1677ff' : '#52c41a'
+            return (
+              <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                <rect width="150" height="64" rx="6" fill="#fff" stroke={color} strokeWidth="2" />
+                <text x="12" y="24" fontSize="13" fontWeight="600" fill="#262626">{node.name || node.id}</text>
+                <text x="12" y="45" fontSize="12" fill={color}>{node.role || 'unknown'} / {node.status || 'unknown'}</text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+    )
+  }
+
   return (
     <div style={{ padding: 24 }}>
       <Card
@@ -158,6 +214,7 @@ const TopologyView: React.FC = () => {
               }))
               return (
                 <Card key={clusterId} size="small" title={<Space><ApartmentOutlined />{clusterId}<Tag>{graph?.mode || 'unknown'}</Tag></Space>}>
+                  {renderTopologyGraph(nodes, graph?.edges || [])}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
                     {nodes.map((node) => (
                       <div key={node.id} style={{ width: 220, minHeight: 92, border: '1px solid #d9d9d9', borderRadius: 6, padding: 12 }}>
