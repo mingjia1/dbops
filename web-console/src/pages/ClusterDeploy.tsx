@@ -26,6 +26,7 @@ interface DeployResult {
   message: string
   started_at: string
   finished_at?: string
+  nodes?: Array<{ instance_id?: string; name?: string; host?: string; port?: number; role?: string }>
 }
 
 const ClusterDeploy: React.FC = () => {
@@ -72,6 +73,7 @@ const ClusterDeploy: React.FC = () => {
     message: data.message || '',
     started_at: data.started_at || data.created_at,
     finished_at: data.finished_at || data.updated_at,
+    nodes: Array.isArray(data.nodes) ? data.nodes : [],
   })
 
   const loadDeployments = async () => {
@@ -87,6 +89,12 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const deploymentNodes = (record: DeployResult) => {
+    if (record.nodes?.length) {
+      return record.nodes.map((node) => {
+        const endpoint = `${node.host || '-'}:${node.port || '-'}`
+        return `${node.name || node.instance_id || '-'} (${endpoint}, ${node.role || '-'})`
+      })
+    }
     const clusterID = record.cluster_id || record.deployment_id
     return instances
       .filter((inst) => inst.cluster_id === clusterID)
@@ -176,6 +184,7 @@ const ClusterDeploy: React.FC = () => {
           progress: typeof data.progress === 'number' ? data.progress : dep.progress,
           message: data.message || dep.message,
           finished_at: data.finished_at,
+          nodes: Array.isArray(data.nodes) ? data.nodes : dep.nodes,
         }
         patchDeployment(next)
         if (next.status === 'success' || next.status === 'completed' || next.status === 'failed') loadDeployments()

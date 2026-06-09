@@ -101,3 +101,50 @@ func TestDestroyClusterWritesAuditLog(t *testing.T) {
 	require.Equal(t, "destroy", logs[0].Action)
 	require.Equal(t, "success", logs[0].Result)
 }
+
+func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          "cluster-with-nodes",
+		ClusterType: "mgr",
+		Name:        "cluster-with-nodes",
+		Status:      "completed",
+	}))
+	hostID := "node-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Name: "node-host", Address: "10.0.0.21", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{
+		ID:        "node-instance",
+		Name:      "node-instance",
+		ClusterID: "cluster-with-nodes",
+		HostID:    &hostID,
+	}))
+	require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID: "node-instance",
+		Host:       "10.0.0.21",
+		Port:       3306,
+		Username:   "root",
+	}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "node-instance", &models.InstanceStatus{
+		InstanceID:          "node-instance",
+		RunStatus:           "running",
+		HealthStatus:        "healthy",
+		Role:                "primary",
+		SecondsBehindMaster: -1,
+	}))
+
+	deployments, err := service.ListDeployments(ctx, 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, deployments, 1)
+	require.Len(t, deployments[0].Nodes, 1)
+	require.Equal(t, "node-instance", deployments[0].Nodes[0].InstanceID)
+	require.Equal(t, "10.0.0.21", deployments[0].Nodes[0].Host)
+	require.Equal(t, 3306, deployments[0].Nodes[0].Port)
+	require.Equal(t, "primary", deployments[0].Nodes[0].Role)
+}

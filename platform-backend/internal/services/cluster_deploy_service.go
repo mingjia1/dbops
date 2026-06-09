@@ -433,6 +433,7 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 		Name:         dep.Name,
 		Status:       dep.Status,
 		CreatedAt:    dep.CreatedAt,
+		Nodes:        s.deploymentNodes(ctx, dep.ID),
 	}, nil
 }
 
@@ -449,6 +450,7 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 			Name:         dep.Name,
 			Status:       dep.Status,
 			CreatedAt:    dep.CreatedAt,
+			Nodes:        s.deploymentNodes(ctx, dep.ID),
 		})
 	}
 	return responses, nil
@@ -460,6 +462,7 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err != nil {
 		return nil, err
 	}
+	nodes := s.deploymentNodes(ctx, clusterID)
 	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
 		return nil, err
 	}
@@ -473,7 +476,45 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		Status:       "destroyed",
 		Message:      fmt.Sprintf("Cluster %s destroyed from platform management; database services were not stopped", clusterID),
 		CreatedAt:    dep.CreatedAt,
+		Nodes:        nodes,
 	}, nil
+}
+
+func (s *ClusterDeployService) deploymentNodes(ctx context.Context, clusterID string) []DeployNode {
+	if s.instRepo == nil || clusterID == "" {
+		return nil
+	}
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil
+	}
+	nodes := make([]DeployNode, 0, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if full, err := s.instRepo.GetByID(ctx, inst.ID); err == nil && full != nil {
+			inst = full
+		}
+		node := DeployNode{
+			InstanceID: inst.ID,
+			Name:       inst.Name,
+			Host:       inst.Connection.Host,
+			Port:       inst.Connection.Port,
+			Role:       inst.Status.Role,
+		}
+		if node.Host == "" {
+			if conn, err := s.instRepo.GetConnection(ctx, inst.ID); err == nil && conn != nil {
+				node.Host = conn.Host
+				node.Port = conn.Port
+			}
+		}
+		if node.Role == "" {
+			node.Role = "unknown"
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 func (s *ClusterDeployService) auditDeployment(ctx context.Context, operation, clusterType, requestedID, requestedName string, resp *DeployResponse, err error) {
@@ -655,12 +696,21 @@ type PXCNode struct {
 }
 
 type DeployResponse struct {
-	DeploymentID string    `json:"deployment_id"`
-	ClusterType  string    `json:"cluster_type"`
-	Name         string    `json:"name"`
-	Status       string    `json:"status"`
-	Message      string    `json:"message"`
-	CreatedAt    time.Time `json:"created_at"`
+	DeploymentID string       `json:"deployment_id"`
+	ClusterType  string       `json:"cluster_type"`
+	Name         string       `json:"name"`
+	Status       string       `json:"status"`
+	Message      string       `json:"message"`
+	CreatedAt    time.Time    `json:"created_at"`
+	Nodes        []DeployNode `json:"nodes,omitempty"`
+}
+
+type DeployNode struct {
+	InstanceID string `json:"instance_id"`
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Role       string `json:"role"`
 }
 
 func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallbackAddress string) (deploymentHost, error) {
