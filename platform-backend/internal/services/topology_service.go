@@ -107,11 +107,6 @@ func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID stri
 		return nil, fmt.Errorf("cluster not found or has no instances")
 	}
 
-	replicationMode := "async"
-	if clusterInstances[0].Topology.ReplicationMode != "" {
-		replicationMode = clusterInstances[0].Topology.ReplicationMode
-	}
-
 	var topologyInstances []InstanceTopologyResponse
 	for _, inst := range clusterInstances {
 		topologyInst, err := s.GetInstanceTopology(ctx, inst.ID)
@@ -121,6 +116,13 @@ func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID stri
 		topologyInstances = append(topologyInstances, *topologyInst)
 	}
 	inferClusterTopology(topologyInstances)
+	replicationMode := "async"
+	for _, inst := range topologyInstances {
+		if inst.ReplicationMode != "" {
+			replicationMode = inst.ReplicationMode
+			break
+		}
+	}
 
 	return &ClusterTopologyResponse{
 		ClusterID:       clusterID,
@@ -135,35 +137,27 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 		return nil, fmt.Errorf("failed to get cluster topology: %w", err)
 	}
 
-	instances, err := s.repo.List(ctx, 100, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list instances: %w", err)
-	}
-
-	instanceMap := make(map[string]models.Instance)
-	for _, inst := range instances {
-		instanceMap[inst.ID] = inst
-	}
-
 	var nodes []TopologyNode
 	nodeIDs := make(map[string]bool)
 	for _, topologyInst := range clusterTopology.Instances {
-		inst, ok := instanceMap[topologyInst.InstanceID]
-		if !ok {
+		inst, err := s.repo.GetByID(ctx, topologyInst.InstanceID)
+		if err != nil {
 			// B5: instanceMap 拿不到时不要塞零值, 跳过该节点 + 记 warn,
 			// 避免前端出现"未命名节点"假象.
-			log.Printf("WARN: topology node %s has no matching instance row, skipping", topologyInst.InstanceID)
+			log.Printf("WARN: topology node %s has no matching instance row, skipping: %v", topologyInst.InstanceID, err)
 			continue
 		}
 		node := TopologyNode{
 			ID:        topologyInst.InstanceID,
 			Name:      inst.Name,
 			Role:      topologyInst.Role,
-			Status:    "healthy",
+			Status:    "unknown",
 			ClusterID: topologyInst.ClusterID,
 		}
 		if inst.Status.HealthStatus != "" {
 			node.Status = inst.Status.HealthStatus
+		} else if inst.Status.RunStatus != "" {
+			node.Status = inst.Status.RunStatus
 		}
 		nodeIDs[node.ID] = true
 		nodes = append(nodes, node)

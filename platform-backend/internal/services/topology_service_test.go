@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTopologyService_GetInstanceTopology(t *testing.T) {
@@ -140,4 +142,51 @@ func TestTopologyService_GetClusterTopologyInfersSinglePrimaryWhenRolesMissing(t
 	assert.Equal(t, "instance-001", result.Instances[2].MasterID)
 
 	mockRepo.AssertExpectations(t)
+}
+
+func TestTopologyService_BuildTopologyGraphUsesPersistedStatusAndMode(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	repo := repositories.NewInstanceRepository(db)
+	service := NewTopologyService(repo)
+	clusterID := "cluster-topology-status"
+
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "topo-master", Name: "topo-master", ClusterID: clusterID}))
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "topo-replica", Name: "topo-replica", ClusterID: clusterID}))
+	require.NoError(t, repo.UpsertStatus(ctx, "topo-master", &models.InstanceStatus{
+		RunStatus:    "running",
+		HealthStatus: "healthy",
+		Role:         "master",
+	}))
+	require.NoError(t, repo.UpsertStatus(ctx, "topo-replica", &models.InstanceStatus{
+		RunStatus:    "stopped",
+		HealthStatus: "unhealthy",
+		Role:         "replica",
+	}))
+	require.NoError(t, repo.UpsertTopology(ctx, "topo-master", &models.InstanceTopology{
+		ClusterID:       clusterID,
+		SlaveIDs:        `["topo-replica"]`,
+		ReplicationMode: "semisync",
+	}))
+	require.NoError(t, repo.UpsertTopology(ctx, "topo-replica", &models.InstanceTopology{
+		ClusterID:       clusterID,
+		MasterID:        "topo-master",
+		ReplicationMode: "semisync",
+	}))
+
+	topology, err := service.GetClusterTopology(ctx, clusterID)
+	require.NoError(t, err)
+	assert.Equal(t, "semisync", topology.ReplicationMode)
+
+	graph, err := service.BuildTopologyGraph(ctx, clusterID)
+	require.NoError(t, err)
+	require.Len(t, graph.Nodes, 2)
+	byID := map[string]TopologyNode{}
+	for _, node := range graph.Nodes {
+		byID[node.ID] = node
+	}
+	assert.Equal(t, "healthy", byID["topo-master"].Status)
+	assert.Equal(t, "unhealthy", byID["topo-replica"].Status)
+	require.Len(t, graph.Edges, 1)
+	assert.Equal(t, "semisync", graph.Edges[0].Label)
 }
