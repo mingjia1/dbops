@@ -6,6 +6,18 @@ import type { ColumnsType } from 'antd/es/table'
 import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
 
 const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+const isFailedAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isSuccessfulAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
+}
+
+const summarizeAgentRows = (rows: any[]) =>
+  rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
 
 const parseBatchHosts = (text: string) => {
   const trimmed = text.trim()
@@ -158,47 +170,58 @@ const HostList: React.FC = () => {
   const handleBatchAgent = async (action: string) => {
     const hostIds = selectedRowKeys.map(String)
     if (hostIds.length === 0) {
-      message.warning('请先选择主机')
+      message.warning('\u8bf7\u5148\u9009\u62e9\u4e3b\u673a')
       return
     }
     const asyncAction = longRunningAgentActions.has(action)
     const res: any = await hostApi.batchAgentAction(hostIds, action, asyncAction)
     const rows = res?.data?.rows || []
-    if (asyncAction || res?.data?.async) {
-      Modal.info({
-        title: `Agent ${action} 任务已提交`,
-        content: `已提交 ${rows.length || hostIds.length} 台主机，平台会在后台执行。请稍后刷新主机或 Agent 状态查看最终结果。`,
+    const failedRows = rows.filter((row: any) => isFailedAgentStatus(row?.status))
+    if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
+      Modal.error({
+        title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
+        content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : rows)}</div>,
       })
-    } else if ((res?.data?.failed ?? 0) > 0) {
-      Modal.warning({
-        title: `Agent ${action} 完成：成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`,
-        content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{rows.map((row: any) => `${row.host_name || row.host_id}: ${row.message || row.status}`).join('\n')}</div>,
+    } else if (asyncAction || res?.data?.async) {
+      Modal.info({
+        title: `Agent ${action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
+        content: `\u5df2\u63d0\u4ea4 ${rows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u8bf7\u7a0d\u540e\u5237\u65b0\u4e3b\u673a\u6216 Agent \u72b6\u6001\u67e5\u770b\u6700\u7ec8\u7ed3\u679c\u3002`,
       })
     } else {
-      message.success(`Agent ${action} 成功：${res?.data?.success ?? 0} 个`)
+      message.success(`Agent ${action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
     }
     fetchHosts()
   }
-
   const handleAgentAction = async (host: Host, action: string) => {
     if (longRunningAgentActions.has(action)) {
       const res: any = await hostApi.batchAgentAction([host.id], action, true)
-      Modal.info({
-        title: `Agent ${action} 任务已提交`,
-        content: res?.data?.rows?.[0]?.message || '平台会在后台执行该 Agent 操作，请稍后刷新状态。',
-      })
+      const rows = res?.data?.rows || []
+      const failedRows = rows.filter((row: any) => isFailedAgentStatus(row?.status))
+      if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
+        Modal.error({
+          title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
+          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : rows)}</div>,
+        })
+      } else {
+        Modal.info({
+          title: `Agent ${action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
+          content: rows?.[0]?.message || '\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u8be5 Agent \u64cd\u4f5c\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0\u72b6\u6001\u3002',
+        })
+      }
       fetchHosts()
       return
     }
     const res: any = await hostApi.agentAction(host.id, action)
     const data = res?.data
-    if (data?.status === 'success') {
-      message.success(data.message || `Agent ${action} 完成`)
+    if (isSuccessfulAgentStatus(data?.status)) {
+      message.success(data.message || `Agent ${action} \u64cd\u4f5c\u5b8c\u6210`)
     } else {
-      message.error(data?.message || `Agent ${action} 失败`)
+      Modal.error({
+        title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
+        content: data?.message || `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
+      })
     }
   }
-
   const submitBatchCreate = async () => {
     const values = await batchForm.validateFields()
     const parsed = parseBatchHosts(values.hosts)

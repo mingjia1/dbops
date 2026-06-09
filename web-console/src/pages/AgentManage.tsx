@@ -15,6 +15,18 @@ const actionOptions = [
 ]
 
 const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+const isFailedAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isSuccessfulAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
+}
+
+const summarizeAgentRows = (rows: any[]) =>
+  rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
 
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
@@ -42,7 +54,7 @@ const AgentManage: React.FC = () => {
     const values = await form.validateFields()
     const hostIds = selectedRowKeys.map(String)
     if (hostIds.length === 0) {
-      message.warning('请先选择主机')
+      message.warning('\u8bf7\u5148\u9009\u62e9\u4e3b\u673a')
       return
     }
     setRunning(true)
@@ -55,23 +67,32 @@ const AgentManage: React.FC = () => {
           resultRows.push(res?.data)
         }
         setRows(resultRows)
-        message.success(`Agent ${values.action} 执行完成`)
+        const failedRows = resultRows.filter((row: any) => !isSuccessfulAgentStatus(row?.status))
+        if (failedRows.length > 0) {
+          Modal.error({
+            title: `Agent ${values.action} \u64cd\u4f5c\u5931\u8d25`,
+            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows)}</div>,
+          })
+        } else {
+          message.success(`Agent ${values.action} \u64cd\u4f5c\u5b8c\u6210`)
+        }
       } else {
         const res: any = await hostApi.batchAgentAction(hostIds, values.action, asyncAction, values.agent_port)
         const resultRows = res?.data?.rows || []
         setRows(resultRows)
-        if (asyncAction || res?.data?.async) {
-          Modal.info({
-            title: `Agent ${values.action} 任务已提交`,
-            content: `已提交 ${resultRows.length || hostIds.length} 台主机，平台会在后台执行。请稍后刷新主机或 Agent 状态查看最终结果。`,
+        const failedRows = resultRows.filter((row: any) => isFailedAgentStatus(row?.status))
+        if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
+          Modal.error({
+            title: `Agent ${values.action} \u64cd\u4f5c\u5931\u8d25`,
+            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : resultRows)}</div>,
           })
-        } else if ((res?.data?.failed ?? 0) > 0) {
-          Modal.warning({
-            title: `Agent ${values.action} 完成：成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`,
-            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{resultRows.map((row: any) => `${row.host_name || row.host_id}: ${row.message || row.status}`).join('\n')}</div>,
+        } else if (asyncAction || res?.data?.async) {
+          Modal.info({
+            title: `Agent ${values.action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
+            content: `\u5df2\u63d0\u4ea4 ${resultRows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u8bf7\u7a0d\u540e\u5237\u65b0\u4e3b\u673a\u6216 Agent \u72b6\u6001\u67e5\u770b\u6700\u7ec8\u7ed3\u679c\u3002`,
           })
         } else {
-          message.success(`Agent ${values.action} 成功：${res?.data?.success ?? 0} 个`)
+          message.success(`Agent ${values.action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
         }
       }
       fetchHosts()
@@ -79,7 +100,6 @@ const AgentManage: React.FC = () => {
       setRunning(false)
     }
   }
-
   const columns: ColumnsType<Host> = [
     { title: '主机名称', dataIndex: 'name', key: 'name' },
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
