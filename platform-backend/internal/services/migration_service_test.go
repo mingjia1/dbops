@@ -2,6 +2,11 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -244,4 +249,122 @@ func TestMigrationService_SwitchFailureWritesAuditLog(t *testing.T) {
 	assert.Equal(t, "switch_migration", logs[0].Operation)
 	assert.Equal(t, "failed", logs[0].Result)
 	assert.Contains(t, logs[0].ErrorMsg, "cannot resolve agent endpoint")
+}
+
+func TestMigrationService_ExecuteRunningAgentStatusStaysMigrating(t *testing.T) {
+	service, migrationRepo, taskID, cleanup := newMigrationExecutionTestService(t, "running", 25)
+	defer cleanup()
+
+	result, err := service.ExecutePhysicalMigration(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusMigrating, result.Status)
+	assert.Equal(t, 25, result.Progress)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusMigrating, task.Status)
+	assert.Equal(t, 25, task.Progress)
+}
+
+func TestMigrationService_ExecuteCompletedAgentStatusCompletes(t *testing.T) {
+	service, migrationRepo, taskID, cleanup := newMigrationExecutionTestService(t, "completed", 100)
+	defer cleanup()
+
+	result, err := service.ExecutePhysicalMigration(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusCompleted, result.Status)
+	assert.Equal(t, 100, result.Progress)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusCompleted, task.Status)
+}
+
+func TestMigrationService_SwitchCompletedMarksApplicationUpdated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration-switch", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "switch-task",
+				"status":   "completed",
+				"progress": 100,
+				"message":  "switch completed",
+			},
+		})
+	}))
+	defer server.Close()
+
+	service, _, taskID := newMigrationServiceWithAgent(t, server.URL)
+
+	result, err := service.ExecuteSwitch(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.True(t, result.ApplicationUpdated)
+}
+
+func newMigrationExecutionTestService(t *testing.T, agentStatus string, progress int) (*MigrationService, *repositories.MigrationRepository, string, func()) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "migration-task",
+				"status":   agentStatus,
+				"progress": progress,
+				"message":  "migration " + agentStatus,
+			},
+		})
+	}))
+	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+	return service, migrationRepo, taskID, server.Close
+}
+
+func newMigrationServiceWithAgent(t *testing.T, serverURL string) (*MigrationService, *repositories.MigrationRepository, string) {
+	t.Helper()
+	ctx := context.Background()
+	u, err := url.Parse(serverURL)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	hostID := "migration-agent-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{
+		ID:        hostID,
+		Name:      "migration-agent-host",
+		Address:   u.Hostname(),
+		AgentPort: agentPort,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{
+		ID:     "migration-source",
+		Name:   "migration-source",
+		HostID: &hostID,
+	}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{
+		ID:     "migration-target",
+		Name:   "migration-target",
+		HostID: &hostID,
+	}))
+	service := NewMigrationService(migrationRepo, instanceRepo, hostRepo, NewAgentClient(""))
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "migration execution",
+		SourceInstanceID: "migration-source",
+		TargetInstanceID: "migration-target",
+		Strategy:         models.MigrationStrategyPhysical,
+	})
+	require.NoError(t, err)
+	return service, migrationRepo, taskID
 }

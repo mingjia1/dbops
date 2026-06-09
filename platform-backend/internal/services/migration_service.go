@@ -152,10 +152,19 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		return out, nil
 	}
 
-	status := models.MigrationStatusCompleted
-	if result.Status == "failed" {
-		status = models.MigrationStatusFailed
+	if result == nil {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
+		out := &MigrationTaskResult{
+			TaskID:    taskID,
+			Status:    models.MigrationStatusFailed,
+			Strategy:  strategy,
+			StartedAt: now,
+			Progress:  0,
+		}
+		s.auditMigrationExecution(ctx, task, out, "agent returned no migration result")
+		return out, nil
 	}
+	status := normalizeMigrationStatus(result.Status)
 	s.repo.UpdateStatus(ctx, taskID, status, result.Progress)
 
 	out := &MigrationTaskResult{
@@ -219,7 +228,7 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 
 	return &models.MigrationProgress{
 		TaskID:    taskID,
-		Status:    models.MigrationStatus(result.Status),
+		Status:    normalizeMigrationStatus(result.Status),
 		Progress:  result.Progress,
 		UpdatedAt: time.Now(),
 	}, nil
@@ -324,7 +333,8 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	}
 	status := models.MigrationStatusFailed
 	progress := task.Progress
-	if result.Status == "success" || result.Status == "completed" {
+	completed := isCompletedMigrationAgentStatus(result.Status)
+	if completed {
 		status = models.MigrationStatusCompleted
 		progress = 100
 	}
@@ -334,10 +344,36 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 		TaskID:             taskID,
 		Status:             result.Status,
 		SwitchedAt:         time.Now(),
-		ApplicationUpdated: result.Status == "success",
+		ApplicationUpdated: completed,
 	}
 	s.auditMigrationSwitch(ctx, task, out, result.Message)
 	return out, nil
+}
+
+func normalizeMigrationStatus(status string) models.MigrationStatus {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch normalized {
+	case "completed", "success", "succeeded", "ok":
+		return models.MigrationStatusCompleted
+	case "failed", "error", "timeout":
+		return models.MigrationStatusFailed
+	case "cancelled", "canceled":
+		return models.MigrationStatusCancelled
+	case "preparing", "accepted", "submitted", "queued", "pending":
+		return models.MigrationStatusPreparing
+	case "verifying":
+		return models.MigrationStatusVerifying
+	case "switching":
+		return models.MigrationStatusSwitching
+	case "running", "migrating":
+		return models.MigrationStatusMigrating
+	default:
+		return models.MigrationStatusMigrating
+	}
+}
+
+func isCompletedMigrationAgentStatus(status string) bool {
+	return normalizeMigrationStatus(status) == models.MigrationStatusCompleted
 }
 
 func (s *MigrationService) GetTask(ctx context.Context, taskID string) (*models.MigrationTask, error) {
