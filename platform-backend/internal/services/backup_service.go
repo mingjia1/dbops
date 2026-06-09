@@ -314,6 +314,15 @@ func isTerminalBackupStatus(status string) bool {
 	}
 }
 
+func isActiveBackupStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending", "running", "submitted", "accepted", "queued":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *BackupService) createRecord(record *models.BackupRecord) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -326,6 +335,7 @@ func (s *BackupService) ListBackups(ctx context.Context, instanceID string) ([]B
 	if err != nil {
 		return nil, err
 	}
+	s.refreshActiveBackupRecords(ctx, records)
 	out := make([]BackupTaskResult, 0, len(records))
 	for _, r := range records {
 		taskID := r.TaskID
@@ -349,6 +359,46 @@ func (s *BackupService) ListBackups(ctx context.Context, instanceID string) ([]B
 		})
 	}
 	return out, nil
+}
+
+func (s *BackupService) refreshActiveBackupRecords(ctx context.Context, records []models.BackupRecord) {
+	if s.agentClient == nil {
+		return
+	}
+	for i := range records {
+		if !isActiveBackupStatus(records[i].Status) || records[i].TaskID == "" {
+			continue
+		}
+		inst, err := s.instRepo.GetByID(ctx, records[i].InstanceID)
+		if err != nil {
+			continue
+		}
+		host, port, err := s.resolveAgentEndpoint(ctx, inst)
+		if err != nil {
+			continue
+		}
+		progressCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		result, err := s.agentClient.GetTaskProgress(progressCtx, host, port, records[i].TaskID)
+		cancel()
+		if err != nil || result == nil {
+			continue
+		}
+		records[i].Status = result.Status
+		records[i].Message = result.Message
+		if path := stringValue(result.Data["backup_path"]); path != "" {
+			records[i].FilePath = path
+		}
+		if size := int64Value(result.Data["file_size"]); size > 0 {
+			records[i].FileSize = size
+		}
+		if checksum := stringValue(result.Data["checksum"]); checksum != "" {
+			records[i].Checksum = checksum
+		}
+		if isTerminalBackupStatus(result.Status) && records[i].CompletedAt.IsZero() {
+			records[i].CompletedAt = time.Now()
+		}
+		_ = s.policyRepo.UpdateRecord(context.Background(), &records[i])
+	}
 }
 
 func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*BackupScanResult, error) {

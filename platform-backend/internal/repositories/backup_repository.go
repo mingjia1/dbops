@@ -185,6 +185,29 @@ func (r *BackupRepository) GetRecordByID(ctx context.Context, id string) (*model
 	return record, nil
 }
 
+func (r *BackupRepository) UpdateRecord(ctx context.Context, record *models.BackupRecord) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	if record == nil || record.ID == "" {
+		return fmt.Errorf("backup record id is required")
+	}
+	query := `
+		UPDATE backup_records
+		SET completed_at = ?, status = ?, message = ?, file_path = ?, file_size = ?, checksum = ?
+		WHERE id = ?
+	`
+	res, err := r.db.Pool.ExecContext(ctx, query,
+		record.CompletedAt, record.Status, record.Message, record.FilePath, record.FileSize, record.Checksum, record.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update backup record: %w", err)
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return fmt.Errorf("backup record not found")
+	}
+	return nil
+}
+
 func (r *BackupRepository) DeleteRecord(ctx context.Context, id string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")

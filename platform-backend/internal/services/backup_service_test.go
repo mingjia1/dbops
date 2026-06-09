@@ -175,9 +175,13 @@ func TestExecuteBackupWritesAuditLogForFailedIncremental(t *testing.T) {
 
 func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/agent/tasks/backup", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-001","status":"running","progress":10,"message":"backup accepted","data":{"backup_path":"/backup/mysql/full.xbstream"}}}`))
+		switch r.URL.Path {
+		case "/agent/tasks/backup":
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-001","status":"running","progress":10,"message":"backup accepted","data":{"backup_path":"/backup/mysql/full.xbstream"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 
@@ -223,6 +227,67 @@ func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	assert.Equal(t, "/backup/mysql/full.xbstream", backups[0].FilePath)
 	assert.True(t, result.CompletedAt.IsZero())
 	assert.True(t, backups[0].CompletedAt.IsZero())
+}
+
+func TestListBackupsRefreshesActiveRecordFromAgentProgress(t *testing.T) {
+	var payload backupAgentRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/agent/tasks/backup":
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-running","status":"running","progress":10,"message":"backup accepted","data":{"backup_path":"/backup/mysql/full-running.xbstream"}}}`))
+		case "/agent/tasks/" + payload.TaskID + "/progress":
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-running","status":"completed","progress":100,"message":"backup completed","data":{"backup_path":"/backup/mysql/full-running.xbstream","file_size":4096,"checksum":"sha256:test"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-refresh"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-refresh", Name: "instance-refresh", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-refresh",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{
+		InstanceID: "instance-refresh",
+		BackupType: "full",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "running", result.Status)
+	require.NotEmpty(t, payload.TaskID)
+
+	backups, err := service.ListBackups(context.Background(), "instance-refresh")
+
+	require.NoError(t, err)
+	require.Len(t, backups, 1)
+	assert.Equal(t, "completed", backups[0].Status)
+	assert.Equal(t, "/backup/mysql/full-running.xbstream", backups[0].FilePath)
+	assert.Equal(t, int64(4096), backups[0].FileSize)
+	assert.Equal(t, "sha256:test", backups[0].Checksum)
+	assert.NotZero(t, backups[0].CompletedAt)
 }
 
 func TestExecuteBackupUsesPolicyStoragePathAsTargetDir(t *testing.T) {
