@@ -821,14 +821,21 @@ func (s *ClusterDeployService) resolvePXCRequestHosts(ctx context.Context, req *
 	if req.BootstrapNode.Port == 0 {
 		req.BootstrapNode.Port = 3306
 	}
-	if len(req.OtherNodes) == 0 {
+	if len(req.OtherHostIDs) > 0 {
+		resolved := make([]PXCNode, 0, len(req.OtherHostIDs))
 		for _, id := range req.OtherHostIDs {
+			idx := len(resolved)
 			host, err := s.resolveHostRef(ctx, id, "")
 			if err != nil {
 				return err
 			}
-			req.OtherNodes = append(req.OtherNodes, PXCNode{Host: host.Address, Port: req.BootstrapNode.Port})
+			port := req.BootstrapNode.Port
+			if idx < len(req.OtherNodes) && req.OtherNodes[idx].Port != 0 {
+				port = req.OtherNodes[idx].Port
+			}
+			resolved = append(resolved, PXCNode{Host: host.Address, Port: port})
 		}
+		req.OtherNodes = resolved
 	}
 	for i := range req.OtherNodes {
 		if req.OtherNodes[i].Host == "" {
