@@ -53,6 +53,9 @@ const strategyOptions = [
 ]
 
 const activeUpgradeStatuses = new Set(['pending', 'running', 'queued', 'executing'])
+const terminalUpgradeStatuses = new Set(['success', 'completed', 'failed', 'error', 'cancelled', 'canceled', 'timeout'])
+const isCompletedUpgradeStatus = (status?: string) => ['success', 'completed'].includes((status || '').toLowerCase())
+const isFailedUpgradeStatus = (status?: string) => ['failed', 'error', 'cancelled', 'canceled', 'timeout'].includes((status || '').toLowerCase())
 
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
@@ -75,6 +78,7 @@ const UpgradeManage: React.FC = () => {
   const planInstanceId = Form.useWatch('instance_id', planForm)
   const compatInstanceId = Form.useWatch('instance_id', compatForm)
   const inPlaceInstanceId = Form.useWatch('instance_id', inPlaceForm)
+  const executeStrategy = Form.useWatch('strategy', inPlaceForm)
 
   const loadData = () => {
     upgradeApi.listHistory().then((res: any) => setHistory(res?.data || [])).catch(() => setHistory([]))
@@ -114,6 +118,14 @@ const UpgradeManage: React.FC = () => {
       })),
     [versions],
   )
+
+  const clusterOptions = useMemo(() => {
+    const clusterIds = Array.from(new Set(instances.map((i) => i.cluster_id).filter(Boolean)))
+    return clusterIds.map((clusterId) => ({
+      value: clusterId,
+      label: `${clusterId} (${instances.filter((i) => i.cluster_id === clusterId).length} 个实例)`,
+    }))
+  }, [instances])
 
   const findInstance = (id?: string) => instances.find((i) => i.id === id)
   const detectedVersion = (inst?: Instance) =>
@@ -166,23 +178,44 @@ const UpgradeManage: React.FC = () => {
     }
   }
 
-  const executeInPlace = async (values: any) => {
+  const executeUpgrade = async (values: any) => {
     if (!values.backup_enabled) {
       message.warning('请确认数据已备份后再启动升级')
       return
     }
     setSubmitting(true)
     try {
-      const res: any = await upgradeApi.executeInPlace({
-        instance_id: values.instance_id,
-        plan_id: values.plan_id,
-        target_version: values.target_version,
-        backup_enabled: !!values.backup_enabled,
-      })
+      const strategy = values.strategy || 'inplace'
+      let res: any
+      if (strategy === 'logical') {
+        res = await upgradeApi.executeLogical({
+          instance_id: values.instance_id,
+          plan_id: values.plan_id,
+          target_version: values.target_version,
+          backup_enabled: !!values.backup_enabled,
+          parallelism: values.parallelism,
+          batch_size: values.batch_size,
+        })
+      } else if (strategy === 'rolling') {
+        res = await upgradeApi.executeRolling({
+          cluster_id: values.cluster_id,
+          plan_id: values.plan_id,
+          target_version: values.target_version,
+          max_in_parallel: values.max_in_parallel,
+          health_check_interval: values.health_check_interval,
+        })
+      } else {
+        res = await upgradeApi.executeInPlace({
+          instance_id: values.instance_id,
+          plan_id: values.plan_id,
+          target_version: values.target_version,
+          backup_enabled: !!values.backup_enabled,
+        })
+      }
       if (!res?.data?.task_id && !res?.data?.id) {
         throw new Error('upgrade API did not return task_id')
       }
-      message.success('原地升级任务已提交')
+      message.success('升级任务已提交')
       setInPlaceOpen(false)
       inPlaceForm.resetFields()
       loadData()
@@ -240,7 +273,7 @@ const UpgradeManage: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (s: string) => <Tag color={s === 'success' || s === 'completed' ? 'success' : s === 'failed' ? 'error' : 'processing'}>{s || '-'}</Tag>,
+      render: (s: string) => <Tag color={isCompletedUpgradeStatus(s) ? 'success' : isFailedUpgradeStatus(s) ? 'error' : terminalUpgradeStatuses.has((s || '').toLowerCase()) ? 'default' : 'processing'}>{s || '-'}</Tag>,
     },
     {
       title: '进度',
@@ -267,7 +300,7 @@ const UpgradeManage: React.FC = () => {
         <Space wrap>
           <Button type="primary" icon={<FileTextOutlined />} onClick={() => setPlanOpen(true)}>规划升级路径</Button>
           <Button icon={<CheckCircleOutlined />} onClick={() => setCompatOpen(true)}>兼容性检查</Button>
-          <Button danger icon={<PlayCircleOutlined />} onClick={() => setInPlaceOpen(true)}>启动原地升级</Button>
+          <Button danger icon={<PlayCircleOutlined />} onClick={() => setInPlaceOpen(true)}>启动升级任务</Button>
           <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
         </Space>
       </Card>
@@ -358,7 +391,7 @@ const UpgradeManage: React.FC = () => {
       </Modal>
 
       <Modal
-        title="启动原地升级"
+        title="启动升级任务"
         open={inPlaceOpen}
         onCancel={() => setInPlaceOpen(false)}
         onOk={() => inPlaceForm.submit()}
@@ -366,12 +399,23 @@ const UpgradeManage: React.FC = () => {
         okButtonProps={{ danger: true }}
         width={720}
       >
-        <Alert type="error" showIcon icon={<ExclamationCircleOutlined />} style={{ marginBottom: 16 }} message="原地升级会影响实例可用性，必须先完成备份并有回滚方案。" />
-        <Form form={inPlaceForm} layout="vertical" onFinish={executeInPlace} initialValues={{ backup_enabled: false }}>
-          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true, message: '请选择实例' }]}>
-            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
+        <Alert type="error" showIcon icon={<ExclamationCircleOutlined />} style={{ marginBottom: 16 }} message="升级任务会影响实例或集群可用性，必须先完成备份并有回滚方案。" />
+        <Form form={inPlaceForm} layout="vertical" onFinish={executeUpgrade} initialValues={{ backup_enabled: false, strategy: 'inplace', parallelism: 4, batch_size: 1000, max_in_parallel: 1, health_check_interval: 30 }}>
+          <Form.Item name="strategy" label="升级策略" rules={[{ required: true }]}>
+            <Select options={strategyOptions} />
           </Form.Item>
-          {versionInfo(inPlaceInstanceId)}
+          {executeStrategy === 'rolling' ? (
+            <Form.Item name="cluster_id" label="目标集群" rules={[{ required: true, message: '请选择集群' }]}>
+              <Select showSearch optionFilterProp="label" options={clusterOptions} placeholder="选择集群" />
+            </Form.Item>
+          ) : (
+            <>
+              <Form.Item name="instance_id" label="目标实例" rules={[{ required: true, message: '请选择实例' }]}>
+                <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
+              </Form.Item>
+              {versionInfo(inPlaceInstanceId)}
+            </>
+          )}
           <Form.Item name="plan_id" label="升级计划ID" rules={[{ required: true, message: '请输入规划后生成的计划ID' }]}>
             <Input placeholder="先规划升级路径，再填写计划ID" />
           </Form.Item>
@@ -381,9 +425,30 @@ const UpgradeManage: React.FC = () => {
           <Form.Item name="backup_enabled" label="数据是否已备份" valuePropName="checked">
             <Switch checkedChildren="已备份" unCheckedChildren="未备份" />
           </Form.Item>
-          <Form.Item name="stop_app_timeout" label="停止应用超时(秒)" initialValue={300}>
-            <InputNumber min={30} max={3600} style={{ width: '100%' }} />
-          </Form.Item>
+          {executeStrategy === 'logical' && (
+            <>
+              <Form.Item name="parallelism" label="并行度">
+                <InputNumber min={1} max={32} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item name="batch_size" label="批次大小">
+                <InputNumber min={100} max={100000} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          )}
+          {executeStrategy === 'rolling' ? (
+            <>
+              <Form.Item name="max_in_parallel" label="最大并行实例数">
+                <InputNumber min={1} max={8} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item name="health_check_interval" label="健康检查间隔(秒)">
+                <InputNumber min={5} max={600} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          ) : (
+            <Form.Item name="stop_app_timeout" label="停止应用超时(秒)" initialValue={300}>
+              <InputNumber min={30} max={3600} style={{ width: '100%' }} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
       <Modal
