@@ -271,7 +271,6 @@ const MigrationManage: React.FC = () => {
           if (err?.response?.status === 404) {
             message.error('迁移切换接口不存在或任务不存在')
             return;
-            message.warning('后端未实现, 已记录本地状态')
           } else {
             message.error(err?.response?.data?.message || '切换失败')
           }
@@ -292,18 +291,10 @@ const MigrationManage: React.FC = () => {
           await loadData()
           message.success('已取消迁移')
           return;
-          setMigrationTasks(tasks =>
-            tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消' } : t)
-          )
-          message.success('已取消迁移')
         } catch (err: any) {
           if (err?.response?.status === 404) {
             message.error('迁移取消接口不存在或任务不存在')
             return;
-            setMigrationTasks(tasks =>
-              tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消(本地)' } : t)
-            )
-            message.warning('后端未实现 cancel, 已记录本地状态')
           } else {
             message.error(err?.response?.data?.message || '取消失败')
           }

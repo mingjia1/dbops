@@ -140,11 +140,9 @@ const HostDetail: React.FC = () => {
           setScanError('扫描超时, 请稍后重试')
         }
       } catch (err: any) {
-        if (err?.response?.status === 404) {
-          stopScanPolling()
-          setScanning(false)
-          setScanError('后端未实现扫描结果查询接口')
-        }
+        stopScanPolling()
+        setScanning(false)
+        setScanError(err?.response?.data?.message || err?.message || '扫描结果查询失败')
       }
     }, 2000)
   }
@@ -194,13 +192,8 @@ const HostDetail: React.FC = () => {
       pollScanResult(taskId)
     } catch (err: any) {
       setScanning(false)
-      if (err?.response?.status === 404) {
-        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
-        setScanError('后端未实现 scan-instances 接口')
-      } else {
-        message.error('扫描发起失败')
-        setScanError('扫描发起失败')
-      }
+      message.error(err?.response?.data?.message || err?.message || '扫描发起失败')
+      setScanError(err?.response?.data?.message || err?.message || '扫描发起失败')
     }
   }
 
@@ -242,11 +235,7 @@ const HostDetail: React.FC = () => {
           })
         }
       } catch (err: any) {
-        if (err?.response?.status === 404) {
-          message.warning('后端未实现批量纳管接口, 请使用添加实例手动录入')
-        } else {
-          message.error(err?.response?.data?.message || '纳管失败')
-        }
+        message.error(err?.response?.data?.message || err?.message || '纳管失败')
       }
     } catch {
       // validate
