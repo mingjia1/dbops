@@ -30,6 +30,16 @@ const isCompletedSwitchStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
 }
+
+const isSkippedSwitchStatus = (status?: string) => (status || '').toLowerCase() === 'skipped'
+
+const switchStatusColor = (status?: string) => {
+  if (isCompletedSwitchStatus(status)) return 'success'
+  if (isFailedSwitchStatus(status)) return 'error'
+  if (isSkippedSwitchStatus(status)) return 'default'
+  return 'processing'
+}
+
 const TARGET_ROLES: Record<string, string[]> = {
   ha: ['master', 'slave'],
   mha: ['master', 'slave'],
@@ -80,6 +90,10 @@ const RoleSwitch: React.FC = () => {
     [instances, clusterId, selectedArch],
   )
   const selected = clusterInstances.find((item) => item.id === selectedInstance)
+  const selectedRole = selected?.status?.role || ''
+  const targetRoleOptions = (TARGET_ROLES[selectedArch] || [])
+    .filter((role) => role !== selectedRole)
+    .map((role) => ({ value: role, label: role }))
 
   const fetchHistory = async (cid: string) => {
     setHistoryLoading(true)
@@ -126,6 +140,8 @@ const RoleSwitch: React.FC = () => {
         message.error(data?.message || '\u89d2\u8272\u5207\u6362\u5931\u8d25')
       } else if (isCompletedSwitchStatus(data?.status)) {
         message.success(data?.message || '\u89d2\u8272\u5207\u6362\u6210\u529f')
+      } else if (isSkippedSwitchStatus(data?.status)) {
+        message.info(data?.message || '\u76ee\u6807\u5b9e\u4f8b\u5df2\u662f\u8be5\u89d2\u8272\uff0c\u672a\u6267\u884c\u5207\u6362')
       } else {
         message.info(data?.message || '\u89d2\u8272\u5207\u6362\u5df2\u8bb0\u5f55\uff0c\u8bf7\u67e5\u770b\u5386\u53f2\u72b6\u6001')
       }
@@ -163,7 +179,7 @@ const RoleSwitch: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (s: string) => (
-        <Tag color={s === 'completed' ? 'success' : s === 'failed' ? 'error' : 'default'}>{s}</Tag>
+        <Tag color={switchStatusColor(s)}>{s}</Tag>
       ),
     },
     { title: '消息', dataIndex: 'message', key: 'message' },
@@ -196,9 +212,12 @@ const RoleSwitch: React.FC = () => {
               disabled={!clusterId}
               value={selectedInstance}
               onChange={(value) => {
+                const next = clusterInstances.find((item) => item.id === value)
                 setSelectedInstance(value)
-                setTargetRole(undefined)
-                form.setFieldsValue({ target_role: undefined })
+                if (!next || next.status?.role === targetRole) {
+                  setTargetRole(undefined)
+                  form.setFieldsValue({ target_role: undefined })
+                }
               }}
               options={clusterInstances.map((i) => ({
                 value: i.id,
@@ -219,7 +238,7 @@ const RoleSwitch: React.FC = () => {
               disabled={!selectedArch}
               value={targetRole}
               onChange={setTargetRole}
-              options={(TARGET_ROLES[selectedArch] || []).map((r) => ({ value: r, label: r }))}
+              options={targetRoleOptions}
             />
           </Form.Item>
           <Form.Item>
