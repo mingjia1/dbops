@@ -25,6 +25,14 @@ const isSuccessfulAgentStatus = (status?: string) => {
   return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
 }
 
+const agentStatusColor = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  if (isSuccessfulAgentStatus(normalized)) return 'success'
+  if (isFailedAgentStatus(normalized)) return 'error'
+  if (['submitted', 'pending', 'running'].includes(normalized)) return 'processing'
+  return 'default'
+}
+
 const summarizeAgentRows = (rows: any[]) =>
   rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
 
@@ -105,14 +113,14 @@ const AgentManage: React.FC = () => {
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', render: (v) => v || 9090 },
-    { title: '主机状态', dataIndex: 'status', key: 'status', render: (v) => <Tag color={v === 'success' ? 'success' : v === 'failed' ? 'error' : 'default'}>{v || 'unknown'}</Tag> },
+    { title: '主机状态', dataIndex: 'status', key: 'status', render: (v) => <Tag color={agentStatusColor(v)}>{v || 'unknown'}</Tag> },
   ]
 
   const resultColumns: ColumnsType<any> = [
     { title: '主机', dataIndex: 'host_name', key: 'host_name' },
     { title: '地址', dataIndex: 'address', key: 'address' },
     { title: '动作', dataIndex: 'action', key: 'action' },
-    { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={v === 'success' ? 'success' : 'error'}>{v}</Tag> },
+    { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={agentStatusColor(v)}>{v || 'unknown'}</Tag> },
     { title: '信息', dataIndex: 'message', key: 'message' },
   ]
 

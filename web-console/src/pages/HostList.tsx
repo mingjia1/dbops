@@ -232,7 +232,20 @@ const HostList: React.FC = () => {
     setBatchSubmitting(true)
     try {
       const res: any = await hostApi.batchCreate(parsed)
-      message.success(`批量添加完成，成功 ${res?.data?.created ?? 0}/${parsed.length}`)
+      const created = res?.data?.created ?? 0
+      const failedRows = (res?.data?.rows || []).filter((row: any) => row.status === 'failed')
+      if (failedRows.length > 0) {
+        Modal.warning({
+          title: `批量添加主机部分失败：成功 ${created} 个，失败 ${failedRows.length} 个`,
+          content: (
+            <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+              {failedRows.map((row: any) => `${row.index || '-'} ${row.name || row.address || '-'}: ${row.message || 'failed'}`).join('\n')}
+            </div>
+          ),
+        })
+      } else {
+        message.success(`批量添加主机完成：成功 ${created}/${parsed.length}`)
+      }
       setBatchOpen(false)
       batchForm.resetFields()
       fetchHosts()
