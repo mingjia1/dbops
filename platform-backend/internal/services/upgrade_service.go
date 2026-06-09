@@ -816,11 +816,54 @@ func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.I
 	for k, v := range extraConfig {
 		cfg[k] = v
 	}
+	s.applyUpgradePackageMetadata(cfg, targetVersion)
 	return s.agentClient.callAgent(ctx, host, port, "/agent/tasks/upgrade", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": instance.ID,
 		"config":      cfg,
 	})
+}
+
+func (s *UpgradeService) applyUpgradePackageMetadata(cfg map[string]interface{}, targetVersion string) {
+	if _, ok := cfg["package_url"].(string); ok {
+		if _, hasChecksum := cfg["checksum"].(string); hasChecksum {
+			return
+		}
+	}
+	entry := findUpgradeCatalogEntry(targetVersion, stringValue(cfg["target_flavor"]))
+	if entry == nil {
+		return
+	}
+	if entry.Version != "" {
+		cfg["target_version"] = entry.Version
+	}
+	if _, ok := cfg["package_url"].(string); !ok && entry.PackageURL != "" {
+		cfg["package_url"] = entry.PackageURL
+	}
+	if _, ok := cfg["checksum"].(string); !ok && isSHA256Hex(entry.Checksum) {
+		cfg["checksum"] = entry.Checksum
+	}
+	if _, ok := cfg["target_flavor"].(string); !ok && entry.Flavor != "" {
+		cfg["target_flavor"] = entry.Flavor
+	}
+}
+
+func findUpgradeCatalogEntry(targetVersion, targetFlavor string) *VersionEntry {
+	catalog := NewVersionCatalog()
+	if entry, err := catalog.Get(targetVersion); err == nil && entry != nil {
+		return entry
+	}
+	if targetFlavor != "" {
+		if entry, err := catalog.GetByFlavorVersion(targetFlavor, targetVersion); err == nil && entry != nil {
+			return entry
+		}
+	}
+	for _, entry := range catalog.List() {
+		if entry.Version == targetVersion {
+			return &entry
+		}
+	}
+	return nil
 }
 
 func (s *UpgradeService) auditUpgrade(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details string) {

@@ -595,6 +595,37 @@ func TestUpgradeService_ExecuteRollingWritesAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].Details, "instances=1")
 }
 
+func TestUpgradeDispatchAddsCatalogPackageMetadata(t *testing.T) {
+	db := newTestDB()
+	service := NewUpgradeService(repositories.NewInstanceRepository(db), repositories.NewTaskRepository(db), nil)
+	config := map[string]interface{}{}
+
+	service.applyUpgradePackageMetadata(config, "mysql-8.0.36")
+
+	assert.Equal(t, "8.0.36", config["target_version"])
+	assert.Equal(t, "mysql", config["target_flavor"])
+	assert.Contains(t, config["package_url"], "mysql-8.0.36")
+	entry, err := NewVersionCatalog().Get("mysql-8.0.36")
+	require.NoError(t, err)
+	assert.Equal(t, entry.Checksum, config["checksum"])
+}
+
+func TestUpgradeDispatchKeepsExplicitPackageURL(t *testing.T) {
+	db := newTestDB()
+	service := NewUpgradeService(repositories.NewInstanceRepository(db), repositories.NewTaskRepository(db), nil)
+	explicitURL := "https://mirror.example/mysql.tar.gz"
+	explicitChecksum := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	config := map[string]interface{}{
+		"package_url": explicitURL,
+		"checksum":    explicitChecksum,
+	}
+
+	service.applyUpgradePackageMetadata(config, "mysql-8.0.36")
+
+	assert.Equal(t, explicitURL, config["package_url"])
+	assert.Equal(t, explicitChecksum, config["checksum"])
+}
+
 func newUpgradeAuditTestRepos(db *repositories.Database) (*repositories.InstanceRepository, *repositories.TaskRepository, *repositories.AuditLogRepository, *AuditService) {
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
