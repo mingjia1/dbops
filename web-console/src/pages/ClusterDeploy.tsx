@@ -20,13 +20,55 @@ interface DeployResult {
   deployment_id: string
   cluster_id: string
   cluster_type: ArchType
-  status: 'pending' | 'running' | 'success' | 'completed' | 'failed' | 'destroyed'
+  status: 'pending' | 'running' | 'success' | 'completed' | 'succeeded' | 'ok' | 'failed' | 'error' | 'timeout' | 'cancelled' | 'canceled' | 'partial' | 'partial_success' | 'destroyed' | string
   stage?: string
   progress: number
   message: string
   started_at: string
   finished_at?: string
   nodes?: Array<{ instance_id?: string; name?: string; host?: string; port?: number; role?: string }>
+}
+
+const normalizeStatus = (status?: string) => (status || '').trim().toLowerCase()
+
+const isCompletedDeployStatus = (status?: string) =>
+  ['success', 'completed', 'succeeded', 'ok'].includes(normalizeStatus(status))
+
+const isFailedDeployStatus = (status?: string) =>
+  ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalizeStatus(status))
+
+const isPartialDeployStatus = (status?: string) =>
+  ['partial', 'partial_success'].includes(normalizeStatus(status))
+
+const isDestroyedDeployStatus = (status?: string) => normalizeStatus(status) === 'destroyed'
+
+const isTerminalDeployStatus = (status?: string) =>
+  isCompletedDeployStatus(status) || isFailedDeployStatus(status) || isPartialDeployStatus(status) || isDestroyedDeployStatus(status)
+
+const deploymentProgress = (status?: string, progress?: number) => {
+  if (typeof progress === 'number') return progress
+  return isTerminalDeployStatus(status) ? 100 : 0
+}
+
+const deploymentProgressStatus = (status?: string) => {
+  if (isFailedDeployStatus(status)) return 'exception'
+  if (isCompletedDeployStatus(status) || isDestroyedDeployStatus(status)) return 'success'
+  if (isPartialDeployStatus(status)) return 'normal'
+  return 'active'
+}
+
+const deploymentStepStatus = (status?: string) => {
+  if (isFailedDeployStatus(status)) return 'error'
+  if (isCompletedDeployStatus(status) || isDestroyedDeployStatus(status)) return 'finish'
+  if (isPartialDeployStatus(status)) return 'error'
+  return 'process'
+}
+
+const showDeploymentResultMessage = (dep: DeployResult) => {
+  const arch = dep.cluster_type?.toUpperCase?.() || 'Cluster'
+  if (isCompletedDeployStatus(dep.status)) message.success(`${arch} 集群部署完成`)
+  else if (isPartialDeployStatus(dep.status)) message.warning(`${arch} 集群部署部分完成: ${dep.message || dep.status}`)
+  else if (isFailedDeployStatus(dep.status)) message.error(`${arch} 集群部署失败: ${dep.message || dep.status}`)
 }
 
 const ClusterDeploy: React.FC = () => {
@@ -68,7 +110,7 @@ const ClusterDeploy: React.FC = () => {
     cluster_id: data.cluster_id || data.deployment_id || data.id,
     cluster_type: data.cluster_type,
     status: data.status || 'pending',
-    progress: data.status === 'success' || data.status === 'completed' || data.status === 'destroyed' ? 100 : 0,
+    progress: deploymentProgress(data.status, data.progress),
     stage: data.stage,
     message: data.message || '',
     started_at: data.started_at || data.created_at,
@@ -168,7 +210,7 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const startPolling = (dep: DeployResult) => {
-    if (dep.status === 'success' || dep.status === 'completed' || dep.status === 'failed') return
+    if (isTerminalDeployStatus(dep.status)) return
     stopPolling()
     let attempts = 0
     pollRef.current = window.setInterval(async () => {
@@ -187,13 +229,12 @@ const ClusterDeploy: React.FC = () => {
           nodes: Array.isArray(data.nodes) ? data.nodes : dep.nodes,
         }
         patchDeployment(next)
-        if (next.status === 'success' || next.status === 'completed' || next.status === 'failed') loadDeployments()
+        if (isTerminalDeployStatus(next.status)) loadDeployments()
         const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
         if (stepIdx >= 0) setCurrentStep(stepIdx)
-        if (next.status === 'success' || next.status === 'completed' || next.status === 'failed' || attempts > 600) {
+        if (isTerminalDeployStatus(next.status) || attempts > 600) {
           stopPolling()
-          if (next.status === 'success' || next.status === 'completed') message.success(`${dep.cluster_type.toUpperCase()} 集群部署完成`)
-          else if (next.status === 'failed') message.error(`部署失败: ${next.message}`)
+          showDeploymentResultMessage(next)
         }
       } catch {
         // Polling is retried until deployment reaches a terminal state.
@@ -228,14 +269,18 @@ const ClusterDeploy: React.FC = () => {
         cluster_id: res?.data?.cluster_id || values.cluster_id || res?.data?.deployment_id || res?.data?.id,
         cluster_type: res?.data?.cluster_type || arch,
         status,
-        progress: status === 'success' || status === 'completed' ? 100 : 0,
-        stage: status === 'success' || status === 'completed' ? STAGE_ORDER[4] : STAGE_ORDER[0],
+        progress: deploymentProgress(status),
+        stage: isCompletedDeployStatus(status) ? STAGE_ORDER[4] : STAGE_ORDER[0],
         message: res?.data?.message || '部署已提交，等待后端开始执行',
         started_at: new Date().toISOString(),
       }
       setActiveDeployment(dep)
       await loadDeployments()
-      message.success(`${arch.toUpperCase()} 集群部署任务已提交`)
+      if (isTerminalDeployStatus(dep.status)) {
+        showDeploymentResultMessage(dep)
+      } else {
+        message.success(`${arch.toUpperCase()} 集群部署任务已提交`)
+      }
       startPolling(dep)
     } catch (err: any) {
       message.error(`提交部署失败: ${err?.response?.data?.message || err?.message}`)
@@ -333,10 +378,11 @@ const ClusterDeploy: React.FC = () => {
       key: 'status',
       width: 100,
       render: (status: string) => {
-        if (status === 'success' || status === 'completed') return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
-        if (status === 'destroyed') return <Tag color="default">已销毁</Tag>
-        if (status === 'failed') return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
-        if (status === 'pending') return <Tag color="default">待开始</Tag>
+        if (isCompletedDeployStatus(status)) return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
+        if (isDestroyedDeployStatus(status)) return <Tag color="default">已销毁</Tag>
+        if (isPartialDeployStatus(status)) return <Tag color="warning" icon={<CloseCircleOutlined />}>部分完成</Tag>
+        if (isFailedDeployStatus(status)) return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
+        if (normalizeStatus(status) === 'pending') return <Tag color="default">待开始</Tag>
         return <Tag color="processing" icon={<ReloadOutlined spin />}>进行中</Tag>
       },
     },
@@ -346,7 +392,7 @@ const ClusterDeploy: React.FC = () => {
       dataIndex: 'progress',
       key: 'progress',
       width: 180,
-      render: (progress: number) => <Progress percent={progress} size="small" status={progress === 100 ? 'success' : 'active'} />,
+      render: (progress: number, record) => <Progress percent={deploymentProgress(record.status, progress)} size="small" status={deploymentProgressStatus(record.status)} />,
     },
     { title: '信息', dataIndex: 'message', key: 'message' },
     {
@@ -367,7 +413,7 @@ const ClusterDeploy: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_, record) => (
-        <Button size="small" danger icon={<DeleteOutlined />} disabled={record.status === 'destroyed'} onClick={() => destroyDeployment(record)}>
+        <Button size="small" danger icon={<DeleteOutlined />} disabled={isDestroyedDeployStatus(record.status)} onClick={() => destroyDeployment(record)}>
           销毁
         </Button>
       ),
@@ -583,7 +629,7 @@ const ClusterDeploy: React.FC = () => {
           style={{ marginTop: 16 }}
           extra={
             <Space>
-              <Tag color={activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'success' : activeDeployment.status === 'failed' ? 'error' : 'processing'}>
+              <Tag color={isCompletedDeployStatus(activeDeployment.status) ? 'success' : isPartialDeployStatus(activeDeployment.status) ? 'warning' : isFailedDeployStatus(activeDeployment.status) ? 'error' : 'processing'}>
                 {activeDeployment.status}
               </Tag>
               {activeDeployment.finished_at && <span>完成于 {new Date(activeDeployment.finished_at).toLocaleString()}</span>}
@@ -594,11 +640,11 @@ const ClusterDeploy: React.FC = () => {
             current={currentStep}
             size="small"
             items={STAGE_ORDER.map((title) => ({ title }))}
-            status={activeDeployment.status === 'failed' ? 'error' : activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'finish' : 'process'}
+            status={deploymentStepStatus(activeDeployment.status)}
           />
           <Progress
-            percent={activeDeployment.progress}
-            status={activeDeployment.status === 'failed' ? 'exception' : activeDeployment.status === 'success' || activeDeployment.status === 'completed' ? 'success' : 'active'}
+            percent={deploymentProgress(activeDeployment.status, activeDeployment.progress)}
+            status={deploymentProgressStatus(activeDeployment.status)}
             style={{ marginTop: 16 }}
           />
           <div style={{ marginTop: 8, color: '#666' }}>{activeDeployment.message}</div>
