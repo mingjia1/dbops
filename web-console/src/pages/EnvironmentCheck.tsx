@@ -70,8 +70,8 @@ const summarizeCheckFailures = (items: CheckItem[]) =>
 
 const formatTimeoutLabel = (err: any) => {
   const configured = err?.config?.timeout
-  if (typeof configured === 'number' && configured > 0) return `${Math.round(configured / 1000)}s`
-  return '前端请求超时'
+  if (typeof configured === 'number' && configured > 0) return `${configured}ms`
+  return '请求超时'
 }
 
 const isTimeoutError = (err: any) => {
@@ -165,7 +165,7 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true)
+      const res: any = await hostApi.submitBatchAgentAction(selectedHosts, 'install')
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))

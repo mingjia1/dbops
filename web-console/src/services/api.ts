@@ -10,7 +10,7 @@ const api = axios.create({
 })
 
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
-const agentSubmitTimeoutMs = 30000
+const agentSubmitTimeoutMs = 10000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
 
 const rejectBusinessError = (res: any) => {
@@ -313,6 +313,9 @@ export const hostApi = {
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
     api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 240000) }),
+
+  submitBatchAgentAction: (hostIds: string[], action: string, agentPort?: number) =>
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitTimeoutMs }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),
