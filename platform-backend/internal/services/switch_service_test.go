@@ -190,6 +190,71 @@ func TestSwitchRoleWithinCluster_PromoteMHASlaveToMaster(t *testing.T) {
 	assert.Equal(t, "inst-new-master", history[0].InstanceID)
 }
 
+func TestSwitchRoleWithinClusterWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "switch-auditor-001")
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	hostID := "audit-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: "127.0.0.1", AgentPort: 9090, SSHPort: 22, SSHUser: "root", Name: "audit-host"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "audit-inst", HostID: &hostID, ClusterID: "audit-cluster", Name: "audit-inst", Status: models.InstanceStatus{Role: "slave"}}))
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "audit-cluster", ClusterType: "mha", Name: "audit-cluster"}))
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""), nil, auditSvc)
+
+	result, err := svc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
+		ClusterID:  "audit-cluster",
+		InstanceID: "audit-inst",
+		TargetRole: "primary",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	logs, err := auditRepo.ListByResource(context.Background(), "role_switch", "audit-cluster:audit-inst", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "switch-auditor-001", logs[0].UserID)
+	assert.Equal(t, "switch_role_within_cluster", logs[0].Operation)
+	assert.Equal(t, "failed", logs[0].Result)
+	assert.Contains(t, logs[0].ErrorMsg, "not valid for cluster architecture")
+}
+
+func TestClusterArchitectureSwitchWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "switch-auditor-002")
+	db := newTestDB()
+	stub := newAgentStub()
+	defer stub.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	hostID := "cluster-switch-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: "cluster-switch-host"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "cluster-switch-inst", HostID: &hostID, ClusterID: "", Name: "cluster-switch-inst"}))
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""), nil, auditSvc)
+
+	result, err := svc.SingleToMHA(ctx, SwitchClusterRequest{
+		InstanceID:  "cluster-switch-inst",
+		ClusterName: "new-mha",
+		VIP:         "10.0.0.10",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	logs, err := auditRepo.ListByResource(context.Background(), "cluster_switch", "cluster-switch-inst", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "switch_cluster_architecture", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "target_type=mha")
+	assert.Contains(t, logs[0].Details, "vip=10.0.0.10")
+}
+
 // --- TDD: MGR primary promotion ---
 func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	ctx := context.Background()

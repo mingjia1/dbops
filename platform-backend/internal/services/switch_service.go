@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type SwitchService struct {
 	instRepo    *repositories.InstanceRepository
 	clusterRepo *repositories.ClusterDeployRepository
 	agentClient *AgentClient
+	auditSvc    *AuditService
 	// P1: 角色切换历史持久化, 之前是 in-memory map 重启即丢.
 	historyRepo *repositories.RoleSwitchHistoryRepository
 
@@ -25,13 +27,18 @@ type SwitchService struct {
 	history map[string][]RoleSwitchRecord
 }
 
-func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, clusterRepo *repositories.ClusterDeployRepository, agentClient *AgentClient, historyRepo *repositories.RoleSwitchHistoryRepository) *SwitchService {
+func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, clusterRepo *repositories.ClusterDeployRepository, agentClient *AgentClient, historyRepo *repositories.RoleSwitchHistoryRepository, auditSvc ...*AuditService) *SwitchService {
+	var audit *AuditService
+	if len(auditSvc) > 0 {
+		audit = auditSvc[0]
+	}
 	return &SwitchService{
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		clusterRepo: clusterRepo,
 		historyRepo: historyRepo,
 		agentClient: agentClient,
+		auditSvc:    audit,
 		history:     make(map[string][]RoleSwitchRecord),
 	}
 }
@@ -121,23 +128,27 @@ func (s *SwitchService) executeSwitch(ctx context.Context, req SwitchClusterRequ
 		"config":      config,
 	})
 	if err != nil {
-		return &SwitchClusterResult{
+		out := &SwitchClusterResult{
 			InstanceID: req.InstanceID,
 			SourceType: sourceType,
 			TargetType: targetType,
 			Status:     "failed",
 			Message:    fmt.Sprintf("Switch failed: %v", err),
-		}, nil
+		}
+		s.auditClusterSwitch(ctx, req, out)
+		return out, nil
 	}
 
-	return &SwitchClusterResult{
+	out := &SwitchClusterResult{
 		InstanceID:  req.InstanceID,
 		SourceType:  sourceType,
 		TargetType:  targetType,
 		Status:      result.Status,
 		Message:     result.Message,
 		CompletedAt: time.Now(),
-	}, nil
+	}
+	s.auditClusterSwitch(ctx, req, out)
+	return out, nil
 }
 
 func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwitchRequest) (*RoleSwitchResult, error) {
@@ -546,6 +557,62 @@ func (s *SwitchService) recordHistory(ctx context.Context, r *RoleSwitchResult) 
 	s.mu.Lock()
 	s.history[r.ClusterID] = append(s.history[r.ClusterID], *record)
 	s.mu.Unlock()
+
+	s.auditRoleSwitch(ctx, r)
+}
+
+func (s *SwitchService) auditClusterSwitch(ctx context.Context, req SwitchClusterRequest, result *SwitchClusterResult) {
+	if result == nil {
+		return
+	}
+	details := fmt.Sprintf("instance_id=%s source_type=%s target_type=%s cluster_name=%s vip=%s status=%s message=%s",
+		req.InstanceID, result.SourceType, result.TargetType, req.ClusterName, req.VIP, result.Status, result.Message)
+	s.auditSwitch(ctx, "switch_cluster_architecture", "switch", "cluster_switch", req.InstanceID, switchAuditResult(result.Status), switchAuditError(result.Status, result.Message), details)
+}
+
+func (s *SwitchService) auditRoleSwitch(ctx context.Context, result *RoleSwitchResult) {
+	if result == nil {
+		return
+	}
+	resourceID := result.TaskID
+	if resourceID == "" {
+		resourceID = result.ClusterID + ":" + result.InstanceID
+	}
+	details := fmt.Sprintf("cluster_id=%s cluster_type=%s instance_id=%s old_role=%s new_role=%s old_master_id=%s new_master_id=%s rebuilt_replicas=%s status=%s message=%s",
+		result.ClusterID, result.ClusterType, result.InstanceID, result.OldRole, result.NewRole, result.OldMasterID, result.NewMasterID, strings.Join(result.RebuiltReplicas, ","), result.Status, result.Message)
+	s.auditSwitch(ctx, "switch_role_within_cluster", "switch", "role_switch", resourceID, switchAuditResult(result.Status), switchAuditError(result.Status, result.Message), details)
+}
+
+func (s *SwitchService) auditSwitch(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details string) {
+	if s.auditSvc == nil {
+		return
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    operation,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Action:       action,
+		Details:      details,
+		Result:       result,
+		ErrorMsg:     errorMsg,
+	})
+}
+
+func switchAuditResult(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "timeout", "cancelled", "canceled":
+		return "failed"
+	default:
+		return "success"
+	}
+}
+
+func switchAuditError(status, message string) string {
+	if switchAuditResult(status) != "failed" {
+		return ""
+	}
+	return message
 }
 
 func (s *SwitchService) ListRoleSwitchHistory(ctx context.Context, clusterID string, limit int) ([]RoleSwitchRecord, error) {

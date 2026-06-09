@@ -168,7 +168,7 @@ func main() {
 	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient, auditService)
 
 	switchHistoryRepo := repositories.NewRoleSwitchHistoryRepository(db)
-	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo)
+	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo, auditService)
 	switchController := controllers.NewSwitchController(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 
