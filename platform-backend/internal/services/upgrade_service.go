@@ -514,6 +514,12 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
 	}
+	if len(clusterInstances) == 0 {
+		err := fmt.Errorf("cluster %s has no managed instances", req.ClusterID)
+		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	// P0: 派发前落 task, 用集群第一个实例 ID 作为 task.InstanceID (anchor).
 	taskID := s.createAndTrackTask("upgrade_rolling",
 		firstInstanceID(clusterInstances), req.PlanID)

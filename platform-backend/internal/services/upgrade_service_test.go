@@ -303,28 +303,25 @@ func TestUpgradeService_Original_ValidateUpgradePath_Invalid(t *testing.T) {
 	assert.NotEmpty(t, errors)
 }
 
-func TestUpgradeService_Original_ExecuteRollingUpgrade(t *testing.T) {
-	// B3: 真用 instanceRepo.ListByClusterID, 不能再传 nil. 改用共享 sqlite test DB.
+func TestUpgradeService_ExecuteRollingUpgradeEmptyClusterFailsWithoutTask(t *testing.T) {
 	db := newTestDB()
+	defer db.Close()
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
 
-	ctx := context.Background()
-
-	req := ExecuteRollingUpgradeRequest{
+	resp, err := service.ExecuteRollingUpgrade(context.Background(), ExecuteRollingUpgradeRequest{
 		ClusterID:     "cluster-001",
 		PlanID:        "plan-001",
 		TargetVersion: "8.0.36",
-	}
+	})
 
-	resp, err := service.ExecuteRollingUpgrade(ctx, req)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotEmpty(t, resp.TaskID)
-	assert.Equal(t, "cluster-001", resp.ClusterID)
-	assert.Equal(t, "running", resp.Status)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "has no managed instances")
+	tasks, listErr := taskRepo.ListByTypes(context.Background(), []string{"upgrade_rolling"}, 10, 0)
+	assert.NoError(t, listErr)
+	assert.Empty(t, tasks)
 }
 
 func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
@@ -333,6 +330,7 @@ func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	createUpgradeTestInstance(t, context.Background(), instanceRepo, "cluster-history-inst-1", "cluster-history")
 
 	resp, err := service.ExecuteRollingUpgrade(context.Background(), ExecuteRollingUpgradeRequest{
 		ClusterID:     "cluster-history",
