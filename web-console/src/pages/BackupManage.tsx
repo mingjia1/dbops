@@ -194,6 +194,7 @@ const BackupManage: React.FC = () => {
       setDiscovered(list)
       setScannedAt(data.scanned_at)
       setScanOpen(true)
+      await fetchRecordsFor(selectedInstance)
       message.success(`扫描完成，发现 ${list.length} 个备份文件`)
     } catch (err: any) {
       message.error(err?.response?.data?.message || '扫描备份失败')
@@ -412,9 +413,9 @@ const BackupManage: React.FC = () => {
                 <>
                   <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={6}><Card size="small"><Statistic title="记录数" value={records.length} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="已完成" value={records.filter((r) => r.status === 'completed').length} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="运行中" value={records.filter((r) => r.status === 'running').length} valueStyle={{ color: '#1677ff' }} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="失败" value={records.filter((r) => r.status === 'failed').length} /></Card></Col>
+                    <Col span={6}><Card size="small"><Statistic title="已完成" value={records.filter((r) => isCompletedBackupStatus(r.status)).length} valueStyle={{ color: '#3f8600' }} /></Card></Col>
+                    <Col span={6}><Card size="small"><Statistic title="运行中" value={records.filter((r) => isActiveBackupStatus(r.status)).length} valueStyle={{ color: '#1677ff' }} /></Card></Col>
+                    <Col span={6}><Card size="small"><Statistic title="失败" value={records.filter((r) => isFailedBackupStatus(r.status)).length} /></Card></Col>
                   </Row>
                   <Table columns={recordColumns} dataSource={records} rowKey="id" loading={loading} locale={{ emptyText: <Empty description="暂无备份记录" /> }} />
                 </>
