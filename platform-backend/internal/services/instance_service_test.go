@@ -221,3 +221,75 @@ func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unhealthy", status.HealthStatus)
 }
+
+func newInstanceAdminServiceWithoutAgent(t *testing.T) (*InstanceService, string) {
+	t.Helper()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	hostID := "admin-host"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{
+		ID:        hostID,
+		Name:      "admin-host",
+		Address:   "127.0.0.1",
+		AgentPort: 9090,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}))
+	instanceID := "admin-instance"
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{
+		ID:     instanceID,
+		Name:   "admin-instance",
+		HostID: &hostID,
+	}))
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        instanceID,
+		Host:              "10.1.81.41",
+		Port:              3307,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	return NewInstanceService(instRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key"), instanceID
+}
+
+func TestInstanceAdminActionWithoutAgentClientReturnsFailedResult(t *testing.T) {
+	service, instanceID := newInstanceAdminServiceWithoutAgent(t)
+
+	result, err := service.AdminAction(context.Background(), instanceID, InstanceAdminRequest{
+		Action:   "change_password",
+		Username: "root",
+		Password: "newpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Equal(t, 100, result.Progress)
+	assert.Contains(t, result.Message, "agent client not configured")
+}
+
+func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
+	service, _ := newInstanceAdminServiceWithoutAgent(t)
+
+	result, err := service.BatchUpdatePassword(context.Background(), BatchPasswordRequest{
+		Host:         "10.1.81.41",
+		Ports:        []int{3307},
+		Username:     "root",
+		NewPassword:  "newpass",
+		UpdateStored: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	data, ok := result.Data.(map[string]interface{})
+	require.True(t, ok)
+	rows, ok := data["rows"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "failed", rows[0]["status"])
+	assert.Contains(t, rows[0]["message"], "agent client not configured")
+}

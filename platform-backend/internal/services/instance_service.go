@@ -596,6 +596,15 @@ type InstanceAdminResult struct {
 	Progress int         `json:"progress"`
 }
 
+func failedInstanceAdminResult(message string) *InstanceAdminResult {
+	return &InstanceAdminResult{
+		TaskID:   "instance-admin-" + uuid.New().String(),
+		Status:   "failed",
+		Message:  message,
+		Progress: 100,
+	}
+}
+
 func (s *InstanceService) AdminAction(ctx context.Context, id string, req InstanceAdminRequest) (*InstanceAdminResult, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -614,6 +623,9 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		return nil, err
 	}
 
+	if s.agentClient == nil {
+		return failedInstanceAdminResult("agent client not configured"), nil
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id":     "instance-admin-" + uuid.New().String(),
 		"instance_id": id,
@@ -641,12 +653,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		},
 	})
 	if err != nil {
-		return &InstanceAdminResult{
-			TaskID:   "instance-admin-" + uuid.New().String(),
-			Status:   "failed",
-			Message:  "instance admin call failed: " + err.Error(),
-			Progress: 100,
-		}, nil
+		return failedInstanceAdminResult("instance admin call failed: " + err.Error()), nil
 	}
 	if result.Status == "completed" && req.Action == "change_password" && req.UpdateStoredPassword {
 		if req.Username == conn.Username && req.Password != "" {
@@ -751,6 +758,9 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
 	if err != nil {
 		return nil, err
+	}
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
 	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id":     "instance-admin-" + uuid.New().String(),

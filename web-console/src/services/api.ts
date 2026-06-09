@@ -211,7 +211,7 @@ export const instanceApi = {
     verb?: string
     update_stored_password?: boolean
   }) =>
-    api.post(`/instances/${id}/admin-action`, data, { timeout: 120000 }),
+    api.post(`/instances/${id}/admin-action`, data, { timeout: 120000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   batchUpdatePassword: (data: {
     host: string
