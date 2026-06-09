@@ -9,6 +9,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockInstanceRepo struct {
@@ -423,4 +424,197 @@ func TestUpgradeService_Original_extractMajorVersion(t *testing.T) {
 
 	assert.Equal(t, "5.7", service.extractMajorVersion("5.7.40"))
 	assert.Equal(t, "8.0", service.extractMajorVersion("8.0.36"))
+}
+
+func TestUpgradeService_PlanUpgradePathWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-001")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-plan", "")
+
+	resp, err := service.PlanUpgradePath(ctx, PlanUpgradePathRequest{
+		InstanceID:    "upgrade-inst-plan",
+		TargetVersion: "8.0.36",
+		Strategy:      "inplace",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_plan", resp.PlanID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "upgrade-auditor-001", logs[0].UserID)
+	assert.Equal(t, "plan_upgrade_path", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "instance_id=upgrade-inst-plan")
+}
+
+func TestUpgradeService_CheckCompatibilityWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-002")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-check", "")
+
+	resp, err := service.CheckCompatibility(ctx, CheckCompatibilityRequest{
+		InstanceID:    "upgrade-inst-check",
+		TargetVersion: "8.0.36",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "compatibility_check", resp.CheckID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "check_upgrade_compatibility", logs[0].Operation)
+	assert.Contains(t, logs[0].Details, "instance_id=upgrade-inst-check")
+}
+
+func TestUpgradeService_ExecuteInPlaceWithoutBackupWritesFailedAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-003")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+
+	resp, err := service.ExecuteInPlaceUpgrade(ctx, ExecuteInPlaceUpgradeRequest{
+		InstanceID:    "upgrade-inst-denied",
+		PlanID:        "plan-denied",
+		TargetVersion: "8.0.36",
+		BackupEnabled: false,
+	})
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_task", "plan-denied", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "execute_in_place_upgrade", logs[0].Operation)
+	assert.Equal(t, "failed", logs[0].Result)
+	assert.Contains(t, logs[0].ErrorMsg, "backup confirmation")
+}
+
+func TestUpgradeService_ExecuteInPlaceWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-004")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-execute", "")
+
+	resp, err := service.ExecuteInPlaceUpgrade(ctx, ExecuteInPlaceUpgradeRequest{
+		InstanceID:    "upgrade-inst-execute",
+		PlanID:        "plan-execute",
+		TargetVersion: "8.0.36",
+		BackupEnabled: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_task", resp.TaskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "execute_in_place_upgrade", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "plan_id=plan-execute")
+}
+
+func TestUpgradeService_ExecuteLogicalWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-005")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-logical", "")
+
+	resp, err := service.ExecuteLogicalMigration(ctx, ExecuteLogicalMigrationRequest{
+		InstanceID:    "upgrade-inst-logical",
+		PlanID:        "plan-logical",
+		TargetVersion: "8.0.36",
+		BackupEnabled: true,
+		Parallelism:   2,
+		BatchSize:     500,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_task", resp.TaskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "execute_logical_upgrade", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "plan_id=plan-logical")
+	assert.Contains(t, logs[0].Details, "parallelism=2")
+}
+
+func TestUpgradeService_RollbackWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-006")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-rollback", "")
+
+	resp, err := service.RollbackUpgrade(ctx, RollbackUpgradeRequest{
+		InstanceID: "upgrade-inst-rollback",
+		PlanID:     "plan-rollback",
+		BackupID:   "backup-001",
+		Force:      true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_task", resp.RollbackID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "rollback_upgrade", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "backup_id=backup-001")
+}
+
+func TestUpgradeService_ExecuteRollingWritesAuditLog(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-007")
+	db := newTestDB()
+	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-cluster-inst-1", "upgrade-cluster-audit")
+
+	resp, err := service.ExecuteRollingUpgrade(ctx, ExecuteRollingUpgradeRequest{
+		ClusterID:           "upgrade-cluster-audit",
+		PlanID:              "plan-rolling",
+		TargetVersion:       "8.0.36",
+		MaxInParallel:       1,
+		HealthCheckInterval: 15,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	logs, err := auditRepo.ListByResource(context.Background(), "upgrade_task", resp.TaskID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "execute_rolling_upgrade", logs[0].Operation)
+	assert.Equal(t, "success", logs[0].Result)
+	assert.Contains(t, logs[0].Details, "cluster_id=upgrade-cluster-audit")
+	assert.Contains(t, logs[0].Details, "instances=1")
+}
+
+func newUpgradeAuditTestRepos(db *repositories.Database) (*repositories.InstanceRepository, *repositories.TaskRepository, *repositories.AuditLogRepository, *AuditService) {
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	return instanceRepo, taskRepo, auditRepo, auditSvc
+}
+
+func createUpgradeTestInstance(t *testing.T, ctx context.Context, repo *repositories.InstanceRepository, id, clusterID string) {
+	t.Helper()
+	instance := &models.Instance{
+		ID:        id,
+		Name:      id,
+		ClusterID: clusterID,
+	}
+	require.NoError(t, repo.Create(ctx, instance))
+	require.NoError(t, repo.CreateVersion(ctx, &models.InstanceVersion{
+		InstanceID:  id,
+		Flavor:      "mysql",
+		Version:     "5.7.40",
+		FullVersion: "5.7.40",
+	}))
 }

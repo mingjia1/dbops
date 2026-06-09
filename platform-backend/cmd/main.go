@@ -158,7 +158,7 @@ func main() {
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)
 
-	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient)
+	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient, auditService)
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
 	versionCatalog := services.NewVersionCatalog()
