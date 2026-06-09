@@ -87,3 +87,29 @@ func (c *BackupController) ScanBackups(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, result)
 }
+
+func (c *BackupController) RestoreBackup(ctx *gin.Context) {
+	var req services.RestoreBackupRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.RestoreBackup(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to restore backup", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
+func (c *BackupController) DeleteBackupRecord(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if err := c.service.DeleteBackupRecord(ctx.Request.Context(), id); err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to delete backup record", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, gin.H{"message": "Backup record deleted successfully"})
+}

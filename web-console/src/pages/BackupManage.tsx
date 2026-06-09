@@ -20,7 +20,7 @@ import {
   Tooltip,
   message,
 } from 'antd'
-import { FileSearchOutlined, PlusOutlined, ReloadOutlined, ScheduleOutlined, ScanOutlined } from '@ant-design/icons'
+import { DeleteOutlined, FileSearchOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, ScheduleOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { backupApi, instanceApi, type DiscoveredBackup, type Instance } from '../services/api'
 
@@ -230,6 +230,59 @@ const BackupManage: React.FC = () => {
 
   const instanceName = (id: string) => instances.find((item) => item.id === id)?.name || id
 
+  const restoreRecord = (record: BackupRecord) => {
+    Modal.confirm({
+      title: '\u786e\u8ba4\u6062\u590d\u5907\u4efd',
+      content: `\u5c06\u5907\u4efd\u6062\u590d\u5230\u5b9e\u4f8b ${instanceName(record.instance_id)}\uff0c\u8be5\u64cd\u4f5c\u4f1a\u8986\u76d6\u76ee\u6807\u6570\u636e\u3002`,
+      okText: '\u786e\u8ba4\u6062\u590d',
+      cancelText: '\u53d6\u6d88',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setSubmitting(true)
+        try {
+          const res: any = await backupApi.restore({
+            backup_id: record.id,
+            target_instance_id: record.instance_id,
+            target_type: 'in-place',
+            confirm_overwrite: true,
+          })
+          const data = res?.data || {}
+          if (isFailedBackupStatus(data.status)) {
+            throw new Error(data.message || '\u6062\u590d\u5931\u8d25')
+          }
+          message.success(isCompletedBackupStatus(data.status) ? '\u6062\u590d\u5b8c\u6210' : '\u6062\u590d\u4efb\u52a1\u5df2\u63d0\u4ea4')
+          await fetchRecordsFor(record.instance_id)
+        } catch (err: any) {
+          message.error(err?.response?.data?.message || err?.message || '\u6062\u590d\u5931\u8d25')
+        } finally {
+          setSubmitting(false)
+        }
+      },
+    })
+  }
+
+  const deleteRecord = (record: BackupRecord) => {
+    Modal.confirm({
+      title: '\u786e\u8ba4\u5220\u9664\u5907\u4efd\u8bb0\u5f55',
+      content: '\u4ec5\u5220\u9664\u5e73\u53f0\u7eb3\u7ba1\u8bb0\u5f55\uff0c\u4e0d\u5220\u9664\u8fdc\u7a0b\u5907\u4efd\u6587\u4ef6\u6216\u76ee\u5f55\u3002',
+      okText: '\u5220\u9664\u8bb0\u5f55',
+      cancelText: '\u53d6\u6d88',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setSubmitting(true)
+        try {
+          await backupApi.delete(record.id)
+          message.success('\u5907\u4efd\u8bb0\u5f55\u5df2\u5220\u9664')
+          await fetchRecordsFor(record.instance_id)
+        } catch (err: any) {
+          message.error(err?.response?.data?.message || err?.message || '\u5220\u9664\u5907\u4efd\u8bb0\u5f55\u5931\u8d25')
+        } finally {
+          setSubmitting(false)
+        }
+      },
+    })
+  }
+
   const recordColumns: ColumnsType<BackupRecord> = [
     { title: '实例', dataIndex: 'instance_id', key: 'instance_id', render: instanceName },
     {
@@ -263,6 +316,35 @@ const BackupManage: React.FC = () => {
       render: (path) => path ? <Tooltip title={path}><span style={{ fontFamily: 'monospace' }}>{path}</span></Tooltip> : '-',
     },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v) => v ? new Date(v).toLocaleString() : '-' },
+    {
+      title: '\u64cd\u4f5c',
+      key: 'actions',
+      width: 160,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            size="small"
+            type="link"
+            icon={<RollbackOutlined />}
+            disabled={!isCompletedBackupStatus(record.status)}
+            loading={submitting}
+            onClick={() => restoreRecord(record)}
+          >
+            {'\u6062\u590d'}
+          </Button>
+          <Button
+            size="small"
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            loading={submitting}
+            onClick={() => deleteRecord(record)}
+          >
+            {'\u5220\u9664'}
+          </Button>
+        </Space>
+      ),
+    },
   ]
 
   const policyColumns: ColumnsType<BackupPolicy> = [

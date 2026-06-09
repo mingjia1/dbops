@@ -14,6 +14,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newTestBackupService 创建一个共享 db 的 BackupService — hostRepo / instRepo /
@@ -273,6 +274,86 @@ func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) 
 	records, err = service.ListBackups(context.Background(), "instance-scan")
 	assert.NoError(t, err)
 	assert.Len(t, records, 1)
+}
+
+func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/agent/tasks/restore", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-restore-001","status":"completed","progress":100,"message":"restore done"}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "restore-host"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "restore-host", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "restore-instance", Name: "restore-instance", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "restore-instance",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	require.NoError(t, backupRepo.CreateRecord(context.Background(), &models.BackupRecord{
+		InstanceID:  "restore-instance",
+		BackupType:  "full",
+		TaskID:      "backup-completed",
+		StartedAt:   time.Now().Add(-time.Hour),
+		CompletedAt: time.Now().Add(-30 * time.Minute),
+		Status:      "completed",
+		FilePath:    "/backup/mysql/full-001",
+		CreatedAt:   time.Now(),
+	}))
+	records, err := backupRepo.ListRecords(context.Background(), "restore-instance", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+	result, err := service.RestoreBackup(context.Background(), RestoreBackupRequest{
+		BackupID:         records[0].ID,
+		TargetInstanceID: "restore-instance",
+		TargetType:       "in-place",
+		ConfirmOverwrite: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotEmpty(t, result.ID)
+	assert.Equal(t, "completed", result.Status)
+	assert.Equal(t, records[0].ID, result.BackupID)
+	assert.Equal(t, "restore-instance", result.TargetInstanceID)
+	assert.NotZero(t, result.CompletedAt)
+}
+
+func TestDeleteBackupRecordRemovesRecord(t *testing.T) {
+	service := newTestBackupService()
+	ctx := context.Background()
+	result, err := service.ExecuteBackup(ctx, ExecuteBackupRequest{InstanceID: "instance-001", BackupType: "full"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	records, err := service.ListBackups(ctx, "instance-001")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	err = service.DeleteBackupRecord(ctx, records[0].ID)
+
+	require.NoError(t, err)
+	records, err = service.ListBackups(ctx, "instance-001")
+	require.NoError(t, err)
+	assert.Empty(t, records)
 }
 
 func TestListBackups(t *testing.T) {

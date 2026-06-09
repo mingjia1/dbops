@@ -53,6 +53,13 @@ type ExecuteBackupRequest struct {
 	PolicyID   string `json:"policy_id"`
 }
 
+type RestoreBackupRequest struct {
+	BackupID         string `json:"backup_id" binding:"required"`
+	TargetInstanceID string `json:"target_instance_id" binding:"required"`
+	TargetType       string `json:"target_type"`
+	ConfirmOverwrite bool   `json:"confirm_overwrite"`
+}
+
 type BackupTaskResult struct {
 	ID          string    `json:"id"`
 	InstanceID  string    `json:"instance_id"`
@@ -67,6 +74,17 @@ type BackupTaskResult struct {
 	Size        string    `json:"size"`
 	Checksum    string    `json:"checksum"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type RestoreBackupResult struct {
+	ID               string    `json:"id"`
+	BackupID         string    `json:"backup_id"`
+	TargetInstanceID string    `json:"target_instance_id"`
+	TaskID           string    `json:"task_id"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
+	CompletedAt      time.Time `json:"completed_at"`
 }
 
 type DiscoveredBackup struct {
@@ -405,6 +423,105 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 		managed[filepath.Base(record.FilePath)] = record.ID
 	}
 	return &BackupScanResult{Backups: discovered, ScannedAt: time.Now()}, nil
+}
+
+func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequest) (*RestoreBackupResult, error) {
+	if req.BackupID == "" || req.TargetInstanceID == "" {
+		return nil, fmt.Errorf("backup_id and target_instance_id are required")
+	}
+	if !req.ConfirmOverwrite {
+		return nil, fmt.Errorf("restore requires confirm_overwrite=true")
+	}
+	backup, err := s.policyRepo.GetRecordByID(ctx, req.BackupID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.ToLower(strings.TrimSpace(backup.Status)) != "completed" {
+		return nil, fmt.Errorf("backup record is not completed")
+	}
+	if backup.FilePath == "" {
+		return nil, fmt.Errorf("backup record has no file_path")
+	}
+	target, err := s.instRepo.GetByID(ctx, req.TargetInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("target instance not found: %w", err)
+	}
+	conn, err := s.instRepo.GetConnection(ctx, req.TargetInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("target instance connection not found: %w", err)
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt target instance password: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
+	taskID := fmt.Sprintf("restore-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
+	startedAt := time.Now()
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/restore", map[string]interface{}{
+		"task_id":     taskID,
+		"instance_id": req.TargetInstanceID,
+		"config": map[string]interface{}{
+			"backup_path": backup.FilePath,
+			"mysql_host":  conn.Host,
+			"mysql_port":  conn.Port,
+			"mysql_user":  conn.Username,
+			"mysql_pass":  password,
+			"target_type": req.TargetType,
+		},
+	})
+	out := &RestoreBackupResult{
+		BackupID:         req.BackupID,
+		TargetInstanceID: req.TargetInstanceID,
+		TaskID:           taskID,
+		Status:           "failed",
+		StartedAt:        startedAt,
+	}
+	if err != nil {
+		out.Message = err.Error()
+	} else {
+		out.Status = result.Status
+		out.Message = result.Message
+		if isTerminalBackupStatus(out.Status) {
+			out.CompletedAt = time.Now()
+		}
+	}
+	restoreRecord := &models.RestoreRecord{
+		BackupID:         req.BackupID,
+		TargetInstanceID: req.TargetInstanceID,
+		StartedAt:        out.StartedAt,
+		CompletedAt:      out.CompletedAt,
+		Status:           out.Status,
+		CreatedAt:        startedAt,
+	}
+	if err := s.policyRepo.CreateRestoreRecord(ctx, restoreRecord); err != nil {
+		return nil, err
+	}
+	out.ID = restoreRecord.ID
+	s.auditBackup(ctx, "restore_backup", "restore", "backup_record", req.BackupID, backupAuditResult(out.Status), out.Message,
+		fmt.Sprintf("backup_id=%s target_instance_id=%s task_id=%s status=%s backup_path=%s", req.BackupID, req.TargetInstanceID, taskID, out.Status, backup.FilePath))
+	return out, nil
+}
+
+func (s *BackupService) DeleteBackupRecord(ctx context.Context, backupID string) error {
+	if backupID == "" {
+		return fmt.Errorf("backup_id is required")
+	}
+	backup, err := s.policyRepo.GetRecordByID(ctx, backupID)
+	if err != nil {
+		return err
+	}
+	if err := s.policyRepo.DeleteRecord(ctx, backupID); err != nil {
+		return err
+	}
+	s.auditBackup(ctx, "delete_backup_record", "delete", "backup_record", backupID, "success", "",
+		fmt.Sprintf("backup_id=%s instance_id=%s file_path=%s", backup.ID, backup.InstanceID, backup.FilePath))
+	return nil
 }
 
 func dedupeDiscoveredBackups(items []DiscoveredBackup) []DiscoveredBackup {

@@ -312,8 +312,10 @@ func main() {
 				backups.GET("/policies", backupController.ListPolicies)
 				backups.POST("/policies", middleware.RequirePermission("admin"), backupController.CreatePolicy)
 				backups.POST("/scan", middleware.RequirePermission("admin"), backupController.ScanBackups)
+				backups.POST("/restore", middleware.RequirePermission("admin"), backupController.RestoreBackup)
 				backups.POST("", middleware.RequirePermission("admin"), backupController.ExecuteBackup)
 				backups.GET("", backupController.ListBackups)
+				backups.DELETE("/:id", middleware.RequirePermission("admin"), backupController.DeleteBackupRecord)
 			}
 
 			monitoring := protected.Group("/monitoring")

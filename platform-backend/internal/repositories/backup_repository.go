@@ -158,6 +158,65 @@ func (r *BackupRepository) ListRecords(ctx context.Context, instanceID string, l
 	return records, nil
 }
 
+func (r *BackupRepository) GetRecordByID(ctx context.Context, id string) (*models.BackupRecord, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	query := `
+		SELECT id, policy_id, instance_id, backup_type, COALESCE(task_id, ''), started_at, completed_at, status, COALESCE(message, ''), file_path, file_size, checksum, created_at
+		FROM backup_records WHERE id = ?
+	`
+	record := &models.BackupRecord{}
+	var policyID sql.NullString
+	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
+		&record.ID, &policyID, &record.InstanceID, &record.BackupType,
+		&record.TaskID, &record.StartedAt, &record.CompletedAt, &record.Status, &record.Message, &record.FilePath,
+		&record.FileSize, &record.Checksum, &record.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("backup record not found")
+		}
+		return nil, fmt.Errorf("failed to get backup record: %w", err)
+	}
+	if policyID.Valid {
+		record.PolicyID = policyID.String
+	}
+	return record, nil
+}
+
+func (r *BackupRepository) DeleteRecord(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	res, err := r.db.Pool.ExecContext(ctx, `DELETE FROM backup_records WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete backup record: %w", err)
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return fmt.Errorf("backup record not found")
+	}
+	return nil
+}
+
+func (r *BackupRepository) CreateRestoreRecord(ctx context.Context, record *models.RestoreRecord) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	record.ID = uuid.New().String()
+	query := `
+		INSERT INTO restore_records (id, backup_id, target_instance_id, started_at, completed_at, status, restore_point, restored_tables, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := r.db.Pool.ExecContext(ctx, query,
+		record.ID, record.BackupID, record.TargetInstanceID, record.StartedAt, record.CompletedAt,
+		record.Status, record.RestorePoint, record.RestoredTables, record.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create restore record: %w", err)
+	}
+	return nil
+}
+
 func (r *BackupRepository) LatestCompletedRecord(ctx context.Context, instanceID, backupType string) (*models.BackupRecord, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not available")
