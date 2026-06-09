@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -175,31 +176,6 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		CheckResult{Category: "dependency", Name: "libaio", Status: "unknown", Passed: false, Value: "agent_collected"},
 	)
 	return results
-
-	for _, item := range []struct{ cat, name, suggestion string }{} {
-		_ = item
-	}
-	for _, item := range []struct{ cat, name, suggestion string }{
-		{"hardware", "cpu_cores", "Agent-side collection is required"},
-		{"hardware", "memory_size", "Agent-side collection is required"},
-		{"hardware", "disk_space", "Agent-side collection is required"},
-		{"os", "kernel_version", "Agent-side collection is required"},
-		{"dependency", "libaio", "Agent-side collection is required"},
-	} {
-		results = append(results, CheckResult{
-			Category:   item.cat,
-			Name:       item.name,
-			Status:     "unknown",
-			Passed:     false,
-			Value:      "not_collected",
-			Suggestion: item.suggestion,
-		})
-	}
-
-	_ = runtime.GOOS
-	_ = runtime.NumCPU()
-
-	return results
 }
 
 func (s *EnvironmentCheckService) GetByID(ctx context.Context, checkID string) (*EnvironmentCheckResult, error) {
@@ -218,69 +194,38 @@ func (s *EnvironmentCheckService) Export(ctx context.Context, checkID string) (s
 }
 
 func agentSystemResults(data map[string]interface{}) []CheckResult {
-	items := []struct {
-		category   string
-		name       string
-		key        string
-		suggestion string
-	}{
-		{"os", "os_release", "os_release", "Agent did not collect the OS release"},
-		{"os", "kernel_version", "kernel_version", "Agent did not collect the kernel version"},
-		{"hardware", "cpu_cores", "cpu_cores", "Agent did not collect CPU core count"},
-		{"hardware", "memory_size", "memory_size", "Agent did not collect memory information"},
-		{"hardware", "disk_space", "disk_space", "Agent did not collect disk information"},
-		{"dependency", "libaio", "libaio", "Install the libaio dependency"},
+	items := []agentCheckSpec{
+		{category: "os", name: "os_release", key: "os_release", missingSuggestion: "Agent did not collect the OS release"},
+		{category: "os", name: "kernel_version", key: "kernel_version", missingSuggestion: "Agent did not collect the kernel version"},
+		{category: "hardware", name: "cpu_cores", key: "cpu_cores", missingSuggestion: "Agent did not collect CPU core count"},
+		{category: "hardware", name: "memory_size", key: "memory_size", missingSuggestion: "Agent did not collect memory information"},
+		{category: "hardware", name: "disk_space", key: "disk_space", missingSuggestion: "Agent did not collect disk information"},
+		{category: "dependency", name: "libaio", key: "libaio", missingSuggestion: "Install the libaio dependency", expected: "installed"},
+		{category: "os", name: "vm_swappiness", key: "vm_swappiness", missingSuggestion: "Agent did not collect vm.swappiness", max: intPtr(10), recommendation: "Set vm.swappiness to 10 or lower for database hosts"},
+		{category: "os", name: "vm_max_map_count", key: "vm_max_map_count", missingSuggestion: "Agent did not collect vm.max_map_count", min: intPtr(262144), recommendation: "Set vm.max_map_count to at least 262144"},
+		{category: "os", name: "vm_overcommit_memory", key: "vm_overcommit_memory", missingSuggestion: "Agent did not collect vm.overcommit_memory", allowed: []string{"0", "1"}, recommendation: "Set vm.overcommit_memory to 0 or 1"},
+		{category: "os", name: "fs_file_max", key: "fs_file_max", missingSuggestion: "Agent did not collect fs.file-max", min: intPtr(65535), recommendation: "Set fs.file-max to at least 65535"},
+		{category: "os", name: "fs_aio_max_nr", key: "fs_aio_max_nr", missingSuggestion: "Agent did not collect fs.aio-max-nr", min: intPtr(1048576), recommendation: "Set fs.aio-max-nr to at least 1048576 for InnoDB async IO"},
+		{category: "os", name: "ulimit_nofile", key: "ulimit_nofile", missingSuggestion: "Agent did not collect ulimit -n", min: intPtr(65535), recommendation: "Raise open files limit to at least 65535"},
+		{category: "os", name: "net_core_somaxconn", key: "net_core_somaxconn", missingSuggestion: "Agent did not collect net.core.somaxconn", min: intPtr(1024), recommendation: "Set net.core.somaxconn to at least 1024"},
+		{category: "os", name: "net_core_netdev_max_backlog", key: "net_core_netdev_max_backlog", missingSuggestion: "Agent did not collect net.core.netdev_max_backlog", min: intPtr(1000), recommendation: "Set net.core.netdev_max_backlog to at least 1000"},
+		{category: "os", name: "net_ipv4_tcp_max_syn_backlog", key: "net_ipv4_tcp_max_syn_backlog", missingSuggestion: "Agent did not collect net.ipv4.tcp_max_syn_backlog", min: intPtr(1024), recommendation: "Set net.ipv4.tcp_max_syn_backlog to at least 1024"},
+		{category: "os", name: "net_ipv4_tcp_fin_timeout", key: "net_ipv4_tcp_fin_timeout", missingSuggestion: "Agent did not collect net.ipv4.tcp_fin_timeout", max: intPtr(30), recommendation: "Set net.ipv4.tcp_fin_timeout to 30 or lower"},
+		{category: "os", name: "net_ipv4_tcp_keepalive_time", key: "net_ipv4_tcp_keepalive_time", missingSuggestion: "Agent did not collect net.ipv4.tcp_keepalive_time", max: intPtr(600), recommendation: "Set net.ipv4.tcp_keepalive_time to 600 or lower"},
+		{category: "os", name: "net_ipv4_tcp_tw_reuse", key: "net_ipv4_tcp_tw_reuse", missingSuggestion: "Agent did not collect net.ipv4.tcp_tw_reuse", allowed: []string{"1"}, recommendation: "Enable net.ipv4.tcp_tw_reuse for high-connection workloads"},
+		{category: "os", name: "net_ipv4_ip_local_port_range", key: "net_ipv4_ip_local_port_range", missingSuggestion: "Agent did not collect net.ipv4.ip_local_port_range", rangeWidthMin: 10000, recommendation: "Use a wider local port range, for example 10240 65535"},
+		{category: "os", name: "transparent_hugepage", key: "transparent_hugepage", missingSuggestion: "Agent did not collect transparent hugepage status", disallowContains: "[always]", recommendation: "Disable transparent hugepage or set it to madvise"},
 	}
-	items = append(items,
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "vm_swappiness", "vm_swappiness", "Agent did not collect vm.swappiness"},
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "vm_max_map_count", "vm_max_map_count", "Agent did not collect vm.max_map_count"},
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "fs_file_max", "fs_file_max", "Agent did not collect fs.file-max"},
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "net_core_somaxconn", "net_core_somaxconn", "Agent did not collect net.core.somaxconn"},
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "net_ipv4_tcp_tw_reuse", "net_ipv4_tcp_tw_reuse", "Agent did not collect net.ipv4.tcp_tw_reuse"},
-		struct {
-			category   string
-			name       string
-			key        string
-			suggestion string
-		}{"os", "net_ipv4_ip_local_port_range", "net_ipv4_ip_local_port_range", "Agent did not collect net.ipv4.ip_local_port_range"},
-	)
 	out := make([]CheckResult, 0, len(items))
 	for _, item := range items {
 		value := stringMapValue(data, item.key)
-		passed := value != "" && value != "not_found"
+		passed, suggestion := evaluateAgentCheck(value, item)
 		status := "passed"
-		suggestion := ""
 		if !passed {
 			status = "failed"
 			if value == "" {
 				value = "not_collected"
 			}
-			suggestion = item.suggestion
 		}
 		out = append(out, CheckResult{
 			Category:   item.category,
@@ -292,6 +237,76 @@ func agentSystemResults(data map[string]interface{}) []CheckResult {
 		})
 	}
 	return out
+}
+
+type agentCheckSpec struct {
+	category          string
+	name              string
+	key               string
+	missingSuggestion string
+	recommendation    string
+	expected          string
+	allowed           []string
+	disallowContains  string
+	min               *int
+	max               *int
+	rangeWidthMin     int
+}
+
+func evaluateAgentCheck(value string, spec agentCheckSpec) (bool, string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "not_found" {
+		return false, spec.missingSuggestion
+	}
+	if spec.expected != "" && !strings.EqualFold(trimmed, spec.expected) {
+		return false, fallbackRecommendation(spec, spec.missingSuggestion)
+	}
+	if len(spec.allowed) > 0 {
+		for _, allowed := range spec.allowed {
+			if trimmed == allowed {
+				return true, ""
+			}
+		}
+		return false, fallbackRecommendation(spec, spec.missingSuggestion)
+	}
+	if spec.disallowContains != "" && strings.Contains(strings.ToLower(trimmed), strings.ToLower(spec.disallowContains)) {
+		return false, fallbackRecommendation(spec, spec.missingSuggestion)
+	}
+	if spec.rangeWidthMin > 0 {
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			return false, fallbackRecommendation(spec, spec.missingSuggestion)
+		}
+		low, lowErr := strconv.Atoi(fields[0])
+		high, highErr := strconv.Atoi(fields[1])
+		if lowErr != nil || highErr != nil || high-low < spec.rangeWidthMin {
+			return false, fallbackRecommendation(spec, spec.missingSuggestion)
+		}
+	}
+	if spec.min != nil || spec.max != nil {
+		n, err := strconv.Atoi(strings.Fields(trimmed)[0])
+		if err != nil {
+			return false, fallbackRecommendation(spec, spec.missingSuggestion)
+		}
+		if spec.min != nil && n < *spec.min {
+			return false, fallbackRecommendation(spec, spec.missingSuggestion)
+		}
+		if spec.max != nil && n > *spec.max {
+			return false, fallbackRecommendation(spec, spec.missingSuggestion)
+		}
+	}
+	return true, ""
+}
+
+func fallbackRecommendation(spec agentCheckSpec, fallback string) string {
+	if spec.recommendation != "" {
+		return spec.recommendation
+	}
+	return fallback
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func stringMapValue(data map[string]interface{}, key string) string {

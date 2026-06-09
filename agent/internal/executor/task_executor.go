@@ -895,17 +895,41 @@ func collectSystemInfo(ctx context.Context) map[string]any {
 	if out := commandOutput(ctx, "sh", "-c", "sysctl -n vm.max_map_count 2>/dev/null"); out != "" {
 		data["vm_max_map_count"] = out
 	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n vm.overcommit_memory 2>/dev/null"); out != "" {
+		data["vm_overcommit_memory"] = out
+	}
 	if out := commandOutput(ctx, "sh", "-c", "sysctl -n fs.file-max 2>/dev/null"); out != "" {
 		data["fs_file_max"] = out
 	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n fs.aio-max-nr 2>/dev/null"); out != "" {
+		data["fs_aio_max_nr"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "ulimit -n 2>/dev/null"); out != "" {
+		data["ulimit_nofile"] = out
+	}
 	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.core.somaxconn 2>/dev/null"); out != "" {
 		data["net_core_somaxconn"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.core.netdev_max_backlog 2>/dev/null"); out != "" {
+		data["net_core_netdev_max_backlog"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.tcp_max_syn_backlog 2>/dev/null"); out != "" {
+		data["net_ipv4_tcp_max_syn_backlog"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.tcp_fin_timeout 2>/dev/null"); out != "" {
+		data["net_ipv4_tcp_fin_timeout"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null"); out != "" {
+		data["net_ipv4_tcp_keepalive_time"] = out
 	}
 	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null"); out != "" {
 		data["net_ipv4_tcp_tw_reuse"] = out
 	}
 	if out := commandOutput(ctx, "sh", "-c", "sysctl -n net.ipv4.ip_local_port_range 2>/dev/null"); out != "" {
 		data["net_ipv4_ip_local_port_range"] = out
+	}
+	if out := commandOutput(ctx, "sh", "-c", "cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null"); out != "" {
+		data["transparent_hugepage"] = out
 	}
 	if out := commandOutput(ctx, "nproc"); out != "" {
 		data["cpu_cores"] = out

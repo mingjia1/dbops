@@ -236,6 +236,74 @@ func TestCheckResult_AllPassed(t *testing.T) {
 	}
 }
 
+func TestAgentSystemResultsEvaluateKernelParameters(t *testing.T) {
+	results := agentSystemResults(map[string]interface{}{
+		"os_release":                   "Rocky Linux 8.9",
+		"kernel_version":               "4.18.0",
+		"cpu_cores":                    "8",
+		"memory_size":                  "32768 MB",
+		"disk_space":                   "100G available / 200G total",
+		"libaio":                       "installed",
+		"vm_swappiness":                "1",
+		"vm_max_map_count":             "262144",
+		"vm_overcommit_memory":         "1",
+		"fs_file_max":                  "1000000",
+		"fs_aio_max_nr":                "1048576",
+		"ulimit_nofile":                "65535",
+		"net_core_somaxconn":           "4096",
+		"net_core_netdev_max_backlog":  "5000",
+		"net_ipv4_tcp_max_syn_backlog": "4096",
+		"net_ipv4_tcp_fin_timeout":     "15",
+		"net_ipv4_tcp_keepalive_time":  "300",
+		"net_ipv4_tcp_tw_reuse":        "1",
+		"net_ipv4_ip_local_port_range": "10240 65535",
+		"transparent_hugepage":         "always madvise [never]",
+	})
+
+	for _, r := range results {
+		assert.True(t, r.Passed, "%s should pass: %s", r.Name, r.Suggestion)
+		assert.Equal(t, "passed", r.Status)
+	}
+}
+
+func TestAgentSystemResultsFailUnsafeKernelParameters(t *testing.T) {
+	results := agentSystemResults(map[string]interface{}{
+		"libaio":                       "not_found",
+		"vm_swappiness":                "60",
+		"vm_max_map_count":             "65530",
+		"fs_file_max":                  "1024",
+		"fs_aio_max_nr":                "65536",
+		"ulimit_nofile":                "1024",
+		"net_core_somaxconn":           "128",
+		"net_ipv4_tcp_tw_reuse":        "0",
+		"net_ipv4_ip_local_port_range": "32768 32778",
+		"transparent_hugepage":         "[always] madvise never",
+	})
+
+	byName := map[string]CheckResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+
+	for _, name := range []string{
+		"libaio",
+		"vm_swappiness",
+		"vm_max_map_count",
+		"fs_file_max",
+		"fs_aio_max_nr",
+		"ulimit_nofile",
+		"net_core_somaxconn",
+		"net_ipv4_tcp_tw_reuse",
+		"net_ipv4_ip_local_port_range",
+		"transparent_hugepage",
+	} {
+		require.Contains(t, byName, name)
+		assert.False(t, byName[name].Passed, name)
+		assert.Equal(t, "failed", byName[name].Status, name)
+		assert.NotEmpty(t, byName[name].Suggestion, name)
+	}
+}
+
 func TestEnvironmentCheck_EmptyHosts(t *testing.T) {
 	tctx := context.Background()
 	service := newTestEnvCheckService(tctx)
