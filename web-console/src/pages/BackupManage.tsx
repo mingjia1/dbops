@@ -47,6 +47,15 @@ interface BackupPolicy {
   enabled: boolean
   created_at: string
 }
+const isFailedBackupStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isCompletedBackupStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
 
 const BackupManage: React.FC = () => {
   const [tab, setTab] = useState('records')
@@ -146,18 +155,21 @@ const BackupManage: React.FC = () => {
     try {
       const res: any = await backupApi.executeBackup(policy.instance_id, policy.backup_type, policy.id)
       const data = res?.data || {}
-      if (data.status && data.status !== 'completed') {
-        throw new Error(data.message || '备份任务执行失败')
+      if (isFailedBackupStatus(data.status)) {
+        throw new Error(data.message || '\u5907\u4efd\u4efb\u52a1\u6267\u884c\u5931\u8d25')
       }
-      message.success('备份执行完成')
+      if (isCompletedBackupStatus(data.status)) {
+        message.success('\u5907\u4efd\u6267\u884c\u5b8c\u6210')
+      } else {
+        message.success('\u5907\u4efd\u4efb\u52a1\u5df2\u63d0\u4ea4\uff0c\u8bf7\u5237\u65b0\u8bb0\u5f55\u67e5\u770b\u72b6\u6001')
+      }
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '备份执行失败')
+      message.error(err?.response?.data?.message || err?.message || '\u5907\u4efd\u6267\u884c\u5931\u8d25')
     } finally {
       await fetchRecordsFor(policy.instance_id)
       setSubmitting(false)
     }
   }
-
   const scanBackups = async () => {
     if (!selectedInstance) {
       message.warning('请先选择实例')

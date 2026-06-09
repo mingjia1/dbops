@@ -2,6 +2,11 @@ package services
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -106,6 +111,56 @@ func TestExecuteIncrementalBackupWithoutFullBaseCreatesFailedRecord(t *testing.T
 	assert.Equal(t, "incremental", backups[0].BackupType)
 	assert.Equal(t, result.TaskID, backups[0].TaskID)
 	assert.Contains(t, backups[0].Message, "completed full backup")
+}
+
+func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/agent/tasks/backup", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-backup-001","status":"running","progress":10,"message":"backup accepted","data":{"backup_path":"/backup/mysql/full.xbstream"}}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	assert.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	assert.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	assert.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-running"
+	assert.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: hostAddr, AgentPort: agentPort}))
+	assert.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-running", Name: "instance-running", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	assert.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-running",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{
+		InstanceID: "instance-running",
+		BackupType: "full",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "running", result.Status)
+	assert.Equal(t, "/backup/mysql/full.xbstream", result.FilePath)
+	backups, err := service.ListBackups(context.Background(), "instance-running")
+	assert.NoError(t, err)
+	assert.Len(t, backups, 1)
+	assert.Equal(t, "running", backups[0].Status)
+	assert.Equal(t, result.TaskID, backups[0].TaskID)
+	assert.Equal(t, "/backup/mysql/full.xbstream", backups[0].FilePath)
 }
 
 func TestListBackups(t *testing.T) {
