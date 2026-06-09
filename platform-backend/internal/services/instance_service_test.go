@@ -2,6 +2,11 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -10,6 +15,69 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInstanceCreateFillsPackageURLFromVersionCatalog(t *testing.T) {
+	db := newTestDB()
+	instRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewInstanceService(instRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key")
+
+	instance, err := service.Create(context.Background(), CreateInstanceRequest{
+		Name:      "versioned-instance",
+		Host:      "10.1.81.41",
+		Port:      3307,
+		Username:  "root",
+		Password:  "rootpass",
+		VersionID: "mysql-5.7.44",
+	})
+
+	require.NoError(t, err)
+	conn, err := instRepo.GetConnection(context.Background(), instance.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "mysql-5.7.44", conn.VersionID)
+	assert.Contains(t, conn.PackageURL, "mysql-5.7.44")
+}
+
+func TestAgentClientDeployInstanceAddsCatalogPackageAndChecksum(t *testing.T) {
+	var payload DeployTaskPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "deploy-task",
+				"status":   "completed",
+				"progress": 100,
+				"message":  "ok",
+			},
+		})
+	}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+
+	instance := &models.Instance{
+		ID: "deploy-instance",
+		Connection: models.InstanceConnection{
+			Host:      "10.1.81.41",
+			Port:      3307,
+			Username:  "root",
+			VersionID: "mysql-5.7.44",
+		},
+	}
+	_, err = NewAgentClient("").DeployInstance(context.Background(), u.Hostname(), port, instance, "deploy-task", "rootpass")
+
+	require.NoError(t, err)
+	assert.Contains(t, payload.Config["package_url"], "mysql-5.7.44")
+	entry, err := NewVersionCatalog().Get("mysql-5.7.44")
+	require.NoError(t, err)
+	assert.Equal(t, entry.Checksum, payload.Config["checksum"])
+}
 
 func newInstanceDeployTestService(t *testing.T, passwordEncrypted string, agent *agentStub) (*InstanceService, *repositories.AuditLogRepository, string) {
 	t.Helper()

@@ -34,6 +34,14 @@ func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *reposit
 }
 
 func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest) (*models.Instance, error) {
+	if req.VersionID != "" && req.PackageURL == "" {
+		entry, err := NewVersionCatalog().Get(req.VersionID)
+		if err != nil {
+			return nil, err
+		}
+		req.PackageURL = entry.PackageURL
+	}
+
 	instance := &models.Instance{
 		Name:      req.Name,
 		ClusterID: req.ClusterID,

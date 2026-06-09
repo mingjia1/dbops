@@ -67,6 +67,14 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 	// the agent falls back to whatever is on PATH (legacy behaviour).
 	if conn.VersionID != "" {
 		cfg["version_id"] = conn.VersionID
+		if entry, err := NewVersionCatalog().Get(conn.VersionID); err == nil {
+			if conn.PackageURL == "" && entry.PackageURL != "" {
+				cfg["package_url"] = entry.PackageURL
+			}
+			if isSHA256Hex(entry.Checksum) {
+				cfg["checksum"] = entry.Checksum
+			}
+		}
 	}
 	if conn.PackageURL != "" {
 		cfg["package_url"] = conn.PackageURL
@@ -88,6 +96,19 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 	}
 
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload)
+}
+
+func isSHA256Hex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, c := range value {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (c *AgentClient) DeployMasterSlave(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {

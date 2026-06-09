@@ -126,6 +126,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		dataDir, _ = req.Config["data_dir"].(string)
 	}
 	packageURL, _ := req.Config["package_url"].(string)
+	checksum, _ := req.Config["checksum"].(string)
 	basedir, _ := req.Config["basedir"].(string)
 	osUser, _ := req.Config["os_user"].(string)
 	mysqlUser, _ := req.Config["mysql_user"].(string)
@@ -177,7 +178,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	var mysqld string
 	if packageURL != "" {
 		var installErr error
-		mysqld, installErr = InstallFromURL(ctx, packageURL, "", basedir, osUser)
+		mysqld, installErr = InstallFromURL(ctx, packageURL, checksum, basedir, osUser)
 		if installErr != nil {
 			return &TaskResult{
 				TaskID:    req.TaskID,
