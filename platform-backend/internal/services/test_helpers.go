@@ -87,13 +87,13 @@ func (s *TestableUpgradeService) PlanUpgradePath(ctx context.Context, req PlanUp
 	warnings := s.generatePreCheckWarnings(instance, req.Strategy)
 
 	return &PlanUpgradePathResponse{
-		PlanID:          "test-plan-id",
-		SourceVersion:   sourceVersion,
-		TargetVersion:   targetVersion,
-		Strategy:        req.Strategy,
-		UpgradePath:     steps,
-		EstimatedTime:   estimatedTime,
-		RiskLevel:       riskLevel,
+		PlanID:           "test-plan-id",
+		SourceVersion:    sourceVersion,
+		TargetVersion:    targetVersion,
+		Strategy:         req.Strategy,
+		UpgradePath:      steps,
+		EstimatedTime:    estimatedTime,
+		RiskLevel:        riskLevel,
 		PreCheckWarnings: warnings,
 	}, nil
 }
@@ -144,11 +144,11 @@ func (s *TestableUpgradeService) generatePreCheckWarnings(instance *models.Insta
 	warnings := []string{}
 	warnings = append(warnings, "Ensure sufficient disk space for backup")
 	warnings = append(warnings, "Verify all applications are compatible with MySQL 8.0")
-	
+
 	if strategy == "inplace" {
 		warnings = append(warnings, "In-place upgrade cannot be rolled back automatically")
 	}
-	
+
 	return warnings
 }
 
@@ -201,7 +201,7 @@ func (s *TestableTopologyService) GetInstanceTopology(ctx context.Context, insta
 		MasterID:        "",
 		SlaveIDs:        []string{},
 		ReplicationMode: "async",
-		Role:            "master",
+		Role:            normalizeTopologyRole(instance.Status.Role, "unknown"),
 	}, nil
 }
 
@@ -227,10 +227,11 @@ func (s *TestableTopologyService) GetClusterTopology(ctx context.Context, cluste
 		topologyInstances = append(topologyInstances, InstanceTopologyResponse{
 			InstanceID:      inst.ID,
 			ClusterID:       inst.ClusterID,
-			Role:            "master",
+			Role:            normalizeTopologyRole(inst.Status.Role, "unknown"),
 			ReplicationMode: "async",
 		})
 	}
+	inferClusterTopology(topologyInstances)
 
 	return &ClusterTopologyResponse{
 		ClusterID:       clusterID,
@@ -240,16 +241,16 @@ func (s *TestableTopologyService) GetClusterTopology(ctx context.Context, cluste
 }
 
 type TestableAlertService struct {
-	ruleRepo        AlertRuleRepositoryInterface
+	ruleRepo         AlertRuleRepositoryInterface
 	notificationRepo AlertNotificationRepositoryInterface
-	monitorService  MonitorServiceInterface
+	monitorService   MonitorServiceInterface
 }
 
 func NewTestableAlertService(ruleRepo AlertRuleRepositoryInterface, notificationRepo AlertNotificationRepositoryInterface, monitorService MonitorServiceInterface) *TestableAlertService {
 	return &TestableAlertService{
-		ruleRepo:        ruleRepo,
+		ruleRepo:         ruleRepo,
 		notificationRepo: notificationRepo,
-		monitorService:  monitorService,
+		monitorService:   monitorService,
 	}
 }
 
@@ -318,12 +319,12 @@ func (s *TestableAlertService) TriggerAlert(ctx context.Context, req TriggerAler
 	}
 
 	return &AlertTriggerResult{
-		AlertID:     "test-alert-id",
-		RuleID:      req.RuleID,
-		InstanceID:  req.InstanceID,
-		Status:      "firing",
-		Severity:    rule.Severity,
-		Message:     req.Message,
+		AlertID:    "test-alert-id",
+		RuleID:     req.RuleID,
+		InstanceID: req.InstanceID,
+		Status:     "firing",
+		Severity:   rule.Severity,
+		Message:    req.Message,
 	}, nil
 }
 

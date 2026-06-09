@@ -114,3 +114,30 @@ func TestTopologyService_InferClusterTopologyWhenRelationsMissing(t *testing.T) 
 	assert.Equal(t, "master-1", instances[2].MasterID)
 	assert.Equal(t, "replica", instances[2].Role)
 }
+
+func TestTopologyService_GetClusterTopologyInfersSinglePrimaryWhenRolesMissing(t *testing.T) {
+	mockRepo := new(MockInstanceRepo)
+	service := NewTestableTopologyService(mockRepo)
+
+	ctx := context.Background()
+	instances := []models.Instance{
+		{ID: "instance-001", Name: "node-1", ClusterID: "cluster-001"},
+		{ID: "instance-002", Name: "node-2", ClusterID: "cluster-001"},
+		{ID: "instance-003", Name: "node-3", ClusterID: "cluster-001"},
+	}
+
+	mockRepo.On("List", ctx, 100, 0).Return(instances, nil)
+
+	result, err := service.GetClusterTopology(ctx, "cluster-001")
+
+	assert.NoError(t, err)
+	assert.Len(t, result.Instances, 3)
+	assert.Equal(t, "master", result.Instances[0].Role)
+	assert.Equal(t, []string{"instance-002", "instance-003"}, result.Instances[0].SlaveIDs)
+	assert.Equal(t, "replica", result.Instances[1].Role)
+	assert.Equal(t, "instance-001", result.Instances[1].MasterID)
+	assert.Equal(t, "replica", result.Instances[2].Role)
+	assert.Equal(t, "instance-001", result.Instances[2].MasterID)
+
+	mockRepo.AssertExpectations(t)
+}

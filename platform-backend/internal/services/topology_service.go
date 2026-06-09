@@ -66,7 +66,7 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 		MasterID:        "",
 		SlaveIDs:        []string{},
 		ReplicationMode: "async",
-		Role:            "master",
+		Role:            "unknown",
 	}
 
 	if instance.Topology.InstanceID != "" {
@@ -83,6 +83,8 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 		if instance.Status.Role != "" {
 			topology.Role = instance.Status.Role
 		}
+	} else if instance.Status.Role != "" {
+		topology.Role = instance.Status.Role
 	}
 
 	return topology, nil
