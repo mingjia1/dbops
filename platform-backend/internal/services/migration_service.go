@@ -46,19 +46,19 @@ func resolveAgentHost(ctx context.Context, inst *models.Instance, instRepo *repo
 }
 
 type CreateMigrationTaskRequest struct {
-	Name             string                  `json:"name" binding:"required"`
-	SourceInstanceID string                  `json:"source_instance_id" binding:"required"`
-	TargetInstanceID string                  `json:"target_instance_id" binding:"required"`
+	Name             string                   `json:"name" binding:"required"`
+	SourceInstanceID string                   `json:"source_instance_id" binding:"required"`
+	TargetInstanceID string                   `json:"target_instance_id" binding:"required"`
 	Strategy         models.MigrationStrategy `json:"strategy" binding:"required"`
-	Config           string                  `json:"config"`
+	Config           string                   `json:"config"`
 }
 
 type MigrationTaskResult struct {
-	TaskID    string                  `json:"task_id"`
-	Status    models.MigrationStatus `json:"status"`
+	TaskID    string                   `json:"task_id"`
+	Status    models.MigrationStatus   `json:"status"`
 	Strategy  models.MigrationStrategy `json:"strategy"`
-	StartedAt time.Time               `json:"started_at"`
-	Progress  int                     `json:"progress"`
+	StartedAt time.Time                `json:"started_at"`
+	Progress  int                      `json:"progress"`
 }
 
 func (s *MigrationService) CreateTask(ctx context.Context, req CreateMigrationTaskRequest) (string, error) {
@@ -92,7 +92,7 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusMigrating, 0)
 
 	config := map[string]interface{}{
-		"migration_type":    string(strategy),
+		"migration_type":     string(strategy),
 		"source_instance_id": task.SourceInstanceID,
 		"target_instance_id": task.TargetInstanceID,
 	}
@@ -177,10 +177,10 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	}
 
 	return &models.MigrationProgress{
-		TaskID:     taskID,
-		Status:     models.MigrationStatus(result.Status),
-		Progress:   result.Progress,
-		UpdatedAt:  time.Now(),
+		TaskID:    taskID,
+		Status:    models.MigrationStatus(result.Status),
+		Progress:  result.Progress,
+		UpdatedAt: time.Now(),
 	}, nil
 }
 
@@ -196,9 +196,9 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	}
 	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	result, callErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-verify", map[string]interface{}{
-		"task_id":             taskID,
-		"source_instance_id":  task.SourceInstanceID,
-		"target_instance_id":  task.TargetInstanceID,
+		"task_id":            taskID,
+		"source_instance_id": task.SourceInstanceID,
+		"target_instance_id": task.TargetInstanceID,
 	})
 	out := &models.MigrationVerification{
 		TaskID:     taskID,
@@ -206,6 +206,7 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	}
 	if callErr != nil {
 		out.Errors = []string{"agent verify call failed: " + callErr.Error()}
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
 		return out, nil
 	}
 	if v, ok := result.Data["source_count"].(float64); ok {
@@ -230,28 +231,44 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 			}
 		}
 	}
+	if len(out.Errors) > 0 {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+	} else {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusVerifying, task.Progress)
+	}
 	return out, nil
 }
 
 func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*models.MigrationSwitchResult, error) {
-	task, _ := s.repo.GetByID(ctx, taskID)
-	var agentHost string = "localhost"
-	agentPort := 9090
-	if task != nil {
-		inst, _ := s.instRepo.GetByID(ctx, task.TargetInstanceID)
-		agentHost, agentPort = resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	task, err := s.repo.GetByID(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, fmt.Errorf("migration task %s not found", taskID)
 	}
+	inst, err := s.instRepo.GetByID(ctx, task.TargetInstanceID)
+	if err != nil || inst == nil {
+		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
+	}
+	agentHost, agentPort := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusSwitching, task.Progress)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-switch", map[string]interface{}{
 		"task_id":     taskID,
-		"instance_id": "",
+		"instance_id": task.TargetInstanceID,
 		"config":      map[string]interface{}{},
 	})
 	if err != nil {
+		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
 		return &models.MigrationSwitchResult{
 			TaskID: taskID,
 			Status: "failed",
 		}, nil
 	}
+	status := models.MigrationStatusFailed
+	progress := task.Progress
+	if result.Status == "success" || result.Status == "completed" {
+		status = models.MigrationStatusCompleted
+		progress = 100
+	}
+	_ = s.repo.UpdateStatus(ctx, taskID, status, progress)
 
 	return &models.MigrationSwitchResult{
 		TaskID:             taskID,

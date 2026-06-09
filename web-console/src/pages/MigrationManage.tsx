@@ -126,13 +126,21 @@ const MigrationManage: React.FC = () => {
   const [activeMigration, setActiveMigration] = useState<MigrationTask | null>(null)
   const [progressDetails, setProgressDetails] = useState<MigrationProgress[]>([])
 
+  const loadData = async () => {
+    try {
+      const [instanceRes, migrationRes]: any[] = await Promise.all([
+        instanceApi.list(100, 0),
+        migrationApi.list(),
+      ])
+      setInstances(instanceRes?.data || [])
+      setMigrationTasks(migrationRes?.data || [])
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err?.message || '加载迁移数据失败')
+    }
+  }
+
   useEffect(() => {
-    instanceApi.list(100, 0).then((res: any) => {
-      setInstances(res?.data || [])
-    }).catch(() => {})
-    migrationApi.list().then((res: any) => {
-      setMigrationTasks(res?.data || [])
-    }).catch(() => {})
+    loadData()
   }, [])
 
   useEffect(() => {
@@ -238,10 +246,14 @@ const MigrationManage: React.FC = () => {
 
   const handleVerify = async (taskId: string) => {
     message.info(`开始验证迁移任务: ${taskId}`)
-    try { await migrationApi.verify(taskId) } catch { /* fallback */ }
-    setMigrationTasks(tasks =>
-      tasks.map(t => t.id === taskId ? { ...t, status: 'verifying' } : t)
-    )
+    try {
+      const res: any = await migrationApi.verify(taskId)
+      const errors = res?.data?.errors || []
+      message[errors.length > 0 ? 'warning' : 'success'](errors.length > 0 ? '迁移验证完成，但存在错误' : '迁移验证通过')
+      await loadData()
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err?.message || '迁移验证失败')
+    }
   }
 
   const handleSwitch = async (taskId: string) => {
@@ -253,15 +265,12 @@ const MigrationManage: React.FC = () => {
       onOk: async () => {
         try {
           await migrationApi.switchover(taskId)
-          setMigrationTasks(tasks =>
-            tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
-          )
+          await loadData()
           message.success('切换完成')
         } catch (err: any) {
           if (err?.response?.status === 404) {
-            setMigrationTasks(tasks =>
-              tasks.map(t => t.id === taskId ? { ...t, status: 'completed', progress: 100, completed_at: new Date().toISOString() } : t)
-            )
+            message.error('迁移切换接口不存在或任务不存在')
+            return;
             message.warning('后端未实现, 已记录本地状态')
           } else {
             message.error(err?.response?.data?.message || '切换失败')
@@ -280,12 +289,17 @@ const MigrationManage: React.FC = () => {
       onOk: async () => {
         try {
           await migrationApi.cancel(taskId)
+          await loadData()
+          message.success('已取消迁移')
+          return;
           setMigrationTasks(tasks =>
             tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消' } : t)
           )
           message.success('已取消迁移')
         } catch (err: any) {
           if (err?.response?.status === 404) {
+            message.error('迁移取消接口不存在或任务不存在')
+            return;
             setMigrationTasks(tasks =>
               tasks.map(t => t.id === taskId ? { ...t, status: 'failed', error_message: '已取消(本地)' } : t)
             )

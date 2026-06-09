@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -17,7 +19,7 @@ func NewMigrationController(service *services.MigrationService) *MigrationContro
 func (c *MigrationController) List(ctx *gin.Context) {
 	tasks, err := c.service.ListTasks(ctx.Request.Context(), "")
 	if err != nil {
-		utils.SuccessResponse(ctx, []interface{}{})
+		utils.InternalServerErrorResponse(ctx, "Failed to list migration tasks", err)
 		return
 	}
 	utils.SuccessResponse(ctx, tasks)
@@ -168,6 +170,10 @@ func (c *MigrationController) Switch(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteSwitch(ctx.Request.Context(), taskID)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			utils.NotFoundResponse(ctx, "Migration task not found")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to execute switch", err)
 		return
 	}
@@ -183,6 +189,10 @@ func (c *MigrationController) Cancel(ctx *gin.Context) {
 	}
 
 	if err := c.service.CancelTask(ctx.Request.Context(), taskID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			utils.NotFoundResponse(ctx, "Migration task not found")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to cancel migration task", err)
 		return
 	}

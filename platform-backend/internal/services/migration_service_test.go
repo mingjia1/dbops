@@ -59,9 +59,9 @@ func TestMigrationService_SwitchWithoutTask(t *testing.T) {
 	ctx := context.Background()
 
 	result, err := service.ExecuteSwitch(ctx, "nonexistent-task")
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "failed", result.Status)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestMigrationService_ListTasks(t *testing.T) {
@@ -78,7 +78,8 @@ func TestMigrationService_CancelTask(t *testing.T) {
 	ctx := context.Background()
 
 	err := service.CancelTask(ctx, "nonexistent-task")
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestMigrationService_VerifyMigration(t *testing.T) {

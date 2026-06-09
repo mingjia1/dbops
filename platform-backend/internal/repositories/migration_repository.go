@@ -106,8 +106,15 @@ func (r *MigrationRepository) UpdateStatus(ctx context.Context, id string, statu
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `UPDATE migration_tasks SET status = ?, progress = ?, updated_at = ? WHERE id = ?`, status, progress, time.Now(), id)
-	return err
+	res, err := r.db.Pool.ExecContext(ctx, `UPDATE migration_tasks SET status = ?, progress = ?, updated_at = ? WHERE id = ?`, status, progress, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return fmt.Errorf("migration task not found")
+	}
+	return nil
 }
 
 func (r *MigrationRepository) List(ctx context.Context) ([]models.MigrationTask, error) {
