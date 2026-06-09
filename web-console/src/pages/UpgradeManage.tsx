@@ -52,6 +52,8 @@ const strategyOptions = [
   { value: 'rolling', label: '滚动升级' },
 ]
 
+const activeUpgradeStatuses = new Set(['pending', 'running', 'queued', 'executing'])
+
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
@@ -62,6 +64,9 @@ const UpgradeManage: React.FC = () => {
   const [inPlaceOpen, setInPlaceOpen] = useState(false)
   const [planResult, setPlanResult] = useState<any>(null)
   const [compatResult, setCompatResult] = useState<any>(null)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportResult, setReportResult] = useState<any>(null)
   const [submitting, setSubmitting] = useState(false)
   const [planForm] = Form.useForm()
   const [compatForm] = Form.useForm()
@@ -81,6 +86,12 @@ const UpgradeManage: React.FC = () => {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    if (!history.some((item) => activeUpgradeStatuses.has((item.status || '').toLowerCase()))) return
+    const timer = window.setInterval(loadData, 5000)
+    return () => window.clearInterval(timer)
+  }, [history])
 
   const instanceOptions = useMemo(
     () => instances.map((i) => ({
@@ -182,8 +193,42 @@ const UpgradeManage: React.FC = () => {
     }
   }
 
+  const showReport = async (record: UpgradeHistory) => {
+    setReportOpen(true)
+    setReportLoading(true)
+    setReportResult(null)
+    try {
+      const res: any = await upgradeApi.getReport(record.id)
+      setReportResult(res?.data || null)
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err?.message || '加载升级报告失败')
+      setReportOpen(false)
+    } finally {
+      setReportLoading(false)
+    }
+  }
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 150, ellipsis: true },
+    {
+      title: '信息',
+      dataIndex: 'message',
+      key: 'message',
+      width: 260,
+      ellipsis: true,
+      render: (v: string) => v || '-',
+    },
+    {
+      title: '操作',
+      key: 'action',
+      fixed: 'right' as const,
+      width: 120,
+      render: (_: any, record: UpgradeHistory) => (
+        <Button size="small" icon={<FileTextOutlined />} onClick={() => showReport(record)}>
+          报告
+        </Button>
+      ),
+    },
     { title: '实例', dataIndex: 'instance_name', key: 'instance_name', render: (v: string, r: UpgradeHistory) => v || r.instance_id },
     { title: '类型', dataIndex: 'upgrade_type', key: 'upgrade_type', render: (v: string) => <Tag>{v || '-'}</Tag> },
     {
@@ -340,6 +385,50 @@ const UpgradeManage: React.FC = () => {
             <InputNumber min={30} max={3600} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="升级报告"
+        open={reportOpen}
+        onCancel={() => setReportOpen(false)}
+        footer={<Button onClick={() => setReportOpen(false)}>关闭</Button>}
+        width={760}
+      >
+        <Spin spinning={reportLoading}>
+          {reportResult ? (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              <Descriptions size="small" bordered column={1}>
+                <Descriptions.Item label="报告 ID">{reportResult.report_id || '-'}</Descriptions.Item>
+                <Descriptions.Item label="任务 / 计划 ID">{reportResult.plan_id || '-'}</Descriptions.Item>
+                <Descriptions.Item label="生成时间">{reportResult.generated_at || '-'}</Descriptions.Item>
+                <Descriptions.Item label="摘要">{reportResult.summary || '-'}</Descriptions.Item>
+                <Descriptions.Item label="详情">{reportResult.details || '-'}</Descriptions.Item>
+              </Descriptions>
+              <Descriptions size="small" bordered column={2} title="指标">
+                <Descriptions.Item label="耗时(秒)">{reportResult.metrics?.duration_seconds ?? 0}</Descriptions.Item>
+                <Descriptions.Item label="错误">{reportResult.metrics?.errors_encountered ?? 0}</Descriptions.Item>
+                <Descriptions.Item label="警告">{reportResult.metrics?.warnings_generated ?? 0}</Descriptions.Item>
+                <Descriptions.Item label="表数量">{reportResult.metrics?.tables_processed ?? 0}</Descriptions.Item>
+              </Descriptions>
+              {(reportResult.issues || []).map((item: any, index: number) => (
+                <Alert
+                  key={index}
+                  type={item.severity === 'error' ? 'error' : 'warning'}
+                  message={`${item.type || '问题'}: ${item.description || '-'}`}
+                  description={`是否解决=${item.resolved ? '是' : '否'} ${item.timestamp || ''}`}
+                />
+              ))}
+              {(reportResult.recommendations || []).length > 0 && (
+                <Card size="small" title="建议">
+                  {(reportResult.recommendations || []).map((item: string, index: number) => (
+                    <Paragraph key={index}>{item}</Paragraph>
+                  ))}
+                </Card>
+              )}
+            </Space>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </Spin>
       </Modal>
     </div>
   )
