@@ -27,6 +27,7 @@ import (
 const (
 	agentSSHCommandTimeout = 30 * time.Second
 	agentUploadTimeout     = 90 * time.Second
+	agentActionTimeout     = 4 * time.Minute
 )
 
 type HostService struct {
@@ -274,7 +275,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
 			return result, nil
 		}
-		if out, err := runSSH(client, agentStartCommand(port, s.agentToken)); err != nil {
+		if out, err := runSSH(client, agentStopCommand()+"\n"+agentStartCommand(port, s.agentToken)); err != nil {
 			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
 			return result, nil
 		}
@@ -283,7 +284,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
 			return result, nil
 		}
-		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true\n"+agentStartCommand(port, s.agentToken)); err != nil {
+		if out, err := runSSH(client, agentStopCommand()+"\n"+agentStartCommand(port, s.agentToken)); err != nil {
 			result.Message = fmt.Sprintf("restart agent failed: %v\n%s", err, out)
 			return result, nil
 		}
@@ -293,12 +294,12 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			return result, nil
 		}
 	case "stop":
-		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true"); err != nil {
+		if out, err := runSSH(client, agentStopCommand()); err != nil {
 			result.Message = fmt.Sprintf("stop agent failed: %v\n%s", err, out)
 			return result, nil
 		}
 	case "delete", "remove":
-		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true\nrm -rf /opt/dbops-agent"); err != nil {
+		if out, err := runSSH(client, agentStopCommand()+"\nrm -rf /opt/dbops-agent"); err != nil {
 			result.Message = fmt.Sprintf("delete agent failed: %v\n%s", err, out)
 			return result, nil
 		}
@@ -338,7 +339,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			actionCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			actionCtx, cancel := context.WithTimeout(ctx, agentActionTimeout)
 			defer cancel()
 			row, err := s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: req.Action})
 			if err != nil {
@@ -413,7 +414,7 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	}
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
-	if err := session.Start("cat > /opt/dbops-agent/agent && chmod +x /opt/dbops-agent/agent"); err != nil {
+	if err := session.Start("cat > /opt/dbops-agent/agent.new && chmod +x /opt/dbops-agent/agent.new && mv -f /opt/dbops-agent/agent.new /opt/dbops-agent/agent"); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
@@ -481,7 +482,11 @@ func agentConfigCommand(port int, token string) string {
 }
 
 func agentStartCommand(port int, token string) string {
-	return fmt.Sprintf("cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null &) && sleep 0.2 && echo started", shellEscape(token))
+	return fmt.Sprintf("cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 0.2 && echo started", shellEscape(token))
+}
+
+func agentStopCommand() string {
+	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); if [ \"$exe\" = \"/opt/dbops-agent/agent\" ]; then kill \"${p##*/}\" 2>/dev/null || true; fi; done"
 }
 
 func shellEscape(value string) string {

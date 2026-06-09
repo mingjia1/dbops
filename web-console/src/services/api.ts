@@ -168,7 +168,7 @@ export const instanceApi = {
     api.post(`/instances/${id}/deploy`),
 
   healthCheck: (id: string) =>
-    api.post(`/instances/${id}/health-check`),
+    api.post(`/instances/${id}/health-check`, {}, { timeout: 60000 }),
 
   adminAction: (id: string, data: {
     action: string
@@ -281,10 +281,10 @@ export const hostApi = {
     api.post(`/hosts/${id}/test`),
 
   agentAction: (id: string, action: string, agentPort?: number) =>
-    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, { timeout: 180000 }),
+    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, { timeout: 300000 }),
 
   batchAgentAction: (hostIds: string[], action: string) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action }, { timeout: 180000 }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action }, { timeout: 300000 }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

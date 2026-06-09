@@ -23,6 +23,11 @@ const parseBatchInstances = (text: string) => {
   }).filter((item) => item.host && item.port)
 }
 
+const isFailedTaskStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -166,9 +171,10 @@ const InstanceList: React.FC = () => {
     for (const instance of selected) {
       try {
         const res: any = await instanceApi.healthCheck(instance.id)
-        if (res?.data?.status === 'failed') {
+        const task = res?.data
+        if (!task || isFailedTaskStatus(task.status)) {
           failed += 1
-          failedRows.push(`${instance.name}: ${res?.data?.message || '检测失败'}`)
+          failedRows.push(`${instance.name}: ${task?.message || '检测失败'}`)
         } else {
           ok += 1
         }

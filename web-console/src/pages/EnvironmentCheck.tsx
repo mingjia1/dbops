@@ -51,6 +51,11 @@ interface CheckResult {
 
 type Mode = 'from-hosts' | 'manual'
 
+const isFailedAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return normalized !== 'success'
+}
+
 const EnvironmentCheck: React.FC = () => {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
@@ -116,22 +121,28 @@ const EnvironmentCheck: React.FC = () => {
     try {
       const res: any = await hostApi.batchAgentAction(selectedHosts, 'install')
       const data = res?.data
-      if ((data?.failed || 0) > 0) {
+      const rows = data?.rows || []
+      const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))
+      if ((data?.failed || 0) > 0 || failedRows.length > 0) {
         Modal.warning({
-          title: `Agent install completed: success ${data?.success ?? 0}, failed ${data?.failed ?? 0}`,
+          title: `Agent 安装完成：成功 ${data?.success ?? 0} 个，失败 ${data?.failed ?? failedRows.length} 个`,
           content: (
             <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-              {(data?.rows || [])
-                .filter((row: any) => row.status !== 'success')
+              {failedRows
                 .map((row: any) => `${row.host_name || row.host_id}: ${row.message || 'install failed'}`)
                 .join('\n')}
             </div>
           ),
         })
       } else {
-        message.success(`Agent install completed: success ${data?.success ?? 0}`)
+        message.success(`Agent 安装完成：成功 ${data?.success ?? 0}`)
       }
       fetchHosts()
+    } catch (err: any) {
+      Modal.error({
+        title: 'Agent 安装请求失败',
+        content: err?.response?.data?.message || err?.message || '请求失败',
+      })
     } finally {
       setSubmitting(false)
     }
