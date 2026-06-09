@@ -24,6 +24,11 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
+const (
+	agentSSHCommandTimeout = 30 * time.Second
+	agentUploadTimeout     = 90 * time.Second
+)
+
 type HostService struct {
 	repo         *repositories.HostRepository
 	instanceRepo *repositories.InstanceRepository
@@ -322,20 +327,34 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 		Total: len(req.HostIDs),
 		Rows:  make([]HostAgentActionResult, 0, len(req.HostIDs)),
 	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for _, hostID := range req.HostIDs {
-		row, err := s.AgentAction(ctx, hostID, HostAgentActionRequest{Action: req.Action})
-		if err != nil {
-			result.Failed++
-			result.Rows = append(result.Rows, HostAgentActionResult{HostID: hostID, Action: req.Action, Status: "failed", Message: err.Error()})
-			continue
-		}
-		if row.Status == "success" {
-			result.Success++
-		} else {
-			result.Failed++
-		}
-		result.Rows = append(result.Rows, *row)
+		hostID := hostID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			actionCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			row, err := s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: req.Action})
+			if err != nil {
+				row = &HostAgentActionResult{HostID: hostID, Action: req.Action, Status: "failed", Message: err.Error()}
+			}
+			mu.Lock()
+			if row.Status == "success" {
+				result.Success++
+			} else {
+				result.Failed++
+			}
+			result.Rows = append(result.Rows, *row)
+			mu.Unlock()
+		}()
 	}
+	wg.Wait()
 	return result, nil
 }
 
@@ -397,13 +416,24 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	if err := session.Start("cat > /opt/dbops-agent/agent && chmod +x /opt/dbops-agent/agent"); err != nil {
 		return err
 	}
-	if _, err := stdin.Write(data); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		if _, err := stdin.Write(data); err != nil {
+			_ = stdin.Close()
+			done <- err
+			return
+		}
 		_ = stdin.Close()
-		return err
-	}
-	_ = stdin.Close()
-	if err := session.Wait(); err != nil {
-		return fmt.Errorf("upload agent binary failed: %w %s", err, strings.TrimSpace(stderr.String()))
+		done <- session.Wait()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("upload agent binary failed: %w %s", err, strings.TrimSpace(stderr.String()))
+		}
+	case <-time.After(agentUploadTimeout):
+		_ = session.Close()
+		return fmt.Errorf("upload agent binary timed out after %s", agentUploadTimeout)
 	}
 	return nil
 }
@@ -433,8 +463,17 @@ func runSSH(client *ssh.Client, command string) (string, error) {
 	var out bytes.Buffer
 	session.Stdout = &out
 	session.Stderr = &out
-	err = session.Run(command)
-	return out.String(), err
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(command)
+	}()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(agentSSHCommandTimeout):
+		_ = session.Close()
+		return out.String(), fmt.Errorf("ssh command timed out after %s", agentSSHCommandTimeout)
+	}
 }
 
 func agentConfigCommand(port int, token string) string {
@@ -442,7 +481,7 @@ func agentConfigCommand(port int, token string) string {
 }
 
 func agentStartCommand(port int, token string) string {
-	return fmt.Sprintf("cd /opt/dbops-agent && nohup env DBOPS_AGENT_TOKEN='%s' ./agent > agent.log 2>&1 &", shellEscape(token))
+	return fmt.Sprintf("cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null &) && sleep 0.2 && echo started", shellEscape(token))
 }
 
 func shellEscape(value string) string {

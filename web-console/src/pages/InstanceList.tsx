@@ -150,7 +150,8 @@ const InstanceList: React.FC = () => {
         // interceptor already showed error
       }
     }
-    message.success(`已提交 ${submitted} 个实例部署任务`)
+    if (submitted === selected.length) message.success(`已提交 ${submitted} 个 MySQL 实例部署任务`)
+    else message.warning(`部署任务提交完成，成功 ${submitted} 个，失败 ${selected.length - submitted} 个`)
   }
 
   const handleBatchHealthCheck = async () => {
@@ -161,16 +162,33 @@ const InstanceList: React.FC = () => {
     }
     let ok = 0
     let failed = 0
+    const failedRows: string[] = []
     for (const instance of selected) {
       try {
         const res: any = await instanceApi.healthCheck(instance.id)
-        if (res?.data?.status === 'failed') failed += 1
-        else ok += 1
-      } catch {
+        if (res?.data?.status === 'failed') {
+          failed += 1
+          failedRows.push(`${instance.name}: ${res?.data?.message || '检测失败'}`)
+        } else {
+          ok += 1
+        }
+      } catch (err: any) {
         failed += 1
+        failedRows.push(`${instance.name}: ${err?.response?.data?.message || err?.message || '请求失败'}`)
       }
     }
-    message.success(`检测完成，成功 ${ok} 个，失败 ${failed} 个`)
+    if (failed > 0) {
+      Modal.warning({
+        title: `检测完成，成功 ${ok} 个，失败 ${failed} 个`,
+        content: (
+          <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+            {failedRows.join('\n')}
+          </div>
+        ),
+      })
+    } else {
+      message.success(`检测完成，成功 ${ok} 个`)
+    }
     fetchInstances()
   }
 
