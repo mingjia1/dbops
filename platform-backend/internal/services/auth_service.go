@@ -16,16 +16,22 @@ import (
 
 type AuthService struct {
 	userRepo    *repositories.UserRepository
+	auditSvc    *AuditService
 	db          interface{}
 	standalone  bool
 	jwtSecret   string
 	tokenExpiry time.Duration
 }
 
-func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string) *AuthService {
+func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string, auditSvc ...*AuditService) *AuthService {
 	var db interface{} = userRepo
+	var audit *AuditService
+	if len(auditSvc) > 0 {
+		audit = auditSvc[0]
+	}
 	return &AuthService{
 		userRepo:    userRepo,
+		auditSvc:    audit,
 		db:          db,
 		standalone:  userRepo == nil,
 		jwtSecret:   jwtSecret,
@@ -205,7 +211,11 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	return s.userRepo.UpdatePassword(ctx, userID, string(hash))
+	if err := s.userRepo.UpdatePassword(ctx, userID, string(hash)); err != nil {
+		return err
+	}
+	s.auditAuth(ctx, "change_password", "change_password", "user", userID, "success", "", "user changed own password")
+	return nil
 }
 
 func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswordsRequest) (int64, error) {
@@ -216,7 +226,28 @@ func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswor
 	if err != nil {
 		return 0, fmt.Errorf("hash password: %w", err)
 	}
-	return s.userRepo.UpdateAllPasswords(ctx, string(hash))
+	updated, err := s.userRepo.UpdateAllPasswords(ctx, string(hash))
+	if err != nil {
+		return 0, err
+	}
+	s.auditAuth(ctx, "reset_all_passwords", "reset_password", "user", "all", "success", "", fmt.Sprintf("updated_count=%d", updated))
+	return updated, nil
+}
+
+func (s *AuthService) auditAuth(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details string) {
+	if s.auditSvc == nil {
+		return
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    operation,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Action:       action,
+		Details:      details,
+		Result:       result,
+		ErrorMsg:     errorMsg,
+	})
 }
 
 func (s *AuthService) Register(ctx context.Context, username, password, email, role string) error {

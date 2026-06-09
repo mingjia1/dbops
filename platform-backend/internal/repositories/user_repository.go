@@ -130,8 +130,18 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `UPDATE users SET password = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
-	return err
+	res, err := r.db.Pool.ExecContext(ctx, `UPDATE users SET password = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 func (r *UserRepository) UpdateAllPasswords(ctx context.Context, passwordHash string) (int64, error) {

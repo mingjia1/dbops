@@ -83,7 +83,9 @@ func main() {
 
 	var userRepo *repositories.UserRepository
 	userRepo = repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
+	auditRepo := repositories.NewAuditLogRepository(db)
+	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	authService := services.NewAuthService(userRepo, cfg.JWTSecret, auditService)
 	authController := controllers.NewAuthController(authService)
 
 	// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
@@ -107,8 +109,6 @@ func main() {
 	hostRepo.AttachStore(jsonStore)
 	agentClient := services.NewAgentClient(cfg.AgentToken)
 	// P0: 提前建 auditService, 让 instanceService/hostService 等可注入.
-	auditRepo := repositories.NewAuditLogRepository(db)
-	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey, cfg.AgentToken)
