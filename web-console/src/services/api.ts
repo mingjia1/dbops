@@ -394,13 +394,13 @@ export const backupApi = {
     api.delete(`/backups/policies/${id}`),
 
   executeBackup: (instanceId: string, backupType: string, policyId?: string) =>
-    api.post('/backups', { instance_id: instanceId, backup_type: backupType, policy_id: policyId }, { timeout: 300000 }),
+    api.post('/backups', { instance_id: instanceId, backup_type: backupType, policy_id: policyId }, { timeout: 300000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   listBackups: (instanceId: string) =>
     api.get(`/backups?instance_id=${instanceId}`),
 
   restore: (data: { backup_id: string; target_instance_id: string; target_type?: string; confirm_overwrite?: boolean }) =>
-    api.post('/backups/restore', data),
+    api.post('/backups/restore', data).then(rejectBusinessError).then(rejectFailedTaskData),
 
   delete: (id: string) =>
     api.delete(`/backups/${id}`),
@@ -720,9 +720,9 @@ export const alertApi = {
 export const upgradeApi = {
   planPath: (data: any) => api.post('/upgrades/plan', data),
   checkCompat: (data: any) => api.post('/upgrades/check', data),
-  executeInPlace: (data: any) => api.post('/upgrades/in-place', data),
-  executeLogical: (data: any) => api.post('/upgrades/logical', data),
-  executeRolling: (data: any) => api.post('/upgrades/rolling', data),
+  executeInPlace: (data: any) => api.post('/upgrades/in-place', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  executeLogical: (data: any) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  executeRolling: (data: any) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
   listHistory: () => api.get('/upgrades'),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`),
   get: (id: string) => api.get(`/upgrades/${id}`),
@@ -756,11 +756,11 @@ export const versionApi = {
 }
 
 export const migrationApi = {
-  createPhysical: (data: any) => api.post('/migrations/physical', data),
-  createReplication: (data: any) => api.post('/migrations/replication', data),
-  createGTID: (data: any) => api.post('/migrations/gtid', data),
-  verify: (taskId: string) => api.post(`/migrations/${taskId}/verify`),
-  switchover: (taskId: string) => api.post(`/migrations/${taskId}/switch`),
+  createPhysical: (data: any) => api.post('/migrations/physical', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  createReplication: (data: any) => api.post('/migrations/replication', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  createGTID: (data: any) => api.post('/migrations/gtid', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  verify: (taskId: string) => api.post(`/migrations/${taskId}/verify`).then(rejectBusinessError).then(rejectFailedTaskData),
+  switchover: (taskId: string) => api.post(`/migrations/${taskId}/switch`).then(rejectBusinessError).then(rejectFailedTaskData),
   cancel: (taskId: string) => api.post(`/migrations/${taskId}/cancel`),
   list: () => api.get('/migrations'),
   get: (taskId: string) => api.get(`/migrations/${taskId}`),
@@ -768,10 +768,10 @@ export const migrationApi = {
 
 export const clusterDeployApi = {
   list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
-  deployHA: (data: any) => api.post('/deployments/ha', data),
-  deployMHA: (data: any) => api.post('/deployments/mha', data),
-  deployMGR: (data: any) => api.post('/deployments/mgr', data),
-  deployPXC: (data: any) => api.post('/deployments/pxc', data),
+  deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployMGR: (data: any) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployPXC: (data: any) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (id: string) => api.get(`/deployments/${id}`),
   destroy: (id: string) => api.delete(`/deployments/${id}`),
 }
@@ -780,15 +780,15 @@ export const haApi = {
   healthCheck: (data: any) => api.post('/ha/health/batch', data),
   detectFailure: (instanceId: string) => api.get(`/ha/health/detect?instance_id=${instanceId}`),
   getFailureState: (instanceId: string) => api.get(`/ha/health/failure-state?instance_id=${instanceId}`),
-  autoFailover: (data: any) => api.post('/ha/failover', data),
-  manualSwitch: (data: any) => api.post('/ha/manual-switch', data),
+  autoFailover: (data: any) => api.post('/ha/failover', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  manualSwitch: (data: any) => api.post('/ha/manual-switch', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (clusterId: string, limit = 10) =>
     api.get(`/ha/status?cluster_id=${clusterId}&limit=${limit}`),
 }
 
 export const roleSwitchApi = {
   switch: (data: { cluster_id: string; instance_id: string; target_role: string; old_master_id?: string }) =>
-    api.post('/switch/cluster/role', data),
+    api.post('/switch/cluster/role', data).then(rejectBusinessError).then(rejectFailedTaskData),
   history: (clusterId: string, limit = 20) =>
     api.get(`/switch/cluster/${clusterId}/role-history?limit=${limit}`),
 }
