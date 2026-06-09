@@ -372,6 +372,36 @@ var InitialSchema = []string{
 		INDEX idx_audit_action (action),
 		INDEX idx_audit_created (created_at)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// Version-agnostic install/upgrade and operational history fields.
+	// Keep these ALTER statements idempotent via RunMigrations duplicate-column handling
+	// so existing MySQL deployments are upgraded in place.
+	`ALTER TABLE instance_connections ADD COLUMN basedir VARCHAR(255) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN datadir VARCHAR(255) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN os_user VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN package_url VARCHAR(1024) DEFAULT ''`,
+	`ALTER TABLE instance_connections ADD COLUMN version_id VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE backup_records ADD COLUMN message TEXT`,
+	`ALTER TABLE backup_records ADD COLUMN task_id VARCHAR(128) DEFAULT ''`,
+	`CREATE TABLE IF NOT EXISTS role_switch_history (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		cluster_type VARCHAR(32) NOT NULL DEFAULT 'mha',
+		instance_id VARCHAR(64) NOT NULL DEFAULT '',
+		instance_host VARCHAR(255) NOT NULL DEFAULT '',
+		old_role VARCHAR(32) NOT NULL DEFAULT '',
+		new_role VARCHAR(32) NOT NULL DEFAULT '',
+		old_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		new_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		rebuilt_replicas TEXT,
+		status VARCHAR(32) NOT NULL DEFAULT 'completed',
+		message TEXT,
+		started_at TIMESTAMP NULL,
+		completed_at TIMESTAMP NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_rsh_cluster (cluster_id, created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
