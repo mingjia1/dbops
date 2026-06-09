@@ -57,6 +57,11 @@ const isCompletedBackupStatus = (status?: string) => {
   return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
 }
 
+const isActiveBackupStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['pending', 'running', 'submitted', 'accepted', 'queued'].includes(normalized)
+}
+
 const BackupManage: React.FC = () => {
   const [tab, setTab] = useState('records')
   const [instances, setInstances] = useState<Instance[]>([])
@@ -83,6 +88,12 @@ const BackupManage: React.FC = () => {
   useEffect(() => {
     fetchRecords()
   }, [selectedInstance])
+
+  useEffect(() => {
+    if (!selectedInstance || !records.some((record) => isActiveBackupStatus(record.status))) return
+    const timer = window.setInterval(() => fetchRecordsFor(selectedInstance), 5000)
+    return () => window.clearInterval(timer)
+  }, [selectedInstance, records])
 
   const fetchRecords = async () => {
     if (!selectedInstance) {
@@ -296,7 +307,7 @@ const BackupManage: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={status === 'completed' ? 'success' : status === 'running' ? 'processing' : 'error'}>
+        <Tag color={isCompletedBackupStatus(status) ? 'success' : isActiveBackupStatus(status) ? 'processing' : isFailedBackupStatus(status) ? 'error' : 'default'}>
           {formatStatus(status)}
         </Tag>
       ),
