@@ -367,13 +367,16 @@ func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo
 		"cluster_type":     clusterType,
 	}
 
-	_, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-promote", map[string]interface{}{
+	result, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-promote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
 		"instance_id": req.InstanceID,
 		"cluster_id":  req.ClusterID,
 		"config":      config,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return switchAgentTaskError("promote instance", result)
 }
 
 func (s *SwitchService) demoteInstance(ctx context.Context, host *AgentHostInfo, clusterType string, req RoleSwitchRequest) error {
@@ -390,13 +393,16 @@ func (s *SwitchService) demoteInstance(ctx context.Context, host *AgentHostInfo,
 		"cluster_type":     clusterType,
 	}
 
-	_, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-demote", map[string]interface{}{
+	result, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-demote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
 		"instance_id": req.InstanceID,
 		"cluster_id":  req.ClusterID,
 		"config":      config,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return switchAgentTaskError("demote instance", result)
 }
 
 func (s *SwitchService) demoteOldMaster(ctx context.Context, clusterID, oldMasterID, clusterType string) error {
@@ -419,13 +425,16 @@ func (s *SwitchService) demoteOldMaster(ctx context.Context, clusterID, oldMaste
 		"cluster_type": clusterType,
 	}
 
-	_, err = s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-demote", map[string]interface{}{
+	result, err := s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-demote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
 		"instance_id": oldMasterID,
 		"cluster_id":  clusterID,
 		"config":      config,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return switchAgentTaskError("demote old master", result)
 }
 
 func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, newMasterID, oldMasterID, clusterType string) ([]string, error) {
@@ -456,17 +465,35 @@ func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, n
 			"cluster_type":  clusterType,
 		}
 
-		_, err = s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-replica-rebuild", map[string]interface{}{
+		result, err := s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-replica-rebuild", map[string]interface{}{
 			"task_id":     uuid.New().String(),
 			"instance_id": inst.ID,
 			"cluster_id":  clusterID,
 			"config":      config,
 		})
-		if err == nil {
+		if err == nil && switchAgentTaskError("rebuild replica", result) == nil {
 			rebuilt = append(rebuilt, inst.ID)
 		}
 	}
 	return rebuilt, nil
+}
+
+func switchAgentTaskError(action string, result *AgentTaskResult) error {
+	if result == nil {
+		return fmt.Errorf("%s returned empty result", action)
+	}
+	status := strings.ToLower(strings.TrimSpace(result.Status))
+	if isSuccessfulTaskStatus(status) {
+		return nil
+	}
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = status
+	}
+	if message == "" {
+		message = "empty status"
+	}
+	return fmt.Errorf("%s did not complete: %s", action, message)
 }
 
 func (s *SwitchService) listClusterInstances(ctx context.Context, clusterID string) ([]*models.Instance, error) {

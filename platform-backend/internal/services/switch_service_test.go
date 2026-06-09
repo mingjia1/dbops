@@ -20,9 +20,11 @@ import (
 
 // agentStub is a programmable Agent stub used by SwitchService tests.
 type agentStub struct {
-	server   *httptest.Server
-	calls    []agentStubCall
-	failPath string
+	server        *httptest.Server
+	calls         []agentStubCall
+	failPath      string
+	statusByPath  map[string]string
+	messageByPath map[string]string
 }
 
 type agentStubCall struct {
@@ -31,7 +33,7 @@ type agentStubCall struct {
 }
 
 func newAgentStub() *agentStub {
-	s := &agentStub{}
+	s := &agentStub{statusByPath: map[string]string{}, messageByPath: map[string]string{}}
 	mux := http.NewServeMux()
 
 	handler := func() http.HandlerFunc {
@@ -43,14 +45,22 @@ func newAgentStub() *agentStub {
 				http.Error(w, "agent failure", http.StatusInternalServerError)
 				return
 			}
+			status := "completed"
+			if configured := s.statusByPath[r.URL.Path]; configured != "" {
+				status = configured
+			}
+			message := "stub ok"
+			if configured := s.messageByPath[r.URL.Path]; configured != "" {
+				message = configured
+			}
 			resp := map[string]interface{}{
 				"code":    200,
 				"message": "success",
 				"data": map[string]interface{}{
 					"task_id":  "stub-task",
-					"status":   "completed",
+					"status":   status,
 					"progress": 100,
-					"message":  "stub ok",
+					"message":  message,
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -188,6 +198,37 @@ func TestSwitchRoleWithinCluster_PromoteMHASlaveToMaster(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, history, 1)
 	assert.Equal(t, "inst-new-master", history[0].InstanceID)
+}
+
+func TestSwitchRoleWithinClusterAgentFailedStatusDoesNotComplete(t *testing.T) {
+	ctx := context.Background()
+	svc, stub, _, instRepo, _ := newTestSwitchService(t)
+	defer stub.Close()
+	stub.statusByPath["/agent/tasks/role-promote"] = "failed"
+	stub.messageByPath["/agent/tasks/role-promote"] = "promotion rejected"
+
+	inst, err := instRepo.GetByID(ctx, "inst-new-master")
+	require.NoError(t, err)
+	inst.Status.Role = "slave"
+	inst.Topology.MasterID = "inst-old-master"
+	require.NoError(t, instRepo.Update(ctx, inst))
+
+	result, err := svc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
+		ClusterID:   "cluster-1",
+		InstanceID:  "inst-new-master",
+		TargetRole:  "master",
+		OldMasterID: "inst-old-master",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "promotion rejected")
+	history, err := svc.ListRoleSwitchHistory(ctx, "cluster-1", 10)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "failed", history[0].Status)
+	assert.Contains(t, history[0].Message, "promotion rejected")
 }
 
 func TestSwitchRoleWithinClusterWritesAuditLog(t *testing.T) {
