@@ -61,6 +61,13 @@ const isSubmittedAgentStatus = (status?: string) => {
   return ['submitted', 'pending', 'running'].includes(normalized)
 }
 
+const summarizeCheckFailures = (items: CheckItem[]) =>
+  items
+    .filter((item) => !item.passed)
+    .slice(0, 20)
+    .map((item) => `${item.category}/${item.name}: ${item.value || item.status}${item.suggestion ? ` - ${item.suggestion}` : ''}`)
+    .join('\n')
+
 const formatTimeoutLabel = (err: any) => {
   const configured = err?.config?.timeout
   if (typeof configured === 'number' && configured > 0) return `${Math.round(configured / 1000)}s`
@@ -124,8 +131,23 @@ const EnvironmentCheck: React.FC = () => {
     setSubmitting(true)
     try {
       const res: any = await envCheckApi.execute(payload)
-      setResult(res?.data || null)
-      message.success('环境检查完成')
+      const data = res?.data || null
+      setResult(data)
+      const results = data?.results || []
+      const failedItems = results.filter((item: CheckItem) => !item.passed)
+      if (failedItems.length > 0) {
+        Modal.warning({
+          title: `环境检查完成，${failedItems.length} 项未通过`,
+          content: (
+            <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+              {summarizeCheckFailures(results) || '存在未通过检查项，请查看下方明细。'}
+              {failedItems.length > 20 && <div style={{ marginTop: 12 }}>仅显示前 20 项，完整结果请查看下方明细。</div>}
+            </div>
+          ),
+        })
+      } else {
+        message.success('环境检查通过')
+      }
     } finally {
       setSubmitting(false)
     }
