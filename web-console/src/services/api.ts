@@ -106,6 +106,12 @@ export const authApi = {
   
   register: (username: string, password: string, email: string, role: string) =>
     api.post('/auth/register', { username, password, email, role }),
+
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    api.post('/auth/change-password', data),
+
+  resetAllPasswords: (newPassword: string) =>
+    api.post('/auth/reset-all-passwords', { new_password: newPassword }),
 }
 
 export const instanceApi = {

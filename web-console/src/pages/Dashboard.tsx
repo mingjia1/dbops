@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { Layout, Menu, Dropdown, Avatar, Space, Typography, Switch, Tooltip } from 'antd'
+import { Layout, Menu, Dropdown, Avatar, Space, Typography, Switch, Tooltip, Modal, Form, Input, message } from 'antd'
 import { BulbOutlined, BulbFilled } from '@ant-design/icons'
 import { getStoredThemeMode, type ThemeMode } from '../appTheme'
+import { authApi } from '../services/api'
 import './Dashboard.css'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -20,6 +21,10 @@ const Dashboard: React.FC = () => {
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
   const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([])
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
+  const [passwordForm] = Form.useForm()
+  const [resetForm] = Form.useForm()
 
   useEffect(() => {
     try {
@@ -28,9 +33,6 @@ const Dashboard: React.FC = () => {
     } catch { /* ignore */ }
   }, [])
 
-  // P0: 之前只改 <html data-theme> + localStorage, ConfigProvider 不重渲.
-  // 修: 派发 'app:theme-change' CustomEvent, ThemeRoot (main.tsx) 监听到后
-  // 调 setMode + 重渲 ConfigProvider, 这样 antd Button/Table/Card 全部跟着切.
   const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
   const toggleTheme = (checked: boolean) => {
     const next: ThemeMode = checked ? 'dark' : 'light'
@@ -42,6 +44,34 @@ const Dashboard: React.FC = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     navigate('/login', { replace: true })
+  }
+
+  const submitChangePassword = async () => {
+    const values = await passwordForm.validateFields()
+    if (values.new_password !== values.confirm_password) {
+      message.error('两次输入的密码不一致')
+      return
+    }
+    await authApi.changePassword({
+      current_password: values.current_password,
+      new_password: values.new_password,
+    })
+    message.success('密码已修改，请重新登录')
+    setPasswordOpen(false)
+    passwordForm.resetFields()
+    handleLogout()
+  }
+
+  const submitResetAllPasswords = async () => {
+    const values = await resetForm.validateFields()
+    if (values.new_password !== values.confirm_password) {
+      message.error('两次输入的密码不一致')
+      return
+    }
+    const res: any = await authApi.resetAllPasswords(values.new_password)
+    message.success(`已重置 ${res?.data?.updated ?? 0} 个用户密码`)
+    setResetOpen(false)
+    resetForm.resetFields()
   }
 
   const menuItems = [
@@ -56,7 +86,7 @@ const Dashboard: React.FC = () => {
         { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
       ],
     },
-    { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检测' },
+    { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
     { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
     { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
     { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
@@ -89,10 +119,6 @@ const Dashboard: React.FC = () => {
     return '/dashboard/home'
   })()
 
-  // P2: 之前用 defaultOpenKeys 只在 mount 时展开一次.
-  // 用户深链接到 /dashboard/hosts/:id 或 /dashboard/instances 后,
-  // antd Menu 4+ 不会自动展开 parent group (需要受控 openKeys).
-  // 修: 根据当前 path 反推应该展开的 parent, 用 openKeys (受控).
   const routeOpenKeys = (() => {
     for (const m of menuItems) {
       if ((m as any).children) {
@@ -110,10 +136,14 @@ const Dashboard: React.FC = () => {
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: `${user?.username || '用户'}` },
+      { key: 'change-password', label: '修改密码' },
+      ...(user?.role === 'admin' ? [{ key: 'reset-all-passwords', label: '重置所有用户密码' }] : []),
       { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
     ],
     onClick: ({ key }: { key: string }) => {
+      if (key === 'change-password') setPasswordOpen(true)
+      if (key === 'reset-all-passwords') setResetOpen(true)
       if (key === 'logout') handleLogout()
     },
   }
@@ -182,6 +212,45 @@ const Dashboard: React.FC = () => {
           <Outlet />
         </Content>
       </Layout>
+      <Modal
+        title="修改密码"
+        open={passwordOpen}
+        onCancel={() => setPasswordOpen(false)}
+        onOk={submitChangePassword}
+        okText="确认修改"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={passwordForm} layout="vertical" preserve={false}>
+          <Form.Item label="当前密码" name="current_password" rules={[{ required: true, message: '请输入当前密码' }]}>
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item label="新密码" name="new_password" rules={[{ required: true, min: 6, message: '新密码至少 6 位' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item label="确认新密码" name="confirm_password" rules={[{ required: true, message: '请再次输入新密码' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title="重置所有用户密码"
+        open={resetOpen}
+        onCancel={() => setResetOpen(false)}
+        onOk={submitResetAllPasswords}
+        okText="确认重置"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={resetForm} layout="vertical" preserve={false} initialValues={{ new_password: '123456', confirm_password: '123456' }}>
+          <Form.Item label="新密码" name="new_password" rules={[{ required: true, min: 6, message: '新密码至少 6 位' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item label="确认新密码" name="confirm_password" rules={[{ required: true, message: '请再次输入新密码' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Layout>
   )
 }

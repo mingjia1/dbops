@@ -72,6 +72,34 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
 }
 
+func (c *AuthController) ChangePassword(ctx *gin.Context) {
+	var req services.ChangePasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	userID := ctx.GetString("user_id")
+	if err := c.authService.ChangePassword(ctx.Request.Context(), userID, req); err != nil {
+		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{"message": "Password changed successfully"})
+}
+
+func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
+	var req services.ResetAllPasswordsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	updated, err := c.authService.ResetAllPasswords(ctx.Request.Context(), req)
+	if err != nil {
+		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{"updated": updated})
+}
+
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	// B1 (cookie): 优先读 Authorization header, fallback 到 HttpOnly cookie "auth_token".
 	// 这样无 cookie 老前端 / curl 还能用 Bearer, 而启用 cookie 的浏览器请求无需暴露 token.

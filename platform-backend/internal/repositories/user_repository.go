@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -123,6 +124,25 @@ func (r *UserRepository) Update(ctx context.Context, user *models.User) error {
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		user.Username, user.Password, user.Email, user.Role, user.Status, user.UpdatedAt, user.ID)
 	return err
+}
+
+func (r *UserRepository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `UPDATE users SET password = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
+	return err
+}
+
+func (r *UserRepository) UpdateAllPasswords(ctx context.Context, passwordHash string) (int64, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return 0, fmt.Errorf("database not available")
+	}
+	res, err := r.db.Pool.ExecContext(ctx, `UPDATE users SET password = ?, updated_at = ?`, passwordHash, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *UserRepository) Delete(ctx context.Context, id string) error {

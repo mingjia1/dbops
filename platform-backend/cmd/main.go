@@ -258,6 +258,12 @@ func main() {
 		// (db=nil 时 authService 处于 standalone 模式, Login 接受任意凭据, 但 ValidateToken 仍要求合法签名.)
 		protected.Use(authController.ValidateToken)
 		{
+			authProtected := protected.Group("/auth")
+			{
+				authProtected.POST("/change-password", authController.ChangePassword)
+				authProtected.POST("/reset-all-passwords", middleware.RequirePermission("admin"), authController.ResetAllPasswords)
+			}
+
 			instances := protected.Group("/instances")
 			{
 				instances.GET("", instanceController.List)

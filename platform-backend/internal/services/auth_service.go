@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -42,9 +43,18 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt int64     `json:"expires_at"`
-	User      UserInfo  `json:"user"`
+	Token     string   `json:"token"`
+	ExpiresAt int64    `json:"expires_at"`
+	User      UserInfo `json:"user"`
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=6"`
+}
+
+type ResetAllPasswordsRequest struct {
+	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
 type UserInfo struct {
@@ -98,7 +108,7 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	}
 
 	user, err := s.userRepo.GetByUsername(ctx, req.Username)
-	if err != nil {
+	if err != nil || user == nil {
 		return nil, errors.New("invalid credentials")
 	}
 
@@ -160,11 +170,11 @@ func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 
 func (s *AuthService) HasPermission(role, permission string) bool {
 	rolePermissions := map[string][]string{
-		"admin":    {"*"},
-		"dba":      {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
-		"operator": {"instance:view", "deploy:execute", "backup:execute", "restore:execute", "monitor:view"},
+		"admin":     {"*"},
+		"dba":       {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
+		"operator":  {"instance:view", "deploy:execute", "backup:execute", "restore:execute", "monitor:view"},
 		"developer": {"instance:view_own", "backup:apply", "monitor:view_own"},
-		"auditor":  {"instance:view", "monitor:view", "audit:view"},
+		"auditor":   {"instance:view", "monitor:view", "audit:view"},
 	}
 
 	permissions := rolePermissions[role]
@@ -177,6 +187,38 @@ func (s *AuthService) HasPermission(role, permission string) bool {
 }
 
 // Register P0-2: 真实实现 - bcrypt 哈希 + 写库, 不再是 no-op.
+func (s *AuthService) ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error {
+	if s.IsStandalone() || s.userRepo == nil {
+		return errors.New("password change is not available in standalone mode")
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+		return errors.New("current password is incorrect")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	return s.userRepo.UpdatePassword(ctx, userID, string(hash))
+}
+
+func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswordsRequest) (int64, error) {
+	if s.IsStandalone() || s.userRepo == nil {
+		return 0, errors.New("password reset is not available in standalone mode")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, fmt.Errorf("hash password: %w", err)
+	}
+	return s.userRepo.UpdateAllPasswords(ctx, string(hash))
+}
+
 func (s *AuthService) Register(ctx context.Context, username, password, email, role string) error {
 	if s.IsStandalone() || s.userRepo == nil {
 		return errors.New("registration is not available in standalone mode")
