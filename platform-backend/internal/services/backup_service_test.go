@@ -440,7 +440,7 @@ func TestExecuteIncrementalBackupUsesFullBackupReturnedAsSuccess(t *testing.T) {
 }
 
 func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {
-	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-001","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"},{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"}]}}}`
+	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-001","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","is_dir":true,"complete":true,"detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"},{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","is_dir":true,"complete":true,"detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"}]}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/agent/tasks/backup-scan", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
@@ -570,7 +570,7 @@ func TestScanBackupsWithoutAgentClientReturnsErrorWithoutRecords(t *testing.T) {
 }
 
 func TestScanBackupsOnlyRegistersCompleteDiscoveries(t *testing.T) {
-	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-complete","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"missing-path.xbstream","size_bytes":2048,"backup_type":"full"},{"file_name":"unknown-type.bin","file_path":"/backup/mysql/unknown-type.bin","size_bytes":2048,"backup_type":"snapshot"},{"file_name":"full-002.xbstream","file_path":"/backup/mysql/full-002.xbstream","size_bytes":4096},{"file_name":"schema-dump.sql.gz","file_path":"/backup/mysql/schema-dump.sql.gz","size_bytes":1024}]}}}`
+	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-complete","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"missing-path.xbstream","size_bytes":2048,"backup_type":"full"},{"file_name":"unknown-type.bin","file_path":"/backup/mysql/unknown-type.bin","size_bytes":2048,"backup_type":"snapshot"},{"file_name":"legacy-dir","file_path":"/backup/mysql/legacy-dir","size_bytes":4096,"backup_type":"full","is_dir":true},{"file_name":"full-002.xbstream.partial","file_path":"/backup/mysql/full-002.xbstream.partial","size_bytes":4096},{"file_name":"full-002.xbstream","file_path":"/backup/mysql/full-002.xbstream","size_bytes":4096},{"file_name":"schema-dump.sql.gz","file_path":"/backup/mysql/schema-dump.sql.gz","size_bytes":1024},{"file_name":"full-003","file_path":"/backup/mysql/full-003","size_bytes":8192,"backup_type":"full","is_dir":true,"complete":true}]}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/backup-scan", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
@@ -606,13 +606,13 @@ func TestScanBackupsOnlyRegistersCompleteDiscoveries(t *testing.T) {
 	result, err := service.ScanBackups(context.Background(), "instance-complete-scan")
 
 	require.NoError(t, err)
-	require.Len(t, result.Backups, 2)
+	require.Len(t, result.Backups, 3)
 	assert.Equal(t, "full", result.Backups[0].BackupType)
 	assert.Equal(t, "logical", result.Backups[1].BackupType)
 	records, err := service.ListBackups(context.Background(), "instance-complete-scan")
 	require.NoError(t, err)
-	require.Len(t, records, 2)
-	assert.ElementsMatch(t, []string{"/backup/mysql/schema-dump.sql.gz", "/backup/mysql/full-002.xbstream"}, []string{records[0].FilePath, records[1].FilePath})
+	require.Len(t, records, 3)
+	assert.ElementsMatch(t, []string{"/backup/mysql/schema-dump.sql.gz", "/backup/mysql/full-002.xbstream", "/backup/mysql/full-003"}, []string{records[0].FilePath, records[1].FilePath, records[2].FilePath})
 }
 
 func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {

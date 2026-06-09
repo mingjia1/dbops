@@ -90,6 +90,8 @@ type BackupScanFile struct {
 	FilePath   string    `json:"file_path"`
 	SizeBytes  int64     `json:"size_bytes"`
 	BackupType string    `json:"backup_type"`
+	IsDir      bool      `json:"is_dir"`
+	Complete   bool      `json:"complete"`
 	DetectedAt time.Time `json:"detected_at"`
 	MTime      time.Time `json:"mtime"`
 }
@@ -1496,6 +1498,8 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 				FilePath:   dir,
 				SizeBytes:  sizeBytes,
 				BackupType: classifyBackupPath(dir, true),
+				IsDir:      true,
+				Complete:   true,
 				DetectedAt: time.Now(),
 				MTime:      info.ModTime(),
 			})
@@ -1529,6 +1533,8 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 					FilePath:   path,
 					SizeBytes:  sizeBytes,
 					BackupType: classifyBackupPath(path, true),
+					IsDir:      true,
+					Complete:   true,
 					DetectedAt: time.Now(),
 					MTime:      stat.ModTime(),
 				})
@@ -1551,6 +1557,8 @@ func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequ
 				FilePath:   path,
 				SizeBytes:  stat.Size(),
 				BackupType: backupType,
+				IsDir:      false,
+				Complete:   true,
 				DetectedAt: time.Now(),
 				MTime:      stat.ModTime(),
 			})

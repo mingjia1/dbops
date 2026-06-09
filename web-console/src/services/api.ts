@@ -414,7 +414,7 @@ export const backupApi = {
     api.delete(`/backups/${id}`),
 
   scan: (instanceId: string) =>
-    api.post('/backups/scan', { instance_id: instanceId }, { timeout: 120000 }),
+    api.post('/backups/scan', { instance_id: instanceId }, { timeout: 120000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 }
 
 export interface DiscoveredBackup {
@@ -422,6 +422,8 @@ export interface DiscoveredBackup {
   file_path: string
   size_bytes: number
   backup_type: string
+  is_dir?: boolean
+  complete?: boolean
   detected_at: string
   mtime?: string
   already_managed?: boolean

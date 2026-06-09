@@ -92,6 +92,8 @@ type DiscoveredBackup struct {
 	FilePath        string    `json:"file_path"`
 	SizeBytes       int64     `json:"size_bytes"`
 	BackupType      string    `json:"backup_type"`
+	IsDir           bool      `json:"is_dir"`
+	Complete        bool      `json:"complete"`
 	DetectedAt      time.Time `json:"detected_at"`
 	MTime           time.Time `json:"mtime"`
 	AlreadyManaged  bool      `json:"already_managed"`
@@ -668,6 +670,8 @@ func decodeDiscoveredBackups(data map[string]interface{}) []DiscoveredBackup {
 			FilePath:   stringValue(m["file_path"]),
 			SizeBytes:  int64Value(m["size_bytes"]),
 			BackupType: normalizeDiscoveredBackupType(stringValue(m["backup_type"])),
+			IsDir:      boolValue(m["is_dir"]),
+			Complete:   boolValue(m["complete"]),
 			DetectedAt: timeValue(m["detected_at"], time.Now()),
 			MTime:      timeValue(m["mtime"], time.Now()),
 		}
@@ -686,7 +690,20 @@ func decodeDiscoveredBackups(data map[string]interface{}) []DiscoveredBackup {
 }
 
 func isCompleteDiscoveredBackup(item DiscoveredBackup) bool {
-	return strings.TrimSpace(item.FilePath) != "" && normalizeDiscoveredBackupType(item.BackupType) != ""
+	if strings.TrimSpace(item.FilePath) == "" || normalizeDiscoveredBackupType(item.BackupType) == "" {
+		return false
+	}
+	if item.Complete {
+		return true
+	}
+	if item.IsDir {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(filepath.Clean(item.FilePath)))
+	if item.SizeBytes <= 0 || isIncompleteBackupPath(name) {
+		return false
+	}
+	return isCompleteBackupFileName(name)
 }
 
 func normalizeDiscoveredBackupType(backupType string) string {
@@ -700,6 +717,9 @@ func normalizeDiscoveredBackupType(backupType string) string {
 
 func inferDiscoveredBackupType(parts ...string) string {
 	text := strings.ToLower(strings.Join(parts, " "))
+	if isIncompleteBackupPath(text) {
+		return ""
+	}
 	switch {
 	case strings.Contains(text, "incremental"), strings.Contains(text, "inc-"), strings.Contains(text, "_inc"):
 		return "incremental"
@@ -710,6 +730,19 @@ func inferDiscoveredBackupType(parts ...string) string {
 	default:
 		return ""
 	}
+}
+
+func isIncompleteBackupPath(path string) bool {
+	lower := strings.ToLower(strings.TrimSpace(path))
+	return strings.HasSuffix(lower, ".tmp") || strings.HasSuffix(lower, ".partial") || strings.HasSuffix(lower, ".incomplete")
+}
+
+func isCompleteBackupFileName(name string) bool {
+	return strings.HasSuffix(name, ".xbstream") ||
+		strings.HasSuffix(name, ".xtrabackup") ||
+		strings.HasSuffix(name, ".sql") ||
+		strings.HasSuffix(name, ".sql.gz") ||
+		strings.HasSuffix(name, ".dump")
 }
 
 func stringValue(v interface{}) string {
@@ -743,6 +776,16 @@ func int64Value(v interface{}) int64 {
 	default:
 		return 0
 	}
+}
+
+func boolValue(v interface{}) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	if s, ok := v.(string); ok {
+		return strings.EqualFold(strings.TrimSpace(s), "true")
+	}
+	return false
 }
 
 func timeValue(v interface{}, fallback time.Time) time.Time {

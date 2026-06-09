@@ -43,8 +43,13 @@ func TestExecuteBackupScanRecognizesCompleteBackupFilesAndDirs(t *testing.T) {
 		byName[item.FileName] = item
 	}
 	assert.Equal(t, "full", byName["full-001"].BackupType)
+	assert.True(t, byName["full-001"].IsDir)
+	assert.True(t, byName["full-001"].Complete)
 	assert.Equal(t, "full", byName["full-002.xbstream"].BackupType)
+	assert.False(t, byName["full-002.xbstream"].IsDir)
+	assert.True(t, byName["full-002.xbstream"].Complete)
 	assert.Equal(t, "logical", byName["logical-001.sql.gz"].BackupType)
+	assert.True(t, byName["logical-001.sql.gz"].Complete)
 	_, partialIncluded := byName["full-003.xbstream.partial"]
 	assert.False(t, partialIncluded)
 }
