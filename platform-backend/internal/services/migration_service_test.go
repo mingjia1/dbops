@@ -221,6 +221,60 @@ func TestMigrationService_ExecuteFailureWritesAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].ErrorMsg, "cannot resolve agent endpoint")
 }
 
+func TestMigrationServiceExecuteWithoutAgentClientFailsTask(t *testing.T) {
+	service, migrationRepo, taskID := newMigrationServiceWithoutAgent(t)
+
+	result, err := service.ExecutePhysicalMigration(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusFailed, result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Contains(t, task.Error, "agent client not configured")
+}
+
+func TestMigrationServiceMonitorWithoutAgentClientReturnsError(t *testing.T) {
+	service, _, taskID := newMigrationServiceWithoutAgent(t)
+
+	result, err := service.MonitorMigrationProgress(context.Background(), taskID)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "agent client not configured")
+}
+
+func TestMigrationServiceVerifyWithoutAgentClientFailsTask(t *testing.T) {
+	service, migrationRepo, taskID := newMigrationServiceWithoutAgent(t)
+
+	result, err := service.VerifyMigration(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Errors, 1)
+	assert.Contains(t, result.Errors[0], "agent client not configured")
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Contains(t, task.Error, "agent client not configured")
+}
+
+func TestMigrationServiceSwitchWithoutAgentClientFailsTask(t *testing.T) {
+	service, migrationRepo, taskID := newMigrationServiceWithoutAgent(t)
+
+	result, err := service.ExecuteSwitch(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Contains(t, task.Error, "agent client not configured")
+}
+
 func TestMigrationService_SwitchFailureWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "auditor-004")
 	db := newTestDB()
@@ -423,6 +477,43 @@ func newMigrationServiceWithAgent(t *testing.T, serverURL string) (*MigrationSer
 		Name:             "migration execution",
 		SourceInstanceID: "migration-source",
 		TargetInstanceID: "migration-target",
+		Strategy:         models.MigrationStrategyPhysical,
+	})
+	require.NoError(t, err)
+	return service, migrationRepo, taskID
+}
+
+func newMigrationServiceWithoutAgent(t *testing.T) (*MigrationService, *repositories.MigrationRepository, string) {
+	t.Helper()
+	ctx := context.Background()
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	hostID := "migration-no-agent-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{
+		ID:        hostID,
+		Name:      "migration-no-agent-host",
+		Address:   "127.0.0.1",
+		AgentPort: 9090,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{
+		ID:     "migration-no-agent-source",
+		Name:   "migration-no-agent-source",
+		HostID: &hostID,
+	}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{
+		ID:     "migration-no-agent-target",
+		Name:   "migration-no-agent-target",
+		HostID: &hostID,
+	}))
+	service := NewMigrationService(migrationRepo, instanceRepo, hostRepo, nil)
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "migration without agent",
+		SourceInstanceID: "migration-no-agent-source",
+		TargetInstanceID: "migration-no-agent-target",
 		Strategy:         models.MigrationStrategyPhysical,
 	})
 	require.NoError(t, err)

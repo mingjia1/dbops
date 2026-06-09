@@ -136,6 +136,20 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		s.auditMigrationExecution(ctx, task, out, err.Error())
 		return out, nil
 	}
+	if s.agentClient == nil {
+		message := "agent client not configured"
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, 0, message)
+		out := &MigrationTaskResult{
+			TaskID:    taskID,
+			Status:    models.MigrationStatusFailed,
+			Strategy:  strategy,
+			StartedAt: now,
+			Progress:  0,
+			Message:   message,
+		}
+		s.auditMigrationExecution(ctx, task, out, message)
+		return out, nil
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.SourceInstanceID,
@@ -225,6 +239,9 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	if err != nil {
 		return nil, err
 	}
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.SourceInstanceID,
@@ -257,21 +274,28 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
-		return &models.MigrationVerification{
+		out := &models.MigrationVerification{
 			TaskID:     taskID,
 			VerifiedAt: time.Now(),
 			Errors:     []string{err.Error()},
-		}, nil
+		}
+		return out, nil
+	}
+	out := &models.MigrationVerification{
+		TaskID:     taskID,
+		VerifiedAt: time.Now(),
+	}
+	if s.agentClient == nil {
+		message := "agent client not configured"
+		out.Errors = []string{message}
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, message)
+		return out, nil
 	}
 	result, callErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-verify", map[string]interface{}{
 		"task_id":            taskID,
 		"source_instance_id": task.SourceInstanceID,
 		"target_instance_id": task.TargetInstanceID,
 	})
-	out := &models.MigrationVerification{
-		TaskID:     taskID,
-		VerifiedAt: time.Now(),
-	}
 	if callErr != nil {
 		out.Errors = []string{"agent verify call failed: " + callErr.Error()}
 		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, out.Errors[0])
@@ -341,6 +365,16 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 		return out, nil
 	}
 	_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusSwitching, task.Progress)
+	if s.agentClient == nil {
+		message := "agent client not configured"
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, message)
+		out := &models.MigrationSwitchResult{
+			TaskID: taskID,
+			Status: "failed",
+		}
+		s.auditMigrationSwitch(ctx, task, out, message)
+		return out, nil
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration-switch", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": task.TargetInstanceID,
