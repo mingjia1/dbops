@@ -797,7 +797,7 @@ func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *mode
 			}
 			return
 		}
-		_, err := s.dispatchUpgrade(context.Background(), instance, taskID, upgradeType, targetVersion, extraConfig)
+		result, err := s.dispatchUpgrade(context.Background(), instance, taskID, upgradeType, targetVersion, extraConfig)
 		if err != nil {
 			if s.taskRepo != nil {
 				_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, "failed", 0, err.Error())
@@ -805,9 +805,44 @@ func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *mode
 			return
 		}
 		if s.taskRepo != nil {
-			_ = s.taskRepo.UpdateStatus(context.Background(), taskID, "completed", 100)
+			status, progress, message := normalizeUpgradeAgentTaskResult(result)
+			_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, status, progress, message)
 		}
 	}()
+}
+
+// normalizeUpgradeAgentTaskResult maps Agent business status to persisted task status.
+func normalizeUpgradeAgentTaskResult(result *AgentTaskResult) (string, int, string) {
+	if result == nil {
+		return "failed", 100, "agent returned empty upgrade result"
+	}
+	status := strings.ToLower(strings.TrimSpace(result.Status))
+	progress := result.Progress
+	message := result.Message
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	switch status {
+	case "failed", "error", "timeout", "cancelled", "canceled", "unhealthy":
+		if progress == 0 {
+			progress = 100
+		}
+		return "failed", progress, message
+	case "success", "succeeded", "completed", "ok":
+		if progress == 0 {
+			progress = 100
+		}
+		return "completed", progress, message
+	case "pending", "running", "queued", "accepted", "executing", "submitted":
+		return status, progress, message
+	case "":
+		return "failed", 100, "agent returned empty upgrade status"
+	default:
+		return status, progress, message
+	}
 }
 
 // dispatchUpgrade B3: 解析 instance 对应的 agent host/port, 调 /agent/tasks/upgrade.

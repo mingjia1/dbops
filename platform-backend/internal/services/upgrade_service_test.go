@@ -624,6 +624,49 @@ func TestUpgradeDispatchKeepsExplicitPackageURL(t *testing.T) {
 	assert.Equal(t, explicitChecksum, config["checksum"])
 }
 
+func TestNormalizeUpgradeAgentTaskResultFailed(t *testing.T) {
+	status, progress, message := normalizeUpgradeAgentTaskResult(&AgentTaskResult{
+		Status:   "failed",
+		Progress: 100,
+		Message:  "upgrade precheck failed",
+	})
+
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, 100, progress)
+	assert.Equal(t, "upgrade precheck failed", message)
+}
+
+func TestNormalizeUpgradeAgentTaskResultRunning(t *testing.T) {
+	status, progress, message := normalizeUpgradeAgentTaskResult(&AgentTaskResult{
+		Status:   "running",
+		Progress: 35,
+		Message:  "copying files",
+	})
+
+	assert.Equal(t, "running", status)
+	assert.Equal(t, 35, progress)
+	assert.Equal(t, "copying files", message)
+}
+
+func TestNormalizeUpgradeAgentTaskResultCompleted(t *testing.T) {
+	status, progress, message := normalizeUpgradeAgentTaskResult(&AgentTaskResult{
+		Status:  "success",
+		Message: "upgrade completed",
+	})
+
+	assert.Equal(t, "completed", status)
+	assert.Equal(t, 100, progress)
+	assert.Equal(t, "upgrade completed", message)
+}
+
+func TestNormalizeUpgradeAgentTaskResultEmptyStatusFails(t *testing.T) {
+	status, progress, message := normalizeUpgradeAgentTaskResult(&AgentTaskResult{})
+
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, 100, progress)
+	assert.Contains(t, message, "empty upgrade status")
+}
+
 func newUpgradeAuditTestRepos(db *repositories.Database) (*repositories.InstanceRepository, *repositories.TaskRepository, *repositories.AuditLogRepository, *AuditService) {
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
