@@ -112,12 +112,14 @@ type HostAgentActionResult struct {
 type BatchHostAgentActionRequest struct {
 	HostIDs []string `json:"host_ids" binding:"required"`
 	Action  string   `json:"action" binding:"required"`
+	Async   bool     `json:"async"`
 }
 
 type BatchHostAgentActionResult struct {
 	Total   int                     `json:"total"`
 	Success int                     `json:"success"`
 	Failed  int                     `json:"failed"`
+	Async   bool                    `json:"async"`
 	Rows    []HostAgentActionResult `json:"rows"`
 }
 
@@ -327,7 +329,52 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentActionRequest) (*BatchHostAgentActionResult, error) {
 	result := &BatchHostAgentActionResult{
 		Total: len(req.HostIDs),
+		Async: req.Async,
 		Rows:  make([]HostAgentActionResult, 0, len(req.HostIDs)),
+	}
+	if req.Async {
+		action := strings.ToLower(strings.TrimSpace(req.Action))
+		if action == "" {
+			action = "status"
+		}
+		for _, hostID := range req.HostIDs {
+			host, err := s.repo.GetByID(ctx, hostID)
+			if err != nil {
+				result.Failed++
+				result.Rows = append(result.Rows, HostAgentActionResult{
+					HostID:  hostID,
+					Action:  action,
+					Status:  "failed",
+					Message: err.Error(),
+				})
+				continue
+			}
+			port := host.AgentPort
+			if port == 0 {
+				port = 9090
+			}
+			result.Success++
+			result.Rows = append(result.Rows, HostAgentActionResult{
+				HostID:    host.ID,
+				HostName:  host.Name,
+				Address:   host.Address,
+				AgentPort: port,
+				Action:    action,
+				Status:    "submitted",
+				Message:   "agent action submitted; refresh host status later",
+			})
+			go func(id string) {
+				actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
+				defer cancel()
+				row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action})
+				if err != nil {
+					_ = s.repo.UpdateStatus(context.Background(), id, "failed")
+					return
+				}
+				s.updateAgentActionHostStatus(row)
+			}(host.ID)
+		}
+		return result, nil
 	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
@@ -364,6 +411,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 	for completedCount < len(req.HostIDs) {
 		select {
 		case row := <-resultCh:
+			s.updateAgentActionHostStatus(&row)
 			completed[row.HostID] = struct{}{}
 			completedCount++
 			if row.Status == "success" {
@@ -375,6 +423,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 		case <-done:
 			for completedCount < len(req.HostIDs) {
 				row := <-resultCh
+				s.updateAgentActionHostStatus(&row)
 				completed[row.HostID] = struct{}{}
 				completedCount++
 				if row.Status == "success" {
@@ -415,6 +464,17 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 		}
 	}
 	return result, nil
+}
+
+func (s *HostService) updateAgentActionHostStatus(row *HostAgentActionResult) {
+	if row == nil || row.HostID == "" {
+		return
+	}
+	status := "failed"
+	if row.Status == "success" {
+		status = "success"
+	}
+	_ = s.repo.UpdateStatus(context.Background(), row.HostID, status)
 }
 
 func (s *HostService) agentHTTPHealth(ctx context.Context, host string, port int) (bool, string) {

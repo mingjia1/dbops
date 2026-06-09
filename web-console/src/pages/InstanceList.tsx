@@ -33,6 +33,15 @@ const isSuccessfulTaskStatus = (status?: string) => {
   return ['success', 'succeeded', 'healthy', 'ok', 'completed'].includes(normalized)
 }
 
+const formatHealthCheckFailure = (instanceName: string, task: any, fallback: string) => {
+  const parts = [
+    `${instanceName}: ${task?.message || fallback}`,
+    task?.status ? `status=${task.status}` : '',
+    task?.task_id ? `task_id=${task.task_id}` : '',
+  ].filter(Boolean)
+  return parts.join(' | ')
+}
+
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -179,7 +188,7 @@ const InstanceList: React.FC = () => {
         const task = res?.data
         if (!task || isFailedTaskStatus(task.status) || !isSuccessfulTaskStatus(task.status)) {
           failed += 1
-          failedRows.push(`${instance.name}: ${task?.message || '检测失败'}`)
+          failedRows.push(formatHealthCheckFailure(instance.name, task, 'health check failed'))
         } else {
           ok += 1
         }
@@ -189,7 +198,7 @@ const InstanceList: React.FC = () => {
       }
     }
     if (failed > 0) {
-      Modal.warning({
+      Modal.error({
         title: ok > 0 ? `检测部分失败，成功 ${ok} 个，失败 ${failed} 个` : `检测失败，成功 ${ok} 个，失败 ${failed} 个`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>

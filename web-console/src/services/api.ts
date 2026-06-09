@@ -207,6 +207,7 @@ export interface Host {
   ssh_port: number
   ssh_user: string
   ssh_auth_method: string
+  agent_port?: number
   os_type: string
   description: string
   tags: string
@@ -283,8 +284,8 @@ export const hostApi = {
   agentAction: (id: string, action: string, agentPort?: number) =>
     api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, { timeout: 240000 }),
 
-  batchAgentAction: (hostIds: string[], action: string) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action }, { timeout: 240000 }),
+  batchAgentAction: (hostIds: string[], action: string, async = false) =>
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async }, { timeout: async ? 30000 : 240000 }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

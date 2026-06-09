@@ -53,7 +53,12 @@ type Mode = 'from-hosts' | 'manual'
 
 const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
-  return normalized !== 'success'
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isSubmittedAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['submitted', 'pending', 'running'].includes(normalized)
 }
 
 const getRequestErrorMessage = (err: any, fallback: string) => {
@@ -127,10 +132,11 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install')
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true)
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))
+      const submittedRows = rows.filter((row: any) => isSubmittedAgentStatus(row.status))
       if ((data?.failed || 0) > 0 || failedRows.length > 0) {
         Modal.warning({
           title: `Agent 安装完成：成功 ${data?.success ?? 0} 个，失败 ${data?.failed ?? failedRows.length} 个`,
@@ -141,6 +147,11 @@ const EnvironmentCheck: React.FC = () => {
                 .join('\n')}
             </div>
           ),
+        })
+      } else if (data?.async || submittedRows.length > 0) {
+        Modal.info({
+          title: `Agent installation submitted: ${submittedRows.length || selectedHosts.length} host(s)`,
+          content: 'The platform is installing Agent in the background. Refresh the host list or Agent status later to confirm the final result.',
         })
       } else {
         message.success(`Agent 安装完成：成功 ${data?.success ?? 0}`)
