@@ -21,6 +21,8 @@ interface MigrationTask {
 
 const activeMigrationStatuses = new Set(['pending', 'preparing', 'migrating', 'running', 'verifying', 'switching'])
 
+const isActiveMigrationStatus = (status?: string) => activeMigrationStatuses.has((status || '').toLowerCase())
+
 const isFailedMigrationStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
@@ -29,6 +31,33 @@ const isFailedMigrationStatus = (status?: string) => {
 const isCompletedMigrationStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
+
+const migrationProgressStatus = (status?: string) => {
+  if (isCompletedMigrationStatus(status)) return 'success'
+  if (isFailedMigrationStatus(status)) return 'exception'
+  if (isActiveMigrationStatus(status)) return 'active'
+  return 'normal'
+}
+
+const migrationStatusColor = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  if (isCompletedMigrationStatus(normalized)) return 'success'
+  if (isFailedMigrationStatus(normalized)) return 'error'
+  if (normalized === 'verifying' || normalized === 'switching') return 'warning'
+  if (isActiveMigrationStatus(normalized)) return 'processing'
+  return 'default'
+}
+
+const showMigrationStartResult = (label: string, task: MigrationTask) => {
+  const detail = task.error || task.error_message || task.status
+  if (isFailedMigrationStatus(task.status)) {
+    message.error(`${label}任务启动失败: ${detail}`)
+  } else if (isCompletedMigrationStatus(task.status)) {
+    message.success(`${label}任务已完成`)
+  } else {
+    message.success(`${label}任务已启动`)
+  }
 }
 interface MigrationProgress {
   stage: string
@@ -157,14 +186,14 @@ const MigrationManage: React.FC = () => {
 
   useEffect(() => {
     if (!activeMigration) return
-    if (!activeMigrationStatuses.has(activeMigration.status)) return
+    if (!isActiveMigrationStatus(activeMigration.status)) return
     const interval = setInterval(() => {
       migrationApi.get(activeMigration.id).then((res: any) => {
         const task = res?.data
         if (!task) return
         setActiveMigration((prev) => (prev ? { ...prev, ...task } : prev))
         setMigrationTasks((tasks) => tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)))
-        if (!activeMigrationStatuses.has(task.status)) {
+        if (!isActiveMigrationStatus(task.status)) {
           clearInterval(interval)
         }
       }).catch(() => clearInterval(interval))
@@ -173,7 +202,7 @@ const MigrationManage: React.FC = () => {
   }, [activeMigration?.id, activeMigration?.status])
 
   useEffect(() => {
-    if (!migrationTasks.some((task) => activeMigrationStatuses.has(task.status))) return
+    if (!migrationTasks.some((task) => isActiveMigrationStatus(task.status))) return
     const interval = setInterval(loadData, 5000)
     return () => clearInterval(interval)
   }, [migrationTasks])
@@ -212,7 +241,7 @@ const MigrationManage: React.FC = () => {
       if (!task) throw new Error('migration API did not return task_id')
       await loadData()
       setActiveMigration(task)
-      message.success('物理迁移任务已启动')
+      showMigrationStartResult('物理迁移', task)
       setProgressDetails([
         { stage: '数据导出', progress: 0, details: '准备中...' },
         { stage: '数据传输', progress: 0, details: '等待中...' },
@@ -234,7 +263,7 @@ const MigrationManage: React.FC = () => {
       if (!task) throw new Error('migration API did not return task_id')
       await loadData()
       setActiveMigration(task)
-      message.success('复制迁移任务已启动')
+      showMigrationStartResult('复制迁移', task)
       setProgressDetails([
         { stage: '建立复制', progress: 0, details: '准备中...' },
         { stage: '数据同步', progress: 0, details: '等待中...' },
@@ -256,7 +285,7 @@ const MigrationManage: React.FC = () => {
       if (!task) throw new Error('migration API did not return task_id')
       await loadData()
       setActiveMigration(task)
-      message.success('GTID迁移任务已启动')
+      showMigrationStartResult('GTID迁移', task)
       setProgressDetails([
         { stage: 'GTID解析', progress: 0, details: '准备中...' },
         { stage: '事务应用', progress: 0, details: '等待中...' },
@@ -344,7 +373,7 @@ const MigrationManage: React.FC = () => {
           <Descriptions.Item label="源实例">{activeMigration.source_instance || activeMigration.source_instance_id}</Descriptions.Item>
           <Descriptions.Item label="目标实例">{activeMigration.target_instance || activeMigration.target_instance_id}</Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Tag color={activeMigration.status === 'running' || activeMigration.status === 'migrating' ? 'processing' : activeMigration.status === 'completed' ? 'success' : 'error'}>
+            <Tag color={migrationStatusColor(activeMigration.status)}>
               {activeMigration.status}
             </Tag>
           </Descriptions.Item>
@@ -359,7 +388,7 @@ const MigrationManage: React.FC = () => {
         <div style={{ marginBottom: 8 }}>
           <strong>总体进度</strong>
         </div>
-        <Progress percent={activeMigration.progress} status={activeMigration.status === 'running' || activeMigration.status === 'migrating' ? 'active' : activeMigration.status === 'completed' ? 'success' : 'exception'} />
+        <Progress percent={activeMigration.progress} status={migrationProgressStatus(activeMigration.status)} />
         
         <Divider />
         
@@ -422,18 +451,7 @@ const MigrationManage: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status: string) => {
-        const colorMap: Record<string, string> = {
-          pending: 'default',
-          running: 'processing',
-          preparing: 'processing',
-          migrating: 'processing',
-          verifying: 'warning',
-          switching: 'warning',
-          completed: 'success',
-          failed: 'error',
-          cancelled: 'default',
-        }
-        return <Tag color={colorMap[status]}>{status}</Tag>
+        return <Tag color={migrationStatusColor(status)}>{status}</Tag>
       },
     },
     {
@@ -456,7 +474,7 @@ const MigrationManage: React.FC = () => {
             size="small"
             icon={<CheckCircleOutlined />}
             onClick={() => handleVerify(record.id)}
-            disabled={record.status !== 'running' && record.status !== 'migrating'}
+            disabled={!['running', 'migrating'].includes((record.status || '').toLowerCase())}
           >
             验证
           </Button>
@@ -465,11 +483,11 @@ const MigrationManage: React.FC = () => {
             type="primary"
             icon={<SwapOutlined />}
             onClick={() => handleSwitch(record.id)}
-            disabled={record.status !== 'verifying'}
+            disabled={(record.status || '').toLowerCase() !== 'verifying'}
           >
             切换
           </Button>
-          {(record.status === 'running' || record.status === 'migrating' || record.status === 'pending' || record.status === 'verifying') && (
+          {isActiveMigrationStatus(record.status) && (
             <Button
               size="small"
               danger
