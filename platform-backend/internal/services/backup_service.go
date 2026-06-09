@@ -212,17 +212,33 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		config["base_backup_path"] = base.FilePath
 		config["base_backup_label"] = base.ID
 	}
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
-		"task_id":     taskID,
-		"instance_id": req.InstanceID,
-		"config":      config,
-	})
 	out := &BackupTaskResult{
 		InstanceID: req.InstanceID,
 		BackupType: req.BackupType,
 		TaskID:     taskID,
 		StartedAt:  now,
 	}
+	if s.agentClient == nil {
+		out.Status = "failed"
+		out.Message = "agent client not configured"
+		_ = s.createRecord(&models.BackupRecord{
+			InstanceID: req.InstanceID,
+			PolicyID:   req.PolicyID,
+			BackupType: req.BackupType,
+			TaskID:     taskID,
+			StartedAt:  now,
+			Status:     "failed",
+			Message:    out.Message,
+			CreatedAt:  now,
+		})
+		s.auditBackupExecution(ctx, out, "failed")
+		return out, nil
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
+		"task_id":     taskID,
+		"instance_id": req.InstanceID,
+		"config":      config,
+	})
 	if err != nil {
 		out.Status = "failed"
 		out.Message = err.Error()
@@ -425,6 +441,9 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, inst)
 	if err != nil {
 		return nil, err
+	}
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
 	}
 
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup-scan", map[string]interface{}{

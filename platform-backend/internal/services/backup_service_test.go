@@ -173,6 +173,39 @@ func TestExecuteBackupWritesAuditLogForFailedIncremental(t *testing.T) {
 	assert.Contains(t, logs[0].ErrorMsg, "completed full backup")
 }
 
+func TestExecuteBackupWithoutAgentClientCreatesFailedRecord(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-no-agent-client"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: "127.0.0.1", AgentPort: 9090}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-no-agent-client", Name: "instance-no-agent-client", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-no-agent-client",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, nil, "test-encryption-key")
+
+	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{InstanceID: "instance-no-agent-client", BackupType: "full"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+	records, err := service.ListBackups(context.Background(), "instance-no-agent-client")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, result.TaskID, records[0].TaskID)
+	assert.Equal(t, "failed", records[0].Status)
+	assert.Contains(t, records[0].Message, "agent client not configured")
+}
+
 func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -503,6 +536,35 @@ func TestScanBackupsAgentFailedStatusDoesNotCreateRecords(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "backup directory is not readable")
 	records, listErr := service.ListBackups(context.Background(), "instance-scan-failed")
+	require.NoError(t, listErr)
+	assert.Empty(t, records)
+}
+
+func TestScanBackupsWithoutAgentClientReturnsErrorWithoutRecords(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-scan-no-agent-client"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "scan-agent", Address: "127.0.0.1", AgentPort: 9090}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-scan-no-agent-client", Name: "instance-scan-no-agent-client", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-scan-no-agent-client",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, nil, "test-encryption-key")
+
+	result, err := service.ScanBackups(context.Background(), "instance-scan-no-agent-client")
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "agent client not configured")
+	records, listErr := service.ListBackups(context.Background(), "instance-scan-no-agent-client")
 	require.NoError(t, listErr)
 	assert.Empty(t, records)
 }
