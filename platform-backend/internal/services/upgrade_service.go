@@ -74,9 +74,7 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 	}
 	targetVersion := req.TargetVersion
 	targetFlavor := req.TargetFlavor
-	if targetFlavor == "" {
-		targetFlavor = sourceFlavor
-	}
+	targetVersion, targetFlavor = normalizeRequestedTargetVersion(targetVersion, targetFlavor, sourceFlavor)
 
 	var steps []UpgradeStepInfo
 	var estimatedTime int
@@ -137,18 +135,45 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 // entire UpgradeService. No hard-coded versions allowed.
 func (s *UpgradeService) readSourceVersion(ctx context.Context, instanceID string) (string, string, error) {
 	ver, err := s.instanceRepo.GetVersion(ctx, instanceID)
+	if err == nil {
+		flavor := ver.Flavor
+		if flavor == "" {
+			flavor = "mysql"
+		}
+		fullVer := ver.FullVersion
+		if fullVer == "" {
+			fullVer = ver.Version
+		}
+		if strings.TrimSpace(fullVer) != "" {
+			return fullVer, flavor, nil
+		}
+	}
+
+	instance, getErr := s.instanceRepo.GetByID(ctx, instanceID)
+	if getErr == nil {
+		versionID := strings.TrimSpace(instance.Connection.VersionID)
+		if versionID != "" {
+			if entry, catalogErr := NewVersionCatalog().Get(versionID); catalogErr == nil && entry != nil {
+				return entry.Version, entry.Flavor, nil
+			}
+		}
+	}
+
 	if err != nil {
 		return "", "", fmt.Errorf("cannot determine source version for instance %s: %w (call POST /api/v1/instances/%s/detect-version first)", instanceID, err, instanceID)
 	}
-	flavor := ver.Flavor
-	if flavor == "" {
-		flavor = "mysql"
+	return "", "", fmt.Errorf("cannot determine source version for instance %s: detected version is empty (call POST /api/v1/instances/%s/detect-version first)", instanceID, instanceID)
+}
+
+func normalizeRequestedTargetVersion(targetVersion, targetFlavor, sourceFlavor string) (string, string) {
+	if targetFlavor == "" {
+		targetFlavor = sourceFlavor
 	}
-	fullVer := ver.FullVersion
-	if fullVer == "" {
-		fullVer = ver.Version
+	if entry, err := NewVersionCatalog().Get(targetVersion); err == nil && entry != nil {
+		targetVersion = entry.Version
+		targetFlavor = entry.Flavor
 	}
-	return fullVer, flavor, nil
+	return targetVersion, targetFlavor
 }
 
 type CheckCompatibilityRequest struct {
@@ -191,9 +216,7 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 	}
 	targetVersion := req.TargetVersion
 	targetFlavor := req.TargetFlavor
-	if targetFlavor == "" {
-		targetFlavor = sourceFlavor
-	}
+	targetVersion, targetFlavor = normalizeRequestedTargetVersion(targetVersion, targetFlavor, sourceFlavor)
 
 	var incompatibilities []IncompatibilityItem
 	var recommendations []string
@@ -297,7 +320,7 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
 	// Read source version from the instance — no hard-coded "5.7.40" anymore.
-	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
+	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +328,7 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	if targetVersion == "" {
 		targetVersion = "8.0.36"
 	}
+	targetVersion, _ = normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
 
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表, B8 端点能查, frontend 轮询可见.
@@ -369,7 +393,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	}
 
 	// Read source version from the instance — no hard-coded "5.7.40" anymore.
-	sourceVersion, _, err := s.readSourceVersion(ctx, req.InstanceID)
+	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +401,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	if targetVersion == "" {
 		targetVersion = "8.0.36"
 	}
+	targetVersion, targetFlavor := normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
 
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表.
@@ -386,7 +411,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 		"batch_size":     req.BatchSize,
 		"backup_enabled": req.BackupEnabled,
 		"source_version": sourceVersion,
-		"target_flavor":  req.TargetFlavor,
+		"target_flavor":  targetFlavor,
 	})
 
 	response := &ExecuteLogicalMigrationResponse{
@@ -445,6 +470,7 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	if req.HealthCheckInterval == 0 {
 		req.HealthCheckInterval = 30
 	}
+	req.TargetVersion, _ = normalizeRequestedTargetVersion(req.TargetVersion, "", "mysql")
 	// B3: 之前是写死 instance-1 / instance-2 占位. 现在从 instRepo 查真实实例列表.
 	clusterInstances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
 	if err != nil {

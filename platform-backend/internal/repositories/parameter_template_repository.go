@@ -343,3 +343,12 @@ func (r *ParameterTemplateRepository) DeleteParameter(ctx context.Context, id st
 	}
 	return nil
 }
+
+func (r *ParameterTemplateRepository) DeleteParametersByTemplate(ctx context.Context, templateID string) error {
+	query := `DELETE FROM parameter_template_parameters WHERE template_id = ?`
+	_, err := r.db.Pool.ExecContext(ctx, query, templateID)
+	if err != nil {
+		return fmt.Errorf("failed to delete template parameters: %w", err)
+	}
+	return nil
+}

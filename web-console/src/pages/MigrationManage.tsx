@@ -5,10 +5,13 @@ import { migrationApi, instanceApi } from '../services/api'
 
 interface MigrationTask {
   id: string
-  migration_type: 'physical' | 'replication' | 'gtid'
-  source_instance: string
-  target_instance: string
-  status: 'pending' | 'running' | 'verifying' | 'completed' | 'failed'
+  migration_type?: 'physical' | 'replication' | 'gtid'
+  strategy?: 'physical' | 'replication' | 'gtid'
+  source_instance?: string
+  target_instance?: string
+  source_instance_id?: string
+  target_instance_id?: string
+  status: 'pending' | 'preparing' | 'migrating' | 'running' | 'verifying' | 'switching' | 'completed' | 'failed' | 'cancelled'
   progress: number
   started_at: string
   completed_at?: string
@@ -134,14 +137,14 @@ const MigrationManage: React.FC = () => {
 
   useEffect(() => {
     if (!activeMigration) return
-    if (activeMigration.status !== 'running') return
+    if (!['running', 'migrating', 'preparing'].includes(activeMigration.status)) return
     const interval = setInterval(() => {
       migrationApi.get(activeMigration.id).then((res: any) => {
         const task = res?.data
         if (!task) return
         setActiveMigration((prev) => (prev ? { ...prev, ...task } : prev))
         setMigrationTasks((tasks) => tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)))
-        if (task.status !== 'running') {
+        if (!['running', 'migrating', 'preparing'].includes(task.status)) {
           clearInterval(interval)
         }
       }).catch(() => clearInterval(interval))
@@ -149,20 +152,33 @@ const MigrationManage: React.FC = () => {
     return () => clearInterval(interval)
   }, [activeMigration?.id, activeMigration?.status])
 
+  const buildCreatePayload = (values: any, strategy: 'physical' | 'replication' | 'gtid') => ({
+    name: `${strategy}-${Date.now()}`,
+    source_instance_id: values.source_instance,
+    target_instance_id: values.target_instance,
+    strategy,
+    config: JSON.stringify(values),
+  })
+
+  const taskFromResult = (values: any, strategy: 'physical' | 'replication' | 'gtid', res: any): MigrationTask => ({
+    id: res?.data?.task_id || res?.data?.id || `mig-${Date.now()}`,
+    migration_type: strategy,
+    strategy,
+    source_instance: values.source_instance,
+    target_instance: values.target_instance,
+    source_instance_id: values.source_instance,
+    target_instance_id: values.target_instance,
+    status: res?.data?.status || 'migrating',
+    progress: typeof res?.data?.progress === 'number' ? res.data.progress : 0,
+    started_at: res?.data?.started_at || new Date().toISOString(),
+  })
+
   const handlePhysicalMigration = async (values: any) => {
     setLoading(true)
     try {
       // F2: 后端失败时直接 message.error + return, 不再塞假 task 进列表
-      const res: any = await migrationApi.createPhysical(values)
-      const task: MigrationTask = res?.data || {
-        id: `mig-${Date.now()}`,
-        migration_type: 'physical',
-        source_instance: values.source_instance,
-        target_instance: values.target_instance,
-        status: 'running',
-        progress: 0,
-        started_at: new Date().toISOString(),
-      }
+      const res: any = await migrationApi.createPhysical(buildCreatePayload(values, 'physical'))
+      const task = taskFromResult(values, 'physical', res)
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('物理迁移任务已启动')
@@ -182,16 +198,8 @@ const MigrationManage: React.FC = () => {
     setLoading(true)
     try {
       // F2: 同上, 不再吞错
-      const res: any = await migrationApi.createReplication(values)
-      const task: MigrationTask = res?.data || {
-        id: `mig-${Date.now()}`,
-        migration_type: 'replication',
-        source_instance: values.source_instance,
-        target_instance: values.target_instance,
-        status: 'running',
-        progress: 0,
-        started_at: new Date().toISOString(),
-      }
+      const res: any = await migrationApi.createReplication(buildCreatePayload(values, 'replication'))
+      const task = taskFromResult(values, 'replication', res)
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('复制迁移任务已启动')
@@ -211,16 +219,8 @@ const MigrationManage: React.FC = () => {
     setLoading(true)
     try {
       // F2: 同上
-      const res: any = await migrationApi.createGTID(values)
-      const task: MigrationTask = res?.data || {
-        id: `mig-${Date.now()}`,
-        migration_type: 'gtid',
-        source_instance: values.source_instance,
-        target_instance: values.target_instance,
-        status: 'running',
-        progress: 0,
-        started_at: new Date().toISOString(),
-      }
+      const res: any = await migrationApi.createGTID(buildCreatePayload(values, 'gtid'))
+      const task = taskFromResult(values, 'gtid', res)
       setMigrationTasks([task, ...migrationTasks])
       setActiveMigration(task)
       message.success('GTID迁移任务已启动')
@@ -304,12 +304,12 @@ const MigrationManage: React.FC = () => {
         <Descriptions column={2} bordered>
           <Descriptions.Item label="任务ID">{activeMigration.id}</Descriptions.Item>
           <Descriptions.Item label="迁移类型">
-            <Tag color="blue">{activeMigration.migration_type}</Tag>
+            <Tag color="blue">{activeMigration.migration_type || activeMigration.strategy}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="源实例">{activeMigration.source_instance}</Descriptions.Item>
-          <Descriptions.Item label="目标实例">{activeMigration.target_instance}</Descriptions.Item>
+          <Descriptions.Item label="源实例">{activeMigration.source_instance || activeMigration.source_instance_id}</Descriptions.Item>
+          <Descriptions.Item label="目标实例">{activeMigration.target_instance || activeMigration.target_instance_id}</Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Tag color={activeMigration.status === 'running' ? 'processing' : activeMigration.status === 'completed' ? 'success' : 'error'}>
+            <Tag color={activeMigration.status === 'running' || activeMigration.status === 'migrating' ? 'processing' : activeMigration.status === 'completed' ? 'success' : 'error'}>
               {activeMigration.status}
             </Tag>
           </Descriptions.Item>
@@ -321,7 +321,7 @@ const MigrationManage: React.FC = () => {
         <div style={{ marginBottom: 8 }}>
           <strong>总体进度</strong>
         </div>
-        <Progress percent={activeMigration.progress} status={activeMigration.status === 'running' ? 'active' : activeMigration.status === 'completed' ? 'success' : 'exception'} />
+        <Progress percent={activeMigration.progress} status={activeMigration.status === 'running' || activeMigration.status === 'migrating' ? 'active' : activeMigration.status === 'completed' ? 'success' : 'exception'} />
         
         <Divider />
         
@@ -351,9 +351,9 @@ const MigrationManage: React.FC = () => {
     },
     {
       title: '迁移类型',
-      dataIndex: 'migration_type',
       key: 'migration_type',
-      render: (type: string) => {
+      render: (_: any, record: MigrationTask) => {
+        const type = record.migration_type || record.strategy || ''
         const typeMap: Record<string, { color: string; text: string }> = {
           physical: { color: 'blue', text: '物理迁移' },
           replication: { color: 'green', text: '复制迁移' },
@@ -364,13 +364,13 @@ const MigrationManage: React.FC = () => {
     },
     {
       title: '源实例',
-      dataIndex: 'source_instance',
       key: 'source_instance',
+      render: (_: any, record: MigrationTask) => record.source_instance || record.source_instance_id,
     },
     {
       title: '目标实例',
-      dataIndex: 'target_instance',
       key: 'target_instance',
+      render: (_: any, record: MigrationTask) => record.target_instance || record.target_instance_id,
     },
     {
       title: '状态',
@@ -380,9 +380,13 @@ const MigrationManage: React.FC = () => {
         const colorMap: Record<string, string> = {
           pending: 'default',
           running: 'processing',
+          preparing: 'processing',
+          migrating: 'processing',
           verifying: 'warning',
+          switching: 'warning',
           completed: 'success',
           failed: 'error',
+          cancelled: 'default',
         }
         return <Tag color={colorMap[status]}>{status}</Tag>
       },
@@ -407,7 +411,7 @@ const MigrationManage: React.FC = () => {
             size="small"
             icon={<CheckCircleOutlined />}
             onClick={() => handleVerify(record.id)}
-            disabled={record.status !== 'running'}
+            disabled={record.status !== 'running' && record.status !== 'migrating'}
           >
             Verify
           </Button>
@@ -420,7 +424,7 @@ const MigrationManage: React.FC = () => {
           >
             Switch
           </Button>
-          {(record.status === 'running' || record.status === 'pending' || record.status === 'verifying') && (
+          {(record.status === 'running' || record.status === 'migrating' || record.status === 'pending' || record.status === 'verifying') && (
             <Button
               size="small"
               danger

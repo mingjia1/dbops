@@ -30,23 +30,23 @@ func NewFailoverService(db *repositories.Database, encryptionKey string) *Failov
 }
 
 type FailoverConfig struct {
-	AutoFailoverEnabled    bool          `json:"auto_failover_enabled"`
-	FailoverTimeout        time.Duration `json:"failover_timeout"`
-	VIP                    string        `json:"vip"`
-	VIPInterface           string        `json:"vip_interface"`
-	CandidateMasterIDs     []string      `json:"candidate_master_ids"`
-	MaxRetries             int           `json:"max_retries"`
-	RequireApproval        bool          `json:"require_approval"`
-	GracePeriod            time.Duration `json:"grace_period"`
+	AutoFailoverEnabled bool          `json:"auto_failover_enabled"`
+	FailoverTimeout     time.Duration `json:"failover_timeout"`
+	VIP                 string        `json:"vip"`
+	VIPInterface        string        `json:"vip_interface"`
+	CandidateMasterIDs  []string      `json:"candidate_master_ids"`
+	MaxRetries          int           `json:"max_retries"`
+	RequireApproval     bool          `json:"require_approval"`
+	GracePeriod         time.Duration `json:"grace_period"`
 }
 
 type FailoverRequest struct {
-	ClusterID     string        `json:"cluster_id" binding:"required"`
-	OldMasterID   string        `json:"old_master_id"`
-	NewMasterID   string        `json:"new_master_id"`
-	Reason        string        `json:"reason"`
-	Config        FailoverConfig `json:"config"`
-	Manual        bool          `json:"manual"`
+	ClusterID   string         `json:"cluster_id" binding:"required"`
+	OldMasterID string         `json:"old_master_id"`
+	NewMasterID string         `json:"new_master_id"`
+	Reason      string         `json:"reason"`
+	Config      FailoverConfig `json:"config"`
+	Manual      bool           `json:"manual"`
 }
 
 type FailoverResult struct {
@@ -66,10 +66,10 @@ type FailoverResult struct {
 }
 
 type VIPSwitchRequest struct {
-	VIP        string `json:"vip" binding:"required"`
-	Interface  string `json:"interface" binding:"required"`
-	OldHost    string `json:"old_host"`
-	NewHost    string `json:"new_host" binding:"required"`
+	VIP       string `json:"vip" binding:"required"`
+	Interface string `json:"interface" binding:"required"`
+	OldHost   string `json:"old_host"`
+	NewHost   string `json:"new_host" binding:"required"`
 }
 
 type VIPSwitchResult struct {
@@ -222,55 +222,62 @@ func (s *FailoverService) ExecuteManualFailover(ctx context.Context, req Failove
 }
 
 func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string) (*MasterInfo, error) {
-	query := `
-		SELECT i.id, ic.host, ic.port, ist.role, ist.health_status
-		FROM instances i
-		JOIN instance_connections ic ON i.id = ic.instance_id
-		JOIN instance_status ist ON i.id = ist.instance_id
-		WHERE i.cluster_id = ? AND ist.role = 'master'
-	`
-
-	master := &MasterInfo{}
-	err := s.db.Pool.QueryRowContext(ctx, query, clusterID).Scan(
-		&master.InstanceID, &master.Host, &master.Port, &master.Role, &master.IsHealthy)
-
+	instances, err := s.instanceRepo.ListByClusterID(ctx, clusterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query master: %w", err)
+		return nil, fmt.Errorf("failed to query cluster instances: %w", err)
 	}
-
-	healthResult := s.healthService.GetFailureState(master.InstanceID)
-	master.IsHealthy = healthResult == nil || !healthResult.IsMarkedFailed
-
-	return master, nil
-}
-
-func (s *FailoverService) GetSlaves(ctx context.Context, clusterID string) ([]MasterInfo, error) {
-	query := `
-		SELECT i.id, ic.host, ic.port, ist.role, ist.health_status, ist.seconds_behind_master
-		FROM instances i
-		JOIN instance_connections ic ON i.id = ic.instance_id
-		JOIN instance_status ist ON i.id = ist.instance_id
-		WHERE i.cluster_id = ? AND ist.role = 'slave'
-		ORDER BY ist.seconds_behind_master ASC
-	`
-
-	rows, err := s.db.Pool.QueryContext(ctx, query, clusterID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query slaves: %w", err)
-	}
-	defer rows.Close()
-
-	var slaves []MasterInfo
-	for rows.Next() {
-		var slave MasterInfo
-		var secondsBehind int
-		err := rows.Scan(&slave.InstanceID, &slave.Host, &slave.Port, &slave.Role, &slave.IsHealthy, &secondsBehind)
+	for _, item := range instances {
+		inst, err := s.instanceRepo.GetByID(ctx, item.ID)
+		if err != nil {
+			continue
+		}
+		role := inst.Status.Role
+		if role != "master" && role != "primary" && role != "primary_master" {
+			continue
+		}
+		conn, err := s.getInstanceConnection(ctx, inst.ID)
 		if err != nil {
 			return nil, err
 		}
-		slaves = append(slaves, slave)
+		failureState := s.healthService.GetFailureState(inst.ID)
+		return &MasterInfo{
+			InstanceID: inst.ID,
+			Host:       conn.Host,
+			Port:       conn.Port,
+			Role:       role,
+			IsHealthy:  inst.Status.HealthStatus != "unhealthy" && (failureState == nil || !failureState.IsMarkedFailed),
+		}, nil
 	}
+	return nil, fmt.Errorf("master not found for cluster %s", clusterID)
+}
 
+func (s *FailoverService) GetSlaves(ctx context.Context, clusterID string) ([]MasterInfo, error) {
+	instances, err := s.instanceRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster instances: %w", err)
+	}
+	var slaves []MasterInfo
+	for _, item := range instances {
+		inst, err := s.instanceRepo.GetByID(ctx, item.ID)
+		if err != nil {
+			continue
+		}
+		role := inst.Status.Role
+		if role != "slave" && role != "replica" && role != "secondary" {
+			continue
+		}
+		conn, err := s.getInstanceConnection(ctx, inst.ID)
+		if err != nil {
+			continue
+		}
+		slaves = append(slaves, MasterInfo{
+			InstanceID: inst.ID,
+			Host:       conn.Host,
+			Port:       conn.Port,
+			Role:       role,
+			IsHealthy:  inst.Status.HealthStatus != "unhealthy",
+		})
+	}
 	return slaves, nil
 }
 
@@ -461,25 +468,19 @@ func (s *FailoverService) SwitchVIP(ctx context.Context, req VIPSwitchRequest) *
 }
 
 func (s *FailoverService) UpdateTopology(ctx context.Context, clusterID, oldMasterID, newMasterID string) error {
-	updateOldMaster := `
-		UPDATE instance_status SET role = 'failed_master' WHERE instance_id = ?
-	`
+	updateOldMaster := `UPDATE instance_statuses SET role = 'failed_master' WHERE instance_id = ?`
 	_, err := s.db.Pool.ExecContext(ctx, updateOldMaster, oldMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update old master status: %w", err)
 	}
 
-	updateNewMaster := `
-		UPDATE instance_status SET role = 'master' WHERE instance_id = ?
-	`
+	updateNewMaster := `UPDATE instance_statuses SET role = 'master' WHERE instance_id = ?`
 	_, err = s.db.Pool.ExecContext(ctx, updateNewMaster, newMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update new master status: %w", err)
 	}
 
-	updateTopology := `
-		UPDATE instance_topology SET master_id = ? WHERE cluster_id = ?
-	`
+	updateTopology := `UPDATE instance_topologies SET master_id = ? WHERE cluster_id = ?`
 	_, err = s.db.Pool.ExecContext(ctx, updateTopology, newMasterID, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to update topology: %w", err)

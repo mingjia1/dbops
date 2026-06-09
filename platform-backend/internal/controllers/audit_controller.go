@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
@@ -20,6 +22,8 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 	limitStr := ctx.DefaultQuery("limit", "20")
 	offsetStr := ctx.DefaultQuery("offset", "0")
 	userID := ctx.Query("user_id")
+	userAlias := ctx.Query("user")
+	action := ctx.Query("action")
 	resourceType := ctx.Query("resource_type")
 	resourceID := ctx.Query("resource_id")
 
@@ -34,7 +38,36 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 	}
 
 	var auditLogs []models.AuditLog
-	if userID != "" {
+	if userID == "" {
+		userID = userAlias
+	}
+
+	if action != "" {
+		auditLogs, err = c.service.ListAuditLogs(ctx.Request.Context(), 500, 0)
+		if err == nil {
+			filtered := make([]models.AuditLog, 0, len(auditLogs))
+			actionLower := strings.ToLower(action)
+			userLower := strings.ToLower(userID)
+			for _, item := range auditLogs {
+				if userLower != "" && !strings.Contains(strings.ToLower(item.UserID), userLower) {
+					continue
+				}
+				if !strings.Contains(strings.ToLower(item.Action), actionLower) && !strings.Contains(strings.ToLower(item.Operation), actionLower) {
+					continue
+				}
+				filtered = append(filtered, item)
+			}
+			if offset < len(filtered) {
+				end := offset + limit
+				if end > len(filtered) {
+					end = len(filtered)
+				}
+				auditLogs = filtered[offset:end]
+			} else {
+				auditLogs = []models.AuditLog{}
+			}
+		}
+	} else if userID != "" {
 		auditLogs, err = c.service.ListAuditLogsByUser(ctx.Request.Context(), userID, limit, offset)
 	} else if resourceType != "" && resourceID != "" {
 		auditLogs, err = c.service.ListAuditLogsByResource(ctx.Request.Context(), resourceType, resourceID, limit, offset)

@@ -17,6 +17,7 @@ interface SwitchResult {
 }
 
 const TARGET_ROLES: Record<string, string[]> = {
+  ha: ['master', 'slave'],
   mha: ['master', 'slave'],
   mgr: ['primary', 'secondary'],
   pxc: ['primary', 'secondary'],
@@ -135,6 +136,7 @@ const RoleSwitch: React.FC = () => {
               // 后端校验失败. 架构类型变化时清空 targetRole.
               onChange={(v) => { setArchType(v); setTargetRole(undefined) }}
               options={[
+                { value: 'ha', label: 'HA (master/slave)' },
                 { value: 'mha', label: 'MHA (master/slave)' },
                 { value: 'mgr', label: 'MGR (primary/secondary)' },
                 { value: 'pxc', label: 'PXC (primary/secondary)' },

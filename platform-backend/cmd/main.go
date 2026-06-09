@@ -143,7 +143,7 @@ func main() {
 	monitorController := controllers.NewMonitorController(monitorService)
 
 	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)
-	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo)
+	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo, instanceService)
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
@@ -320,6 +320,7 @@ func main() {
 				paramTemplates.GET("/:id/parameters", paramTemplateController.GetParameters)
 				paramTemplates.POST("/:id/validate", paramTemplateController.Validate)
 				paramTemplates.POST("/recommend", paramTemplateController.Recommend)
+				paramTemplates.POST("/apply", middleware.RequirePermission("admin"), paramTemplateController.Apply)
 			}
 
 			deployments := protected.Group("/deployments")
@@ -389,9 +390,11 @@ func main() {
 				migrations.POST("/replication", migrationController.ExecuteReplication)
 				migrations.POST("/gtid", migrationController.ExecuteGTID)
 				migrations.POST("/orchestrate", migrationController.Orchestrate)
+				migrations.GET("/:id", migrationController.GetByID)
 				migrations.GET("/:id/progress", migrationController.GetProgress)
 				migrations.POST("/:id/verify", migrationController.Verify)
 				migrations.POST("/:id/switch", migrationController.Switch)
+				migrations.POST("/:id/cancel", migrationController.Cancel)
 			}
 
 			alerts := protected.Group("/alerts")
@@ -416,6 +419,7 @@ func main() {
 			approvals := protected.Group("/approvals")
 			{
 				approvals.GET("", approvalController.ListApprovalRequests)
+				approvals.POST("", middleware.RequirePermission("admin"), approvalController.CreateApprovalRequest)
 				approvals.GET("/:id", approvalController.GetApprovalRequestByID)
 				approvals.POST("/:id/approve", approvalController.ApproveRequest)
 				approvals.POST("/:id/reject", approvalController.RejectRequest)

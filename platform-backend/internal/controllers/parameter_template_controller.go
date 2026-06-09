@@ -150,6 +150,15 @@ func (c *ParameterTemplateController) Recommend(ctx *gin.Context) {
 		return
 	}
 
+	if req.CPUCores == 0 {
+		req.CPUCores = 4
+	}
+	if req.MemoryGB == 0 {
+		req.MemoryGB = 16
+	}
+	if req.DiskGB == 0 {
+		req.DiskGB = 100
+	}
 	if req.WorkloadType == "" {
 		req.WorkloadType = "mixed"
 	}
@@ -157,6 +166,22 @@ func (c *ParameterTemplateController) Recommend(ctx *gin.Context) {
 	result, err := c.service.RecommendParameters(ctx.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to generate recommendations", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
+func (c *ParameterTemplateController) Apply(ctx *gin.Context) {
+	var req services.ApplyParameterTemplateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.Apply(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to apply parameter template", err)
 		return
 	}
 

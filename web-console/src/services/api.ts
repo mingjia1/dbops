@@ -371,20 +371,45 @@ export interface ParameterTemplate {
   name: string
   category: string
   description: string
-  parameters: string
+  parameters: ParameterTemplateParameter[]
   is_preset: boolean
   created_by?: string
   created_at: string
   updated_at: string
 }
 
+export interface ParameterTemplateParameter {
+  id?: string
+  template_id?: string
+  version_id?: string
+  parameter_name: string
+  value: string
+  data_type: string
+  min_value?: string
+  max_value?: string
+  unit?: string
+  description?: string
+  is_dynamic?: boolean
+  is_mandatory?: boolean
+  category?: string
+}
+
 export interface ApprovalRequest {
   id: string
   requester: string
+  requester_id?: string
+  approver_id?: string
   operation_type: string
   target_resource: string
+  resource_type?: string
+  resource_id?: string
   status: string
+  approval_status?: string
   description: string
+  request_reason?: string
+  approval_comment?: string
+  priority?: number
+  expires_at?: string
   created_at: string
   updated_at: string
 }
@@ -392,20 +417,99 @@ export interface ApprovalRequest {
 export interface AuditLog {
   id: string
   user: string
+  user_id?: string
+  operation?: string
   action: string
   resource_type: string
   resource_id: string
   ip_address: string
   details: string
+  result?: string
+  error_msg?: string
   created_at: string
+}
+
+const inferParamType = (value: any): string => {
+  const text = String(value)
+  if (/^(on|off|true|false)$/i.test(text)) return 'bool'
+  if (/^\d+(k|m|g|t)$/i.test(text)) return 'size'
+  if (/^\d+$/.test(text)) return 'int'
+  return 'string'
+}
+
+const parseTemplateParameters = (input: any): ParameterTemplateParameter[] => {
+  if (Array.isArray(input)) return input
+  if (!input || typeof input !== 'string') return []
+  const parsed = JSON.parse(input)
+  if (Array.isArray(parsed)) return parsed
+  return Object.entries(parsed).map(([key, value]) => ({
+    parameter_name: key,
+    value: String(value),
+    data_type: inferParamType(value),
+    is_dynamic: true,
+    category: 'custom',
+  }))
+}
+
+export const parameterTemplateParamsToJson = (params: any): string => {
+  const rows = parseTemplateParameters(params)
+  const obj: Record<string, string> = {}
+  rows.forEach((row) => {
+    obj[row.parameter_name] = row.value
+  })
+  return JSON.stringify(obj, null, 2)
+}
+
+const normalizeParameterTemplate = (template: any): ParameterTemplate => ({
+  ...template,
+  parameters: parseTemplateParameters(template?.parameters),
+})
+
+const normalizeParameterTemplateResponse = (res: any) => {
+  if (Array.isArray(res?.data)) {
+    return { ...res, data: res.data.map(normalizeParameterTemplate) }
+  }
+  if (res?.data) return { ...res, data: normalizeParameterTemplate(res.data) }
+  return res
+}
+
+const buildParameterTemplatePayload = (data: any) => ({
+  ...data,
+  parameters: parseTemplateParameters(data?.parameters),
+})
+
+const normalizeApproval = (item: any): ApprovalRequest => ({
+  ...item,
+  requester: item?.requester ?? item?.requester_id ?? '-',
+  target_resource: item?.target_resource ?? [item?.resource_type, item?.resource_id].filter(Boolean).join(':') || '-',
+  status: item?.status ?? item?.approval_status ?? 'pending',
+  description: item?.description ?? item?.request_reason ?? '',
+})
+
+const normalizeApprovalResponse = (res: any) => {
+  if (Array.isArray(res?.data)) return { ...res, data: res.data.map(normalizeApproval) }
+  if (res?.data) return { ...res, data: normalizeApproval(res.data) }
+  return res
+}
+
+const normalizeAuditLog = (item: any): AuditLog => ({
+  ...item,
+  user: item?.user ?? item?.user_id ?? '-',
+  action: item?.action || item?.operation || '-',
+})
+
+const normalizeAuditResponse = (res: any) => {
+  if (Array.isArray(res?.data)) return { ...res, data: res.data.map(normalizeAuditLog) }
+  if (res?.data) return { ...res, data: normalizeAuditLog(res.data) }
+  return res
 }
 
 export const parameterTemplateApi = {
   list: () =>
-    api.get('/parameter-templates'),
+    api.get('/parameter-templates').then(normalizeParameterTemplateResponse),
   
   get: (id: string) =>
-    api.get(`/parameter-templates/${id}`),
+    api.get(`/parameter-templates/${id}`).then(normalizeParameterTemplateResponse),
   
   create: (data: {
     name: string
@@ -413,15 +517,15 @@ export const parameterTemplateApi = {
     description?: string
     parameters: string
   }) =>
-    api.post('/parameter-templates', data),
+    api.post('/parameter-templates', buildParameterTemplatePayload(data)).then(normalizeParameterTemplateResponse),
   
   update: (id: string, data: {
     name?: string
     category?: string
     description?: string
-    parameters?: string
+    parameters?: string | ParameterTemplateParameter[]
   }) =>
-    api.put(`/parameter-templates/${id}`, data),
+    api.put(`/parameter-templates/${id}`, buildParameterTemplatePayload(data)).then(normalizeParameterTemplateResponse),
   
   delete: (id: string) =>
     api.delete(`/parameter-templates/${id}`),
@@ -429,22 +533,33 @@ export const parameterTemplateApi = {
   recommend: (data: { instance_id?: string; template_id?: string; workload_type?: string }) =>
     api.post('/parameter-templates/recommend', data),
 
-  apply: (data: { template_id: string; instance_id: string; parameters: string; require_restart?: boolean }) =>
-    api.post('/parameter-templates/apply', data),
+  apply: (data: { template_id: string; instance_id: string; parameters?: string | ParameterTemplateParameter[]; require_restart?: boolean }) =>
+    api.post('/parameter-templates/apply', { ...data, parameters: parseTemplateParameters(data.parameters) }),
 }
 
 export const approvalApi = {
   list: (status?: string) =>
-    api.get(`/approvals${status ? `?status=${status}` : ''}`),
+    api.get(`/approvals${status ? `?status=${status}` : ''}`).then(normalizeApprovalResponse),
   
   get: (id: string) =>
-    api.get(`/approvals/${id}`),
+    api.get(`/approvals/${id}`).then(normalizeApprovalResponse),
+
+  create: (data: {
+    requester_id: string
+    operation_type: string
+    resource_type: string
+    resource_id: string
+    request_reason?: string
+    priority?: number
+    expiry_hours?: number
+  }) =>
+    api.post('/approvals', data).then(normalizeApprovalResponse),
   
   approve: (id: string, data: { comment?: string }) =>
-    api.post(`/approvals/${id}/approve`, data),
+    api.post(`/approvals/${id}/approve`, data).then(normalizeApprovalResponse),
   
-  reject: (id: string, data: { reason: string }) =>
-    api.post(`/approvals/${id}/reject`, data),
+  reject: (id: string, data: { reason?: string; comment?: string }) =>
+    api.post(`/approvals/${id}/reject`, { comment: data.comment ?? data.reason ?? '' }).then(normalizeApprovalResponse),
 }
 
 export const auditApi = {
@@ -460,18 +575,54 @@ export const auditApi = {
     if (filters?.start_date) params.append('start_date', filters.start_date)
     if (filters?.end_date) params.append('end_date', filters.end_date)
     const queryString = params.toString()
-    return api.get(`/audit-logs${queryString ? `?${queryString}` : ''}`)
+    return api.get(`/audit-logs${queryString ? `?${queryString}` : ''}`).then(normalizeAuditResponse)
   },
 
   get: (id: string) =>
-    api.get(`/audit-logs/${id}`),
+    api.get(`/audit-logs/${id}`).then(normalizeAuditResponse),
+}
+
+const parseAlertChannels = (channels: any): string[] => {
+  if (Array.isArray(channels)) return channels
+  if (typeof channels !== 'string' || channels.trim() === '') return []
+  try {
+    const parsed = JSON.parse(channels)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return channels.split(',').map(item => item.trim()).filter(Boolean)
+  }
+}
+
+const normalizeAlertRule = (rule: any) => ({
+  ...rule,
+  duration: rule?.duration ?? rule?.duration_seconds ?? 60,
+  notification_channels: parseAlertChannels(rule?.notification_channels),
+})
+
+const normalizeAlertRuleResponse = (res: any) => {
+  if (Array.isArray(res?.data)) {
+    return { ...res, data: res.data.map(normalizeAlertRule) }
+  }
+  if (res?.data) {
+    return { ...res, data: normalizeAlertRule(res.data) }
+  }
+  return res
+}
+
+const buildAlertRulePayload = (data: any) => {
+  const { duration, duration_seconds, notification_channels, ...rest } = data || {}
+  return {
+    ...rest,
+    duration_seconds: duration_seconds ?? duration ?? 60,
+    notification_channels: JSON.stringify(parseAlertChannels(notification_channels)),
+  }
 }
 
 export const alertApi = {
-  listRules: () => api.get('/alerts/rules'),
-  getRule: (id: string) => api.get(`/alerts/rules/${id}`),
-  createRule: (data: any) => api.post('/alerts/rules', data),
-  updateRule: (id: string, data: any) => api.put(`/alerts/rules/${id}`, data),
+  listRules: async () => normalizeAlertRuleResponse(await api.get('/alerts/rules')),
+  getRule: async (id: string) => normalizeAlertRuleResponse(await api.get(`/alerts/rules/${id}`)),
+  createRule: async (data: any) => normalizeAlertRuleResponse(await api.post('/alerts/rules', buildAlertRulePayload(data))),
+  updateRule: async (id: string, data: any) => normalizeAlertRuleResponse(await api.put(`/alerts/rules/${id}`, buildAlertRulePayload(data))),
   deleteRule: (id: string) => api.delete(`/alerts/rules/${id}`),
   listChannels: () => api.get('/alerts/notifications/channels'),
   createChannel: (data: any) => api.post('/alerts/notifications/channels', data),
@@ -552,6 +703,12 @@ export const roleSwitchApi = {
     api.post('/switch/cluster/role', data),
   history: (clusterId: string, limit = 20) =>
     api.get(`/switch/cluster/${clusterId}/role-history?limit=${limit}`),
+}
+
+export const topologyApi = {
+  getCluster: (clusterId: string) => api.get(`/topology/clusters/${encodeURIComponent(clusterId)}`),
+  getGraph: (clusterId: string) => api.get(`/topology/clusters/${encodeURIComponent(clusterId)}/graph`),
+  getInstance: (instanceId: string) => api.get(`/topology/instances/${encodeURIComponent(instanceId)}`),
 }
 
 export default api

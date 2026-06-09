@@ -1,26 +1,88 @@
-import React, { useEffect, useState } from 'react'
-import { Card, Select, Space, Tag, Empty, Spin, Row, Col, Statistic, Button } from 'antd'
-import { ApartmentOutlined, ReloadOutlined, DatabaseOutlined } from '@ant-design/icons'
-import { instanceApi, type Instance } from '../services/api'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Empty, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd'
+import { ApartmentOutlined, DatabaseOutlined, ReloadOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import { instanceApi, topologyApi, type Instance } from '../services/api'
 
-interface ClusterTopology {
+const { Text } = Typography
+
+interface TopologyNode {
+  id: string
+  name: string
+  role: string
+  status: string
   cluster_id: string
-  master: Instance | null
-  replicas: Instance[]
+}
+
+interface TopologyEdge {
+  source_id: string
+  target_id: string
+  type: string
+  label: string
+}
+
+interface ClusterGraph {
+  clusterId: string
+  mode: string
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+}
+
+const primaryRoles = new Set(['master', 'primary', 'primary_master'])
+
+const roleColor = (role?: string) => {
+  if (!role) return 'default'
+  if (primaryRoles.has(role)) return 'blue'
+  if (role === 'slave' || role === 'replica' || role === 'secondary') return 'green'
+  return 'default'
+}
+
+const statusColor = (status?: string) => {
+  if (status === 'healthy' || status === 'running') return 'success'
+  if (status === 'failed' || status === 'stopped') return 'error'
+  return 'default'
 }
 
 const TopologyView: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
+  const [graphs, setGraphs] = useState<Record<string, ClusterGraph>>({})
   const [loading, setLoading] = useState(false)
-  const [clusterFilter, setClusterFilter] = useState<string | undefined>(undefined)
+  const [clusterFilter, setClusterFilter] = useState<string | undefined>()
+
+  const clusterIds = useMemo(
+    () => Array.from(new Set(instances.map((i) => i.cluster_id).filter(Boolean))) as string[],
+    [instances],
+  )
 
   const fetchData = async () => {
     setLoading(true)
     try {
-      const res: any = await instanceApi.list(100, 0)
-      setInstances(res?.data || [])
+      const res: any = await instanceApi.list(1000, 0)
+      const list: Instance[] = res?.data || []
+      setInstances(list)
+
+      const ids = Array.from(new Set(list.map((i) => i.cluster_id).filter(Boolean))) as string[]
+      const loaded: Record<string, ClusterGraph> = {}
+      await Promise.all(ids.map(async (clusterId) => {
+        try {
+          const [topologyRes, graphRes]: any[] = await Promise.all([
+            topologyApi.getCluster(clusterId),
+            topologyApi.getGraph(clusterId),
+          ])
+          loaded[clusterId] = {
+            clusterId,
+            mode: topologyRes?.data?.replication_mode || graphRes?.data?.edges?.[0]?.label || 'unknown',
+            nodes: graphRes?.data?.nodes || [],
+            edges: graphRes?.data?.edges || [],
+          }
+        } catch {
+          loaded[clusterId] = { clusterId, mode: 'unknown', nodes: [], edges: [] }
+        }
+      }))
+      setGraphs(loaded)
     } catch {
       setInstances([])
+      setGraphs({})
     } finally {
       setLoading(false)
     }
@@ -30,147 +92,107 @@ const TopologyView: React.FC = () => {
     fetchData()
   }, [])
 
-  const filtered = clusterFilter
-    ? instances.filter((i) => i.cluster_id === clusterFilter)
-    : instances
+  const visibleClusterIds = clusterFilter ? [clusterFilter] : clusterIds
+  const visibleInstances = clusterFilter ? instances.filter((i) => i.cluster_id === clusterFilter) : instances
+  const standalones = instances.filter((i) => !i.cluster_id)
 
-  const clusters: Record<string, ClusterTopology> = {}
-  const standalones: Instance[] = []
-  for (const inst of filtered) {
-    if (!inst.cluster_id) {
-      standalones.push(inst)
-      continue
-    }
-    if (!clusters[inst.cluster_id]) {
-      clusters[inst.cluster_id] = { cluster_id: inst.cluster_id, master: null, replicas: [] }
-    }
-    const role = inst.status?.role || ''
-    if (role === 'master' || role === 'primary' || role === 'primary_master') {
-      clusters[inst.cluster_id].master = inst
-    } else {
-      clusters[inst.cluster_id].replicas.push(inst)
-    }
-  }
-
-  const clusterIds = Array.from(new Set(instances.map((i) => i.cluster_id).filter(Boolean)))
+  const instanceColumns: ColumnsType<Instance> = [
+    { title: '实例', dataIndex: 'name', key: 'name' },
+    {
+      title: '地址',
+      key: 'endpoint',
+      render: (_, item) => `${item.connection?.host || item.host || '-'}:${item.connection?.port || item.port || '-'}`,
+    },
+    {
+      title: '角色',
+      key: 'role',
+      render: (_, item) => <Tag color={roleColor(item.status?.role)}>{item.status?.role || 'unknown'}</Tag>,
+    },
+    {
+      title: '健康',
+      key: 'health',
+      render: (_, item) => <Tag color={statusColor(item.status?.health_status)}>{item.status?.health_status || '-'}</Tag>,
+    },
+  ]
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: 24 }}>
       <Card
-        title={
-          <Space>
-            <ApartmentOutlined />
-            <span>集群拓扑</span>
-          </Space>
-        }
+        title={<Space><ApartmentOutlined /><span>拓扑视图</span></Space>}
         extra={
           <Space>
             <Select
-              placeholder="按集群过滤"
+              placeholder="按集群筛选"
               allowClear
-              style={{ width: 220 }}
+              style={{ width: 260 }}
               value={clusterFilter}
               onChange={setClusterFilter}
-              options={clusterIds.map((c) => ({ value: c as string, label: c as string }))}
+              options={clusterIds.map((id) => ({ value: id, label: id }))}
             />
             <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           </Space>
         }
       >
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col span={6}>
-            <Card>
-              <Statistic title="实例总数" value={filtered.length} prefix={<DatabaseOutlined />} />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="集群数"
-                value={Object.keys(clusters).length}
-                prefix={<ApartmentOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="主节点数"
-                value={Object.values(clusters).filter((c) => c.master).length}
-                prefix={<DatabaseOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="独立实例"
-                value={standalones.length}
-                prefix={<DatabaseOutlined />}
-              />
-            </Card>
-          </Col>
+          <Col xs={12} md={6}><Statistic title="实例数" value={visibleInstances.length} prefix={<DatabaseOutlined />} /></Col>
+          <Col xs={12} md={6}><Statistic title="集群数" value={visibleClusterIds.length} prefix={<ApartmentOutlined />} /></Col>
+          <Col xs={12} md={6}><Statistic title="主节点" value={visibleInstances.filter((i) => primaryRoles.has(i.status?.role || '')).length} /></Col>
+          <Col xs={12} md={6}><Statistic title="独立实例" value={standalones.length} /></Col>
         </Row>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-        ) : filtered.length === 0 ? (
-          <Empty description="暂无实例数据, 请先创建实例" />
+          <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
+        ) : visibleInstances.length === 0 ? (
+          <Empty description="暂无拓扑数据" />
         ) : (
-          <>
-            <Row gutter={[16, 16]}>
-              {Object.values(clusters).map((cluster) => (
-                <Col xs={24} md={12} lg={8} key={cluster.cluster_id}>
-                  <Card
-                    size="small"
-                    title={
-                      <Space>
-                        <ApartmentOutlined />
-                        <span>集群: {cluster.cluster_id}</span>
-                      </Space>
-                    }
-                  >
-                    <div style={{ marginBottom: 8 }}>
-                      <strong>主节点:</strong>{' '}
-                      {cluster.master ? (
-                        <Tag color="blue">{cluster.master.name}</Tag>
-                      ) : (
-                        <Tag color="warning">无主</Tag>
-                      )}
-                    </div>
-                    <div>
-                      <strong>从节点 ({cluster.replicas.length}):</strong>
-                      <div style={{ marginTop: 4 }}>
-                        {cluster.replicas.length === 0 ? (
-                          <Tag>无</Tag>
-                        ) : (
-                          cluster.replicas.map((r) => (
-                            <Tag key={r.id} color="default">{r.name}</Tag>
-                          ))
-                        )}
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {visibleClusterIds.map((clusterId) => {
+              const graph = graphs[clusterId]
+              const clusterInstances = instances.filter((i) => i.cluster_id === clusterId)
+              const nodes = graph?.nodes?.length ? graph.nodes : clusterInstances.map((i) => ({
+                id: i.id,
+                name: i.name,
+                role: i.status?.role || 'unknown',
+                status: i.status?.health_status || i.status?.run_status || 'unknown',
+                cluster_id: clusterId,
+              }))
+              return (
+                <Card key={clusterId} size="small" title={<Space><ApartmentOutlined />{clusterId}<Tag>{graph?.mode || 'unknown'}</Tag></Space>}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+                    {nodes.map((node) => (
+                      <div key={node.id} style={{ width: 220, minHeight: 92, border: '1px solid #d9d9d9', borderRadius: 6, padding: 12 }}>
+                        <Space direction="vertical" size={4}>
+                          <Text strong>{node.name || node.id}</Text>
+                          <Space>
+                            <Tag color={roleColor(node.role)}>{node.role || 'unknown'}</Tag>
+                            <Tag color={statusColor(node.status)}>{node.status || 'unknown'}</Tag>
+                          </Space>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{node.id}</Text>
+                        </Space>
                       </div>
-                    </div>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
-            {standalones.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ marginBottom: 8, fontWeight: 600 }}>独立实例 (未加入集群)</div>
-                <Row gutter={[16, 16]}>
-                  {standalones.map((s) => (
-                    <Col xs={24} md={12} lg={8} key={s.id}>
-                      <Card size="small" title={<Space><DatabaseOutlined /><span>{s.name}</span></Space>}>
-                        <div>主机: {s.host || s.connection?.host || '-'}</div>
-                        <div>端口: {s.port || s.connection?.port || '-'}</div>
-                        <div>角色: {s.status?.role ? <Tag color="default">{s.status.role}</Tag> : <Tag>未检测</Tag>}</div>
-                      </Card>
-                    </Col>
-                  ))}
-                </Row>
-              </div>
+                    ))}
+                  </div>
+                  <Table
+                    size="small"
+                    pagination={false}
+                    columns={[
+                      { title: '源节点', dataIndex: 'source_id', key: 'source_id' },
+                      { title: '目标节点', dataIndex: 'target_id', key: 'target_id' },
+                      { title: '关系', dataIndex: 'label', key: 'label', render: (v) => <Tag>{v || 'replication'}</Tag> },
+                    ]}
+                    dataSource={(graph?.edges || []).map((edge, index) => ({ ...edge, key: `${edge.source_id}-${edge.target_id}-${index}` }))}
+                    locale={{ emptyText: '暂无复制关系' }}
+                  />
+                </Card>
+              )
+            })}
+
+            {standalones.length > 0 && !clusterFilter && (
+              <Card size="small" title="独立实例">
+                <Table columns={instanceColumns} dataSource={standalones} rowKey="id" pagination={false} />
+              </Card>
             )}
-          </>
+          </Space>
         )}
       </Card>
     </div>

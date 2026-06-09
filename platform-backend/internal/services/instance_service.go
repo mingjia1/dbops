@@ -79,11 +79,29 @@ func (s *InstanceService) GetByID(ctx context.Context, id string) (*models.Insta
 }
 
 func (s *InstanceService) List(ctx context.Context, limit, offset int) ([]models.Instance, error) {
-	return s.repo.List(ctx, limit, offset)
+	instances, err := s.repo.List(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichListedInstances(ctx, instances), nil
 }
 
 func (s *InstanceService) ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error) {
-	return s.repo.ListByHostID(ctx, hostID, limit, offset)
+	instances, err := s.repo.ListByHostID(ctx, hostID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichListedInstances(ctx, instances), nil
+}
+
+func (s *InstanceService) enrichListedInstances(ctx context.Context, instances []models.Instance) []models.Instance {
+	for i := range instances {
+		full, err := s.repo.GetByID(ctx, instances[i].ID)
+		if err == nil && full != nil {
+			instances[i] = *full
+		}
+	}
+	return instances
 }
 
 func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInstanceRequest) (*models.Instance, error) {

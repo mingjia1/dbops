@@ -23,6 +23,22 @@ func (c *MigrationController) List(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, tasks)
 }
 
+func (c *MigrationController) GetByID(ctx *gin.Context) {
+	taskID := ctx.Param("id")
+	if taskID == "" {
+		utils.BadRequestResponse(ctx, "Task ID is required")
+		return
+	}
+
+	task, err := c.service.GetTask(ctx.Request.Context(), taskID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Migration task not found")
+		return
+	}
+
+	utils.SuccessResponse(ctx, task)
+}
+
 func (c *MigrationController) ExecutePhysical(ctx *gin.Context) {
 	var req services.CreateMigrationTaskRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -157,4 +173,19 @@ func (c *MigrationController) Switch(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, result)
+}
+
+func (c *MigrationController) Cancel(ctx *gin.Context) {
+	taskID := ctx.Param("id")
+	if taskID == "" {
+		utils.BadRequestResponse(ctx, "Task ID is required")
+		return
+	}
+
+	if err := c.service.CancelTask(ctx.Request.Context(), taskID); err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to cancel migration task", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, gin.H{"task_id": taskID, "status": "cancelled"})
 }

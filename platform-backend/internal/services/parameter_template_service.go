@@ -11,11 +11,16 @@ import (
 )
 
 type ParameterTemplateService struct {
-	repo *repositories.ParameterTemplateRepository
+	repo            *repositories.ParameterTemplateRepository
+	instanceService *InstanceService
 }
 
-func NewParameterTemplateService(repo *repositories.ParameterTemplateRepository) *ParameterTemplateService {
-	return &ParameterTemplateService{repo: repo}
+func NewParameterTemplateService(repo *repositories.ParameterTemplateRepository, instanceService ...*InstanceService) *ParameterTemplateService {
+	s := &ParameterTemplateService{repo: repo}
+	if len(instanceService) > 0 {
+		s.instanceService = instanceService[0]
+	}
+	return s
 }
 
 func (s *ParameterTemplateService) Create(ctx context.Context, req CreateParameterTemplateRequest) (*models.ParameterTemplate, error) {
@@ -57,15 +62,37 @@ func (s *ParameterTemplateService) Create(ctx context.Context, req CreateParamet
 }
 
 func (s *ParameterTemplateService) GetByID(ctx context.Context, id string) (*models.ParameterTemplate, error) {
-	return s.repo.GetByID(ctx, id)
+	template, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrateParameters(ctx, template)
 }
 
 func (s *ParameterTemplateService) List(ctx context.Context, limit, offset int) ([]models.ParameterTemplate, error) {
-	return s.repo.List(ctx, limit, offset)
+	templates, err := s.repo.List(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	for i := range templates {
+		if hydrated, err := s.hydrateParameters(ctx, &templates[i]); err == nil {
+			templates[i] = *hydrated
+		}
+	}
+	return templates, nil
 }
 
 func (s *ParameterTemplateService) ListPresets(ctx context.Context) ([]models.ParameterTemplate, error) {
-	return s.repo.ListPresetTemplates(ctx)
+	templates, err := s.repo.ListPresetTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range templates {
+		if hydrated, err := s.hydrateParameters(ctx, &templates[i]); err == nil {
+			templates[i] = *hydrated
+		}
+	}
+	return templates, nil
 }
 
 func (s *ParameterTemplateService) Update(ctx context.Context, id string, req UpdateParameterTemplateRequest) (*models.ParameterTemplate, error) {
@@ -93,7 +120,19 @@ func (s *ParameterTemplateService) Update(ctx context.Context, id string, req Up
 		return nil, fmt.Errorf("failed to update parameter template: %w", err)
 	}
 
-	return template, nil
+	if req.Parameters != nil {
+		if err := s.repo.DeleteParametersByTemplate(ctx, id); err != nil {
+			return nil, err
+		}
+		for _, param := range *req.Parameters {
+			p := parameterInputToModel(id, param)
+			if err := s.repo.CreateParameter(ctx, p); err != nil {
+				return nil, fmt.Errorf("failed to create parameter: %w", err)
+			}
+		}
+	}
+
+	return s.hydrateParameters(ctx, template)
 }
 
 func (s *ParameterTemplateService) Delete(ctx context.Context, id string) error {
@@ -111,6 +150,96 @@ func (s *ParameterTemplateService) Delete(ctx context.Context, id string) error 
 
 func (s *ParameterTemplateService) GetParameters(ctx context.Context, templateID string, versionID *string) ([]models.ParameterTemplateParameter, error) {
 	return s.repo.ListParameters(ctx, templateID, versionID)
+}
+
+func (s *ParameterTemplateService) Apply(ctx context.Context, req ApplyParameterTemplateRequest) (*ApplyParameterTemplateResponse, error) {
+	if s.instanceService == nil {
+		return nil, fmt.Errorf("instance service is not configured")
+	}
+	params := req.Parameters
+	if len(params) == 0 {
+		template, err := s.GetByID(ctx, req.TemplateID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range template.Parameters {
+			params = append(params, ParameterInput{
+				ParameterName: p.ParameterName,
+				Value:         p.Value,
+				DataType:      p.DataType,
+				Category:      p.Category,
+			})
+		}
+	}
+	if len(params) == 0 {
+		return nil, fmt.Errorf("template has no parameters to apply")
+	}
+
+	resp := &ApplyParameterTemplateResponse{
+		TemplateID: req.TemplateID,
+		InstanceID: req.InstanceID,
+		Results:    make([]ApplyParameterResult, 0, len(params)),
+	}
+	for _, p := range params {
+		if p.ParameterName == "" {
+			continue
+		}
+		result, err := s.instanceService.AdminAction(ctx, req.InstanceID, InstanceAdminRequest{
+			Action: "set_variable",
+			Name:   p.ParameterName,
+			Value:  p.Value,
+		})
+		row := ApplyParameterResult{
+			Name:   p.ParameterName,
+			Value:  p.Value,
+			Status: "completed",
+		}
+		if err != nil {
+			row.Status = "failed"
+			row.Message = err.Error()
+			resp.Failed++
+		} else if result != nil {
+			row.Status = result.Status
+			row.Message = result.Message
+			if result.Status == "completed" || result.Status == "success" {
+				resp.Applied++
+			} else {
+				resp.Failed++
+			}
+		}
+		resp.Results = append(resp.Results, row)
+	}
+	resp.RequireRestart = req.RequireRestart
+	return resp, nil
+}
+
+func (s *ParameterTemplateService) hydrateParameters(ctx context.Context, template *models.ParameterTemplate) (*models.ParameterTemplate, error) {
+	if template == nil {
+		return nil, fmt.Errorf("parameter template is nil")
+	}
+	params, err := s.repo.ListParameters(ctx, template.ID, nil)
+	if err != nil {
+		return nil, err
+	}
+	template.Parameters = params
+	return template, nil
+}
+
+func parameterInputToModel(templateID string, param ParameterInput) *models.ParameterTemplateParameter {
+	return &models.ParameterTemplateParameter{
+		TemplateID:    templateID,
+		VersionID:     param.VersionID,
+		ParameterName: param.ParameterName,
+		Value:         param.Value,
+		DataType:      param.DataType,
+		MinValue:      param.MinValue,
+		MaxValue:      param.MaxValue,
+		Unit:          param.Unit,
+		Description:   param.Description,
+		IsDynamic:     param.IsDynamic,
+		IsMandatory:   param.IsMandatory,
+		Category:      param.Category,
+	}
 }
 
 func (s *ParameterTemplateService) ValidateParameters(ctx context.Context, req ValidateParametersRequest) (*ValidationResult, error) {
@@ -536,9 +665,10 @@ type ParameterInput struct {
 }
 
 type UpdateParameterTemplateRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Category    string `json:"category"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Category    string            `json:"category"`
+	Parameters  *[]ParameterInput `json:"parameters"`
 }
 
 type ValidateParametersRequest struct {
@@ -572,10 +702,33 @@ type ValidationWarning struct {
 }
 
 type RecommendParametersRequest struct {
-	CPUCores     int    `json:"cpu_cores" binding:"required"`
-	MemoryGB     int    `json:"memory_gb" binding:"required"`
-	DiskGB       int    `json:"disk_gb" binding:"required"`
+	CPUCores     int    `json:"cpu_cores"`
+	MemoryGB     int    `json:"memory_gb"`
+	DiskGB       int    `json:"disk_gb"`
 	WorkloadType string `json:"workload_type"`
+}
+
+type ApplyParameterTemplateRequest struct {
+	TemplateID      string           `json:"template_id" binding:"required"`
+	InstanceID      string           `json:"instance_id" binding:"required"`
+	Parameters      []ParameterInput `json:"parameters"`
+	RequireRestart  bool             `json:"require_restart"`
+}
+
+type ApplyParameterTemplateResponse struct {
+	TemplateID      string                 `json:"template_id"`
+	InstanceID      string                 `json:"instance_id"`
+	Applied         int                    `json:"applied"`
+	Failed          int                    `json:"failed"`
+	RequireRestart  bool                   `json:"require_restart"`
+	Results         []ApplyParameterResult `json:"results"`
+}
+
+type ApplyParameterResult struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 type RecommendationResult struct {
