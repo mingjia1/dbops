@@ -15,8 +15,11 @@ interface MigrationTask {
   progress: number
   started_at: string
   completed_at?: string
+  error?: string
   error_message?: string
 }
+
+const activeMigrationStatuses = new Set(['pending', 'preparing', 'migrating', 'running', 'verifying', 'switching'])
 
 const isFailedMigrationStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
@@ -154,20 +157,26 @@ const MigrationManage: React.FC = () => {
 
   useEffect(() => {
     if (!activeMigration) return
-    if (!['running', 'migrating', 'preparing'].includes(activeMigration.status)) return
+    if (!activeMigrationStatuses.has(activeMigration.status)) return
     const interval = setInterval(() => {
       migrationApi.get(activeMigration.id).then((res: any) => {
         const task = res?.data
         if (!task) return
         setActiveMigration((prev) => (prev ? { ...prev, ...task } : prev))
         setMigrationTasks((tasks) => tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)))
-        if (!['running', 'migrating', 'preparing'].includes(task.status)) {
+        if (!activeMigrationStatuses.has(task.status)) {
           clearInterval(interval)
         }
       }).catch(() => clearInterval(interval))
     }, 2000)
     return () => clearInterval(interval)
   }, [activeMigration?.id, activeMigration?.status])
+
+  useEffect(() => {
+    if (!migrationTasks.some((task) => activeMigrationStatuses.has(task.status))) return
+    const interval = setInterval(loadData, 5000)
+    return () => clearInterval(interval)
+  }, [migrationTasks])
 
   const buildCreatePayload = (values: any, strategy: 'physical' | 'replication' | 'gtid') => ({
     name: `${strategy}-${Date.now()}`,
@@ -340,6 +349,9 @@ const MigrationManage: React.FC = () => {
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="开始时间">{activeMigration.started_at}</Descriptions.Item>
+          {(activeMigration.error || activeMigration.error_message) && (
+            <Descriptions.Item label="错误信息" span={2}>{activeMigration.error || activeMigration.error_message}</Descriptions.Item>
+          )}
         </Descriptions>
         
         <Divider />
@@ -374,6 +386,13 @@ const MigrationManage: React.FC = () => {
       title: '任务ID',
       dataIndex: 'id',
       key: 'id',
+    },
+    {
+      title: '错误信息',
+      key: 'error',
+      width: 260,
+      ellipsis: true,
+      render: (_: any, record: MigrationTask) => record.error || record.error_message || '-',
     },
     {
       title: '迁移类型',
@@ -439,7 +458,7 @@ const MigrationManage: React.FC = () => {
             onClick={() => handleVerify(record.id)}
             disabled={record.status !== 'running' && record.status !== 'migrating'}
           >
-            Verify
+            验证
           </Button>
           <Button
             size="small"
@@ -448,7 +467,7 @@ const MigrationManage: React.FC = () => {
             onClick={() => handleSwitch(record.id)}
             disabled={record.status !== 'verifying'}
           >
-            Switch
+            切换
           </Button>
           {(record.status === 'running' || record.status === 'migrating' || record.status === 'pending' || record.status === 'verifying') && (
             <Button

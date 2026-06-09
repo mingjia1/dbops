@@ -103,12 +103,24 @@ func (r *MigrationRepository) getByIDInDB(ctx context.Context, id string) (*mode
 }
 
 func (r *MigrationRepository) UpdateStatus(ctx context.Context, id string, status models.MigrationStatus, progress int) error {
+	return r.updateStatus(ctx, id, status, progress, nil)
+}
+
+func (r *MigrationRepository) UpdateStatusWithError(ctx context.Context, id string, status models.MigrationStatus, progress int, errorMsg string) error {
+	return r.updateStatus(ctx, id, status, progress, &errorMsg)
+}
+
+func (r *MigrationRepository) updateStatus(ctx context.Context, id string, status models.MigrationStatus, progress int, errorMsg *string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
 	now := time.Now()
 	query := `UPDATE migration_tasks SET status = ?, progress = ?, updated_at = ?`
 	args := []interface{}{status, progress, now}
+	if errorMsg != nil {
+		query += `, error = ?`
+		args = append(args, *errorMsg)
+	}
 	if isMigrationStartedStatus(status) {
 		query += `, started_at = COALESCE(started_at, ?)`
 		args = append(args, now)

@@ -79,6 +79,7 @@ type MigrationTaskResult struct {
 	Strategy  models.MigrationStrategy `json:"strategy"`
 	StartedAt time.Time                `json:"started_at"`
 	Progress  int                      `json:"progress"`
+	Message   string                   `json:"message,omitempty"`
 }
 
 func (s *MigrationService) CreateTask(ctx context.Context, req CreateMigrationTaskRequest) (string, error) {
@@ -123,13 +124,14 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	sourceInstFull, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
 	agentHost, agentPort, err := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
-		s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
+		s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, 0, err.Error())
 		out := &MigrationTaskResult{
 			TaskID:    taskID,
 			Status:    models.MigrationStatusFailed,
 			Strategy:  strategy,
 			StartedAt: now,
 			Progress:  0,
+			Message:   err.Error(),
 		}
 		s.auditMigrationExecution(ctx, task, out, err.Error())
 		return out, nil
@@ -140,32 +142,39 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		"config":      config,
 	})
 	if err != nil {
-		s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
+		s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, 0, err.Error())
 		out := &MigrationTaskResult{
 			TaskID:    taskID,
 			Status:    models.MigrationStatusFailed,
 			Strategy:  strategy,
 			StartedAt: now,
 			Progress:  0,
+			Message:   err.Error(),
 		}
 		s.auditMigrationExecution(ctx, task, out, err.Error())
 		return out, nil
 	}
 
 	if result == nil {
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, 0)
+		message := "agent returned no migration result"
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, 0, message)
 		out := &MigrationTaskResult{
 			TaskID:    taskID,
 			Status:    models.MigrationStatusFailed,
 			Strategy:  strategy,
 			StartedAt: now,
 			Progress:  0,
+			Message:   message,
 		}
-		s.auditMigrationExecution(ctx, task, out, "agent returned no migration result")
+		s.auditMigrationExecution(ctx, task, out, message)
 		return out, nil
 	}
 	status := normalizeMigrationStatus(result.Status)
-	s.repo.UpdateStatus(ctx, taskID, status, result.Progress)
+	if status == models.MigrationStatusFailed {
+		s.repo.UpdateStatusWithError(ctx, taskID, status, result.Progress, result.Message)
+	} else {
+		s.repo.UpdateStatus(ctx, taskID, status, result.Progress)
+	}
 
 	out := &MigrationTaskResult{
 		TaskID:    taskID,
@@ -173,6 +182,7 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		Strategy:  strategy,
 		StartedAt: now,
 		Progress:  result.Progress,
+		Message:   result.Message,
 	}
 	s.auditMigrationExecution(ctx, task, out, result.Message)
 	return out, nil
@@ -246,7 +256,7 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	}
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
 		return &models.MigrationVerification{
 			TaskID:     taskID,
 			VerifiedAt: time.Now(),
@@ -264,7 +274,7 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	}
 	if callErr != nil {
 		out.Errors = []string{"agent verify call failed: " + callErr.Error()}
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, out.Errors[0])
 		return out, nil
 	}
 	if v, ok := result.Data["source_count"].(float64); ok {
@@ -290,7 +300,7 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 		}
 	}
 	if len(out.Errors) > 0 {
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, strings.Join(out.Errors, "; "))
 	} else {
 		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusVerifying, task.Progress)
 	}
@@ -308,7 +318,7 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	}
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
 		out := &models.MigrationSwitchResult{
 			TaskID: taskID,
 			Status: "failed",
@@ -323,7 +333,7 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 		"config":      map[string]interface{}{},
 	})
 	if err != nil {
-		_ = s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusFailed, task.Progress)
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
 		out := &models.MigrationSwitchResult{
 			TaskID: taskID,
 			Status: "failed",
@@ -338,7 +348,11 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 		status = models.MigrationStatusCompleted
 		progress = 100
 	}
-	_ = s.repo.UpdateStatus(ctx, taskID, status, progress)
+	if status == models.MigrationStatusFailed {
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, status, progress, result.Message)
+	} else {
+		_ = s.repo.UpdateStatus(ctx, taskID, status, progress)
+	}
 
 	out := &models.MigrationSwitchResult{
 		TaskID:             taskID,
