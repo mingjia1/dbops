@@ -2,9 +2,14 @@ package services
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -22,6 +28,7 @@ type HostService struct {
 	repo         *repositories.HostRepository
 	instanceRepo *repositories.InstanceRepository
 	encKey       string
+	agentToken   string
 
 	taskMu      sync.RWMutex
 	testResults map[string]*HostTestResult
@@ -30,10 +37,15 @@ type HostService struct {
 	scanResults map[string]*HostScanResult
 }
 
-func NewHostService(repo *repositories.HostRepository, encKey string) *HostService {
+func NewHostService(repo *repositories.HostRepository, encKey string, agentToken ...string) *HostService {
+	token := ""
+	if len(agentToken) > 0 {
+		token = agentToken[0]
+	}
 	return &HostService{
 		repo:        repo,
 		encKey:      encKey,
+		agentToken:  token,
 		testResults: make(map[string]*HostTestResult),
 		scanResults: make(map[string]*HostScanResult),
 	}
@@ -54,6 +66,52 @@ type CreateHostRequest struct {
 	OSType        string `json:"os_type"`
 	Description   string `json:"description"`
 	Tags          string `json:"tags"`
+}
+
+type BatchCreateHostRequest struct {
+	Hosts []CreateHostRequest `json:"hosts" binding:"required"`
+}
+
+type BatchCreateHostResult struct {
+	Total   int                  `json:"total"`
+	Created int                  `json:"created"`
+	Rows    []BatchCreateHostRow `json:"rows"`
+}
+
+type BatchCreateHostRow struct {
+	Index   int          `json:"index"`
+	Name    string       `json:"name"`
+	Address string       `json:"address"`
+	Status  string       `json:"status"`
+	Message string       `json:"message,omitempty"`
+	Host    *models.Host `json:"host,omitempty"`
+}
+
+type HostAgentActionRequest struct {
+	Action    string `json:"action" binding:"required"`
+	AgentPort int    `json:"agent_port"`
+}
+
+type HostAgentActionResult struct {
+	HostID    string `json:"host_id"`
+	HostName  string `json:"host_name"`
+	Address   string `json:"address"`
+	AgentPort int    `json:"agent_port"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+}
+
+type BatchHostAgentActionRequest struct {
+	HostIDs []string `json:"host_ids" binding:"required"`
+	Action  string   `json:"action" binding:"required"`
+}
+
+type BatchHostAgentActionResult struct {
+	Total   int                     `json:"total"`
+	Success int                     `json:"success"`
+	Failed  int                     `json:"failed"`
+	Rows    []HostAgentActionResult `json:"rows"`
 }
 
 type UpdateHostRequest struct {
@@ -117,7 +175,278 @@ func (s *HostService) Create(ctx context.Context, req CreateHostRequest) (*model
 	if err := s.repo.Create(ctx, host); err != nil {
 		return nil, err
 	}
+	go func(hostID string) {
+		_, _ = s.AgentAction(context.Background(), hostID, HostAgentActionRequest{Action: "install"})
+	}(host.ID)
 	return host, nil
+}
+
+func (s *HostService) BatchCreate(ctx context.Context, req BatchCreateHostRequest) (*BatchCreateHostResult, error) {
+	result := &BatchCreateHostResult{
+		Total: len(req.Hosts),
+		Rows:  make([]BatchCreateHostRow, 0, len(req.Hosts)),
+	}
+	for i, item := range req.Hosts {
+		row := BatchCreateHostRow{
+			Index:   i + 1,
+			Name:    item.Name,
+			Address: item.Address,
+		}
+		host, err := s.Create(ctx, item)
+		if err != nil {
+			row.Status = "failed"
+			row.Message = err.Error()
+		} else {
+			row.Status = "created"
+			row.Host = host
+			result.Created++
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result, nil
+}
+
+func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAgentActionRequest) (*HostAgentActionResult, error) {
+	host, err := s.repo.GetByID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	port := req.AgentPort
+	if port == 0 {
+		port = host.AgentPort
+	}
+	if port == 0 {
+		port = 9090
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "status"
+	}
+	result := &HostAgentActionResult{
+		HostID:    host.ID,
+		HostName:  host.Name,
+		Address:   host.Address,
+		AgentPort: port,
+		Action:    action,
+		Status:    "failed",
+	}
+
+	if action == "status" {
+		if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
+			result.Status = "success"
+			result.Message = msg
+			return result, nil
+		} else {
+			result.Message = msg
+			return result, nil
+		}
+	}
+
+	password, err := utils.Decrypt(host.SSHCredential, s.encKey)
+	if err != nil {
+		result.Message = "decrypt SSH credential failed: " + err.Error()
+		return result, nil
+	}
+	if strings.TrimSpace(password) == "" {
+		result.Message = "host has no SSH credential; edit host and save SSH password first"
+		return result, nil
+	}
+
+	client, err := s.sshClient(host, password)
+	if err != nil {
+		result.Message = "SSH connect failed: " + err.Error()
+		return result, nil
+	}
+	defer client.Close()
+
+	switch action {
+	case "install", "add", "update":
+		if err := s.uploadAgentBinary(client); err != nil {
+			result.Message = err.Error()
+			return result, nil
+		}
+		if out, err := runSSH(client, agentConfigCommand(port, s.agentToken)); err != nil {
+			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
+			return result, nil
+		}
+		if out, err := runSSH(client, agentStartCommand(port, s.agentToken)); err != nil {
+			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
+			return result, nil
+		}
+	case "restart", "modify":
+		if out, err := runSSH(client, agentConfigCommand(port, s.agentToken)); err != nil {
+			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
+			return result, nil
+		}
+		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true\n"+agentStartCommand(port, s.agentToken)); err != nil {
+			result.Message = fmt.Sprintf("restart agent failed: %v\n%s", err, out)
+			return result, nil
+		}
+	case "start":
+		if out, err := runSSH(client, agentStartCommand(port, s.agentToken)); err != nil {
+			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
+			return result, nil
+		}
+	case "stop":
+		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true"); err != nil {
+			result.Message = fmt.Sprintf("stop agent failed: %v\n%s", err, out)
+			return result, nil
+		}
+	case "delete", "remove":
+		if out, err := runSSH(client, "pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true\nrm -rf /opt/dbops-agent"); err != nil {
+			result.Message = fmt.Sprintf("delete agent failed: %v\n%s", err, out)
+			return result, nil
+		}
+	default:
+		result.Message = "unsupported agent action: " + action
+		return result, nil
+	}
+
+	if action == "delete" || action == "remove" || action == "stop" {
+		result.Status = "success"
+		result.Message = "agent " + action + " completed"
+		return result, nil
+	}
+	time.Sleep(500 * time.Millisecond)
+	if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
+		result.Status = "success"
+		result.Message = msg
+	} else {
+		result.Message = "agent command executed, but health check failed: " + msg
+	}
+	return result, nil
+}
+
+func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentActionRequest) (*BatchHostAgentActionResult, error) {
+	result := &BatchHostAgentActionResult{
+		Total: len(req.HostIDs),
+		Rows:  make([]HostAgentActionResult, 0, len(req.HostIDs)),
+	}
+	for _, hostID := range req.HostIDs {
+		row, err := s.AgentAction(ctx, hostID, HostAgentActionRequest{Action: req.Action})
+		if err != nil {
+			result.Failed++
+			result.Rows = append(result.Rows, HostAgentActionResult{HostID: hostID, Action: req.Action, Status: "failed", Message: err.Error()})
+			continue
+		}
+		if row.Status == "success" {
+			result.Success++
+		} else {
+			result.Failed++
+		}
+		result.Rows = append(result.Rows, *row)
+	}
+	return result, nil
+}
+
+func (s *HostService) agentHTTPHealth(ctx context.Context, host string, port int) (bool, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s:%d/health", host, port), nil)
+	if err != nil {
+		return false, err.Error()
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("health returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return true, fmt.Sprintf("agent healthy on %s:%d", host, port)
+}
+
+func (s *HostService) sshClient(host *models.Host, credential string) (*ssh.Client, error) {
+	auth := []ssh.AuthMethod{ssh.Password(credential)}
+	if signer, err := ssh.ParsePrivateKey([]byte(credential)); err == nil {
+		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+	}
+	config := &ssh.ClientConfig{
+		User:            host.SSHUser,
+		Auth:            auth,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+	return ssh.Dial("tcp", net.JoinHostPort(host.Address, strconv.Itoa(host.SSHPort)), config)
+}
+
+func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
+	binPath, err := findAgentBinary()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(binPath)
+	if err != nil {
+		return fmt.Errorf("read agent binary: %w", err)
+	}
+	if out, err := runSSH(client, "mkdir -p /opt/dbops-agent"); err != nil {
+		return fmt.Errorf("prepare agent directory failed: %v\n%s", err, out)
+	}
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	session.Stderr = &stderr
+	if err := session.Start("cat > /opt/dbops-agent/agent && chmod +x /opt/dbops-agent/agent"); err != nil {
+		return err
+	}
+	if _, err := stdin.Write(data); err != nil {
+		_ = stdin.Close()
+		return err
+	}
+	_ = stdin.Close()
+	if err := session.Wait(); err != nil {
+		return fmt.Errorf("upload agent binary failed: %w %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func findAgentBinary() (string, error) {
+	candidates := []string{
+		filepath.Join("agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("..", "..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("agent", "bin", "mysql-ops-agent-linux"),
+		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux"),
+	}
+	for _, candidate := range candidates {
+		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("agent binary not found; expected agent/bin/mysql-ops-agent-linux-amd64")
+}
+
+func runSSH(client *ssh.Client, command string) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	var out bytes.Buffer
+	session.Stdout = &out
+	session.Stderr = &out
+	err = session.Run(command)
+	return out.String(), err
+}
+
+func agentConfigCommand(port int, token string) string {
+	return fmt.Sprintf("cat > /opt/dbops-agent/config.yaml <<'EOF'\nagent_port: \"%d\"\nlog_level: \"info\"\nagent_token: \"%s\"\nEOF", port, shellEscape(token))
+}
+
+func agentStartCommand(port int, token string) string {
+	return fmt.Sprintf("cd /opt/dbops-agent && nohup env DBOPS_AGENT_TOKEN='%s' ./agent > agent.log 2>&1 &", shellEscape(token))
+}
+
+func shellEscape(value string) string {
+	return strings.ReplaceAll(value, "'", "'\\''")
 }
 
 func (s *HostService) GetByID(ctx context.Context, id string) (*models.Host, error) {
@@ -580,6 +909,25 @@ type RegisterScannedInstanceRequest struct {
 	ClusterID string `json:"cluster_id"`
 }
 
+type BatchRegisterScannedInstanceRequest struct {
+	Instances []RegisterScannedInstanceRequest `json:"instances" binding:"required"`
+}
+
+type BatchRegisterScannedInstanceResult struct {
+	Total      int                               `json:"total"`
+	Registered int                               `json:"registered"`
+	Skipped    int                               `json:"skipped"`
+	Rows       []BatchRegisterScannedInstanceRow `json:"rows"`
+}
+
+type BatchRegisterScannedInstanceRow struct {
+	Port       int    `json:"port"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+}
+
 func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string, req RegisterScannedInstanceRequest) (string, error) {
 	if s.instanceRepo == nil {
 		return "", fmt.Errorf("instance repository not initialized")
@@ -620,4 +968,46 @@ func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string
 		return "", fmt.Errorf("failed to create connection: %w", err)
 	}
 	return inst.ID, nil
+}
+
+func (s *HostService) RegisterScannedInstances(ctx context.Context, hostID string, req BatchRegisterScannedInstanceRequest) (*BatchRegisterScannedInstanceResult, error) {
+	if s.instanceRepo == nil {
+		return nil, fmt.Errorf("instance repository not initialized")
+	}
+	if _, err := s.repo.GetByID(ctx, hostID); err != nil {
+		return nil, err
+	}
+	managedPorts := s.listManagedPorts(hostID)
+	result := &BatchRegisterScannedInstanceResult{
+		Total: len(req.Instances),
+		Rows:  make([]BatchRegisterScannedInstanceRow, 0, len(req.Instances)),
+	}
+	for _, item := range req.Instances {
+		row := BatchRegisterScannedInstanceRow{
+			Port: item.Port,
+			Name: item.Name,
+		}
+		if item.Port <= 0 {
+			row.Status = "failed"
+			row.Message = "port is required"
+		} else if existingID, ok := managedPorts[item.Port]; ok {
+			row.Status = "skipped"
+			row.Message = "instance already managed"
+			row.InstanceID = existingID
+			result.Skipped++
+		} else {
+			instanceID, err := s.RegisterScannedInstance(ctx, hostID, item)
+			if err != nil {
+				row.Status = "failed"
+				row.Message = err.Error()
+			} else {
+				row.Status = "registered"
+				row.InstanceID = instanceID
+				result.Registered++
+				managedPorts[item.Port] = instanceID
+			}
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result, nil
 }

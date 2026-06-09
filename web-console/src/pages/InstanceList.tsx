@@ -1,9 +1,27 @@
 import React, { useEffect, useState } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Empty, Divider } from 'antd'
-import { PlusOutlined, ReloadOutlined, ScanOutlined, DesktopOutlined } from '@ant-design/icons'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Alert, Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd'
+import { CheckCircleOutlined, DatabaseOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { instanceApi, hostApi, versionApi, Instance, Host, type VersionEntry } from '../services/api'
+import { hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
+
+const parseBatchInstances = (text: string) => {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  if (trimmed.startsWith('[')) return JSON.parse(trimmed)
+  return trimmed.split(/\r?\n/).map((line, index) => {
+    const [name, host, port, username, password, hostId, clusterId] = line.split(',').map((v) => v?.trim())
+    return {
+      name: name || `mysql-${index + 1}`,
+      host,
+      port: port ? Number(port) : 3306,
+      username: username || 'root',
+      password: password || '',
+      host_id: hostId || undefined,
+      cluster_id: clusterId || undefined,
+    }
+  }).filter((item) => item.host && item.port)
+}
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -16,16 +34,18 @@ const InstanceList: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [hostFilter, setHostFilter] = useState<string | undefined>(presetHost)
   const [modalOpen, setModalOpen] = useState(false)
+  const [batchOpen, setBatchOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [form] = Form.useForm()
+  const [batchForm] = Form.useForm()
 
   const fetchInstances = async () => {
     setLoading(true)
     try {
       const filterId = hostFilter || presetHost || undefined
-      const res: any = filterId
-        ? await instanceApi.listByHost(filterId)
-        : await instanceApi.list()
+      const res: any = filterId ? await instanceApi.listByHost(filterId, 1000, 0) : await instanceApi.list(1000, 0)
       setInstances(res.data || [])
     } catch {
       setInstances([])
@@ -36,7 +56,7 @@ const InstanceList: React.FC = () => {
 
   const fetchHosts = async () => {
     try {
-      const res: any = await hostApi.list(100, 0)
+      const res: any = await hostApi.list(1000, 0)
       setHosts(res.data || [])
     } catch {
       setHosts([])
@@ -46,29 +66,30 @@ const InstanceList: React.FC = () => {
   useEffect(() => {
     fetchInstances()
     fetchHosts()
-    // Load version catalog for the "目标版本" dropdown in the create modal.
     versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (hostFilter || presetHost) {
-      fetchInstances()
-    }
-    if (presetHost) {
-      form.setFieldsValue({ host_id: presetHost })
-    }
+    fetchInstances()
+    if (presetHost) form.setFieldsValue({ host_id: presetHost })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostFilter, presetHost, hosts])
+  }, [hostFilter, presetHost])
 
-  const handleDelete = async (id: string) => {
-    try {
-      await instanceApi.delete(id)
-      message.success('实例删除成功')
-      fetchInstances()
-    } catch {
-      // interceptor already showed error
+  const hostNameById = (id: string | null | undefined) => {
+    if (!id) return '-'
+    const host = hosts.find((item) => item.id === id)
+    return host ? host.name : id.substring(0, 8)
+  }
+
+  const selectedHostAddress = (hostId?: string) => hosts.find((item) => item.id === hostId)?.address
+
+  const openCreate = () => {
+    form.resetFields()
+    if (presetHost) {
+      form.setFieldsValue({ host_id: presetHost, host: selectedHostAddress(presetHost) })
     }
+    setModalOpen(true)
   }
 
   const handleCreate = async () => {
@@ -80,27 +101,102 @@ const InstanceList: React.FC = () => {
       setModalOpen(false)
       form.resetFields()
       fetchInstances()
-    } catch {
-      // interceptor already showed error
     } finally {
       setSubmitting(false)
     }
   }
 
-  const hostNameById = (id: string | null | undefined) => {
-    if (!id) return '-'
-    const h = hosts.find((x) => x.id === id)
-    return h ? h.name : id.substring(0, 8)
+  const submitBatchCreate = async () => {
+    const values = await batchForm.validateFields()
+    const parsed = parseBatchInstances(values.instances)
+    if (parsed.length === 0) {
+      message.warning('没有可添加的实例')
+      return
+    }
+    setBatchSubmitting(true)
+    try {
+      const res: any = await instanceApi.batchCreate(parsed)
+      message.success(`批量添加完成，成功 ${res?.data?.created ?? 0}/${parsed.length}`)
+      setBatchOpen(false)
+      batchForm.resetFields()
+      fetchInstances()
+    } finally {
+      setBatchSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      await instanceApi.delete(id)
+      message.success('实例删除成功')
+      fetchInstances()
+    } catch {
+      // interceptor already showed error
+    }
+  }
+
+  const handleBatchDeploy = async () => {
+    const selected = instances.filter((item) => selectedRowKeys.includes(item.id))
+    if (selected.length === 0) {
+      message.warning('请先选择实例')
+      return
+    }
+    let submitted = 0
+    for (const instance of selected) {
+      try {
+        await instanceApi.deploy(instance.id)
+        submitted += 1
+      } catch {
+        // interceptor already showed error
+      }
+    }
+    message.success(`已提交 ${submitted} 个实例部署任务`)
+  }
+
+  const handleBatchHealthCheck = async () => {
+    const selected = instances.filter((item) => selectedRowKeys.includes(item.id))
+    if (selected.length === 0) {
+      message.warning('请先选择实例')
+      return
+    }
+    let ok = 0
+    let failed = 0
+    for (const instance of selected) {
+      try {
+        const res: any = await instanceApi.healthCheck(instance.id)
+        if (res?.data?.status === 'failed') failed += 1
+        else ok += 1
+      } catch {
+        failed += 1
+      }
+    }
+    message.success(`检测完成，成功 ${ok} 个，失败 ${failed} 个`)
+    fetchInstances()
+  }
+
+  const handleScanHost = async () => {
+    if (!hostFilter) {
+      message.warning('请先选择主机')
+      return
+    }
+    try {
+      const r: any = await hostApi.scanInstances(hostFilter, { probe_mysql: true })
+      const taskId = r?.data?.task_id
+      if (!taskId) {
+        message.warning('扫描任务未返回 task_id')
+        return
+      }
+      message.info('扫描任务已提交，正在打开主机详情')
+      navigate(`/dashboard/hosts/${hostFilter}?tab=instances&scan_task=${taskId}`)
+    } catch {
+      message.error('扫描发起失败')
+    }
   }
 
   const columns: ColumnsType<Instance> = [
     { title: '实例名称', dataIndex: 'name', key: 'name' },
-    {
-      title: '所属主机',
-      dataIndex: 'host_id',
-      key: 'host_id',
-      render: (id) => hostNameById(id),
-    },
+    { title: '所属主机', dataIndex: 'host_id', key: 'host_id', render: (id) => hostNameById(id) },
+    { title: '连接地址', key: 'endpoint', render: (_, r) => `${r.connection?.host || r.host || '-'}:${r.connection?.port || r.port || '-'}` },
     { title: '集群 ID', dataIndex: 'cluster_id', key: 'cluster_id', render: (v) => v || '-' },
     {
       title: '状态',
@@ -109,150 +205,65 @@ const InstanceList: React.FC = () => {
         const role = r.status?.role
         const health = r.status?.health_status
         const run = r.status?.run_status
-        if (health === 'healthy' || health === 'ok') {
-          return <Tag color="success">健康{role ? ` (${role})` : ''}</Tag>
-        }
-        if (health === 'unhealthy' || health === 'failed') {
-          return <Tag color="error">异常</Tag>
-        }
-        if (run === 'running') {
-          return <Tag color="processing">运行中{role ? ` (${role})` : ''}</Tag>
-        }
-        if (run === 'stopped') {
-          return <Tag color="default">已停止</Tag>
-        }
+        if (health === 'healthy' || health === 'ok') return <Tag color="success">健康{role ? ` (${role})` : ''}</Tag>
+        if (health === 'unhealthy' || health === 'failed') return <Tag color="error">异常</Tag>
+        if (run === 'running') return <Tag color="processing">运行中{role ? ` (${role})` : ''}</Tag>
+        if (run === 'stopped') return <Tag>已停止</Tag>
         return <Tag>未检测</Tag>
       },
     },
-    {
-      title: '复制延迟',
-      key: 'lag',
-      render: (_, r) => {
-        const lag = r.status?.seconds_behind_master
-        if (lag === undefined || lag === null) return '-'
-        if (lag > 30) return <Tag color="error">{lag}s</Tag>
-        if (lag > 5) return <Tag color="warning">{lag}s</Tag>
-        return <Tag color="success">{lag}s</Tag>
-      },
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (t) => (t ? new Date(t).toLocaleString() : '-'),
-    },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (t) => (t ? new Date(t).toLocaleString() : '-') },
     {
       title: '操作',
       key: 'action',
       render: (_, r) => (
         <Space>
-          <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>
-            详情
-          </Button>
-          <Popconfirm
-            title="确定删除该实例?"
-            onConfirm={() => handleDelete(r.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button type="link" size="small" danger>
-              删除
-            </Button>
+          <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>详情</Button>
+          <Popconfirm title="确定删除该实例？" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
+            <Button type="link" size="small" danger>删除</Button>
           </Popconfirm>
         </Space>
       ),
     },
   ]
 
-  const handleScanHost = async () => {
-    if (!hostFilter) {
-      message.warning('请先选择一台主机')
-      return
-    }
-    try {
-      const r: any = await hostApi.scanInstances(hostFilter)
-      const taskId = r?.data?.task_id
-      if (!taskId) {
-        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
-        return
-      }
-      message.info('已发起扫描, 正在跳转到主机详情查看结果')
-      navigate(`/dashboard/hosts/${hostFilter}?tab=instances&scan_task=${taskId}`)
-    } catch (err: any) {
-      if (err?.response?.status === 404) {
-        message.warning('后端未实现 scan-instances 接口, 请手动添加实例')
-      } else {
-        message.error('扫描发起失败')
-      }
-    }
-  }
-
   const presetHostObj = hosts.find((h) => h.id === presetHost)
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: 24 }}>
       {presetHostObj && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
           message={`已按主机筛选: ${presetHostObj.name}`}
-          description={
-            <Space>
-              <span>主机地址: {presetHostObj.address}:{presetHostObj.ssh_port}</span>
-              <Button
-                size="small"
-                type="link"
-                onClick={() => navigate(`/dashboard/hosts/${presetHostObj.id}`)}
-              >
-                打开主机详情
-              </Button>
-            </Space>
-          }
+          description={<Space><span>主机地址: {presetHostObj.address}:{presetHostObj.ssh_port}</span><Button size="small" type="link" onClick={() => navigate(`/dashboard/hosts/${presetHostObj.id}`)}>打开主机详情</Button></Space>}
           closable
         />
       )}
       <Card
-        title={
-          <Space>
-            <DesktopOutlined />
-            <span>实例管理</span>
-          </Space>
-        }
+        title={<Space><DatabaseOutlined /><span>实例管理</span></Space>}
         extra={
           <Space>
             <Select
               placeholder="按主机筛选"
               allowClear
-              style={{ width: 200 }}
+              style={{ width: 220 }}
               value={hostFilter}
               onChange={setHostFilter}
-              options={hosts.map((h) => ({ value: h.id, label: h.name }))}
+              options={hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))}
             />
-            <Button
-              icon={<ScanOutlined />}
-              onClick={handleScanHost}
-              disabled={!hostFilter}
-            >
-              扫描该主机
-            </Button>
-            <Button icon={<ReloadOutlined />} onClick={fetchInstances}>
-              刷新
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                form.resetFields()
-                setModalOpen(true)
-              }}
-            >
-              添加实例
-            </Button>
+            <Button icon={<ScanOutlined />} onClick={handleScanHost} disabled={!hostFilter}>扫描该主机</Button>
+            <Button icon={<CheckCircleOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchHealthCheck}>一键检测选中</Button>
+            <Button icon={<RocketOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchDeploy}>部署 MySQL 实例</Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchInstances}>刷新</Button>
+            <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加实例</Button>
           </Space>
         }
       >
         <Table
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
           columns={columns}
           dataSource={instances}
           rowKey="id"
@@ -260,153 +271,70 @@ const InstanceList: React.FC = () => {
           pagination={{ pageSize: 20 }}
           locale={{
             emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={
-                  <div>
-                    <div style={{ marginBottom: 8 }}>暂无实例</div>
-                    {hostFilter ? (
-                      <Space>
-                        <Button
-                          type="primary"
-                          icon={<ScanOutlined />}
-                          onClick={handleScanHost}
-                        >
-                          自动扫描该主机
-                        </Button>
-                        <Button
-                          icon={<PlusOutlined />}
-                          onClick={() => {
-                            form.resetFields()
-                            setModalOpen(true)
-                          }}
-                        >
-                          手动添加实例
-                        </Button>
-                      </Space>
-                    ) : (
-                      <Space>
-                        <Button
-                          type="primary"
-                          icon={<DesktopOutlined />}
-                          onClick={() => navigate('/dashboard/hosts/new')}
-                        >
-                          添加主机
-                        </Button>
-                        <Button
-                          icon={<PlusOutlined />}
-                          onClick={() => {
-                            form.resetFields()
-                            setModalOpen(true)
-                          }}
-                        >
-                          手动添加实例
-                        </Button>
-                      </Space>
-                    )}
-                  </div>
-                }
-              />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无实例">
+                <Space>
+                  {hostFilter && <Button type="primary" icon={<ScanOutlined />} onClick={handleScanHost}>扫描该主机并纳管</Button>}
+                  <Button icon={<PlusOutlined />} onClick={openCreate}>添加实例</Button>
+                  <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
+                </Space>
+              </Empty>
             ),
           }}
         />
       </Card>
 
-      <Modal
-        title="添加实例"
-        open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={handleCreate}
-        confirmLoading={submitting}
-        okText="创建"
-        cancelText="取消"
-        width={600}
-      >
+      <Modal title="添加实例" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={handleCreate} confirmLoading={submitting} okText="创建" cancelText="取消" width={640}>
         <Form form={form} layout="vertical" autoComplete="off">
-          <Form.Item
-            name="name"
-            label="实例名称"
-            rules={[{ required: true, message: '请输入实例名称' }]}
-          >
+          <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
             <Input placeholder="例如: order-db-01" />
           </Form.Item>
-
-          <Form.Item
-            name="host_id"
-            label="所属主机"
-            rules={[{ required: true, message: '请选择所属主机' }]}
-          >
+          <Form.Item name="host_id" label="所属主机" rules={[{ required: true, message: '请选择所属主机' }]}>
             <Select
               placeholder="选择主机"
               options={hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address}:${h.ssh_port})` }))}
+              onChange={(value) => form.setFieldsValue({ host: selectedHostAddress(value) })}
             />
           </Form.Item>
-
-          <Form.Item
-            name="host"
-            label="连接地址"
-            rules={[{ required: true, message: '请输入连接地址' }]}
-          >
+          <Form.Item name="host" label="连接地址" rules={[{ required: true, message: '请输入连接地址' }]}>
             <Input placeholder="例如: 192.168.1.100" />
           </Form.Item>
-
-          <Form.Item
-            name="port"
-            label="端口"
-            rules={[{ required: true, message: '请输入端口' }]}
-            initialValue={3306}
-          >
+          <Form.Item name="port" label="端口" rules={[{ required: true, message: '请输入端口' }]} initialValue={3306}>
             <InputNumber min={1} max={65535} style={{ width: '100%' }} />
           </Form.Item>
-
-          <Form.Item
-            name="username"
-            label="用户名"
-            rules={[{ required: true, message: '请输入用户名' }]}
-          >
+          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input placeholder="例如: root" />
           </Form.Item>
-
-          <Form.Item
-            name="password"
-            label="密码"
-            rules={[{ required: true, message: '请输入密码' }]}
-          >
+          <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
           </Form.Item>
-
-          <Form.Item name="cluster_id" label="集群 ID (可选)">
+          <Form.Item name="cluster_id" label="集群 ID">
             <Input placeholder="例如: mgr-cluster-01" />
           </Form.Item>
-
-          <Divider plain style={{ margin: '8px 0 0' }}>安装参数 (版本无关, 可选, 用于后续部署/升级)</Divider>
-          <Form.Item
-            name="version_id"
-            label="目标版本 (来自版本目录)"
-            extra="选择要安装/升级到的 MySQL/MariaDB/Percona 版本"
-          >
+          <Divider plain>部署参数</Divider>
+          <Form.Item name="version_id" label="目标版本">
             <Select
               allowClear
               showSearch
-              placeholder="留空表示不指定, 后续可手动选择"
-              options={versions.map((v) => ({
-                value: v.id,
-                label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}`,
-              }))}
+              placeholder="可留空，后续部署或升级时再选择"
+              options={versions.map((v) => ({ value: v.id, label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}` }))}
             />
           </Form.Item>
+          <Form.Item name="basedir" label="basedir"><Input placeholder="/opt/mysql-8.0.36" /></Form.Item>
+          <Form.Item name="datadir" label="datadir"><Input placeholder="/data/mysql/3307" /></Form.Item>
+          <Form.Item name="os_user" label="OS 用户" initialValue="mysql"><Input placeholder="mysql" /></Form.Item>
+          <Form.Item name="package_url" label="package_url"><Input placeholder="可留空，使用版本目录默认包地址" /></Form.Item>
+        </Form>
+      </Modal>
 
-          <Form.Item name="basedir" label="basedir (安装根目录)">
-            <Input placeholder="/opt/mysql-8.0.36" />
-          </Form.Item>
-          <Form.Item name="datadir" label="datadir (数据目录)">
-            <Input placeholder="/data/mysql/3307" />
-          </Form.Item>
-          <Form.Item name="os_user" label="OS 用户" initialValue="mysql">
-            <Input placeholder="mysql" />
-          </Form.Item>
-          <Form.Item name="package_url" label="package_url (可选, 留空将使用版本目录默认 URL)">
-            <Input placeholder="https://dev.mysql.com/.../mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz" />
+      <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width={760}>
+        <Form form={batchForm} layout="vertical">
+          <Form.Item
+            name="instances"
+            label="实例清单"
+            extra="支持 CSV：name,host,port,username,password,host_id,cluster_id；也支持 JSON 数组。host_id 可从主机列表复制，留空也可先按连接地址纳管。"
+            rules={[{ required: true, message: '请输入实例清单' }]}
+          >
+            <Input.TextArea rows={10} placeholder={'mysql-3306,10.1.81.41,3306,root,123456,host-id,cluster-a\n备用格式也可粘贴 JSON 数组'} />
           </Form.Item>
         </Form>
       </Modal>

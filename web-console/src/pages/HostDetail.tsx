@@ -39,6 +39,9 @@ const HostDetail: React.FC = () => {
   const [registering, setRegistering] = useState(false)
   const [registerTarget, setRegisterTarget] = useState<ScannedInstance | null>(null)
   const [registerForm] = Form.useForm()
+  const [batchRegisterOpen, setBatchRegisterOpen] = useState(false)
+  const [batchRegistering, setBatchRegistering] = useState(false)
+  const [batchRegisterForm] = Form.useForm()
 
   const [scanConfigOpen, setScanConfigOpen] = useState(false)
   const [scanMode, setScanMode] = useState<'default' | 'custom' | 'range'>('default')
@@ -249,6 +252,46 @@ const HostDetail: React.FC = () => {
       // validate
     } finally {
       setRegistering(false)
+    }
+  }
+
+  const openBatchRegister = () => {
+    batchRegisterForm.resetFields()
+    batchRegisterForm.setFieldsValue({ username: 'root' })
+    setBatchRegisterOpen(true)
+  }
+
+  const submitBatchRegister = async () => {
+    if (!id || !scanResult) return
+    const targets = (scanResult.instances || []).filter((item) => !item.already_managed)
+    if (targets.length === 0) {
+      message.info('没有待纳管实例')
+      return
+    }
+    const values = await batchRegisterForm.validateFields()
+    setBatchRegistering(true)
+    try {
+      const payload = targets.map((item) => ({
+        port: item.port,
+        name: item.recommended_name || `${host?.name || 'host'}-${item.port}`,
+        username: values.username,
+        password: values.password,
+        cluster_id: values.cluster_id || undefined,
+      }))
+      const res: any = await hostApi.registerScannedInstances(id, payload)
+      const rows = res?.data?.rows || []
+      const registeredPorts = new Set(rows.filter((row: any) => row.status === 'registered' || row.status === 'skipped').map((row: any) => row.port))
+      message.success(`一键纳管完成，成功 ${res?.data?.registered ?? 0} 个，跳过 ${res?.data?.skipped ?? 0} 个`)
+      setBatchRegisterOpen(false)
+      fetchInstances()
+      setScanResult({
+        ...scanResult,
+        instances: scanResult.instances.map((item) =>
+          registeredPorts.has(item.port) ? { ...item, already_managed: true } : item,
+        ),
+      })
+    } finally {
+      setBatchRegistering(false)
     }
   }
 
@@ -559,7 +602,7 @@ const HostDetail: React.FC = () => {
                           type="primary"
                           icon={<ImportOutlined />}
                           disabled={newInstances.length === 0}
-                          onClick={() => newInstances[0] && openRegister(newInstances[0])}
+                          onClick={openBatchRegister}
                         >
                           一键纳管下一个
                         </Button>
@@ -633,6 +676,36 @@ const HostDetail: React.FC = () => {
           ]}
         />
       </Card>
+
+      <Modal
+        title="一键纳管全部待纳管实例"
+        open={batchRegisterOpen}
+        onCancel={() => setBatchRegisterOpen(false)}
+        onOk={submitBatchRegister}
+        confirmLoading={batchRegistering}
+        okText="全部纳管"
+        cancelText="取消"
+        width={560}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={`将纳管 ${newInstances.length} 个扫描发现的实例`}
+          description="这些实例会使用同一组 MySQL 连接账号和密码登记到平台。已纳管端口会自动跳过。"
+        />
+        <Form form={batchRegisterForm} layout="vertical">
+          <Form.Item name="username" label="连接用户名" rules={[{ required: true, message: '请输入连接用户名' }]}>
+            <Input placeholder="例如: root" />
+          </Form.Item>
+          <Form.Item name="password" label="连接密码" rules={[{ required: true, message: '请输入密码' }]}>
+            <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item name="cluster_id" label="集群 ID">
+            <Input placeholder="可选；同一批实例会写入相同集群 ID" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={`配置扫描: ${host?.name || ''}`}

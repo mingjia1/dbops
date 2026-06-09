@@ -130,6 +130,21 @@ const EnvironmentCheck: React.FC = () => {
     }
   }
 
+  const installAgentForSelectedHosts = async () => {
+    if (selectedHosts.length === 0) {
+      message.warning('请先选择主机')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install')
+      message.success(`Agent 安装完成，成功 ${res?.data?.success ?? 0} 个，失败 ${res?.data?.failed ?? 0} 个`)
+      fetchHosts()
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const columns: ColumnsType<CheckItem> = [
     { title: '类别', dataIndex: 'category', key: 'category', width: 120 },
     { title: '检查项', dataIndex: 'name', key: 'name', width: 200 },
@@ -250,6 +265,13 @@ const EnvironmentCheck: React.FC = () => {
                     </span>
                     <Button icon={<ReloadOutlined />} onClick={fetchHosts}>
                       刷新
+                    </Button>
+                    <Button
+                      onClick={installAgentForSelectedHosts}
+                      loading={submitting}
+                      disabled={selectedHosts.length === 0}
+                    >
+                      安装 Agent
                     </Button>
                     <Button
                       type="primary"

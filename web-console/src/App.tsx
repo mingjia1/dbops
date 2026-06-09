@@ -28,6 +28,7 @@ const ClusterDeploy = lazy(() => import('./pages/ClusterDeploy'))
 const HAManage = lazy(() => import('./pages/HAManage'))
 const RoleSwitch = lazy(() => import('./pages/RoleSwitch'))
 const DataStorage = lazy(() => import('./pages/DataStorage'))
+const AgentManage = lazy(() => import('./pages/AgentManage'))
 
 function App() {
   const navigate = useNavigate()
@@ -76,6 +77,7 @@ function App() {
             <Route path="ha" element={<HAManage />} />
             <Route path="role-switch" element={<RoleSwitch />} />
             <Route path="data-storage" element={<DataStorage />} />
+            <Route path="agent-manage" element={<AgentManage />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>

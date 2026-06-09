@@ -309,7 +309,38 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 		TaskID:   task.ID,
 		Status:   result.Status,
 		Progress: result.Progress,
+		Message:  "MySQL instance deploy: " + result.Message,
+	}, nil
+}
+
+func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*InstanceAdminResult, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.agentClient.ExecuteHealthCheck(ctx, agentHost, agentPort, id)
+	if err != nil {
+		return &InstanceAdminResult{
+			TaskID:   "health-check-" + uuid.New().String(),
+			Status:   "failed",
+			Message:  err.Error(),
+			Progress: 100,
+		}, nil
+	}
+	return &InstanceAdminResult{
+		TaskID:   result.TaskID,
+		Status:   result.Status,
 		Message:  result.Message,
+		Data:     result.Data,
+		Progress: result.Progress,
 	}, nil
 }
 
@@ -332,6 +363,26 @@ type CreateInstanceRequest struct {
 	OSUser     string `json:"os_user"`
 }
 
+type BatchCreateInstanceRequest struct {
+	Instances []CreateInstanceRequest `json:"instances" binding:"required"`
+}
+
+type BatchCreateInstanceResult struct {
+	Total   int                      `json:"total"`
+	Created int                      `json:"created"`
+	Rows    []BatchCreateInstanceRow `json:"rows"`
+}
+
+type BatchCreateInstanceRow struct {
+	Index    int              `json:"index"`
+	Name     string           `json:"name"`
+	Host     string           `json:"host"`
+	Port     int              `json:"port"`
+	Status   string           `json:"status"`
+	Message  string           `json:"message,omitempty"`
+	Instance *models.Instance `json:"instance,omitempty"`
+}
+
 type UpdateInstanceRequest struct {
 	Name      string `json:"name"`
 	ClusterID string `json:"cluster_id"`
@@ -343,6 +394,32 @@ type DeployResult struct {
 	Status   string `json:"status"`
 	Progress int    `json:"progress"`
 	Message  string `json:"message"`
+}
+
+func (s *InstanceService) BatchCreate(ctx context.Context, req BatchCreateInstanceRequest) (*BatchCreateInstanceResult, error) {
+	result := &BatchCreateInstanceResult{
+		Total: len(req.Instances),
+		Rows:  make([]BatchCreateInstanceRow, 0, len(req.Instances)),
+	}
+	for i, item := range req.Instances {
+		row := BatchCreateInstanceRow{
+			Index: i + 1,
+			Name:  item.Name,
+			Host:  item.Host,
+			Port:  item.Port,
+		}
+		instance, err := s.Create(ctx, item)
+		if err != nil {
+			row.Status = "failed"
+			row.Message = err.Error()
+		} else {
+			row.Status = "created"
+			row.Instance = instance
+			result.Created++
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result, nil
 }
 
 type InstanceAdminRequest struct {
@@ -425,7 +502,12 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("instance admin call failed: %w", err)
+		return &InstanceAdminResult{
+			TaskID:   "instance-admin-" + uuid.New().String(),
+			Status:   "failed",
+			Message:  "instance admin call failed: " + err.Error(),
+			Progress: 100,
+		}, nil
 	}
 	if result.Status == "completed" && req.Action == "change_password" && req.UpdateStoredPassword {
 		if req.Username == conn.Username && req.Password != "" {

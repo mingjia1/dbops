@@ -32,6 +32,22 @@ func (c *InstanceController) Create(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, instance)
 }
 
+func (c *InstanceController) BatchCreate(ctx *gin.Context) {
+	var req services.BatchCreateInstanceRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.BatchCreate(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to create instances", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
 func (c *InstanceController) GetByID(ctx *gin.Context) {
 	id := ctx.Param("id")
 
@@ -110,6 +126,18 @@ func (c *InstanceController) Deploy(ctx *gin.Context) {
 	result, err := c.service.Deploy(ctx.Request.Context(), id)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy instance", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
+func (c *InstanceController) HealthCheck(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	result, err := c.service.HealthCheck(ctx.Request.Context(), id)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to check instance health", err)
 		return
 	}
 

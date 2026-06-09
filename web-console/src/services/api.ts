@@ -133,8 +133,30 @@ export const instanceApi = {
     cluster_id?: string
     host_id?: string
     ssl_enabled?: boolean
+    version_id?: string
+    package_url?: string
+    basedir?: string
+    datadir?: string
+    os_user?: string
   }) =>
     api.post('/instances', data),
+
+  batchCreate: (instances: Array<{
+    name: string
+    host: string
+    port: number
+    username: string
+    password: string
+    cluster_id?: string
+    host_id?: string
+    ssl_enabled?: boolean
+    version_id?: string
+    package_url?: string
+    basedir?: string
+    datadir?: string
+    os_user?: string
+  }>) =>
+    api.post('/instances/batch', { instances }),
   
   update: (id: string, data: { name?: string; cluster_id?: string; host_id?: string }) =>
     api.put(`/instances/${id}`, data),
@@ -144,6 +166,9 @@ export const instanceApi = {
   
   deploy: (id: string) =>
     api.post(`/instances/${id}/deploy`),
+
+  healthCheck: (id: string) =>
+    api.post(`/instances/${id}/health-check`),
 
   adminAction: (id: string, data: {
     action: string
@@ -215,11 +240,26 @@ export const hostApi = {
     ssh_user: string
     ssh_auth_method?: string
     ssh_credential: string
+    agent_port?: number
     os_type?: string
     description?: string
     tags?: string
   }) =>
     api.post('/hosts', data),
+
+  batchCreate: (hosts: Array<{
+    name: string
+    address: string
+    ssh_port?: number
+    ssh_user: string
+    ssh_auth_method?: string
+    ssh_credential: string
+    agent_port?: number
+    os_type?: string
+    description?: string
+    tags?: string
+  }>) =>
+    api.post('/hosts/batch', { hosts }),
   
   update: (id: string, data: {
     name?: string
@@ -240,6 +280,12 @@ export const hostApi = {
   testConnection: (id: string) =>
     api.post(`/hosts/${id}/test`),
 
+  agentAction: (id: string, action: string, agentPort?: number) =>
+    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }),
+
+  batchAgentAction: (hostIds: string[], action: string) =>
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action }),
+
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),
 
@@ -251,7 +297,10 @@ export const hostApi = {
 
   registerScannedInstance: (hostId: string, data: { port: number; name: string; username: string; password: string; cluster_id?: string }) =>
     api.post(`/hosts/${hostId}/scan-instances/register`, data),
-}
+
+  registerScannedInstances: (hostId: string, instances: Array<{ port: number; name: string; username: string; password: string; cluster_id?: string }>) =>
+    api.post(`/hosts/${hostId}/scan-instances/register-batch`, { instances }),
+  }
 
 export interface ScannedInstance {
   port: number

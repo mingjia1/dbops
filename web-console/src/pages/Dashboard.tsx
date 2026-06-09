@@ -1,18 +1,15 @@
 import React, { useEffect, useState } from 'react'
-import { Layout, Menu, Dropdown, Avatar, Space, Typography, Switch, Tooltip, Modal, Form, Input, message } from 'antd'
-import { BulbOutlined, BulbFilled } from '@ant-design/icons'
+import { Avatar, Dropdown, Form, Input, Layout, Menu, message, Modal, Space, Switch, Tooltip, Typography } from 'antd'
+import {
+  AlertOutlined, ApartmentOutlined, AuditOutlined, BarChartOutlined, BulbFilled, BulbOutlined,
+  CloudOutlined, ClusterOutlined, DashboardOutlined, DatabaseOutlined, DesktopOutlined,
+  FileTextOutlined, HddOutlined, HeartOutlined, LogoutOutlined, PartitionOutlined,
+  RetweetOutlined, SafetyOutlined, SettingOutlined, SwapOutlined, UserOutlined,
+} from '@ant-design/icons'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getStoredThemeMode, type ThemeMode } from '../appTheme'
 import { authApi } from '../services/api'
 import './Dashboard.css'
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import {
-  DashboardOutlined, DesktopOutlined, DatabaseOutlined,
-  SettingOutlined, CloudOutlined, BarChartOutlined,
-  AlertOutlined, SwapOutlined, PartitionOutlined,
-  ApartmentOutlined, FileTextOutlined, SafetyOutlined,
-  AuditOutlined, LogoutOutlined, UserOutlined,
-  ClusterOutlined, HeartOutlined, RetweetOutlined, HddOutlined,
-} from '@ant-design/icons'
 
 const { Header, Content, Sider } = Layout
 
@@ -21,6 +18,7 @@ const Dashboard: React.FC = () => {
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
   const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([])
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [passwordForm] = Form.useForm()
@@ -28,12 +26,13 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     try {
-      const u = localStorage.getItem('user')
-      if (u) setUser(JSON.parse(u))
-    } catch { /* ignore */ }
+      const stored = localStorage.getItem('user')
+      if (stored) setUser(JSON.parse(stored))
+    } catch {
+      // ignore invalid local storage
+    }
   }, [])
 
-  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
   const toggleTheme = (checked: boolean) => {
     const next: ThemeMode = checked ? 'dark' : 'light'
     setThemeMode(next)
@@ -102,6 +101,7 @@ const Dashboard: React.FC = () => {
       label: '系统管理',
       children: [
         { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
+        { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: 'Agent 管理' },
         { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
         { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
       ],
@@ -109,21 +109,21 @@ const Dashboard: React.FC = () => {
   ]
 
   const selectedKey = (() => {
-    for (const m of menuItems) {
-      if ((m as any).children) {
-        const hit = (m as any).children.find((c: any) => location.pathname.startsWith(c.key))
+    for (const item of menuItems) {
+      if ((item as any).children) {
+        const hit = (item as any).children.find((child: any) => location.pathname.startsWith(child.key))
         if (hit) return hit.key
       }
-      if (location.pathname.startsWith(m.key)) return m.key
+      if (location.pathname.startsWith(item.key)) return item.key
     }
     return '/dashboard/home'
   })()
 
   const routeOpenKeys = (() => {
-    for (const m of menuItems) {
-      if ((m as any).children) {
-        const hit = (m as any).children.find((c: any) => location.pathname.startsWith(c.key))
-        if (hit) return [m.key]
+    for (const item of menuItems) {
+      if ((item as any).children) {
+        const hit = (item as any).children.find((child: any) => location.pathname.startsWith(child.key))
+        if (hit) return [item.key]
       }
     }
     return ['/dashboard/resources']
@@ -152,9 +152,7 @@ const Dashboard: React.FC = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <Header className="dashboard-header">
         <div className="header-left">
-          <div className="header-logo">
-            <DatabaseOutlined />
-          </div>
+          <div className="header-logo"><DatabaseOutlined /></div>
           <Typography.Title level={4} style={{ color: '#fff', margin: 0, fontWeight: 600 }}>
             MySQL 运维平台
           </Typography.Title>
@@ -191,11 +189,11 @@ const Dashboard: React.FC = () => {
                   key: item.key,
                   icon: item.icon,
                   label: item.label,
-                  children: item.children.map((c: any) => ({
-                    key: c.key,
-                    icon: c.icon,
-                    label: c.label,
-                    onClick: () => navigate(c.key),
+                  children: item.children.map((child: any) => ({
+                    key: child.key,
+                    icon: child.icon,
+                    label: child.label,
+                    onClick: () => navigate(child.key),
                   })),
                 }
               }
@@ -212,15 +210,7 @@ const Dashboard: React.FC = () => {
           <Outlet />
         </Content>
       </Layout>
-      <Modal
-        title="修改密码"
-        open={passwordOpen}
-        onCancel={() => setPasswordOpen(false)}
-        onOk={submitChangePassword}
-        okText="确认修改"
-        cancelText="取消"
-        destroyOnClose
-      >
+      <Modal title="修改密码" open={passwordOpen} onCancel={() => setPasswordOpen(false)} onOk={submitChangePassword} okText="确认修改" cancelText="取消" destroyOnClose>
         <Form form={passwordForm} layout="vertical" preserve={false}>
           <Form.Item label="当前密码" name="current_password" rules={[{ required: true, message: '请输入当前密码' }]}>
             <Input.Password autoComplete="current-password" />
@@ -233,15 +223,7 @@ const Dashboard: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
-      <Modal
-        title="重置所有用户密码"
-        open={resetOpen}
-        onCancel={() => setResetOpen(false)}
-        onOk={submitResetAllPasswords}
-        okText="确认重置"
-        cancelText="取消"
-        destroyOnClose
-      >
+      <Modal title="重置所有用户密码" open={resetOpen} onCancel={() => setResetOpen(false)} onOk={submitResetAllPasswords} okText="确认重置" cancelText="取消" destroyOnClose>
         <Form form={resetForm} layout="vertical" preserve={false} initialValues={{ new_password: '123456', confirm_password: '123456' }}>
           <Form.Item label="新密码" name="new_password" rules={[{ required: true, min: 6, message: '新密码至少 6 位' }]}>
             <Input.Password autoComplete="new-password" />

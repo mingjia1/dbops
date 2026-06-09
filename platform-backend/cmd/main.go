@@ -111,7 +111,7 @@ func main() {
 	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
-	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey)
+	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey, cfg.AgentToken)
 	hostService.SetInstanceRepo(instanceRepo)
 	hostController := controllers.NewHostController(hostService)
 
@@ -270,11 +270,13 @@ func main() {
 				instances.GET("/:id", instanceController.GetByID)
 				// B2: 写操作 (POST/PUT/DELETE) 需要 admin 角色, 任何登录用户都不能直接调.
 				instances.POST("", middleware.RequirePermission("admin"), instanceController.Create)
+				instances.POST("/batch", middleware.RequirePermission("admin"), instanceController.BatchCreate)
 				instances.POST("/admin/batch-password", middleware.RequirePermission("admin"), instanceController.BatchUpdatePassword)
 				instances.PUT("/:id", middleware.RequirePermission("admin"), instanceController.Update)
 				instances.DELETE("/:id", middleware.RequirePermission("admin"), instanceController.Delete)
 				instances.POST("/:id/detect-version", middleware.RequirePermission("admin"), instanceController.DetectVersion)
 				instances.POST("/:id/deploy", middleware.RequirePermission("admin"), instanceController.Deploy)
+				instances.POST("/:id/health-check", middleware.RequirePermission("admin"), instanceController.HealthCheck)
 				instances.POST("/:id/admin", middleware.RequirePermission("admin"), instanceController.AdminAction)
 				instances.POST("/:id/admin-action", middleware.RequirePermission("admin"), instanceController.AdminAction)
 			}
@@ -283,14 +285,18 @@ func main() {
 			{
 				hosts.GET("", hostController.List)
 				hosts.POST("", hostController.Create)
+				hosts.POST("/batch", middleware.RequirePermission("admin"), hostController.BatchCreate)
+				hosts.POST("/agent/batch", middleware.RequirePermission("admin"), hostController.BatchAgentAction)
 				hosts.GET("/test/:task_id", hostController.GetTestResult)
 				hosts.GET("/:id", hostController.GetByID)
 				hosts.PUT("/:id", hostController.Update)
 				hosts.DELETE("/:id", hostController.Delete)
+				hosts.POST("/:id/agent", middleware.RequirePermission("admin"), hostController.AgentAction)
 				hosts.POST("/:id/test", hostController.TestConnection)
 				hosts.POST("/:id/scan-instances", hostController.ScanInstances)
 				hosts.GET("/:id/scan-instances/:task_id", hostController.GetScanResult)
 				hosts.POST("/:id/scan-instances/register", hostController.RegisterScannedInstance)
+				hosts.POST("/:id/scan-instances/register-batch", middleware.RequirePermission("admin"), hostController.RegisterScannedInstances)
 			}
 
 			envChecks := protected.Group("/env-checks")
