@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
@@ -148,24 +149,28 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	}
 
 	allHosts := append([]SecondaryNode{{Host: req.PrimaryHost, Port: req.PrimaryPort}}, req.SecondaryHosts...)
+	localPorts := make([]int, len(allHosts))
+	for i := range allHosts {
+		localPorts[i] = 33061 + i
+	}
 
+	groupName := defaultString(req.ConfigParams["group_name"], uuid.New().String())
 	for i, node := range allHosts {
 		var groupSeeds []string
 		for j, other := range allHosts {
 			if i != j {
-				groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", other.Host, 33061))
+				groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", other.Host, localPorts[j]))
 			}
-			_ = j
 		}
 
 		isPrimary := i == 0
 		deployMode := "mgr"
 		config := map[string]interface{}{
 			"deploy_mode":    deployMode,
-			"group_name":     req.Name,
+			"group_name":     groupName,
 			"group_seeds":    groupSeeds,
 			"local_address":  node.Host,
-			"local_port":     33061,
+			"local_port":     localPorts[i],
 			"mysql_port":     node.Port,
 			"server_id":      i + 1,
 			"primary_host":   req.PrimaryHost,
@@ -208,6 +213,17 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	}
 
 	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	if err := s.syncClusterManagement(ctx, "mgr", deployment.ID, allHostsToPseudoNodes(allHosts, "primary", "secondary")); err != nil {
+		s.repo.UpdateStatus(ctx, deployment.ID, "partial")
+		return &DeployResponse{
+			DeploymentID: deployment.ID,
+			ClusterType:  "mgr",
+			Name:         req.Name,
+			Status:       "partial",
+			Message:      fmt.Sprintf("MGR deployed but management sync failed: %v", err),
+			CreatedAt:    deployment.CreatedAt,
+		}, nil
+	}
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "mgr",
@@ -598,34 +614,52 @@ func (s *ClusterDeployService) deployPseudoCluster(ctx context.Context, clusterT
 		return nil, fmt.Errorf("failed to create pseudo deployment: %w", err)
 	}
 
+	if err := s.syncClusterManagement(ctx, clusterType, clusterID, nodes); err != nil {
+		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+		return &DeployResponse{
+			DeploymentID: deployment.ID,
+			ClusterType:  clusterType,
+			Name:         name,
+			Status:       "failed",
+			Message:      err.Error(),
+			CreatedAt:    deployment.CreatedAt,
+		}, nil
+	}
+
+	return &DeployResponse{
+		DeploymentID: deployment.ID,
+		ClusterType:  clusterType,
+		Name:         name,
+		Status:       "success",
+		Message:      fmt.Sprintf("Pseudo %s cluster %s is managed with %d instances", clusterType, clusterID, len(nodes)),
+		CreatedAt:    deployment.CreatedAt,
+	}, nil
+}
+
+func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, clusterType, clusterID string, nodes []pseudoNode) error {
 	matched := make([]*models.Instance, 0, len(nodes))
 	for _, node := range nodes {
 		inst, err := s.findInstanceByEndpoint(ctx, node.Host, node.Port)
 		if err != nil {
-			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
-			return &DeployResponse{
-				DeploymentID: deployment.ID,
-				ClusterType:  clusterType,
-				Name:         name,
-				Status:       "failed",
-				Message:      err.Error(),
-				CreatedAt:    deployment.CreatedAt,
-			}, nil
+			return err
 		}
 		inst.ClusterID = clusterID
 		if err := s.instRepo.Update(ctx, inst); err != nil {
-			return nil, err
+			return err
 		}
 		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
 			RunStatus:           "running",
 			HealthStatus:        "healthy",
 			Role:                node.Role,
-			ReplicationStatus:   "pseudo",
+			ReplicationStatus:   clusterType,
 			SecondsBehindMaster: 0,
 		}); err != nil {
-			return nil, err
+			return err
 		}
 		matched = append(matched, inst)
+	}
+	if len(matched) == 0 {
+		return fmt.Errorf("no managed instances found for cluster %s", clusterID)
 	}
 
 	primaryID := matched[0].ID
@@ -648,18 +682,10 @@ func (s *ClusterDeployService) deployPseudoCluster(ctx context.Context, clusterT
 			topology.MasterID = primaryID
 		}
 		if err := s.instRepo.UpsertTopology(ctx, inst.ID, topology); err != nil {
-			return nil, err
+			return err
 		}
 	}
-
-	return &DeployResponse{
-		DeploymentID: deployment.ID,
-		ClusterType:  clusterType,
-		Name:         name,
-		Status:       "success",
-		Message:      fmt.Sprintf("Pseudo %s cluster %s is managed with %d instances", clusterType, clusterID, len(matched)),
-		CreatedAt:    deployment.CreatedAt,
-	}, nil
+	return nil
 }
 
 func (s *ClusterDeployService) findInstanceByEndpoint(ctx context.Context, host string, port int) (*models.Instance, error) {
@@ -868,6 +894,18 @@ func slavePseudoNodes(nodes []SlaveNode, role string) []pseudoNode {
 func secondaryPseudoNodes(nodes []SecondaryNode, role string) []pseudoNode {
 	out := make([]pseudoNode, 0, len(nodes))
 	for _, node := range nodes {
+		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
+	}
+	return out
+}
+
+func allHostsToPseudoNodes(nodes []SecondaryNode, primaryRole, replicaRole string) []pseudoNode {
+	out := make([]pseudoNode, 0, len(nodes))
+	for i, node := range nodes {
+		role := replicaRole
+		if i == 0 {
+			role = primaryRole
+		}
 		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
 	}
 	return out

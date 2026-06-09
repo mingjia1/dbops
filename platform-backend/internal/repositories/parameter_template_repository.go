@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 )
@@ -19,6 +22,8 @@ func NewParameterTemplateRepository(db *Database) *ParameterTemplateRepository {
 
 func (r *ParameterTemplateRepository) Create(ctx context.Context, template *models.ParameterTemplate) error {
 	template.ID = uuid.New().String()
+	template.CreatedAt = template.CreatedAt.Round(0)
+	template.UpdatedAt = template.UpdatedAt.Round(0)
 
 	query := `
 		INSERT INTO parameter_templates (id, name, description, category, is_preset, created_by, created_at, updated_at)
@@ -43,9 +48,7 @@ func (r *ParameterTemplateRepository) GetByID(ctx context.Context, id string) (*
 	`
 
 	template := &models.ParameterTemplate{}
-	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
-		&template.ID, &template.Name, &template.Description, &template.Category,
-		&template.IsPreset, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt)
+	err := scanParameterTemplate(r.db.Pool.QueryRowContext(ctx, query, id), template)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -64,9 +67,7 @@ func (r *ParameterTemplateRepository) GetByName(ctx context.Context, name string
 	`
 
 	template := &models.ParameterTemplate{}
-	err := r.db.Pool.QueryRowContext(ctx, query, name).Scan(
-		&template.ID, &template.Name, &template.Description, &template.Category,
-		&template.IsPreset, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt)
+	err := scanParameterTemplate(r.db.Pool.QueryRowContext(ctx, query, name), template)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -97,9 +98,7 @@ func (r *ParameterTemplateRepository) List(ctx context.Context, limit, offset in
 	templates := make([]models.ParameterTemplate, 0)
 	for rows.Next() {
 		var template models.ParameterTemplate
-		if err := rows.Scan(
-			&template.ID, &template.Name, &template.Description, &template.Category,
-			&template.IsPreset, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt); err != nil {
+		if err := scanParameterTemplate(rows, &template); err != nil {
 			return nil, err
 		}
 		templates = append(templates, template)
@@ -127,9 +126,7 @@ func (r *ParameterTemplateRepository) ListPresetTemplates(ctx context.Context) (
 	templates := make([]models.ParameterTemplate, 0)
 	for rows.Next() {
 		var template models.ParameterTemplate
-		if err := rows.Scan(
-			&template.ID, &template.Name, &template.Description, &template.Category,
-			&template.IsPreset, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt); err != nil {
+		if err := scanParameterTemplate(rows, &template); err != nil {
 			return nil, err
 		}
 		templates = append(templates, template)
@@ -241,7 +238,7 @@ func (r *ParameterTemplateRepository) CreateParameter(ctx context.Context, param
 	`
 
 	_, err := r.db.Pool.ExecContext(ctx, query,
-		param.ID, param.TemplateID, param.VersionID, param.ParameterName, param.Value, param.DataType,
+		param.ID, param.TemplateID, nullableText(param.VersionID), param.ParameterName, param.Value, param.DataType,
 		param.MinValue, param.MaxValue, param.Unit, param.Description, param.IsDynamic, param.IsMandatory, param.Category)
 
 	if err != nil {
@@ -249,6 +246,13 @@ func (r *ParameterTemplateRepository) CreateParameter(ctx context.Context, param
 	}
 
 	return nil
+}
+
+func nullableText(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (r *ParameterTemplateRepository) GetParameterByID(ctx context.Context, id string) (*models.ParameterTemplateParameter, error) {
@@ -259,9 +263,7 @@ func (r *ParameterTemplateRepository) GetParameterByID(ctx context.Context, id s
 	`
 
 	param := &models.ParameterTemplateParameter{}
-	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
-		&param.ID, &param.TemplateID, &param.VersionID, &param.ParameterName, &param.Value, &param.DataType,
-		&param.MinValue, &param.MaxValue, &param.Unit, &param.Description, &param.IsDynamic, &param.IsMandatory, &param.Category)
+	err := scanParameterTemplateParameter(r.db.Pool.QueryRowContext(ctx, query, id), param)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -304,15 +306,74 @@ func (r *ParameterTemplateRepository) ListParameters(ctx context.Context, templa
 	params := make([]models.ParameterTemplateParameter, 0)
 	for rows.Next() {
 		var param models.ParameterTemplateParameter
-		if err := rows.Scan(
-			&param.ID, &param.TemplateID, &param.VersionID, &param.ParameterName, &param.Value, &param.DataType,
-			&param.MinValue, &param.MaxValue, &param.Unit, &param.Description, &param.IsDynamic, &param.IsMandatory, &param.Category); err != nil {
+		if err := scanParameterTemplateParameter(rows, &param); err != nil {
 			return nil, err
 		}
 		params = append(params, param)
 	}
 
 	return params, nil
+}
+
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanParameterTemplate(scanner rowScanner, template *models.ParameterTemplate) error {
+	var createdAt, updatedAt interface{}
+	if err := scanner.Scan(
+		&template.ID, &template.Name, &template.Description, &template.Category,
+		&template.IsPreset, &template.CreatedBy, &createdAt, &updatedAt); err != nil {
+		return err
+	}
+	template.CreatedAt = parseDBTime(createdAt)
+	template.UpdatedAt = parseDBTime(updatedAt)
+	return nil
+}
+
+func scanParameterTemplateParameter(scanner rowScanner, param *models.ParameterTemplateParameter) error {
+	var versionID sql.NullString
+	if err := scanner.Scan(
+		&param.ID, &param.TemplateID, &versionID, &param.ParameterName, &param.Value, &param.DataType,
+		&param.MinValue, &param.MaxValue, &param.Unit, &param.Description, &param.IsDynamic, &param.IsMandatory, &param.Category); err != nil {
+		return err
+	}
+	param.VersionID = versionID.String
+	return nil
+}
+
+func parseDBTime(value interface{}) time.Time {
+	switch v := value.(type) {
+	case time.Time:
+		return v
+	case string:
+		return parseTimeString(v)
+	case []byte:
+		return parseTimeString(string(v))
+	default:
+		return time.Time{}
+	}
+}
+
+func parseTimeString(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if idx := strings.Index(value, " m="); idx >= 0 {
+		value = value[:idx]
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 func (r *ParameterTemplateRepository) UpdateParameter(ctx context.Context, param *models.ParameterTemplateParameter) error {

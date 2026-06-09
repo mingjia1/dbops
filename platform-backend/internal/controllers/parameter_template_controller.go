@@ -1,10 +1,10 @@
 package controllers
 
 import (
-	"strconv"
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"strconv"
 )
 
 type ParameterTemplateController struct {

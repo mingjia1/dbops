@@ -28,8 +28,8 @@ type InstanceTopologyResponse struct {
 }
 
 type ClusterTopologyResponse struct {
-	ClusterID       string                    `json:"cluster_id"`
-	ReplicationMode string                    `json:"replication_mode"`
+	ClusterID       string                     `json:"cluster_id"`
+	ReplicationMode string                     `json:"replication_mode"`
 	Instances       []InstanceTopologyResponse `json:"instances"`
 }
 
@@ -39,10 +39,10 @@ type TopologyGraph struct {
 }
 
 type TopologyNode struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	Status   string `json:"status"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
 	ClusterID string `json:"cluster_id"`
 }
 
@@ -71,7 +71,7 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 	if instance.Topology.InstanceID != "" {
 		topology.MasterID = instance.Topology.MasterID
 		topology.ReplicationMode = instance.Topology.ReplicationMode
-		
+
 		if instance.Topology.SlaveIDs != "" {
 			var slaveIDs []string
 			if err := json.Unmarshal([]byte(instance.Topology.SlaveIDs), &slaveIDs); err == nil {
@@ -142,6 +142,7 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 	}
 
 	var nodes []TopologyNode
+	nodeIDs := make(map[string]bool)
 	for _, topologyInst := range clusterTopology.Instances {
 		inst, ok := instanceMap[topologyInst.InstanceID]
 		if !ok {
@@ -160,10 +161,23 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 		if inst.Status.HealthStatus != "" {
 			node.Status = inst.Status.HealthStatus
 		}
+		nodeIDs[node.ID] = true
 		nodes = append(nodes, node)
 	}
 
 	var edges []TopologyEdge
+	edgeKeys := make(map[string]bool)
+	addEdge := func(edge TopologyEdge) {
+		if !nodeIDs[edge.SourceID] || !nodeIDs[edge.TargetID] {
+			return
+		}
+		key := edge.SourceID + "->" + edge.TargetID + ":" + edge.Type
+		if edgeKeys[key] {
+			return
+		}
+		edgeKeys[key] = true
+		edges = append(edges, edge)
+	}
 	for _, topologyInst := range clusterTopology.Instances {
 		if topologyInst.MasterID != "" {
 			edge := TopologyEdge{
@@ -172,7 +186,7 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 				Type:     "replication",
 				Label:    topologyInst.ReplicationMode,
 			}
-			edges = append(edges, edge)
+			addEdge(edge)
 		}
 
 		for _, slaveID := range topologyInst.SlaveIDs {
@@ -182,7 +196,7 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 				Type:     "replication",
 				Label:    topologyInst.ReplicationMode,
 			}
-			edges = append(edges, edge)
+			addEdge(edge)
 		}
 	}
 

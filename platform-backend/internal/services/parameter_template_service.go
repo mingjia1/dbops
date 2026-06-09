@@ -3,11 +3,11 @@ package services
 import (
 	"context"
 	"fmt"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"strconv"
 	"strings"
 	"time"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 )
 
 type ParameterTemplateService struct {
@@ -244,8 +244,8 @@ func parameterInputToModel(templateID string, param ParameterInput) *models.Para
 
 func (s *ParameterTemplateService) ValidateParameters(ctx context.Context, req ValidateParametersRequest) (*ValidationResult, error) {
 	result := &ValidationResult{
-		IsValid: true,
-		Errors:  []ValidationError{},
+		IsValid:  true,
+		Errors:   []ValidationError{},
 		Warnings: []ValidationWarning{},
 	}
 
@@ -362,11 +362,11 @@ func (s *ParameterTemplateService) isValidTimeFormat(value string) bool {
 
 func (s *ParameterTemplateService) isIllegalValue(paramName, value string) bool {
 	illegalValues := map[string][]string{
-		"max_connections":          {"0", "-1"},
-		"innodb_buffer_pool_size":  {"0"},
-		"innodb_log_file_size":     {"0"},
-		"max_allowed_packet":       {"0"},
-		"query_cache_size":         {"-1"},
+		"max_connections":         {"0", "-1"},
+		"innodb_buffer_pool_size": {"0"},
+		"innodb_log_file_size":    {"0"},
+		"max_allowed_packet":      {"0"},
+		"query_cache_size":        {"-1"},
 	}
 
 	if illegalList, ok := illegalValues[paramName]; ok {
@@ -643,11 +643,11 @@ func (s *ParameterTemplateService) RecommendParameters(ctx context.Context, req 
 }
 
 type CreateParameterTemplateRequest struct {
-	Name        string                       `json:"name" binding:"required"`
-	Description string                       `json:"description"`
-	Category    string                       `json:"category" binding:"required"`
-	CreatedBy   string                       `json:"created_by"`
-	Parameters  []ParameterInput             `json:"parameters"`
+	Name        string           `json:"name" binding:"required"`
+	Description string           `json:"description"`
+	Category    string           `json:"category" binding:"required"`
+	CreatedBy   string           `json:"created_by"`
+	Parameters  []ParameterInput `json:"parameters"`
 }
 
 type ParameterInput struct {
@@ -672,21 +672,21 @@ type UpdateParameterTemplateRequest struct {
 }
 
 type ValidateParametersRequest struct {
-	TemplateID string                   `json:"template_id"`
+	TemplateID string                     `json:"template_id"`
 	Parameters []ParameterValidationInput `json:"parameters" binding:"required"`
 }
 
 type ParameterValidationInput struct {
-	ParameterName string                  `json:"parameter_name" binding:"required"`
-	Value         string                  `json:"value" binding:"required"`
+	ParameterName string                   `json:"parameter_name" binding:"required"`
+	Value         string                   `json:"value" binding:"required"`
 	DataType      models.ParameterDataType `json:"data_type" binding:"required"`
-	MinValue      string                  `json:"min_value"`
-	MaxValue      string                  `json:"max_value"`
-	IsMandatory   bool                    `json:"is_mandatory"`
+	MinValue      string                   `json:"min_value"`
+	MaxValue      string                   `json:"max_value"`
+	IsMandatory   bool                     `json:"is_mandatory"`
 }
 
 type ValidationResult struct {
-	IsValid  bool               `json:"is_valid"`
+	IsValid  bool                `json:"is_valid"`
 	Errors   []ValidationError   `json:"errors"`
 	Warnings []ValidationWarning `json:"warnings"`
 }
@@ -709,19 +709,19 @@ type RecommendParametersRequest struct {
 }
 
 type ApplyParameterTemplateRequest struct {
-	TemplateID      string           `json:"template_id" binding:"required"`
-	InstanceID      string           `json:"instance_id" binding:"required"`
-	Parameters      []ParameterInput `json:"parameters"`
-	RequireRestart  bool             `json:"require_restart"`
+	TemplateID     string           `json:"template_id" binding:"required"`
+	InstanceID     string           `json:"instance_id" binding:"required"`
+	Parameters     []ParameterInput `json:"parameters"`
+	RequireRestart bool             `json:"require_restart"`
 }
 
 type ApplyParameterTemplateResponse struct {
-	TemplateID      string                 `json:"template_id"`
-	InstanceID      string                 `json:"instance_id"`
-	Applied         int                    `json:"applied"`
-	Failed          int                    `json:"failed"`
-	RequireRestart  bool                   `json:"require_restart"`
-	Results         []ApplyParameterResult `json:"results"`
+	TemplateID     string                 `json:"template_id"`
+	InstanceID     string                 `json:"instance_id"`
+	Applied        int                    `json:"applied"`
+	Failed         int                    `json:"failed"`
+	RequireRestart bool                   `json:"require_restart"`
+	Results        []ApplyParameterResult `json:"results"`
 }
 
 type ApplyParameterResult struct {
@@ -738,8 +738,8 @@ type RecommendationResult struct {
 }
 
 type ParameterRecommendation struct {
-	ParameterName string                  `json:"parameter_name"`
-	Value         string                  `json:"value"`
+	ParameterName string                   `json:"parameter_name"`
+	Value         string                   `json:"value"`
 	DataType      models.ParameterDataType `json:"data_type"`
-	Reason        string                  `json:"reason"`
+	Reason        string                   `json:"reason"`
 }

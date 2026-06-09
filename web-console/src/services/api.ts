@@ -481,7 +481,7 @@ const buildParameterTemplatePayload = (data: any) => ({
 const normalizeApproval = (item: any): ApprovalRequest => ({
   ...item,
   requester: item?.requester ?? item?.requester_id ?? '-',
-  target_resource: item?.target_resource ?? [item?.resource_type, item?.resource_id].filter(Boolean).join(':') || '-',
+  target_resource: item?.target_resource ?? ([item?.resource_type, item?.resource_id].filter(Boolean).join(':') || '-'),
   status: item?.status ?? item?.approval_status ?? 'pending',
   description: item?.description ?? item?.request_reason ?? '',
 })

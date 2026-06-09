@@ -242,11 +242,12 @@ func (e *MGRExecutor) installGroupReplicationPlugin(ctx context.Context, config 
 	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, installSQL)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
-		if !strings.Contains(string(output), "already installed") {
+		text := string(output)
+		if !strings.Contains(text, "already installed") && !strings.Contains(text, "already exists") {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  10,
-				Message:   fmt.Sprintf("Failed to install group_replication plugin: %v, output: %s", err, string(output)),
+				Message:   fmt.Sprintf("Failed to install group_replication plugin: %v, output: %s", err, text),
 				Timestamp: time.Now(),
 			}
 		}
@@ -374,6 +375,11 @@ func (e *MGRExecutor) startGroupReplication(ctx context.Context, config MGRConfi
 }
 
 func (e *MGRExecutor) joinGroup(ctx context.Context, config MGRConfig) *TaskResult {
+	recoveryResult := e.configureRecoveryChannel(ctx, config)
+	if recoveryResult.Status == "failed" {
+		return recoveryResult
+	}
+
 	startSQL := "START GROUP_REPLICATION;"
 	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, startSQL)
 
@@ -396,8 +402,39 @@ func (e *MGRExecutor) joinGroup(ctx context.Context, config MGRConfig) *TaskResu
 	}
 }
 
+func (e *MGRExecutor) configureRecoveryChannel(ctx context.Context, config MGRConfig) *TaskResult {
+	prepSQL := "STOP GROUP_REPLICATION; SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = OFF;"
+	prepCmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, prepSQL)
+	_, _ = prepCmd.CombinedOutput()
+
+	changeMasterSQL := fmt.Sprintf(
+		"CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
+		escapeSQL(config.ReplicateUser),
+		escapeSQL(config.ReplicatePass),
+	)
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, changeMasterSQL)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  70,
+			Message:   fmt.Sprintf("Failed to configure MGR recovery channel: %v, output: %s", err, string(output)),
+			Timestamp: time.Now(),
+		}
+	}
+
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  75,
+		Message:   "MGR recovery channel configured",
+		Timestamp: time.Now(),
+	}
+}
+
 func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]GroupMemberStatus, error) {
-	querySQL := "SELECT MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members;"
+	querySQL := "SELECT MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, " +
+		"IF(COALESCE((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='group_replication_primary_member'), '') = '', " +
+		"'PRIMARY', IF(MEMBER_ID = (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='group_replication_primary_member'), 'PRIMARY', 'SECONDARY')) " +
+		"FROM performance_schema.replication_group_members;"
 
 	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, querySQL)
 	cmd.Args = append(cmd.Args[:len(cmd.Args)-2], "-N", cmd.Args[len(cmd.Args)-2], cmd.Args[len(cmd.Args)-1])
@@ -436,6 +473,10 @@ func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]
 }
 
 func (e *MGRExecutor) bootstrapPrimaryNode(ctx context.Context, config MGRConfig) *TaskResult {
+	prepSQL := "STOP GROUP_REPLICATION; SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = OFF;"
+	prepCmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, prepSQL)
+	_, _ = prepCmd.CombinedOutput()
+
 	createUserSQL := fmt.Sprintf(
 		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
 			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",

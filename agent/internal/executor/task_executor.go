@@ -107,6 +107,9 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 		return mhaExecutor.DeployMHA(ctx, req)
 	case "mgr":
 		mgrExecutor := NewMGRExecutor()
+		if bootstrap, ok := req.Config["bootstrap"].(bool); ok && !bootstrap {
+			return mgrExecutor.ConfigureGroupMember(ctx, req)
+		}
 		return mgrExecutor.DeployMGRSinglePrimary(ctx, req)
 	case "pxc":
 		return e.DeployPXC(ctx, req)
@@ -1761,7 +1764,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			return adminFailed(req.TaskID, "invalid variable name"), nil
 		}
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
-			fmt.Sprintf("SET GLOBAL %s = '%s'", name, escapeSQL(value)))
+			fmt.Sprintf("SET GLOBAL %s = %s", name, formatVariableValue(value)))
 	case "read_config":
 		path := configPath(req.Config)
 		data, readErr := os.ReadFile(path)
@@ -2094,6 +2097,19 @@ func validScope(s string) bool {
 		return true
 	}
 	return regexp.MustCompile(`^[A-Za-z0-9_$*]+(\.[A-Za-z0-9_$*]+)?$`).MatchString(s)
+}
+
+func formatVariableValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	upper := strings.ToUpper(trimmed)
+	if regexp.MustCompile(`^-?\d+(\.\d+)?$`).MatchString(trimmed) {
+		return trimmed
+	}
+	switch upper {
+	case "ON", "OFF", "TRUE", "FALSE", "DEFAULT":
+		return upper
+	}
+	return "'" + escapeSQL(trimmed) + "'"
 }
 
 func marshalData(v any) string {
