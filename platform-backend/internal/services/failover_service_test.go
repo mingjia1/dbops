@@ -1,9 +1,11 @@
 package services
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -94,5 +96,51 @@ func TestPrioritizeManualCandidate(t *testing.T) {
 	want := []string{"slave-2", "slave-1", "slave-3"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("unexpected candidate order: got %v want %v", got, want)
+	}
+}
+
+func TestStopReplicationOnSlavesReturnsMissingSlaveConnection(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	svc := &FailoverService{
+		db:            db,
+		encryptionKey: "test-encryption-key-32bytes!!",
+	}
+
+	err := svc.StopReplicationOnSlaves(context.Background(), []MasterInfo{{InstanceID: "missing-slave"}})
+	if err == nil {
+		t.Fatalf("expected missing slave connection to be returned")
+	}
+	if !strings.Contains(err.Error(), "missing-slave connection") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRecordFailoverHistoryPersistsResult(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	svc := &FailoverService{
+		db: db,
+	}
+	result := &FailoverResult{
+		ClusterID:    "cluster-001",
+		OldMasterID:  "master-001",
+		NewMasterID:  "slave-001",
+		FailoverTime: time.Now(),
+		Status:       "partial_success",
+		Success:      false,
+		ErrorMessage: "replication rebuild failed",
+	}
+
+	svc.recordFailoverHistory(context.Background(), result)
+	history, err := svc.GetFailoverHistory(context.Background(), "cluster-001", 10)
+	if err != nil {
+		t.Fatalf("GetFailoverHistory failed: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected one history row, got %d", len(history))
+	}
+	if history[0].Status != result.Status || history[0].OldMasterID != result.OldMasterID || history[0].NewMasterID != result.NewMasterID {
+		t.Fatalf("unexpected history row: %+v", history[0])
 	}
 }

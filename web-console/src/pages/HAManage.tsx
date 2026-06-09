@@ -196,7 +196,8 @@ const HAManage: React.FC = () => {
     }
   }
   const runBatchHealth = async () => {
-    const ids = instances.filter((i) => i.host_id).map((i) => i.id)
+    const scopedInstances = clusterId ? instances.filter((i) => i.cluster_id === clusterId) : instances
+    const ids = scopedInstances.filter((i) => i.host_id).map((i) => i.id)
     if (ids.length === 0) {
       message.warning('\u6ca1\u6709\u53ef\u68c0\u6d4b\u7684\u5b9e\u4f8b')
       return
@@ -207,7 +208,7 @@ const HAManage: React.FC = () => {
       const failed = rows.filter((row: any) => !row?.is_healthy || isFailedHAStatus(row?.status) || row?.status === 'unhealthy')
       if (failed.length > 0) {
         Modal.warning({
-          title: `\u5065\u5eb7\u68c0\u67e5\u5b8c\u6210\uff1a\u5f02\u5e38 ${failed.length} \u4e2a`,
+          title: `\u5065\u5eb7\u68c0\u67e5\u90e8\u5206\u5931\u8d25\uff1a\u6b63\u5e38 ${rows.length - failed.length} \u4e2a\uff0c\u5f02\u5e38 ${failed.length} \u4e2a`,
           content: (
             <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
               {failed.map((row: any) => `${row.instance_id || '-'}: ${row.error_message || row.status || 'unhealthy'}`).join('\n')}

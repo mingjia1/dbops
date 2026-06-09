@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -154,15 +155,18 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 		FailoverType:  "auto",
 	}
 
-	conn, err := s.getInstanceConnection(ctx, master.InstanceID)
-	if err == nil {
-		s.StopReplicationOnSlaves(ctx, slaves, conn)
-	}
-
 	newConn, err := s.getInstanceConnection(ctx, newMaster.InstanceID)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = fmt.Sprintf("failed to get new master connection: %v", err)
+		s.recordFailoverHistory(ctx, result)
+		return result, nil
+	}
+
+	if err := s.StopReplicationOnSlaves(ctx, slaves); err != nil {
+		result.Status = "failed"
+		result.ErrorMessage = fmt.Sprintf("failed to stop replication on slaves: %v", err)
+		s.recordFailoverHistory(ctx, result)
 		return result, nil
 	}
 
@@ -170,6 +174,7 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = fmt.Sprintf("failed to promote new master: %v", err)
+		s.recordFailoverHistory(ctx, result)
 		return result, nil
 	}
 
@@ -180,6 +185,7 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 		result.ErrorMessage = fmt.Sprintf("master promoted but replication rebuild failed: %v", err)
 		result.Duration = time.Since(startTime)
 		result.RebuildReplTime = time.Since(rebuildStart)
+		s.recordFailoverHistory(ctx, result)
 		return result, nil
 	}
 	result.RebuildReplTime = time.Since(rebuildStart)
@@ -199,7 +205,11 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 
 	err = s.UpdateTopology(ctx, req.ClusterID, master.InstanceID, newMaster.InstanceID)
 	if err != nil {
+		result.Status = "partial_success"
 		result.ErrorMessage = fmt.Sprintf("topology update failed: %v", err)
+		result.Duration = time.Since(startTime)
+		s.recordFailoverHistory(ctx, result)
+		return result, nil
 	}
 
 	s.healthService.ClearFailureState(master.InstanceID)
@@ -207,6 +217,7 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 	result.Status = "completed"
 	result.Success = true
 	result.Duration = time.Since(startTime)
+	s.recordFailoverHistory(ctx, result)
 
 	return result, nil
 }
@@ -368,20 +379,35 @@ func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInf
 	return nil
 }
 
-func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []MasterInfo, conn *models.InstanceConnection) error {
-	for range slaves {
+func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []MasterInfo) error {
+	var failures []string
+	for _, slave := range slaves {
+		conn, err := s.getInstanceConnection(ctx, slave.InstanceID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s connection: %v", slave.InstanceID, err))
+			continue
+		}
+
 		dsn, err := s.dsnForConnection(conn)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s dsn: %v", slave.InstanceID, err))
 			continue
 		}
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s connect: %v", slave.InstanceID, err))
 			continue
 		}
-		defer db.Close()
 
-		_, _ = db.Exec("STOP SLAVE IO_THREAD")
+		_, execErr := db.ExecContext(ctx, "STOP SLAVE IO_THREAD")
+		_ = db.Close()
+		if execErr != nil {
+			failures = append(failures, fmt.Sprintf("%s stop slave io: %v", slave.InstanceID, execErr))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -392,6 +418,7 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 		return fmt.Errorf("failed to get master binlog position: %w", err)
 	}
 
+	var failures []string
 	for _, slave := range slaves {
 		if slave.InstanceID == newMaster.InstanceID {
 			continue
@@ -399,25 +426,29 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 
 		slaveConn, err := s.getInstanceConnection(ctx, slave.InstanceID)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s connection: %v", slave.InstanceID, err))
 			continue
 		}
 
 		dsn, err := s.dsnForConnection(slaveConn)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s dsn: %v", slave.InstanceID, err))
 			continue
 		}
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s connect: %v", slave.InstanceID, err))
 			continue
 		}
-		defer db.Close()
 
 		// B1: 用 ? 占位符, 杜绝 Sprintf 拼接造成的注入 + 密码 ' 转义.
 		// PasswordEncrypted 在这里已经被 dsnForConnection 解密到 plain, 但 CHANGE MASTER
 		// 的 MASTER_PASSWORD 是明文参数, 需要解密 newConn 同理.
 		newPlain, err := utils.Decrypt(newConn.PasswordEncrypted, s.encryptionKey)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s decrypt new master password: %v", slave.InstanceID, err))
+			_ = db.Close()
 			continue
 		}
 		_, err = db.ExecContext(ctx,
@@ -426,20 +457,22 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 			masterBinlogPos.File, masterBinlogPos.Position,
 		)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s change master: %v", slave.InstanceID, err))
+			_ = db.Close()
 			continue
 		}
 
-		_, err = db.Exec("START SLAVE")
+		_, err = db.ExecContext(ctx, "START SLAVE")
+		_ = db.Close()
 		if err != nil {
-			continue
-		}
-
-		_, err = db.Exec("START SLAVE")
-		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s start slave: %v", slave.InstanceID, err))
 			continue
 		}
 	}
 
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
 	return nil
 }
 
@@ -548,6 +581,21 @@ func (s *FailoverService) GetFailoverHistory(ctx context.Context, clusterID stri
 	}
 
 	return history, nil
+}
+
+func (s *FailoverService) recordFailoverHistory(ctx context.Context, result *FailoverResult) {
+	if s == nil || s.db == nil || s.db.Pool == nil || result == nil {
+		return
+	}
+	failoverTime := result.FailoverTime
+	if failoverTime.IsZero() {
+		failoverTime = time.Now()
+	}
+	_, _ = s.db.Pool.ExecContext(ctx, `
+		INSERT INTO failover_history (
+			id, cluster_id, old_master_id, new_master_id, failover_time, status, success, error_message
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, uuid.New().String(), result.ClusterID, result.OldMasterID, result.NewMasterID, failoverTime, result.Status, result.Success, result.ErrorMessage)
 }
 
 func (s *FailoverService) ValidateFailoverRequest(ctx context.Context, req FailoverRequest) error {

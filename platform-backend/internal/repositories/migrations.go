@@ -402,6 +402,18 @@ var InitialSchema = []string{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_rsh_cluster (cluster_id, created_at)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS failover_history (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		old_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		new_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		failover_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		status VARCHAR(32) NOT NULL DEFAULT '',
+		success TINYINT(1) DEFAULT 0,
+		error_message TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_failover_history_cluster (cluster_id, failover_time)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -785,6 +797,18 @@ var schemaSQLite = []string{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_rsh_cluster ON role_switch_history(cluster_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS failover_history (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		old_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		new_master_id VARCHAR(64) NOT NULL DEFAULT '',
+		failover_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		status VARCHAR(32) NOT NULL DEFAULT '',
+		success INTEGER DEFAULT 0,
+		error_message TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_failover_history_cluster ON failover_history(cluster_id, failover_time)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.
