@@ -99,3 +99,18 @@ func TestTopologyService_GetClusterTopology_EmptyCluster(t *testing.T) {
 
 	mockRepo.AssertExpectations(t)
 }
+
+func TestTopologyService_InferClusterTopologyWhenRelationsMissing(t *testing.T) {
+	instances := []InstanceTopologyResponse{
+		{InstanceID: "master-1", ClusterID: "cluster-001", Role: "primary", ReplicationMode: "async"},
+		{InstanceID: "replica-1", ClusterID: "cluster-001", Role: "replica", ReplicationMode: "async"},
+		{InstanceID: "replica-2", ClusterID: "cluster-001", Role: "", ReplicationMode: "async"},
+	}
+
+	inferClusterTopology(instances)
+
+	assert.Equal(t, []string{"replica-1", "replica-2"}, instances[0].SlaveIDs)
+	assert.Equal(t, "master-1", instances[1].MasterID)
+	assert.Equal(t, "master-1", instances[2].MasterID)
+	assert.Equal(t, "replica", instances[2].Role)
+}

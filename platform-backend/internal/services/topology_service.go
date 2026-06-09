@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -117,6 +118,7 @@ func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID stri
 		}
 		topologyInstances = append(topologyInstances, *topologyInst)
 	}
+	inferClusterTopology(topologyInstances)
 
 	return &ClusterTopologyResponse{
 		ClusterID:       clusterID,
@@ -204,4 +206,63 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 		Nodes: nodes,
 		Edges: edges,
 	}, nil
+}
+
+func inferClusterTopology(instances []InstanceTopologyResponse) {
+	if len(instances) <= 1 {
+		return
+	}
+	hasExplicitRelation := false
+	for _, inst := range instances {
+		if inst.MasterID != "" || len(inst.SlaveIDs) > 0 {
+			hasExplicitRelation = true
+			break
+		}
+	}
+	if hasExplicitRelation {
+		return
+	}
+
+	primaryIndex := 0
+	for i, inst := range instances {
+		if topologyIsPrimaryRole(inst.Role) {
+			primaryIndex = i
+			break
+		}
+	}
+	primaryID := instances[primaryIndex].InstanceID
+	slaveIDs := make([]string, 0, len(instances)-1)
+	for i := range instances {
+		if instances[i].ReplicationMode == "" {
+			instances[i].ReplicationMode = "async"
+		}
+		if i == primaryIndex {
+			instances[i].Role = normalizeTopologyRole(instances[i].Role, "master")
+			continue
+		}
+		instances[i].Role = normalizeTopologyRole(instances[i].Role, "replica")
+		instances[i].MasterID = primaryID
+		slaveIDs = append(slaveIDs, instances[i].InstanceID)
+	}
+	instances[primaryIndex].SlaveIDs = slaveIDs
+}
+
+func topologyIsPrimaryRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "master", "primary", "primary_master", "leader", "writer":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTopologyRole(role, fallback string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" || role == "unknown" {
+		return fallback
+	}
+	if role == "slave" || role == "secondary" {
+		return "replica"
+	}
+	return role
 }
