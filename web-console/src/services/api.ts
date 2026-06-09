@@ -9,6 +9,10 @@ const api = axios.create({
   withCredentials: true,
 })
 
+const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
+const agentSubmitTimeoutMs = 10000
+const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
+
 const rejectBusinessError = (res: any) => {
   if (res && typeof res.code === 'number' && res.code !== 200) {
     return Promise.reject({
@@ -21,7 +25,7 @@ const rejectBusinessError = (res: any) => {
 
 const rejectFailedTaskData = (res: any) => {
   const status = String(res?.data?.status || '').toLowerCase()
-  if (['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(status)) {
+  if (failedTaskStatuses.includes(status)) {
     return Promise.reject({
       response: { data: res },
       message: res?.data?.message || res?.message || 'Task failed',
@@ -303,10 +307,12 @@ export const hostApi = {
     api.post(`/hosts/${id}/test`),
 
   agentAction: (id: string, action: string, agentPort?: number) =>
-    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, { timeout: 240000 }),
+    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, {
+      timeout: longRunningAgentActions.includes(action) ? agentSubmitTimeoutMs : 240000,
+    }),
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? 10000 : 240000) }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 240000) }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

@@ -52,7 +52,7 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
 }
 
 const formatHealthCheckSummary = (ok: number, failed: number) =>
-  `\u68c0\u6d4b\u5931\u8d25\uff1a\u6210\u529f ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u6309\u5931\u8d25\u5904\u7406\u3002`
+  `检测未通过：通过 ${ok} 个，失败 ${failed} 个。后端返回 failed/error/timeout，或 Agent 端口拒绝连接时，页面按失败处理。`
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -212,7 +212,7 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? `\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25\uff1a\u6210\u529f ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a` : `\u4e00\u952e\u68c0\u6d4b\u5931\u8d25\uff1a\u5931\u8d25 ${failed} \u4e2a`,
+        title: ok > 0 ? `一键检测未通过：通过 ${ok} 个，失败 ${failed} 个` : `一键检测失败：失败 ${failed} 个`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             <div>{formatHealthCheckSummary(ok, failed)}</div>
