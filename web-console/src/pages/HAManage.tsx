@@ -13,6 +13,18 @@ interface HAClusterStatus {
   history: any[]
 }
 
+const isFailedHAStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+}
+
+const isCompletedHAStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
+}
+
+const isSkippedHAStatus = (status?: string) => (status || '').toLowerCase() === 'skipped'
+const isPartialHAStatus = (status?: string) => (status || '').toLowerCase() === 'partial_success'
 interface PreflightResult {
   master_healthy: boolean
   slave_count: number
@@ -127,56 +139,88 @@ const HAManage: React.FC = () => {
     try {
       const values = await autoForm.validateFields()
       if (!values.confirm_impact) {
-        message.warning('请确认已了解操作影响')
+        message.warning('\u8bf7\u786e\u8ba4\u5df2\u4e86\u89e3\u64cd\u4f5c\u5f71\u54cd')
         return
       }
       setSubmitting(true)
       const res: any = await haApi.autoFailover({ cluster_id: clusterId, ...values, require_restart: values.require_restart || false })
-      message.success(res?.data?.message || '自动故障转移已启动')
+      const data = res?.data || res
+      if (isFailedHAStatus(data?.status)) {
+        message.error(data?.error_message || data?.message || '\u81ea\u52a8\u6545\u969c\u8f6c\u79fb\u5931\u8d25')
+      } else if (isSkippedHAStatus(data?.status)) {
+        message.info(data?.error_message || data?.message || '\u672a\u89e6\u53d1\u81ea\u52a8\u6545\u969c\u8f6c\u79fb')
+      } else if (isPartialHAStatus(data?.status)) {
+        message.warning(data?.error_message || data?.message || '\u6545\u969c\u8f6c\u79fb\u90e8\u5206\u5b8c\u6210')
+      } else if (isCompletedHAStatus(data?.status)) {
+        message.success(data?.message || '\u81ea\u52a8\u6545\u969c\u8f6c\u79fb\u5b8c\u6210')
+      } else {
+        message.info(data?.message || '\u81ea\u52a8\u6545\u969c\u8f6c\u79fb\u5df2\u63d0\u4ea4')
+      }
       setAutoOpen(false)
       autoForm.resetFields()
       if (clusterId) fetchStatus(clusterId)
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '提交失败')
+      message.error(err?.response?.data?.message || err?.message || '\u63d0\u4ea4\u5931\u8d25')
     } finally {
       setSubmitting(false)
     }
   }
-
   const submitManual = async () => {
     try {
       const values = await manualForm.validateFields()
       if (!values.confirm_impact) {
-        message.warning('请确认已了解操作影响')
+        message.warning('\u8bf7\u786e\u8ba4\u5df2\u4e86\u89e3\u64cd\u4f5c\u5f71\u54cd')
         return
       }
       setSubmitting(true)
       const res: any = await haApi.manualSwitch({ cluster_id: clusterId, ...values })
-      message.success(res?.data?.message || '手动切换已启动')
+      const data = res?.data || res
+      if (isFailedHAStatus(data?.status)) {
+        message.error(data?.error_message || data?.message || '\u624b\u52a8\u5207\u6362\u5931\u8d25')
+      } else if (isSkippedHAStatus(data?.status)) {
+        message.info(data?.error_message || data?.message || '\u624b\u52a8\u5207\u6362\u672a\u6267\u884c')
+      } else if (isPartialHAStatus(data?.status)) {
+        message.warning(data?.error_message || data?.message || '\u624b\u52a8\u5207\u6362\u90e8\u5206\u5b8c\u6210')
+      } else if (isCompletedHAStatus(data?.status)) {
+        message.success(data?.message || '\u624b\u52a8\u5207\u6362\u5b8c\u6210')
+      } else {
+        message.info(data?.message || '\u624b\u52a8\u5207\u6362\u5df2\u63d0\u4ea4')
+      }
       setManualOpen(false)
       manualForm.resetFields()
       if (clusterId) fetchStatus(clusterId)
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '提交失败')
+      message.error(err?.response?.data?.message || err?.message || '\u63d0\u4ea4\u5931\u8d25')
     } finally {
       setSubmitting(false)
     }
   }
-
   const runBatchHealth = async () => {
     const ids = instances.filter((i) => i.host_id).map((i) => i.id)
     if (ids.length === 0) {
-      message.warning('没有可检测的实例')
+      message.warning('\u6ca1\u6709\u53ef\u68c0\u6d4b\u7684\u5b9e\u4f8b')
       return
     }
     try {
       const res: any = await haApi.healthCheck({ instance_ids: ids })
-      message.success(res?.data?.message || `已对 ${ids.length} 个实例发起健康检查`)
+      const rows = Array.isArray(res?.data) ? res.data : []
+      const failed = rows.filter((row: any) => !row?.is_healthy || isFailedHAStatus(row?.status) || row?.status === 'unhealthy')
+      if (failed.length > 0) {
+        Modal.warning({
+          title: `\u5065\u5eb7\u68c0\u67e5\u5b8c\u6210\uff1a\u5f02\u5e38 ${failed.length} \u4e2a`,
+          content: (
+            <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+              {failed.map((row: any) => `${row.instance_id || '-'}: ${row.error_message || row.status || 'unhealthy'}`).join('\n')}
+            </div>
+          ),
+        })
+      } else {
+        message.success(`\u5065\u5eb7\u68c0\u67e5\u5b8c\u6210\uff1a${rows.length || ids.length} \u4e2a\u5b9e\u4f8b\u6b63\u5e38`)
+      }
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '健康检查失败')
+      message.error(err?.response?.data?.message || '\u5065\u5eb7\u68c0\u67e5\u5931\u8d25')
     }
   }
-
   const slaveColumns: ColumnsType<any> = [
     { title: '实例ID', dataIndex: 'id', key: 'id' },
     {
