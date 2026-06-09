@@ -122,6 +122,17 @@ func (s *SwitchService) executeSwitch(ctx context.Context, req SwitchClusterRequ
 		"cluster_name": req.ClusterName,
 	}
 
+	if s.agentClient == nil {
+		out := &SwitchClusterResult{
+			InstanceID: req.InstanceID,
+			SourceType: sourceType,
+			TargetType: targetType,
+			Status:     "failed",
+			Message:    "agent client not configured",
+		}
+		s.auditClusterSwitch(ctx, req, out)
+		return out, nil
+	}
 	result, err := s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/cluster-switch", map[string]interface{}{
 		"task_id":     req.InstanceID,
 		"instance_id": req.InstanceID,
@@ -341,6 +352,9 @@ func (s *SwitchService) guessCurrentRole(inst *models.Instance, clusterType stri
 }
 
 func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo, clusterType string, req RoleSwitchRequest) error {
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
 	config := map[string]interface{}{
 		"cluster_id":       req.ClusterID,
 		"instance_id":      req.InstanceID,
@@ -363,6 +377,9 @@ func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo
 }
 
 func (s *SwitchService) demoteInstance(ctx context.Context, host *AgentHostInfo, clusterType string, req RoleSwitchRequest) error {
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
 	config := map[string]interface{}{
 		"cluster_id":       req.ClusterID,
 		"instance_id":      req.InstanceID,
@@ -391,6 +408,9 @@ func (s *SwitchService) demoteOldMaster(ctx context.Context, clusterID, oldMaste
 	if err != nil {
 		return err
 	}
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
 	config := map[string]interface{}{
 		"cluster_id":   clusterID,
 		"instance_id":  oldMasterID,
@@ -409,6 +429,9 @@ func (s *SwitchService) demoteOldMaster(ctx context.Context, clusterID, oldMaste
 }
 
 func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, newMasterID, oldMasterID, clusterType string) ([]string, error) {
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
 	allInsts, err := s.listClusterInstances(ctx, clusterID)
 	if err != nil {
 		return nil, err

@@ -255,6 +255,25 @@ func TestClusterArchitectureSwitchWritesAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].Details, "vip=10.0.0.10")
 }
 
+func TestClusterArchitectureSwitchWithoutAgentClientFails(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	hostID := "cluster-switch-no-agent-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: "127.0.0.1", AgentPort: 9090, SSHPort: 22, SSHUser: "root", Name: "cluster-switch-no-agent-host"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "cluster-switch-no-agent-inst", HostID: &hostID, Name: "cluster-switch-no-agent-inst"}))
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, nil, nil)
+
+	result, err := svc.SingleToMHA(ctx, SwitchClusterRequest{InstanceID: "cluster-switch-no-agent-inst"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+}
+
 // --- TDD: MGR primary promotion ---
 func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	ctx := context.Background()
@@ -288,6 +307,39 @@ func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	assert.Equal(t, "primary", result.NewRole)
 }
 
+func TestSwitchRoleWithinClusterPromoteWithoutAgentClientFailsAndRecordsHistory(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	hostID := "switch-no-agent-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: "127.0.0.1", AgentPort: 9090, SSHPort: 22, SSHUser: "root", Name: "switch-no-agent-host"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "old-master-no-agent", HostID: &hostID, ClusterID: "switch-no-agent-cluster", Name: "old-master", Status: models.InstanceStatus{Role: "master"}}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "old-master-no-agent", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "new-master-no-agent", HostID: &hostID, ClusterID: "switch-no-agent-cluster", Name: "new-master", Status: models.InstanceStatus{Role: "slave"}, Topology: models.InstanceTopology{MasterID: "old-master-no-agent"}}))
+	require.NoError(t, instRepo.UpsertTopology(ctx, "new-master-no-agent", &models.InstanceTopology{MasterID: "old-master-no-agent"}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "new-master-no-agent", &models.InstanceStatus{Role: "slave", HealthStatus: "healthy"}))
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "switch-no-agent-cluster", ClusterType: "mha", Name: "switch-no-agent-cluster"}))
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, nil, nil)
+
+	result, err := svc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
+		ClusterID:   "switch-no-agent-cluster",
+		InstanceID:  "new-master-no-agent",
+		TargetRole:  "master",
+		OldMasterID: "old-master-no-agent",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+	history, err := svc.ListRoleSwitchHistory(ctx, "switch-no-agent-cluster", 10)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "failed", history[0].Status)
+}
+
 // --- TDD: PXC demote primary -> secondary ---
 func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 	ctx := context.Background()
@@ -314,6 +366,35 @@ func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "completed", result.Status)
 	assert.Equal(t, "secondary", result.NewRole)
+}
+
+func TestSwitchRoleWithinClusterDemoteWithoutAgentClientFailsAndRecordsHistory(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	hostID := "demote-no-agent-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: "127.0.0.1", AgentPort: 9090, SSHPort: 22, SSHUser: "root", Name: "demote-no-agent-host"}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "demote-no-agent-inst", HostID: &hostID, ClusterID: "demote-no-agent-cluster", Name: "demote-no-agent-inst", Status: models.InstanceStatus{Role: "primary"}}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "demote-no-agent-inst", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{ID: "demote-no-agent-cluster", ClusterType: "pxc", Name: "demote-no-agent-cluster"}))
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, nil, nil)
+
+	result, err := svc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
+		ClusterID:  "demote-no-agent-cluster",
+		InstanceID: "demote-no-agent-inst",
+		TargetRole: "secondary",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "agent client not configured")
+	history, err := svc.ListRoleSwitchHistory(ctx, "demote-no-agent-cluster", 10)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "failed", history[0].Status)
 }
 
 // --- TDD: skip when current role == target role ---
