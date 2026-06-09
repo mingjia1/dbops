@@ -201,7 +201,8 @@ const InstanceList: React.FC = () => {
         }
       } catch (err: any) {
         failed += 1
-        failedRows.push(`${instance.name}: ${err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'}`)
+        const task = err?.response?.data?.data
+        failedRows.push(formatHealthCheckFailure(instance.name, task, err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'))
       }
     }
     if (failed > 0) {

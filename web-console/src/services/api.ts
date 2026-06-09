@@ -9,6 +9,16 @@ const api = axios.create({
   withCredentials: true,
 })
 
+const rejectBusinessError = (res: any) => {
+  if (res && typeof res.code === 'number' && res.code !== 200) {
+    return Promise.reject({
+      response: { data: res },
+      message: res.message || 'Request failed',
+    })
+  }
+  return res
+}
+
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
@@ -168,7 +178,7 @@ export const instanceApi = {
     api.post(`/instances/${id}/deploy`),
 
   healthCheck: (id: string) =>
-    api.post(`/instances/${id}/health-check`, {}, { timeout: 60000 }),
+    api.post(`/instances/${id}/health-check`, {}, { timeout: 30000 }).then(rejectBusinessError),
 
   adminAction: (id: string, data: {
     action: string
@@ -285,7 +295,7 @@ export const hostApi = {
     api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, { timeout: 240000 }),
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? 60000 : 240000) }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? 10000 : 240000) }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

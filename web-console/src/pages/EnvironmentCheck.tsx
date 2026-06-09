@@ -61,7 +61,7 @@ const isSubmittedAgentStatus = (status?: string) => {
   return ['submitted', 'pending', 'running'].includes(normalized)
 }
 
-const getRequestErrorMessage = (err: any, fallback: string) => {
+const getAgentSubmitErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
   if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
     return `${fallback}: 提交请求超时，平台未能确认 Agent 安装任务是否已入队。请到 Agent 管理或刷新主机列表查看最终状态；如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
@@ -132,7 +132,7 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 30000)
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 10000)
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))
@@ -160,7 +160,7 @@ const EnvironmentCheck: React.FC = () => {
     } catch (err: any) {
       Modal.error({
         title: 'Agent 安装请求失败',
-        content: getRequestErrorMessage(err, 'Agent 安装请求失败'),
+        content: getAgentSubmitErrorMessage(err, 'Agent 安装请求失败'),
       })
     } finally {
       setSubmitting(false)
