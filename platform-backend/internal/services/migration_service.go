@@ -277,6 +277,20 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, out.Errors[0])
 		return out, nil
 	}
+	if result == nil {
+		out.Errors = []string{"agent verify returned no result"}
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, out.Errors[0])
+		return out, nil
+	}
+	if normalizeMigrationStatus(result.Status) == models.MigrationStatusFailed {
+		msg := strings.TrimSpace(result.Message)
+		if msg == "" {
+			msg = "agent verification failed"
+		}
+		out.Errors = []string{msg}
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, msg)
+		return out, nil
+	}
 	if v, ok := result.Data["source_count"].(float64); ok {
 		out.SourceCount = int64(v)
 	}
@@ -356,7 +370,7 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 
 	out := &models.MigrationSwitchResult{
 		TaskID:             taskID,
-		Status:             result.Status,
+		Status:             string(status),
 		SwitchedAt:         time.Now(),
 		ApplicationUpdated: completed,
 	}

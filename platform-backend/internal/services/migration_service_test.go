@@ -308,6 +308,66 @@ func TestMigrationService_SwitchCompletedMarksApplicationUpdated(t *testing.T) {
 	assert.True(t, result.ApplicationUpdated)
 }
 
+func TestMigrationService_VerifyAgentFailedStatusFailsTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration-verify", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "verify-task",
+				"status":   "failed",
+				"progress": 100,
+				"message":  "checksum mismatch",
+			},
+		})
+	}))
+	defer server.Close()
+
+	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+
+	result, err := service.VerifyMigration(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Errors, 1)
+	assert.Equal(t, "checksum mismatch", result.Errors[0])
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Contains(t, task.Error, "checksum mismatch")
+}
+
+func TestMigrationService_SwitchNonCompletedStatusReturnsFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration-switch", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "switch-task",
+				"status":   "running",
+				"progress": 80,
+				"message":  "switch not complete",
+			},
+		})
+	}))
+	defer server.Close()
+
+	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+
+	result, err := service.ExecuteSwitch(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.False(t, result.ApplicationUpdated)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Contains(t, task.Error, "switch not complete")
+}
+
 func newMigrationExecutionTestService(t *testing.T, agentStatus string, progress int) (*MigrationService, *repositories.MigrationRepository, string, func()) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
