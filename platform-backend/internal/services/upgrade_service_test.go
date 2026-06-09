@@ -605,9 +605,7 @@ func TestUpgradeDispatchAddsCatalogPackageMetadata(t *testing.T) {
 	assert.Equal(t, "8.0.36", config["target_version"])
 	assert.Equal(t, "mysql", config["target_flavor"])
 	assert.Contains(t, config["package_url"], "mysql-8.0.36")
-	entry, err := NewVersionCatalog().Get("mysql-8.0.36")
-	require.NoError(t, err)
-	assert.Equal(t, entry.Checksum, config["checksum"])
+	assert.NotContains(t, config, "checksum")
 }
 
 func TestUpgradeDispatchKeepsExplicitPackageURL(t *testing.T) {

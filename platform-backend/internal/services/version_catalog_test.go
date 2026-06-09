@@ -14,7 +14,11 @@ func TestVersionCatalogActiveEntriesHaveUsablePackageMetadata(t *testing.T) {
 		}
 		assert.NotEmpty(t, entry.PackageURL, entry.ID)
 		assert.True(t, strings.HasPrefix(entry.PackageURL, "https://"), entry.ID)
-		assert.True(t, isSHA256Hex(entry.Checksum), entry.ID)
-		assert.NotContains(t, strings.ToLower(entry.Checksum), "placeholder", entry.ID)
+		if entry.ChecksumVerified {
+			assert.True(t, isSHA256Hex(entry.Checksum), entry.ID)
+			assert.NotContains(t, strings.ToLower(entry.Checksum), "placeholder", entry.ID)
+		} else {
+			assert.Empty(t, entry.Checksum, entry.ID)
+		}
 	}
 }

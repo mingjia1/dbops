@@ -11,20 +11,21 @@ import (
 // "supported upgrade path" matrix; validity is computed at runtime from
 // MajorVersion() and the engine's documented upgrade rules.
 type VersionEntry struct {
-	ID            string   `json:"id"`             // "<flavor>-<version>" e.g. "mysql-8.0.36"
-	Flavor        string   `json:"flavor"`         // "mysql" | "mariadb" | "percona"
-	Version       string   `json:"version"`        // "8.0.36"
-	MajorMinor    string   `json:"major_minor"`    // "8.0"
-	IsLTS         bool     `json:"is_lts"`
-	ReleaseDate   string   `json:"release_date"`
-	EOLDate       string   `json:"eol_date"`
-	PackageURL    string   `json:"package_url"`    // glibc2.17/x86_64 tarball/xz
-	Checksum      string   `json:"checksum"`       // sha256
-	MinGlibc      string   `json:"min_glibc"`      // e.g. "2.17"
-	OSFamily      []string `json:"os_family"`      // ["linux"]
-	Status        string   `json:"status"`         // "active" | "deprecated" | "eol"
-	UpgradeFrom   []string `json:"upgrade_from"`   // e.g. ["5.7.44","5.7.43",...]
-	UpgradeNotes  string   `json:"upgrade_notes,omitempty"`
+	ID               string   `json:"id"`          // "<flavor>-<version>" e.g. "mysql-8.0.36"
+	Flavor           string   `json:"flavor"`      // "mysql" | "mariadb" | "percona"
+	Version          string   `json:"version"`     // "8.0.36"
+	MajorMinor       string   `json:"major_minor"` // "8.0"
+	IsLTS            bool     `json:"is_lts"`
+	ReleaseDate      string   `json:"release_date"`
+	EOLDate          string   `json:"eol_date"`
+	PackageURL       string   `json:"package_url"` // glibc2.17/x86_64 tarball/xz
+	Checksum         string   `json:"checksum"`    // sha256
+	ChecksumVerified bool     `json:"checksum_verified"`
+	MinGlibc         string   `json:"min_glibc"`    // e.g. "2.17"
+	OSFamily         []string `json:"os_family"`    // ["linux"]
+	Status           string   `json:"status"`       // "active" | "deprecated" | "eol"
+	UpgradeFrom      []string `json:"upgrade_from"` // e.g. ["5.7.44","5.7.43",...]
+	UpgradeNotes     string   `json:"upgrade_notes,omitempty"`
 }
 
 type VersionCatalog struct{}
@@ -160,8 +161,9 @@ func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string)
 }
 
 // catalogEntries is the curated, version-agnostic version catalog.
-// Real download URLs and sha256 checksums are real values from dev.mysql.com /
-// mariadb.org / percona.com as of 2026-06. New versions are added by appending.
+// Download URLs are curated values from dev.mysql.com / mariadb.org / percona.com.
+// SHA256 values are optional and only used when ChecksumVerified is true.
+// New versions are added by appending.
 // No code change is required to add a new version: just append to this slice.
 var catalogEntries = []VersionEntry{
 	// ---------- MySQL 5.6 (EOL Feb 2021, but kept for legacy migration) ----------
@@ -169,9 +171,9 @@ var catalogEntries = []VersionEntry{
 		ID: "mysql-5.6.51", Flavor: "mysql", Version: "5.6.51", MajorMinor: "5.6",
 		IsLTS: false, ReleaseDate: "2021-01-13", EOLDate: "2021-02-28",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-5.6/mysql-5.6.51-linux-glibc2.12-x86_64.tar.gz",
-		Checksum:  "第一节：URL placeholder, 请到 dev.mysql.com 复制实际 sha256",
-		MinGlibc:  "2.12", OSFamily: []string{"linux"}, Status: "eol",
-		UpgradeFrom: []string{"5.6.0", "5.6.51"},
+		Checksum:   "",
+		MinGlibc:   "2.12", OSFamily: []string{"linux"}, Status: "eol",
+		UpgradeFrom:  []string{"5.6.0", "5.6.51"},
 		UpgradeNotes: "MySQL 5.6 已于 2021-02-28 EOL. 只能升级到 5.7, 不能直接到 8.0.",
 	},
 	// ---------- MySQL 5.7 ----------
@@ -179,16 +181,16 @@ var catalogEntries = []VersionEntry{
 		ID: "mysql-5.7.44", Flavor: "mysql", Version: "5.7.44", MajorMinor: "5.7",
 		IsLTS: true, ReleaseDate: "2024-04-23", EOLDate: "2026-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz",
-		Checksum:  "e79e1b0566a59b98569ea8085a4ba2e6dfb6f9b9a45c545e8b3a35e2b6c2a4de",
-		MinGlibc:  "2.12", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.12", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"5.7.0", "5.7.43", "5.7.44"},
 	},
 	{
 		ID: "mysql-5.7.43", Flavor: "mysql", Version: "5.7.43", MajorMinor: "5.7",
 		IsLTS: true, ReleaseDate: "2023-10-12", EOLDate: "2025-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.43-linux-glibc2.12-x86_64.tar.gz",
-		Checksum:  "f3a90e7c4b88c5a25d9b1f4a7a3e0a8d1c2b3e4f5a6b7c8d9e0f1a2b3c4d5e6f",
-		MinGlibc:  "2.12", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.12", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"5.7.0", "5.7.42", "5.7.43"},
 	},
 	// ---------- MySQL 8.0 (Innovation track) ----------
@@ -196,25 +198,25 @@ var catalogEntries = []VersionEntry{
 		ID: "mysql-8.0.36", Flavor: "mysql", Version: "8.0.36", MajorMinor: "8.0",
 		IsLTS: true, ReleaseDate: "2024-01-16", EOLDate: "2026-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz",
-		Checksum:  "b4fc51911a4f9b0a8b3e7d1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a",
-		MinGlibc:  "2.17", OSFamily: []string{"linux"}, Status: "active",
-		UpgradeFrom: []string{"8.0.0", "8.0.35", "5.7.9"},
+		Checksum:   "",
+		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
+		UpgradeFrom:  []string{"8.0.0", "8.0.35", "5.7.9"},
 		UpgradeNotes: "8.0.36 是 CentOS 7.9 (glibc 2.17) 能装的最新 8.0.x; 8.0.37+ 需要 glibc 2.28.",
 	},
 	{
 		ID: "mysql-8.0.35", Flavor: "mysql", Version: "8.0.35", MajorMinor: "8.0",
 		IsLTS: true, ReleaseDate: "2023-10-12", EOLDate: "2025-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.35-linux-glibc2.17-x86_64.tar.xz",
-		Checksum:  "c1b2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
-		MinGlibc:  "2.17", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"8.0.0", "8.0.34", "5.7.9"},
 	},
 	{
 		ID: "mysql-8.0.34", Flavor: "mysql", Version: "8.0.34", MajorMinor: "8.0",
 		IsLTS: true, ReleaseDate: "2023-07-18", EOLDate: "2025-01-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.34-linux-glibc2.17-x86_64.tar.xz",
-		Checksum:  "d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e1d2c3",
-		MinGlibc:  "2.17", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"8.0.0", "8.0.33", "5.7.9"},
 	},
 	// ---------- MySQL 8.0 (glibc 2.28+, Ubuntu 20.04 / RHEL 8+ 专用) ----------
@@ -222,9 +224,9 @@ var catalogEntries = []VersionEntry{
 		ID: "mysql-8.0.37", Flavor: "mysql", Version: "8.0.37", MajorMinor: "8.0",
 		IsLTS: true, ReleaseDate: "2024-04-30", EOLDate: "2026-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.37-linux-glibc2.28-x86_64.tar.xz",
-		Checksum:  "e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4",
-		MinGlibc:  "2.28", OSFamily: []string{"linux"}, Status: "active",
-		UpgradeFrom: []string{"8.0.0", "8.0.36", "5.7.9"},
+		Checksum:   "",
+		MinGlibc:   "2.28", OSFamily: []string{"linux"}, Status: "active",
+		UpgradeFrom:  []string{"8.0.0", "8.0.36", "5.7.9"},
 		UpgradeNotes: "需要 glibc 2.28+ (Ubuntu 20.04 / RHEL 8+). CentOS 7.9 不可用.",
 	},
 	// ---------- MySQL 8.4 (LTS, modern track) ----------
@@ -232,9 +234,9 @@ var catalogEntries = []VersionEntry{
 		ID: "mysql-8.4.0", Flavor: "mysql", Version: "8.4.0", MajorMinor: "8.4",
 		IsLTS: true, ReleaseDate: "2024-04-30", EOLDate: "2032-04-30",
 		PackageURL: "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.xz",
-		Checksum:  "f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e5",
-		MinGlibc:  "2.28", OSFamily: []string{"linux"}, Status: "active",
-		UpgradeFrom: []string{"8.0.36", "8.0.37", "8.4.0"},
+		Checksum:   "",
+		MinGlibc:   "2.28", OSFamily: []string{"linux"}, Status: "active",
+		UpgradeFrom:  []string{"8.0.36", "8.0.37", "8.4.0"},
 		UpgradeNotes: "MySQL 8.4 是新的 LTS (8.x 长期支持), EOL 2032.",
 	},
 	// ---------- MariaDB 10.x ----------
@@ -242,16 +244,16 @@ var catalogEntries = []VersionEntry{
 		ID: "mariadb-10.11.4", Flavor: "mariadb", Version: "10.11.4", MajorMinor: "10.11",
 		IsLTS: true, ReleaseDate: "2024-02-22", EOLDate: "2028-02-22",
 		PackageURL: "https://archive.mariadb.org/mariadb-10.11.4/bintar-linux-systemd-x86_64/mariadb-10.11.4-linux-systemd-x86_64.tar.gz",
-		Checksum:  "a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6",
-		MinGlibc:  "2.17", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"10.10.0", "10.11.3", "10.11.4"},
 	},
 	{
 		ID: "mariadb-10.6.16", Flavor: "mariadb", Version: "10.6.16", MajorMinor: "10.6",
 		IsLTS: true, ReleaseDate: "2024-02-22", EOLDate: "2027-07-22",
 		PackageURL: "https://archive.mariadb.org/mariadb-10.6.16/bintar-linux-systemd-x86_64/mariadb-10.6.16-linux-systemd-x86_64.tar.gz",
-		Checksum:  "b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7",
-		MinGlibc:  "2.17", OSFamily: []string{"linux"}, Status: "active",
+		Checksum:   "",
+		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom: []string{"10.5.0", "10.6.15", "10.6.16"},
 	},
 	// ---------- Percona Server 8.0 ----------
@@ -259,9 +261,9 @@ var catalogEntries = []VersionEntry{
 		ID: "percona-8.0.36-28", Flavor: "percona", Version: "8.0.36-28", MajorMinor: "8.0",
 		IsLTS: true, ReleaseDate: "2024-04-25", EOLDate: "2026-04-30",
 		PackageURL: "https://downloads.percona.com/downloads/Percona-Server-8.0/Percona-Server-8.0.36-28/binary/tarball/Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz",
-		Checksum:  "c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8",
-		MinGlibc:  "2.28", OSFamily: []string{"linux"}, Status: "active",
-		UpgradeFrom: []string{"8.0.35-27", "8.0.36-28"},
+		Checksum:   "",
+		MinGlibc:   "2.28", OSFamily: []string{"linux"}, Status: "active",
+		UpgradeFrom:  []string{"8.0.35-27", "8.0.36-28"},
 		UpgradeNotes: "Percona 8.0 兼容 MySQL 8.0 升级路径. CentOS 7.9 glibc 2.17 不可用.",
 	},
 }

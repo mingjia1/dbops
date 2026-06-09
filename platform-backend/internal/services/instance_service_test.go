@@ -39,7 +39,7 @@ func TestInstanceCreateFillsPackageURLFromVersionCatalog(t *testing.T) {
 	assert.Contains(t, conn.PackageURL, "mysql-5.7.44")
 }
 
-func TestAgentClientDeployInstanceAddsCatalogPackageAndChecksum(t *testing.T) {
+func TestAgentClientDeployInstanceAddsCatalogPackageWithoutUnverifiedChecksum(t *testing.T) {
 	var payload DeployTaskPayload
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
@@ -74,9 +74,7 @@ func TestAgentClientDeployInstanceAddsCatalogPackageAndChecksum(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, payload.Config["package_url"], "mysql-5.7.44")
-	entry, err := NewVersionCatalog().Get("mysql-5.7.44")
-	require.NoError(t, err)
-	assert.Equal(t, entry.Checksum, payload.Config["checksum"])
+	assert.NotContains(t, payload.Config, "checksum")
 }
 
 func newInstanceDeployTestService(t *testing.T, passwordEncrypted string, agent *agentStub) (*InstanceService, *repositories.AuditLogRepository, string) {

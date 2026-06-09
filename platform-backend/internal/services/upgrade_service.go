@@ -840,7 +840,7 @@ func (s *UpgradeService) applyUpgradePackageMetadata(cfg map[string]interface{},
 	if _, ok := cfg["package_url"].(string); !ok && entry.PackageURL != "" {
 		cfg["package_url"] = entry.PackageURL
 	}
-	if _, ok := cfg["checksum"].(string); !ok && isSHA256Hex(entry.Checksum) {
+	if _, ok := cfg["checksum"].(string); !ok && isVerifiedCatalogChecksum(entry) {
 		cfg["checksum"] = entry.Checksum
 	}
 	if _, ok := cfg["target_flavor"].(string); !ok && entry.Flavor != "" {

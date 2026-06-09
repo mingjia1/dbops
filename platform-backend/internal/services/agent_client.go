@@ -71,7 +71,7 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 			if conn.PackageURL == "" && entry.PackageURL != "" {
 				cfg["package_url"] = entry.PackageURL
 			}
-			if isSHA256Hex(entry.Checksum) {
+			if isVerifiedCatalogChecksum(entry) {
 				cfg["checksum"] = entry.Checksum
 			}
 		}
@@ -109,6 +109,10 @@ func isSHA256Hex(value string) bool {
 		return false
 	}
 	return true
+}
+
+func isVerifiedCatalogChecksum(entry *VersionEntry) bool {
+	return entry != nil && entry.ChecksumVerified && isSHA256Hex(entry.Checksum)
 }
 
 func (c *AgentClient) DeployMasterSlave(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {

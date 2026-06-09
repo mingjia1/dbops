@@ -708,6 +708,7 @@ export interface VersionEntry {
   eol_date: string
   package_url: string
   checksum: string
+  checksum_verified?: boolean
   min_glibc: string
   os_family: string[]
   status: 'active' | 'deprecated' | 'eol'
