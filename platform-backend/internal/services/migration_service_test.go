@@ -246,6 +246,39 @@ func TestMigrationServiceMonitorWithoutAgentClientReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent client not configured")
 }
 
+func TestMigrationServiceMonitorFailedAgentStatusFailsTask(t *testing.T) {
+	service, migrationRepo, taskID, cleanup := newMigrationMonitorTestService(t, "failed", 67, "replication stopped")
+	defer cleanup()
+
+	result, err := service.MonitorMigrationProgress(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusFailed, result.Status)
+	assert.Equal(t, 67, result.Progress)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusFailed, task.Status)
+	assert.Equal(t, 67, task.Progress)
+	assert.Contains(t, task.Error, "replication stopped")
+}
+
+func TestMigrationServiceMonitorCompletedAgentStatusCompletesTask(t *testing.T) {
+	service, migrationRepo, taskID, cleanup := newMigrationMonitorTestService(t, "completed", 100, "migration complete")
+	defer cleanup()
+
+	result, err := service.MonitorMigrationProgress(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusCompleted, result.Status)
+	assert.Equal(t, 100, result.Progress)
+	task, err := migrationRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, models.MigrationStatusCompleted, task.Status)
+	assert.Equal(t, 100, task.Progress)
+}
+
 func TestMigrationServiceVerifyWithoutAgentClientFailsTask(t *testing.T) {
 	service, migrationRepo, taskID := newMigrationServiceWithoutAgent(t)
 
@@ -438,6 +471,26 @@ func newMigrationExecutionTestService(t *testing.T, agentStatus string, progress
 		})
 	}))
 	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+	return service, migrationRepo, taskID, server.Close
+}
+
+func newMigrationMonitorTestService(t *testing.T, agentStatus string, progress int, message string) (*MigrationService, *repositories.MigrationRepository, string, func()) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  "migration-monitor-task",
+				"status":   agentStatus,
+				"progress": progress,
+				"message":  message,
+			},
+		})
+	}))
+	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+	require.NoError(t, migrationRepo.UpdateStatus(context.Background(), taskID, models.MigrationStatusMigrating, 25))
 	return service, migrationRepo, taskID, server.Close
 }
 

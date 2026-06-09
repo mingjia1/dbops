@@ -252,10 +252,20 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	if err != nil {
 		return nil, fmt.Errorf("agent monitor call failed: %w", err)
 	}
+	status := normalizeMigrationStatus(result.Status)
+	if status == models.MigrationStatusFailed {
+		message := strings.TrimSpace(result.Message)
+		if message == "" {
+			message = "agent migration monitor failed"
+		}
+		_ = s.repo.UpdateStatusWithError(ctx, taskID, status, result.Progress, message)
+	} else {
+		_ = s.repo.UpdateStatus(ctx, taskID, status, result.Progress)
+	}
 
 	return &models.MigrationProgress{
 		TaskID:    taskID,
-		Status:    normalizeMigrationStatus(result.Status),
+		Status:    status,
 		Progress:  result.Progress,
 		UpdatedAt: time.Now(),
 	}, nil
