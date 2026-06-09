@@ -15,16 +15,16 @@ import (
 )
 
 type AlertService struct {
-	ruleRepo        *repositories.AlertRuleRepository
+	ruleRepo         *repositories.AlertRuleRepository
 	notificationRepo *repositories.AlertNotificationRepository
-	monitorService  *MonitorService
+	monitorService   *MonitorService
 }
 
 func NewAlertService(ruleRepo *repositories.AlertRuleRepository, notificationRepo *repositories.AlertNotificationRepository, monitorService *MonitorService) *AlertService {
 	return &AlertService{
-		ruleRepo:        ruleRepo,
+		ruleRepo:         ruleRepo,
 		notificationRepo: notificationRepo,
-		monitorService:  monitorService,
+		monitorService:   monitorService,
 	}
 }
 
@@ -106,12 +106,12 @@ type TriggerAlertRequest struct {
 }
 
 type AlertTriggerResult struct {
-	AlertID    string    `json:"alert_id"`
-	RuleID     string    `json:"rule_id"`
-	InstanceID string    `json:"instance_id"`
-	Status     string    `json:"status"`
-	Severity   string    `json:"severity"`
-	Message    string    `json:"message"`
+	AlertID     string    `json:"alert_id"`
+	RuleID      string    `json:"rule_id"`
+	InstanceID  string    `json:"instance_id"`
+	Status      string    `json:"status"`
+	Severity    string    `json:"severity"`
+	Message     string    `json:"message"`
 	TriggeredAt time.Time `json:"triggered_at"`
 }
 
@@ -152,9 +152,9 @@ func (s *AlertService) TriggerAlert(ctx context.Context, req TriggerAlertRequest
 }
 
 type SendNotificationRequest struct {
-	AlertID  string `json:"alert_id" binding:"required"`
+	AlertID  string   `json:"alert_id" binding:"required"`
 	Channels []string `json:"channels" binding:"required"`
-	Message  string `json:"message" binding:"required"`
+	Message  string   `json:"message" binding:"required"`
 }
 
 type NotificationResult struct {
@@ -291,12 +291,21 @@ func (s *AlertService) GetAlertHistory(ctx context.Context, filter AlertHistoryF
 	if err != nil {
 		return nil, err
 	}
+	ruleNames := make(map[string]string)
 	out := make([]AlertHistoryEntry, 0, len(records))
 	for _, r := range records {
+		ruleName, ok := ruleNames[r.RuleID]
+		if !ok {
+			ruleName = r.RuleID
+			if rule, err := s.ruleRepo.GetAlertRuleByID(ctx, r.RuleID); err == nil && rule != nil && rule.Name != "" {
+				ruleName = rule.Name
+			}
+			ruleNames[r.RuleID] = ruleName
+		}
 		out = append(out, AlertHistoryEntry{
 			ID:          r.ID,
 			RuleID:      r.RuleID,
-			RuleName:    r.RuleID, // ruleName 需要 join, 这里返回 id 留 TODO
+			RuleName:    ruleName,
 			InstanceID:  r.InstanceID,
 			Status:      r.Status,
 			Severity:    r.Severity,

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockAlertRuleRepo struct {
@@ -343,6 +345,44 @@ func TestAlertService_Original_GetAlertHistory(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, history)
 	assert.Empty(t, history)
+}
+
+func TestAlertService_GetAlertHistoryReturnsRuleName(t *testing.T) {
+	db := newTestDB()
+	ruleRepo := repositories.NewAlertRuleRepository(db)
+	notifRepo := repositories.NewAlertNotificationRepository(db)
+	service := NewAlertService(ruleRepo, notifRepo, nil)
+	ctx := context.Background()
+
+	rule := &models.AlertRule{
+		Name:            "CPU High",
+		Metric:          "cpu_usage",
+		Condition:       ">",
+		Threshold:       80,
+		Severity:        "warning",
+		DurationSeconds: 60,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	require.NoError(t, ruleRepo.CreateAlertRule(ctx, rule))
+	require.NoError(t, ruleRepo.CreateAlertRecord(ctx, &models.AlertRecord{
+		ID:          "alert-cpu-high",
+		RuleID:      rule.ID,
+		InstanceID:  "instance-001",
+		TriggeredAt: time.Now(),
+		Status:      "firing",
+		Severity:    "warning",
+		Value:       91.5,
+		Message:     "CPU usage is high",
+		CreatedAt:   time.Now(),
+	}))
+
+	history, err := service.GetAlertHistory(ctx, AlertHistoryFilter{InstanceID: "instance-001", Limit: 10})
+
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, rule.ID, history[0].RuleID)
+	assert.Equal(t, "CPU High", history[0].RuleName)
 }
 
 func TestAlertService_Original_evaluateCondition(t *testing.T) {
