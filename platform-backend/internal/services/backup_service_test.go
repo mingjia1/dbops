@@ -213,6 +213,8 @@ func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	assert.Equal(t, "running", backups[0].Status)
 	assert.Equal(t, result.TaskID, backups[0].TaskID)
 	assert.Equal(t, "/backup/mysql/full.xbstream", backups[0].FilePath)
+	assert.True(t, result.CompletedAt.IsZero())
+	assert.True(t, backups[0].CompletedAt.IsZero())
 }
 
 func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {

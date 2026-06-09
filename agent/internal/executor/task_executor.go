@@ -1595,6 +1595,11 @@ func classifyBackupPath(path string, isDir bool) string {
 		return "full"
 	}
 	switch {
+	case strings.HasSuffix(lower, ".xbstream"):
+		if strings.Contains(lower, "incremental") || strings.Contains(lower, "-inc") || strings.Contains(lower, "_inc") {
+			return "incremental"
+		}
+		return "full"
 	case strings.HasSuffix(lower, ".sql") || strings.HasSuffix(lower, ".sql.gz") || strings.HasSuffix(lower, ".dump"):
 		return "logical"
 	default:

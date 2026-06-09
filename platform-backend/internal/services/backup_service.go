@@ -220,7 +220,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	}
 	out.Status = result.Status
 	out.Message = result.Message
-	out.CompletedAt = time.Now()
+	if isTerminalBackupStatus(out.Status) {
+		out.CompletedAt = time.Now()
+	}
 	out.FilePath = stringValue(result.Data["backup_path"])
 	out.FileSize = int64Value(result.Data["file_size"])
 	out.Checksum = stringValue(result.Data["checksum"])
@@ -278,6 +280,15 @@ func backupAuditResult(status string) string {
 		return "failed"
 	default:
 		return "success"
+	}
+}
+
+func isTerminalBackupStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "success", "succeeded", "ok", "failed", "error", "timeout", "cancelled", "canceled":
+		return true
+	default:
+		return false
 	}
 }
 
