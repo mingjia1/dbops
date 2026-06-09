@@ -183,6 +183,9 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 	if result.Code != 200 {
 		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
 	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("agent returned empty data")
+	}
 
 	return result.Data, nil
 }
@@ -214,6 +217,12 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 	var result agentResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if result.Code != 200 {
+		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("agent returned empty data")
 	}
 
 	return result.Data, nil
@@ -252,6 +261,12 @@ func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int
 	var result agentResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if result.Code != 200 {
+		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("agent returned empty data")
 	}
 	return result.Data, nil
 }
