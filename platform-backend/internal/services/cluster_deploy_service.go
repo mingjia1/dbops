@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ type ClusterDeployService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	agentClient *AgentClient
+	auditSvc    *AuditService
 	defaults    config.ClusterDefaults
 }
 
@@ -37,17 +39,24 @@ func NewClusterDeployService(
 	instRepo *repositories.InstanceRepository,
 	agentClient *AgentClient,
 	defaults config.ClusterDefaults,
+	auditSvc ...*AuditService,
 ) *ClusterDeployService {
+	var audit *AuditService
+	if len(auditSvc) > 0 {
+		audit = auditSvc[0]
+	}
 	return &ClusterDeployService{
 		repo:        repo,
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		agentClient: agentClient,
+		auditSvc:    audit,
 		defaults:    defaults,
 	}
 }
 
-func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (*DeployResponse, error) {
+func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (resp *DeployResponse, err error) {
+	defer func() { s.auditDeployment(ctx, "deploy_mha_cluster", "mha", req.ClusterID, req.Name, resp, err) }()
 	if err := s.resolveMHARequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
@@ -129,7 +138,8 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	}, nil
 }
 
-func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRRequest) (*DeployResponse, error) {
+func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRRequest) (resp *DeployResponse, err error) {
+	defer func() { s.auditDeployment(ctx, "deploy_mgr_cluster", "mgr", req.ClusterID, req.Name, resp, err) }()
 	if err := s.resolveMGRRequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
@@ -234,7 +244,8 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	}, nil
 }
 
-func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCRequest) (*DeployResponse, error) {
+func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCRequest) (resp *DeployResponse, err error) {
+	defer func() { s.auditDeployment(ctx, "deploy_pxc_cluster", "pxc", req.ClusterID, req.Name, resp, err) }()
 	if err := s.resolvePXCRequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
@@ -345,7 +356,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	}, nil
 }
 
-func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest) (*DeployResponse, error) {
+func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest) (resp *DeployResponse, err error) {
+	defer func() { s.auditDeployment(ctx, "deploy_ha_cluster", "ha", req.ClusterID, req.Name, resp, err) }()
 	if err := s.resolveHARequestHosts(ctx, &req); err != nil {
 		return nil, err
 	}
@@ -442,7 +454,8 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 	return responses, nil
 }
 
-func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (*DeployResponse, error) {
+func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (resp *DeployResponse, err error) {
+	defer func() { s.auditDeployment(ctx, "destroy_cluster", "", clusterID, "", resp, err) }()
 	dep, err := s.repo.GetByID(ctx, clusterID)
 	if err != nil {
 		return nil, err
@@ -461,6 +474,67 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		Message:      fmt.Sprintf("Cluster %s destroyed from platform management; database services were not stopped", clusterID),
 		CreatedAt:    dep.CreatedAt,
 	}, nil
+}
+
+func (s *ClusterDeployService) auditDeployment(ctx context.Context, operation, clusterType, requestedID, requestedName string, resp *DeployResponse, err error) {
+	if s.auditSvc == nil {
+		return
+	}
+	resourceID := requestedID
+	if resp != nil && resp.DeploymentID != "" {
+		resourceID = resp.DeploymentID
+	}
+	if resourceID == "" {
+		resourceID = requestedName
+	}
+	if clusterType == "" && resp != nil {
+		clusterType = resp.ClusterType
+	}
+	name := requestedName
+	if resp != nil && resp.Name != "" {
+		name = resp.Name
+	}
+	status := ""
+	message := ""
+	if resp != nil {
+		status = resp.Status
+		message = resp.Message
+	}
+	auditResult := deployAuditResult(status, err)
+	errorMsg := ""
+	if err != nil {
+		errorMsg = err.Error()
+	} else if auditResult == "failed" {
+		errorMsg = message
+	}
+	details := fmt.Sprintf("cluster_id=%s cluster_type=%s name=%s status=%s message=%s",
+		resourceID, clusterType, name, status, message)
+	action := "deploy"
+	if operation == "destroy_cluster" {
+		action = "destroy"
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    operation,
+		ResourceType: "cluster_deployment",
+		ResourceID:   resourceID,
+		Action:       action,
+		Details:      details,
+		Result:       auditResult,
+		ErrorMsg:     errorMsg,
+	})
+}
+
+func deployAuditResult(status string, err error) string {
+	if err != nil {
+		return "failed"
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "timeout", "cancelled", "canceled", "partial", "partial_success":
+		return "failed"
+	default:
+		return "success"
+	}
 }
 
 func (s *ClusterDeployService) clearClusterManagement(ctx context.Context, clusterID string) error {

@@ -147,7 +147,7 @@ func main() {
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
-	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults)
+	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
 	topologyController := controllers.NewTopologyController(topologyService)
