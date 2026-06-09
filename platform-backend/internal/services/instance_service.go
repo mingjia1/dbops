@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -243,11 +244,13 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		s.auditDeploy(ctx, id, "", "failed", 0, "", fmt.Sprintf("instance not found: %v", err), nil)
 		return nil, fmt.Errorf("instance not found: %w", err)
 	}
 
 	conn, err := s.repo.GetConnection(ctx, id)
 	if err != nil {
+		s.auditDeploy(ctx, id, "", "failed", 0, "", fmt.Sprintf("instance connection not found: %v", err), nil)
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 
@@ -259,6 +262,7 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 		CreatedAt:  time.Now(),
 	}
 	if err := s.taskRepo.Create(ctx, task); err != nil {
+		s.auditDeploy(ctx, id, "", "failed", 0, "", fmt.Sprintf("failed to create task: %v", err), nil)
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
@@ -279,38 +283,116 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 		agentHost = conn.Host
 		agentPort = 9090
 	}
-
-	mysqlPassword, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
-	if err != nil {
+	if s.agentClient == nil {
 		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
+		msg := "Deploy failed: agent client not configured"
+		s.auditDeploy(ctx, id, task.ID, "failed", 0, msg, "agent client not configured", map[string]interface{}{
+			"agent_host": agentHost,
+			"agent_port": agentPort,
+		})
 		return &DeployResult{
 			TaskID:   task.ID,
 			Status:   "failed",
 			Progress: 0,
-			Message:  fmt.Sprintf("Deploy failed: decrypt instance password: %v", err),
+			Message:  msg,
 		}, nil
+	}
+
+	mysqlPassword, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
+		resp := &DeployResult{
+			TaskID:   task.ID,
+			Status:   "failed",
+			Progress: 0,
+			Message:  fmt.Sprintf("Deploy failed: decrypt instance password: %v", err),
+		}
+		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, err.Error(), map[string]interface{}{
+			"agent_host": agentHost,
+			"agent_port": agentPort,
+		})
+		return resp, nil
 	}
 	instance.Connection = *conn
 
 	result, err := s.agentClient.DeployInstance(ctx, agentHost, agentPort, instance, task.ID, mysqlPassword)
 	if err != nil {
 		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
-		return &DeployResult{
+		resp := &DeployResult{
 			TaskID:   task.ID,
 			Status:   "failed",
 			Progress: 0,
 			Message:  fmt.Sprintf("Deploy failed: %v", err),
-		}, nil
+		}
+		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, err.Error(), map[string]interface{}{
+			"agent_host": agentHost,
+			"agent_port": agentPort,
+		})
+		return resp, nil
 	}
 
 	taskRepo.UpdateStatus(ctx, task.ID, result.Status, result.Progress)
 
-	return &DeployResult{
+	resp := &DeployResult{
 		TaskID:   task.ID,
 		Status:   result.Status,
 		Progress: result.Progress,
 		Message:  "MySQL instance deploy: " + result.Message,
-	}, nil
+	}
+	s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, "", map[string]interface{}{
+		"agent_host": agentHost,
+		"agent_port": agentPort,
+	})
+	return resp, nil
+}
+
+func (s *InstanceService) auditDeploy(ctx context.Context, instanceID, taskID, status string, progress int, message, errMsg string, details map[string]interface{}) {
+	if s.auditSvc == nil {
+		return
+	}
+	if details == nil {
+		details = map[string]interface{}{}
+	}
+	details["instance_id"] = instanceID
+	if taskID != "" {
+		details["task_id"] = taskID
+	}
+	if status != "" {
+		details["status"] = status
+	}
+	details["progress"] = progress
+	if message != "" {
+		details["message"] = message
+	}
+	detailBytes, _ := json.Marshal(details)
+	resourceType := "instance"
+	resourceID := instanceID
+	if taskID != "" {
+		resourceType = "instance_deploy_task"
+		resourceID = taskID
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    "deploy_instance",
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Action:       "deploy",
+		Details:      string(detailBytes),
+		Result:       instanceDeployAuditResult(status, errMsg),
+		ErrorMsg:     errMsg,
+	})
+}
+
+func instanceDeployAuditResult(status, errMsg string) string {
+	if errMsg != "" {
+		return "failed"
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "timeout", "cancelled", "canceled":
+		return "failed"
+	default:
+		return "success"
+	}
 }
 
 func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*InstanceAdminResult, error) {
