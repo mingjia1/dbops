@@ -124,6 +124,15 @@ type BatchHostAgentActionResult struct {
 	Rows    []HostAgentActionResult `json:"rows"`
 }
 
+func isLongRunningAgentAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "install", "add", "update", "modify", "restart":
+		return true
+	default:
+		return false
+	}
+}
+
 type UpdateHostRequest struct {
 	Name          string `json:"name"`
 	Address       string `json:"address"`
@@ -328,6 +337,9 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 }
 
 func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentActionRequest) (*BatchHostAgentActionResult, error) {
+	if isLongRunningAgentAction(req.Action) {
+		req.Async = true
+	}
 	result := &BatchHostAgentActionResult{
 		Total: len(req.HostIDs),
 		Async: req.Async,

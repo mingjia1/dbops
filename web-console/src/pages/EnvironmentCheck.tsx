@@ -64,7 +64,7 @@ const isSubmittedAgentStatus = (status?: string) => {
 const getRequestErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
   if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
-    return `${fallback}：请求超时。请确认主机 SSH 可连接、SSH 凭据正确，并稍后刷新主机或 Agent 状态。`
+    return `${fallback}: request timed out. The install request is submitted asynchronously; refresh host or Agent status later. If it still fails, verify SSH connectivity and saved SSH credentials.`
   }
   return raw
 }
