@@ -49,6 +49,9 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
   return parts.join(' | ')
 }
 
+const formatHealthCheckSummary = (ok: number, failed: number) =>
+  `\u901a\u8fc7\uff1a${ok} \u4e2a\uff0c\u672a\u901a\u8fc7\uff1a${failed} \u4e2a\u3002\u540e\u7aef\u8fd4\u56de failed/error/timeout \u6216 Agent \u8fde\u63a5\u5931\u8d25\u65f6\uff0c\u9875\u9762\u4f1a\u6309\u68c0\u6d4b\u5931\u8d25\u5904\u7406\u3002`
+
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -207,10 +210,10 @@ const InstanceList: React.FC = () => {
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5931\u8d25',
+        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u672a\u901a\u8fc7' : '\u4e00\u952e\u68c0\u6d4b\u5168\u90e8\u672a\u901a\u8fc7',
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-            <div>{`\u68c0\u6d4b\u5931\u8d25\uff1a${failed} \u4e2a\uff0c\u6210\u529f\uff1a${ok} \u4e2a\u3002Agent \u8fde\u63a5\u5931\u8d25\u6216\u8fd4\u56de failed \u5747\u4f1a\u8ba1\u5165\u5931\u8d25\uff0c\u4e0d\u4f1a\u6309\u6210\u529f\u5904\u7406\u3002`}</div>
+            <div>{formatHealthCheckSummary(ok, failed)}</div>
             <Divider style={{ margin: '12px 0' }} />
             {failedRows.join('\n')}
           </div>

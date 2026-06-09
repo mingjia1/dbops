@@ -19,6 +19,17 @@ const rejectBusinessError = (res: any) => {
   return res
 }
 
+const rejectFailedTaskData = (res: any) => {
+  const status = String(res?.data?.status || '').toLowerCase()
+  if (['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(status)) {
+    return Promise.reject({
+      response: { data: res },
+      message: res?.data?.message || res?.message || 'Task failed',
+    })
+  }
+  return res
+}
+
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
@@ -178,7 +189,7 @@ export const instanceApi = {
     api.post(`/instances/${id}/deploy`),
 
   healthCheck: (id: string) =>
-    api.post(`/instances/${id}/health-check`, {}, { timeout: 30000 }).then(rejectBusinessError),
+    api.post(`/instances/${id}/health-check`, {}, { timeout: 30000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   adminAction: (id: string, data: {
     action: string

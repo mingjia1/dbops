@@ -61,10 +61,16 @@ const isSubmittedAgentStatus = (status?: string) => {
   return ['submitted', 'pending', 'running'].includes(normalized)
 }
 
+const formatTimeoutLabel = (err: any) => {
+  const configured = err?.config?.timeout
+  if (typeof configured === 'number' && configured > 0) return `${Math.round(configured / 1000)}s`
+  return '前端请求超时'
+}
+
 const getAgentSubmitErrorMessage = (err: any, fallback: string) => {
   const raw = err?.response?.data?.message || err?.message || fallback
   if (err?.code === 'ECONNABORTED' || /timeout/i.test(raw)) {
-    return `${fallback}: 提交请求超时，平台未能确认 Agent 安装任务是否已入队。请到 Agent 管理或刷新主机列表查看最终状态；如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
+    return `${fallback}: 提交请求在 ${formatTimeoutLabel(err)} 内未返回。安装 Agent 按后台任务提交，这里只确认提交结果；请到 Agent 管理或刷新主机列表查看最终状态。如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
   }
   return raw
 }
@@ -132,7 +138,7 @@ const EnvironmentCheck: React.FC = () => {
     }
     setSubmitting(true)
     try {
-      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 10000)
+      const res: any = await hostApi.batchAgentAction(selectedHosts, 'install', true, undefined, 30000)
       const data = res?.data
       const rows = data?.rows || []
       const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))
@@ -151,7 +157,7 @@ const EnvironmentCheck: React.FC = () => {
       } else if (data?.async || submittedRows.length > 0) {
         Modal.info({
           title: `Agent 安装任务已提交：${submittedRows.length || selectedHosts.length} 台主机`,
-          content: '平台会在后台执行安装。这里仅表示任务已提交，不代表安装成功；请稍后刷新主机列表或 Agent 管理查看最终状态。',
+          content: '平台已提交后台安装任务。这里仅表示提交成功，不代表 Agent 已安装成功；请稍后刷新主机列表或 Agent 管理查看最终状态。',
         })
       } else {
         message.success(`Agent 安装完成：成功 ${data?.success ?? 0}`)
