@@ -168,12 +168,12 @@ const UpgradeManage: React.FC = () => {
         target_version: values.target_version,
         backup_enabled: !!values.backup_enabled,
       })
-      message.success('原地升级任务已提交')
-      setInPlaceOpen(false)
-      inPlaceForm.resetFields()
       if (!res?.data?.task_id && !res?.data?.id) {
         throw new Error('upgrade API did not return task_id')
       }
+      message.success('原地升级任务已提交')
+      setInPlaceOpen(false)
+      inPlaceForm.resetFields()
       loadData()
     } catch (err: any) {
       message.error(err?.response?.data?.message || err?.message || '升级任务提交失败')

@@ -315,6 +315,9 @@ type ExecuteInPlaceUpgradeResponse struct {
 }
 
 func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteInPlaceUpgradeRequest) (*ExecuteInPlaceUpgradeResponse, error) {
+	if !req.BackupEnabled {
+		return nil, fmt.Errorf("backup confirmation is required before in-place upgrade")
+	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)
@@ -381,6 +384,9 @@ type DataMigrationStats struct {
 }
 
 func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req ExecuteLogicalMigrationRequest) (*ExecuteLogicalMigrationResponse, error) {
+	if !req.BackupEnabled {
+		return nil, fmt.Errorf("backup confirmation is required before logical upgrade migration")
+	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get instance: %w", err)

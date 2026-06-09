@@ -351,6 +351,50 @@ func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
 	assert.Equal(t, resp.TaskID, tasks[0].ID)
 }
 
+func TestUpgradeService_ExecuteInPlaceRequiresBackupConfirmation(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+
+	resp, err := service.ExecuteInPlaceUpgrade(context.Background(), ExecuteInPlaceUpgradeRequest{
+		InstanceID:    "instance-001",
+		PlanID:        "plan-001",
+		TargetVersion: "8.0.36",
+		BackupEnabled: false,
+	})
+
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "backup confirmation")
+	tasks, listErr := taskRepo.ListByTypes(context.Background(), []string{"upgrade_in_place"}, 10, 0)
+	assert.NoError(t, listErr)
+	assert.Empty(t, tasks)
+}
+
+func TestUpgradeService_ExecuteLogicalRequiresBackupConfirmation(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+
+	resp, err := service.ExecuteLogicalMigration(context.Background(), ExecuteLogicalMigrationRequest{
+		InstanceID:    "instance-001",
+		PlanID:        "plan-001",
+		TargetVersion: "8.0.36",
+		BackupEnabled: false,
+	})
+
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "backup confirmation")
+	tasks, listErr := taskRepo.ListByTypes(context.Background(), []string{"upgrade_logical"}, 10, 0)
+	assert.NoError(t, listErr)
+	assert.Empty(t, tasks)
+}
+
 func TestUpgradeService_Original_GenerateUpgradeReport(t *testing.T) {
 	// B3: GenerateUpgradeReport 现在真用 taskRepo.GetByID. 共享 sqlite test DB.
 	db := newTestDB()

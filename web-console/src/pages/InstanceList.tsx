@@ -181,7 +181,7 @@ const InstanceList: React.FC = () => {
   const handleBatchHealthCheck = async () => {
     const selected = instances.filter((item) => selectedRowKeys.includes(item.id))
     if (selected.length === 0) {
-      message.warning('请先选择实例')
+      message.warning('\u8bf7\u5148\u9009\u62e9\u5b9e\u4f8b')
       return
     }
     let ok = 0
@@ -199,24 +199,25 @@ const InstanceList: React.FC = () => {
         }
       } catch (err: any) {
         failed += 1
-        failedRows.push(`${instance.name}: ${err?.response?.data?.message || err?.message || '请求失败'}`)
+        failedRows.push(`${instance.name}: ${err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'}`)
       }
     }
     if (failed > 0) {
       Modal.error({
-        title: ok > 0 ? `检测部分失败：成功 ${ok} 个，失败 ${failed} 个` : `检测失败：成功 ${ok} 个，失败 ${failed} 个`,
+        title: ok > 0 ? '\u4e00\u952e\u68c0\u6d4b\u90e8\u5206\u5931\u8d25' : '\u4e00\u952e\u68c0\u6d4b\u5931\u8d25',
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+            <div>{`\u6210\u529f ${ok} \u4e2a\uff0c\u5931\u8d25 ${failed} \u4e2a`}</div>
+            <Divider style={{ margin: '12px 0' }} />
             {failedRows.join('\n')}
           </div>
         ),
       })
     } else {
-      message.success(`检测成功：${ok} 个`)
+      message.success(`\u68c0\u6d4b\u6210\u529f\uff1a${ok} \u4e2a`)
     }
     fetchInstances()
   }
-
   const handleScanHost = async () => {
     if (!hostFilter) {
       message.warning('请先选择主机')
