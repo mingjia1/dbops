@@ -68,6 +68,7 @@ type MasterSlaveConfig struct {
 type BackupConfig struct {
 	InstanceID      string `json:"instance_id"`
 	BackupType      string `json:"backup_type"`
+	BackupMethod    string `json:"backup_method"`
 	TargetDir       string `json:"target_dir"`
 	MySQLHost       string `json:"mysql_host"`
 	MySQLPort       int    `json:"mysql_port"`
@@ -75,6 +76,7 @@ type BackupConfig struct {
 	MySQLPass       string `json:"mysql_pass"`
 	BaseBackupPath  string `json:"base_backup_path"`
 	BaseBackupLabel string `json:"base_backup_label"`
+	DatabaseSize    int64  `json:"database_size"`
 }
 
 type RestoreConfig struct {
@@ -527,8 +529,76 @@ func (e *TaskExecutor) verifyReplication(ctx context.Context, config MasterSlave
 
 func (e *TaskExecutor) ExecuteBackup(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseBackupConfig(req.Config)
+	method := config.BackupMethod
+	if method == "" || method == "auto" {
+		var err error
+		method, err = e.selectBackupMethod(ctx, config)
+		if err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   err.Error(),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+	switch method {
+	case "mysqldump":
+		return e.executeLogicalBackup(ctx, config, "database size is below 10G, used mysqldump")
+	case "xtrabackup":
+		return e.executeXtrabackup(ctx, config, false)
+	default:
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "unsupported backup method: " + method,
+			Timestamp: time.Now(),
+		}, nil
+	}
+}
 
-	return e.executeXtrabackup(ctx, config)
+const xtrabackupSizeThresholdBytes int64 = 10 * 1024 * 1024 * 1024
+
+func (e *TaskExecutor) selectBackupMethod(ctx context.Context, config BackupConfig) (string, error) {
+	if strings.EqualFold(config.BackupType, "incremental") {
+		return "xtrabackup", nil
+	}
+	size := config.DatabaseSize
+	if size <= 0 {
+		var err error
+		size, err = estimateMySQLDataSize(ctx, config)
+		if err != nil {
+			return "", fmt.Errorf("estimate database size failed before backup method selection: %w", err)
+		}
+	}
+	if size > xtrabackupSizeThresholdBytes {
+		return "xtrabackup", nil
+	}
+	return "mysqldump", nil
+}
+
+func estimateMySQLDataSize(ctx context.Context, config BackupConfig) (int64, error) {
+	query := "SELECT COALESCE(SUM(data_length + index_length),0) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')"
+	var lastErr error
+	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
+		cmd := exec.CommandContext(ctx, "mysql", "-N", "-B", "-h", host, "-P", fmt.Sprintf("%d", config.MySQLPort), "-u", defaultString(config.MySQLUser, "root"), "-e", query)
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			lastErr = fmt.Errorf("host=%s: %v %s", host, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+		if err != nil {
+			lastErr = fmt.Errorf("host=%s: parse size %q: %w", host, strings.TrimSpace(string(out)), err)
+			continue
+		}
+		return size, nil
+	}
+	if lastErr != nil {
+		return 0, lastErr
+	}
+	return 0, fmt.Errorf("no MySQL host candidates available")
 }
 
 func parseBackupConfig(config map[string]interface{}) BackupConfig {
@@ -539,6 +609,9 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 
 	if v, ok := config["backup_type"].(string); ok {
 		bc.BackupType = v
+	}
+	if v, ok := config["backup_method"].(string); ok {
+		bc.BackupMethod = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v, ok := config["target_dir"].(string); ok {
 		bc.TargetDir = v
@@ -563,19 +636,20 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 	if v, ok := config["base_backup_label"].(string); ok {
 		bc.BaseBackupLabel = v
 	}
+	bc.DatabaseSize = int64Config(config, "database_size")
 
 	return bc
 }
 
-func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
+func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfig, allowLogicalFallback bool) (*TaskResult, error) {
 	// P0: 之前用 time.Now().Unix() 1 秒精度, 同秒并发会写同 dir 互相覆盖.
 	// 改 UnixNano 纳秒精度, 并发 backup 不可能撞.
 	if _, err := exec.LookPath("xtrabackup"); err != nil {
-		if config.BackupType == "incremental" {
+		if config.BackupType == "incremental" || !allowLogicalFallback {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  0,
-				Message:   "incremental backup requires xtrabackup on target host",
+				Message:   "xtrabackup is required for this backup but was not found on target host",
 				Timestamp: time.Now(),
 			}, nil
 		}
@@ -682,6 +756,7 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		Data: map[string]any{
 			"backup_path":       backupDir,
 			"backup_type":       config.BackupType,
+			"backup_method":     "xtrabackup",
 			"base_backup_path":  config.BaseBackupPath,
 			"base_backup_label": config.BaseBackupLabel,
 			"file_size":         sizeBytes,
@@ -800,10 +875,11 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 		Message:   msg,
 		Timestamp: time.Now(),
 		Data: map[string]any{
-			"backup_path": backupFile,
-			"backup_type": "logical",
-			"file_size":   sizeBytes,
-			"checksum":    checksum,
+			"backup_path":   backupFile,
+			"backup_type":   "logical",
+			"backup_method": "mysqldump",
+			"file_size":     sizeBytes,
+			"checksum":      checksum,
 		},
 	}, nil
 }
@@ -2083,6 +2159,22 @@ func backupMySQLHostCandidates(host string) []string {
 		}
 	}
 	return out
+}
+
+func int64Config(config map[string]interface{}, key string) int64 {
+	switch v := config[key].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n
+	default:
+		return 0
+	}
 }
 
 func defaultString(value, fallback string) string {

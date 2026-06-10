@@ -248,12 +248,13 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		})
 	}
 	config := map[string]interface{}{
-		"backup_type": req.BackupType,
-		"target_dir":  targetDir,
-		"mysql_host":  localMySQLHostForAgent(conn.Host, agentHost),
-		"mysql_port":  conn.Port,
-		"mysql_user":  conn.Username,
-		"mysql_pass":  password,
+		"backup_type":   req.BackupType,
+		"backup_method": "auto",
+		"target_dir":    targetDir,
+		"mysql_host":    localMySQLHostForAgent(conn.Host, agentHost),
+		"mysql_port":    conn.Port,
+		"mysql_user":    conn.Username,
+		"mysql_pass":    password,
 	}
 	if req.BackupType == "incremental" {
 		base, err := s.policyRepo.LatestCompletedRecord(ctx, req.InstanceID, "full")
@@ -375,7 +376,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			Timestamp: time.Now(),
 			Level:     backupTaskLogLevel(out.Status),
 			Message:   out.Message,
-			Context:   fmt.Sprintf("backup_type=%s file_path=%s checksum=%s", out.BackupType, out.FilePath, out.Checksum),
+			Context:   fmt.Sprintf("backup_type=%s backup_method=%s file_path=%s checksum=%s", out.BackupType, stringValue(result.Data["backup_method"]), out.FilePath, out.Checksum),
 		})
 	}
 	s.auditBackupExecution(ctx, out, backupAuditResult(out.Status))
