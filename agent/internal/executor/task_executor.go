@@ -1820,8 +1820,16 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output = "config written: " + path
 	case "service_control":
 		verb, _ := req.Config["verb"].(string)
+		verb = strings.ToLower(strings.TrimSpace(verb))
+		if verb == "" {
+			verb = "status"
+		}
+		req.Config["verb"] = verb
 		if verb != "start" && verb != "stop" && verb != "restart" && verb != "status" {
 			return adminFailed(req.TaskID, "invalid service action"), nil
+		}
+		if err := validateServiceControlConfig(req.Config); err != nil {
+			return adminFailed(req.TaskID, err.Error()), nil
 		}
 		output, err = controlInstanceService(ctx, req.Config)
 	default:
@@ -1867,6 +1875,28 @@ func adminTarget(config map[string]interface{}) (string, int, string, string) {
 	}
 	pass, _ := config["target_pass"].(string)
 	return host, port, user, pass
+}
+
+func validateServiceControlConfig(config map[string]interface{}) error {
+	verb, _ := config["verb"].(string)
+	verb = strings.ToLower(strings.TrimSpace(verb))
+	if verb == "" {
+		verb = "status"
+	}
+	datadir, _ := config["datadir"].(string)
+	if strings.TrimSpace(datadir) == "" {
+		return fmt.Errorf("service control requires instance datadir metadata")
+	}
+	if verb == "start" || verb == "restart" {
+		basedir, _ := config["basedir"].(string)
+		if strings.TrimSpace(basedir) == "" {
+			return fmt.Errorf("service control %s requires instance basedir metadata", verb)
+		}
+		if configInt(config, "target_port") <= 0 {
+			return fmt.Errorf("service control %s requires instance port metadata", verb)
+		}
+	}
+	return nil
 }
 
 func controlInstanceService(ctx context.Context, config map[string]interface{}) (string, error) {

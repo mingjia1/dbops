@@ -59,10 +59,57 @@ const showMigrationStartResult = (label: string, task: MigrationTask) => {
     message.success(`${label}任务已启动`)
   }
 }
-interface MigrationProgress {
+interface MigrationProgressStep {
   stage: string
   progress: number
   details: string
+}
+
+interface MigrationProgressResponse {
+  task_id: string
+  status: string
+  progress: number
+  current_step?: string
+  total_steps?: number
+  completed_steps?: number
+  data_transferred?: number
+  estimated_time?: number
+  updated_at?: string
+}
+
+const formatBytes = (value?: number) => {
+  if (!value || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let index = 0
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024
+    index += 1
+  }
+  return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+const buildProgressDetails = (progress: MigrationProgressResponse): MigrationProgressStep[] => {
+  const totalSteps = progress.total_steps || 0
+  const completedSteps = progress.completed_steps || 0
+  const stepPercent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : progress.progress || 0
+  return [
+    {
+      stage: progress.current_step || '迁移执行',
+      progress: progress.progress || 0,
+      details: `状态: ${progress.status || 'unknown'}`,
+    },
+    {
+      stage: '阶段完成度',
+      progress: stepPercent,
+      details: totalSteps > 0 ? `${completedSteps}/${totalSteps} 个阶段已完成` : '等待后端返回阶段数量',
+    },
+    {
+      stage: '数据传输',
+      progress: progress.progress || 0,
+      details: `已传输 ${formatBytes(progress.data_transferred)}${progress.estimated_time ? `, 预计剩余 ${progress.estimated_time}s` : ''}`,
+    },
+  ]
 }
 
 const PhysicalFormSection: React.FC<{
@@ -165,7 +212,7 @@ const MigrationManage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [currentTab, setCurrentTab] = useState('physical')
   const [activeMigration, setActiveMigration] = useState<MigrationTask | null>(null)
-  const [progressDetails, setProgressDetails] = useState<MigrationProgress[]>([])
+  const [progressDetails, setProgressDetails] = useState<MigrationProgressStep[]>([])
 
   const loadData = async () => {
     try {
@@ -188,12 +235,23 @@ const MigrationManage: React.FC = () => {
     if (!activeMigration) return
     if (!isActiveMigrationStatus(activeMigration.status)) return
     const interval = setInterval(() => {
-      migrationApi.get(activeMigration.id).then((res: any) => {
-        const task = res?.data
-        if (!task) return
-        setActiveMigration((prev) => (prev ? { ...prev, ...task } : prev))
-        setMigrationTasks((tasks) => tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)))
-        if (!isActiveMigrationStatus(task.status)) {
+      Promise.allSettled([
+        migrationApi.get(activeMigration.id),
+        migrationApi.getProgress(activeMigration.id),
+      ]).then(([taskResult, progressResult]) => {
+        const task = taskResult.status === 'fulfilled' ? taskResult.value?.data : null
+        const progress: MigrationProgressResponse | null = progressResult.status === 'fulfilled' ? progressResult.value?.data : null
+        const merged = {
+          ...(task || {}),
+          ...(progress ? { status: progress.status, progress: progress.progress } : {}),
+          id: task?.id || progress?.task_id || activeMigration.id,
+        }
+        if (progress) {
+          setProgressDetails(buildProgressDetails(progress))
+        }
+        setActiveMigration((prev) => (prev ? { ...prev, ...merged } : prev))
+        setMigrationTasks((tasks) => tasks.map((t) => (t.id === merged.id ? { ...t, ...merged } : t)))
+        if (!isActiveMigrationStatus(merged.status)) {
           clearInterval(interval)
         }
       }).catch(() => clearInterval(interval))

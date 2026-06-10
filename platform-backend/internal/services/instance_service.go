@@ -605,6 +605,31 @@ func failedInstanceAdminResult(message string) *InstanceAdminResult {
 	}
 }
 
+func validateInstanceAdminMetadata(conn *models.InstanceConnection, req InstanceAdminRequest) error {
+	if conn == nil {
+		return fmt.Errorf("instance connection metadata is required")
+	}
+	if strings.TrimSpace(req.Action) != "service_control" {
+		return nil
+	}
+	verb := strings.ToLower(strings.TrimSpace(req.Verb))
+	if verb == "" {
+		verb = "status"
+	}
+	if strings.TrimSpace(conn.Datadir) == "" {
+		return fmt.Errorf("service control requires instance datadir metadata")
+	}
+	if verb == "start" || verb == "restart" {
+		if strings.TrimSpace(conn.Basedir) == "" {
+			return fmt.Errorf("service control %s requires instance basedir metadata", verb)
+		}
+		if conn.Port <= 0 {
+			return fmt.Errorf("service control %s requires instance port metadata", verb)
+		}
+	}
+	return nil
+}
+
 func (s *InstanceService) AdminAction(ctx context.Context, id string, req InstanceAdminRequest) (*InstanceAdminResult, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -613,6 +638,9 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	conn, err := s.repo.GetConnection(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	if err := validateInstanceAdminMetadata(conn, req); err != nil {
+		return failedInstanceAdminResult(err.Error()), nil
 	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
@@ -751,6 +779,9 @@ func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPass
 }
 
 func (s *InstanceService) adminActionWithConnection(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, req InstanceAdminRequest) (*InstanceAdminResult, error) {
+	if err := validateInstanceAdminMetadata(conn, req); err != nil {
+		return failedInstanceAdminResult(err.Error()), nil
+	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)

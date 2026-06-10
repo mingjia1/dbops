@@ -271,6 +271,87 @@ func TestInstanceAdminActionWithoutAgentClientReturnsFailedResult(t *testing.T) 
 	assert.Contains(t, result.Message, "agent client not configured")
 }
 
+func TestValidateInstanceAdminMetadataForServiceControl(t *testing.T) {
+	tests := []struct {
+		name    string
+		conn    *models.InstanceConnection
+		req     InstanceAdminRequest
+		wantErr string
+	}{
+		{
+			name: "non service control skips instance layout metadata",
+			conn: &models.InstanceConnection{},
+			req:  InstanceAdminRequest{Action: "change_password"},
+		},
+		{
+			name:    "missing connection metadata",
+			conn:    nil,
+			req:     InstanceAdminRequest{Action: "service_control", Verb: "status"},
+			wantErr: "instance connection metadata is required",
+		},
+		{
+			name:    "status requires datadir",
+			conn:    &models.InstanceConnection{Port: 3307},
+			req:     InstanceAdminRequest{Action: "service_control", Verb: "status"},
+			wantErr: "service control requires instance datadir metadata",
+		},
+		{
+			name: "start requires basedir",
+			conn: &models.InstanceConnection{
+				Datadir: "/data/mysql/3307",
+				Port:    3307,
+			},
+			req:     InstanceAdminRequest{Action: "service_control", Verb: "start"},
+			wantErr: "service control start requires instance basedir metadata",
+		},
+		{
+			name: "restart requires port",
+			conn: &models.InstanceConnection{
+				Basedir: "/opt/mysql57",
+				Datadir: "/data/mysql/3307",
+			},
+			req:     InstanceAdminRequest{Action: "service_control", Verb: "restart"},
+			wantErr: "service control restart requires instance port metadata",
+		},
+		{
+			name: "start accepts complete metadata",
+			conn: &models.InstanceConnection{
+				Basedir: "/opt/mysql57",
+				Datadir: "/data/mysql/3307",
+				Port:    3307,
+			},
+			req: InstanceAdminRequest{Action: "service_control", Verb: " START "},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateInstanceAdminMetadata(tt.conn, tt.req)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestInstanceAdminActionServiceControlMissingDatadirReturnsFailedResult(t *testing.T) {
+	service, instanceID := newInstanceAdminServiceWithoutAgent(t)
+
+	result, err := service.AdminAction(context.Background(), instanceID, InstanceAdminRequest{
+		Action: "service_control",
+		Verb:   "status",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Equal(t, 100, result.Progress)
+	assert.Contains(t, result.Message, "service control requires instance datadir metadata")
+}
+
 func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
 	service, _ := newInstanceAdminServiceWithoutAgent(t)
 

@@ -136,25 +136,25 @@ const BackupManage: React.FC = () => {
     try {
       const values = await form.validateFields()
       setSubmitting(true)
-      await backupApi.createPolicy({
-        instance_id: selectedInstance,
-        backup_type: values.backup_type,
-        schedule: 'manual',
-        retention_days: 7,
-        storage_type: 'local',
-        storage_path: '/backup/mysql',
-        enabled: false,
-      })
-      message.success('备份任务已创建')
+      const res: any = await backupApi.executeBackup(selectedInstance, values.backup_type)
+      const data = res?.data || {}
+      if (isFailedBackupStatus(data.status)) {
+        throw new Error(data.message || '备份任务执行失败')
+      }
+      if (isCompletedBackupStatus(data.status)) {
+        message.success('备份执行完成')
+      } else {
+        message.success('备份任务已提交，请刷新记录查看状态')
+      }
       setCreateOpen(false)
-      setTab('policies')
-      await fetchPolicies()
+      setTab('records')
+      await fetchRecordsFor(selectedInstance)
     } catch (err: any) {
       if (!err?.response?.data?.message && err?.message) {
         message.error(err.message)
         return
       }
-      message.error(err?.response?.data?.message || '创建备份任务失败')
+      message.error(err?.response?.data?.message || '备份执行失败')
     } finally {
       setSubmitting(false)
     }

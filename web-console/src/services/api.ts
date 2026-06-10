@@ -778,6 +778,7 @@ export const migrationApi = {
   cancel: (taskId: string) => api.post(`/migrations/${taskId}/cancel`),
   list: () => api.get('/migrations'),
   get: (taskId: string) => api.get(`/migrations/${taskId}`),
+  getProgress: (taskId: string) => api.get(`/migrations/${taskId}/progress`, { suppressGlobalError: true } as any),
 }
 
 export const clusterDeployApi = {
