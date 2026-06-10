@@ -42,6 +42,16 @@ func (c *BackupController) ListPolicies(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, policies)
 }
 
+func (c *BackupController) DeletePolicy(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if err := c.service.DeletePolicy(ctx.Request.Context(), id); err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to delete backup policy", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, gin.H{"message": "Backup policy deleted successfully"})
+}
+
 func (c *BackupController) ExecuteBackup(ctx *gin.Context) {
 	var req services.ExecuteBackupRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

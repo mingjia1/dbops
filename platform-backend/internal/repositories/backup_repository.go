@@ -100,6 +100,27 @@ func (r *BackupRepository) ListPolicies(ctx context.Context, instanceID string, 
 	return policies, rows.Err()
 }
 
+func (r *BackupRepository) DeletePolicy(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	var recordCount int
+	if err := r.db.Pool.QueryRowContext(ctx, `SELECT COUNT(1) FROM backup_records WHERE policy_id = ?`, id).Scan(&recordCount); err != nil {
+		return fmt.Errorf("failed to check backup policy records: %w", err)
+	}
+	if recordCount > 0 {
+		return fmt.Errorf("backup policy has backup records and cannot be deleted")
+	}
+	res, err := r.db.Pool.ExecContext(ctx, `DELETE FROM backup_policies WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete backup policy: %w", err)
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return fmt.Errorf("backup policy not found")
+	}
+	return nil
+}
+
 func (r *BackupRepository) CreateRecord(ctx context.Context, record *models.BackupRecord) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")

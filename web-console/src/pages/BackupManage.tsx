@@ -240,6 +240,28 @@ const BackupManage: React.FC = () => {
     }
   }
 
+  const deletePolicy = (policy: BackupPolicy) => {
+    Modal.confirm({
+      title: '\u786e\u8ba4\u5220\u9664\u5907\u4efd\u7b56\u7565',
+      content: '\u4ec5\u5141\u8bb8\u5220\u9664\u5c1a\u672a\u4ea7\u751f\u5907\u4efd\u8bb0\u5f55\u7684\u7b56\u7565\uff1b\u5df2\u6709\u5907\u4efd\u8bb0\u5f55\u7684\u7b56\u7565\u4f1a\u88ab\u540e\u7aef\u62d2\u7edd\u5220\u9664\u3002',
+      okText: '\u5220\u9664\u7b56\u7565',
+      cancelText: '\u53d6\u6d88',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setSubmitting(true)
+        try {
+          await backupApi.deletePolicy(policy.id)
+          message.success('\u5907\u4efd\u7b56\u7565\u5df2\u5220\u9664')
+          await fetchPolicies()
+        } catch (err: any) {
+          message.error(err?.response?.data?.message || err?.message || '\u5220\u9664\u5907\u4efd\u7b56\u7565\u5931\u8d25')
+        } finally {
+          setSubmitting(false)
+        }
+      },
+    })
+  }
+
   const instanceName = (id: string) => instances.find((item) => item.id === id)?.name || id
 
   const restoreRecord = (record: BackupRecord) => {
@@ -367,9 +389,14 @@ const BackupManage: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_, record) => (
-        <Button size="small" type="link" loading={submitting} onClick={() => executePolicy(record)}>
-          执行
-        </Button>
+        <Space size="small">
+          <Button size="small" type="link" loading={submitting} onClick={() => executePolicy(record)}>
+            执行
+          </Button>
+          <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={submitting} onClick={() => deletePolicy(record)}>
+            {'\u5220\u9664'}
+          </Button>
+        </Space>
       ),
     },
     { title: '保留天数', dataIndex: 'retention_days', key: 'retention_days' },

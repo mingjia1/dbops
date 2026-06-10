@@ -135,6 +135,17 @@ func (s *BackupService) ListPolicies(ctx context.Context, instanceID string) ([]
 	return s.policyRepo.ListPolicies(ctx, instanceID, 100, 0)
 }
 
+func (s *BackupService) DeletePolicy(ctx context.Context, policyID string) error {
+	if strings.TrimSpace(policyID) == "" {
+		return fmt.Errorf("backup policy id is required")
+	}
+	if err := s.policyRepo.DeletePolicy(ctx, policyID); err != nil {
+		return err
+	}
+	s.auditBackup(ctx, "delete_backup_policy", "delete", "backup_policy", policyID, "success", "", "")
+	return nil
+}
+
 func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequest) (*BackupTaskResult, error) {
 	targetDir := "/backup/mysql"
 	if req.PolicyID != "" {
