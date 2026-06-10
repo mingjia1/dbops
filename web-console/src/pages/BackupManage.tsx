@@ -73,6 +73,7 @@ const BackupManage: React.FC = () => {
   const [scanLoading, setScanLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [policyOpen, setPolicyOpen] = useState(false)
+  const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null)
   const [scanOpen, setScanOpen] = useState(false)
   const [discovered, setDiscovered] = useState<DiscoveredBackup[]>([])
   const [scannedAt, setScannedAt] = useState<string>()
@@ -213,6 +214,7 @@ const BackupManage: React.FC = () => {
   }
 
   const openPolicy = () => {
+    setEditingPolicy(null)
     policyForm.setFieldsValue({
       instance_id: selectedInstance,
       backup_type: 'full',
@@ -225,16 +227,36 @@ const BackupManage: React.FC = () => {
     setPolicyOpen(true)
   }
 
+  const openEditPolicy = (policy: BackupPolicy) => {
+    setEditingPolicy(policy)
+    policyForm.setFieldsValue({
+      instance_id: policy.instance_id,
+      backup_type: policy.backup_type,
+      schedule: policy.schedule,
+      retention_days: policy.retention_days,
+      storage_type: policy.storage_type || 'local',
+      storage_path: policy.storage_path,
+      enabled: policy.enabled,
+    })
+    setPolicyOpen(true)
+  }
+
   const submitPolicy = async () => {
     try {
       const values = await policyForm.validateFields()
       setSubmitting(true)
-      await backupApi.createPolicy(values)
-      message.success('备份策略已创建')
+      if (editingPolicy) {
+        await backupApi.updatePolicy(editingPolicy.id, values)
+        message.success('备份策略已更新')
+      } else {
+        await backupApi.createPolicy(values)
+        message.success('备份策略已创建')
+      }
       setPolicyOpen(false)
+      setEditingPolicy(null)
       fetchPolicies()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '创建备份策略失败')
+      message.error(err?.response?.data?.message || (editingPolicy ? '更新备份策略失败' : '创建备份策略失败'))
     } finally {
       setSubmitting(false)
     }
@@ -390,6 +412,9 @@ const BackupManage: React.FC = () => {
       key: 'action',
       render: (_, record) => (
         <Space size="small">
+          <Button size="small" type="link" loading={submitting} onClick={() => openEditPolicy(record)}>
+            {'\u7f16\u8f91'}
+          </Button>
           <Button size="small" type="link" loading={submitting} onClick={() => executePolicy(record)}>
             执行
           </Button>
@@ -490,9 +515,12 @@ const BackupManage: React.FC = () => {
       </Modal>
 
       <Modal
-        title="新建备份策略"
+        title={editingPolicy ? '编辑备份策略' : '新建备份策略'}
         open={policyOpen}
-        onCancel={() => setPolicyOpen(false)}
+        onCancel={() => {
+          setPolicyOpen(false)
+          setEditingPolicy(null)
+        }}
         onOk={submitPolicy}
         confirmLoading={submitting}
         width={620}

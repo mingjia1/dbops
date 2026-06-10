@@ -47,6 +47,16 @@ type CreateBackupPolicyRequest struct {
 	Enabled       bool   `json:"enabled"`
 }
 
+type UpdateBackupPolicyRequest struct {
+	InstanceID    string `json:"instance_id" binding:"required"`
+	BackupType    string `json:"backup_type" binding:"required"`
+	Schedule      string `json:"schedule" binding:"required"`
+	RetentionDays int    `json:"retention_days"`
+	StorageType   string `json:"storage_type"`
+	StoragePath   string `json:"storage_path"`
+	Enabled       bool   `json:"enabled"`
+}
+
 type ExecuteBackupRequest struct {
 	InstanceID string `json:"instance_id" binding:"required"`
 	BackupType string `json:"backup_type" binding:"required"`
@@ -133,6 +143,36 @@ func (s *BackupService) CreatePolicy(ctx context.Context, req CreateBackupPolicy
 
 func (s *BackupService) ListPolicies(ctx context.Context, instanceID string) ([]models.BackupPolicy, error) {
 	return s.policyRepo.ListPolicies(ctx, instanceID, 100, 0)
+}
+
+func (s *BackupService) UpdatePolicy(ctx context.Context, policyID string, req UpdateBackupPolicyRequest) (*models.BackupPolicy, error) {
+	if strings.TrimSpace(policyID) == "" {
+		return nil, fmt.Errorf("backup policy id is required")
+	}
+	policy, err := s.policyRepo.GetPolicyByID(ctx, policyID)
+	if err != nil {
+		return nil, err
+	}
+	policy.InstanceID = req.InstanceID
+	policy.BackupType = req.BackupType
+	policy.Schedule = req.Schedule
+	policy.RetentionDays = req.RetentionDays
+	policy.StorageType = req.StorageType
+	policy.StoragePath = req.StoragePath
+	policy.Enabled = req.Enabled
+	policy.UpdatedAt = time.Now()
+	if policy.StorageType == "" {
+		policy.StorageType = "local"
+	}
+	if policy.RetentionDays == 0 {
+		policy.RetentionDays = 7
+	}
+	if err := s.policyRepo.UpdatePolicy(ctx, policy); err != nil {
+		return nil, err
+	}
+	s.auditBackup(ctx, "update_backup_policy", "update", "backup_policy", policy.ID, "success", "",
+		fmt.Sprintf("instance_id=%s backup_type=%s schedule=%s storage=%s:%s enabled=%v", policy.InstanceID, policy.BackupType, policy.Schedule, policy.StorageType, policy.StoragePath, policy.Enabled))
+	return policy, nil
 }
 
 func (s *BackupService) DeletePolicy(ctx context.Context, policyID string) error {

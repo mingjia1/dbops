@@ -100,6 +100,30 @@ func (r *BackupRepository) ListPolicies(ctx context.Context, instanceID string, 
 	return policies, rows.Err()
 }
 
+func (r *BackupRepository) UpdatePolicy(ctx context.Context, policy *models.BackupPolicy) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	if policy == nil || policy.ID == "" {
+		return fmt.Errorf("backup policy id is required")
+	}
+	query := `
+		UPDATE backup_policies
+		SET instance_id = ?, backup_type = ?, schedule = ?, retention_days = ?, storage_type = ?, storage_path = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`
+	res, err := r.db.Pool.ExecContext(ctx, query,
+		policy.InstanceID, policy.BackupType, policy.Schedule, policy.RetentionDays, policy.StorageType,
+		policy.StoragePath, policy.Enabled, policy.UpdatedAt, policy.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update backup policy: %w", err)
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return fmt.Errorf("backup policy not found")
+	}
+	return nil
+}
+
 func (r *BackupRepository) DeletePolicy(ctx context.Context, id string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")

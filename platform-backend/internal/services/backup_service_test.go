@@ -101,6 +101,51 @@ func TestCreatePolicyWritesAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].Details, "backup_type=full")
 }
 
+func TestUpdatePolicy(t *testing.T) {
+	service, auditRepo := newTestBackupServiceWithAudit()
+	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
+	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
+		InstanceID:    "instance-001",
+		BackupType:    "full",
+		Schedule:      "0 2 * * *",
+		RetentionDays: 7,
+		StorageType:   "local",
+		StoragePath:   "/backup",
+		Enabled:       true,
+	})
+	require.NoError(t, err)
+
+	updated, err := service.UpdatePolicy(ctx, policyID, UpdateBackupPolicyRequest{
+		InstanceID:    "instance-001",
+		BackupType:    "incremental",
+		Schedule:      "0 */6 * * *",
+		RetentionDays: 14,
+		StorageType:   "nfs",
+		StoragePath:   "/backup/mysql",
+		Enabled:       false,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, policyID, updated.ID)
+	assert.Equal(t, "incremental", updated.BackupType)
+	assert.Equal(t, "0 */6 * * *", updated.Schedule)
+	assert.Equal(t, 14, updated.RetentionDays)
+	assert.Equal(t, "nfs", updated.StorageType)
+	assert.False(t, updated.Enabled)
+
+	policies, err := service.ListPolicies(context.Background(), "instance-001")
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+	assert.Equal(t, "incremental", policies[0].BackupType)
+	assert.Equal(t, "0 */6 * * *", policies[0].Schedule)
+	logs, err := auditRepo.ListByResource(context.Background(), "backup_policy", policyID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, "update_backup_policy", logs[0].Operation)
+	assert.Contains(t, logs[0].Details, "enabled=false")
+}
+
 func TestDeletePolicyWithoutRecords(t *testing.T) {
 	service, auditRepo := newTestBackupServiceWithAudit()
 	ctx := context.WithValue(context.Background(), "user_id", "backup-user")

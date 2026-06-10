@@ -311,6 +311,7 @@ func main() {
 				// B2: 备份策略创建是 admin 操作.
 				backups.GET("/policies", backupController.ListPolicies)
 				backups.POST("/policies", middleware.RequirePermission("admin"), backupController.CreatePolicy)
+				backups.PUT("/policies/:id", middleware.RequirePermission("admin"), backupController.UpdatePolicy)
 				backups.DELETE("/policies/:id", middleware.RequirePermission("admin"), backupController.DeletePolicy)
 				backups.POST("/scan", middleware.RequirePermission("admin"), backupController.ScanBackups)
 				backups.POST("/restore", middleware.RequirePermission("admin"), backupController.RestoreBackup)
