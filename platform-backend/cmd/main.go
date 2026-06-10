@@ -87,6 +87,8 @@ func main() {
 	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, auditService)
 	authController := controllers.NewAuthController(authService)
+	userService := services.NewUserService(userRepo)
+	userController := controllers.NewUserController(userService)
 
 	// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
 	if created, username, plain, err := authService.SeedAdminIfEmpty(context.Background()); err != nil {
@@ -262,6 +264,16 @@ func main() {
 			{
 				authProtected.POST("/change-password", authController.ChangePassword)
 				authProtected.POST("/reset-all-passwords", middleware.RequirePermission("admin"), authController.ResetAllPasswords)
+			}
+
+			users := protected.Group("/users")
+			users.Use(middleware.RequirePermission("admin"))
+			{
+				users.GET("", userController.List)
+				users.POST("", userController.Create)
+				users.GET("/:id", userController.GetByID)
+				users.PUT("/:id", userController.Update)
+				users.DELETE("/:id", userController.Delete)
 			}
 
 			instances := protected.Group("/instances")
