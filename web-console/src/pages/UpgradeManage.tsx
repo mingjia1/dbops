@@ -26,6 +26,7 @@ import {
   FileTextOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons'
 import { instanceApi, upgradeApi, versionApi, type Instance, type VersionEntry } from '../services/api'
 
@@ -36,6 +37,8 @@ interface UpgradeHistory {
   instance_id: string
   instance_name?: string
   upgrade_type?: string
+  task_type?: string
+  plan_id?: string
   source_version?: string
   target_version?: string
   status: string
@@ -241,6 +244,40 @@ const UpgradeManage: React.FC = () => {
     }
   }
 
+  const canRollback = (record: UpgradeHistory) => {
+    const type = (record.task_type || record.upgrade_type || '').toLowerCase()
+    if (type.includes('rollback')) return false
+    const status = (record.status || '').toLowerCase()
+    return terminalUpgradeStatuses.has(status) && !!record.instance_id
+  }
+
+  const rollbackUpgrade = (record: UpgradeHistory) => {
+    Modal.confirm({
+      title: '\u786e\u8ba4\u56de\u6eda\u5347\u7ea7',
+      content: '\u56de\u6eda\u4f1a\u505c\u6b62\u76ee\u6807\u5b9e\u4f8b\u3001\u6062\u590d\u6570\u636e\u548c\u914d\u7f6e\uff0c\u8bf7\u786e\u8ba4\u5df2\u8bc4\u4f30\u4e1a\u52a1\u5f71\u54cd\u3002',
+      okText: '\u786e\u8ba4\u56de\u6eda',
+      cancelText: '\u53d6\u6d88',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setSubmitting(true)
+        try {
+          const res: any = await upgradeApi.rollback({
+            plan_id: record.plan_id || record.id,
+            instance_id: record.instance_id,
+            force: true,
+          })
+          const data = res?.data || {}
+          message.success(data.rollback_id ? `\u56de\u6eda\u4efb\u52a1\u5df2\u63d0\u4ea4: ${data.rollback_id}` : '\u56de\u6eda\u4efb\u52a1\u5df2\u63d0\u4ea4')
+          loadData()
+        } catch (err: any) {
+          message.error(err?.response?.data?.message || err?.message || '\u56de\u6eda\u5347\u7ea7\u5931\u8d25')
+        } finally {
+          setSubmitting(false)
+        }
+      },
+    })
+  }
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 150, ellipsis: true },
     {
@@ -255,11 +292,18 @@ const UpgradeManage: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right' as const,
-      width: 120,
+      width: 190,
       render: (_: any, record: UpgradeHistory) => (
-        <Button size="small" icon={<FileTextOutlined />} onClick={() => showReport(record)}>
-          报告
-        </Button>
+        <Space size="small">
+          <Button size="small" icon={<FileTextOutlined />} onClick={() => showReport(record)}>
+            报告
+          </Button>
+          {canRollback(record) && (
+            <Button size="small" danger icon={<RollbackOutlined />} loading={submitting} onClick={() => rollbackUpgrade(record)}>
+              {'\u56de\u6eda'}
+            </Button>
+          )}
+        </Space>
       ),
     },
     { title: '实例', dataIndex: 'instance_name', key: 'instance_name', render: (v: string, r: UpgradeHistory) => v || r.instance_id },

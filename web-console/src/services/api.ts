@@ -733,6 +733,7 @@ export const upgradeApi = {
   executeInPlace: (data: any) => api.post('/upgrades/in-place', data).then(rejectBusinessError).then(rejectFailedTaskData),
   executeLogical: (data: any) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
   executeRolling: (data: any) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  rollback: (data: any) => api.post('/upgrades/rollback', data).then(rejectBusinessError).then(rejectFailedTaskData),
   listHistory: () => api.get('/upgrades'),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`),
   get: (id: string) => api.get(`/upgrades/${id}`),
