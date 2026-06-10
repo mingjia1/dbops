@@ -12,6 +12,11 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 )
 
+const (
+	agentDefaultTimeout    = 2 * time.Minute
+	agentDeploymentTimeout = 15 * time.Minute
+)
+
 type AgentClient struct {
 	httpClient *http.Client
 	agentToken string
@@ -22,7 +27,7 @@ func NewAgentClient(agentToken string) *AgentClient {
 		// B8: 之前 300s timeout 撞死长任务 (backup/upgrade/migration/role-switch).
 		// 修: 30s 适合短 op; 长 op 走 fire-and-forget + GetTaskProgress 轮询.
 		httpClient: &http.Client{
-			Timeout: 2 * time.Minute,
+			Timeout: agentDefaultTimeout,
 		},
 		agentToken: agentToken,
 	}
@@ -95,7 +100,7 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 		Config:     cfg,
 	}
 
-	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload)
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload, agentDeploymentTimeout)
 }
 
 func isSHA256Hex(value string) bool {
@@ -126,6 +131,10 @@ func (c *AgentClient) DeployMasterSlave(ctx context.Context, hostAddr string, ag
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload)
 }
 
+func (c *AgentClient) DeployCluster(ctx context.Context, hostAddr string, agentPort int, payload interface{}) (*AgentTaskResult, error) {
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload, agentDeploymentTimeout)
+}
+
 func (c *AgentClient) ExecuteHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d/agent/tasks/health-check?instance_id=%s", hostAddr, agentPort, instanceID)
 	return c.callAgentGet(ctx, url)
@@ -150,6 +159,10 @@ func (c *AgentClient) ExecuteBackup(ctx context.Context, hostAddr string, agentP
 }
 
 func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}) (*AgentTaskResult, error) {
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, path, payload, agentDefaultTimeout)
+}
+
+func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d%s", hostAddr, agentPort, path)
 
 	body, err := json.Marshal(payload)
@@ -173,7 +186,15 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 		req.Header.Set("Authorization", "Bearer "+c.agentToken)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	client := c.httpClient
+	if timeout > 0 && (client == nil || client.Timeout != timeout) {
+		transport := http.DefaultTransport
+		if client != nil && client.Transport != nil {
+			transport = client.Transport
+		}
+		client = &http.Client{Timeout: timeout, Transport: transport}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("agent request failed: %w", err)
 	}

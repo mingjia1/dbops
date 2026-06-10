@@ -11,6 +11,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type ClusterDeployService struct {
@@ -20,6 +21,7 @@ type ClusterDeployService struct {
 	agentClient *AgentClient
 	auditSvc    *AuditService
 	defaults    config.ClusterDefaults
+	encKey      string
 }
 
 type deploymentHost struct {
@@ -53,6 +55,10 @@ func NewClusterDeployService(
 		auditSvc:    audit,
 		defaults:    defaults,
 	}
+}
+
+func (s *ClusterDeployService) SetEncryptionKey(key string) {
+	s.encKey = key
 }
 
 func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (resp *DeployResponse, err error) {
@@ -90,6 +96,11 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		"ping_interval":  3,
 		"ping_retry":     3,
 	}
+	sshPasswords, err := s.sshPasswordsForMHA(ctx, req)
+	if err != nil {
+		return s.failDeployment(ctx, deployment, "mha", req.Name, fmt.Sprintf("prepare MHA SSH credentials failed: %v", err)), nil
+	}
+	config["ssh_passwords"] = sshPasswords
 
 	var slaveHosts []string
 	var slavePorts []int
@@ -111,7 +122,7 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	if s.agentClient == nil {
 		return s.failDeployment(ctx, deployment, "mha", req.Name, "agent client not configured"), nil
 	}
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/deploy", map[string]interface{}{
+	result, err := s.agentClient.DeployCluster(ctx, agentHost, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
 		"config":      config,
@@ -214,7 +225,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		if s.agentClient == nil {
 			return s.failDeployment(ctx, deployment, "mgr", req.Name, "agent client not configured"), nil
 		}
-		result, err := s.agentClient.callAgent(ctx, node.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
+		result, err := s.agentClient.DeployCluster(ctx, node.Host, agentPort, map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
 			"config":      config,
@@ -305,7 +316,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	if s.agentClient == nil {
 		return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
 	}
-	result, err := s.agentClient.callAgent(ctx, req.BootstrapNode.Host, agentPort, "/agent/tasks/deploy", map[string]interface{}{
+	result, err := s.agentClient.DeployCluster(ctx, req.BootstrapNode.Host, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
 		"config":      bootstrapConfig,
@@ -352,7 +363,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		if s.agentClient == nil {
 			return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
 		}
-		result, err := s.agentClient.callAgent(ctx, node.Host, nodeAgentPort, "/agent/tasks/deploy", map[string]interface{}{
+		result, err := s.agentClient.DeployCluster(ctx, node.Host, nodeAgentPort, map[string]interface{}{
 			"task_id":     deployment.ID,
 			"instance_id": "",
 			"config":      joinConfig,
@@ -434,7 +445,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		"mysql_user":     defaultString(req.MySQLUser, "root"),
 		"mysql_password": req.MySQLPassword,
 	}
-	result, err := s.agentClient.callAgent(ctx, req.MasterHost, agentPort, "/agent/tasks/deploy", map[string]interface{}{
+	result, err := s.agentClient.DeployCluster(ctx, req.MasterHost, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
 		"config":      masterConfig,
@@ -475,7 +486,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 			"mysql_user":     defaultString(req.MySQLUser, "root"),
 			"mysql_password": req.MySQLPassword,
 		}
-		result, err = s.agentClient.callAgent(ctx, replica.Host, defaultInt(replica.AgentPort, 9090), "/agent/tasks/deploy", map[string]interface{}{
+		result, err = s.agentClient.DeployCluster(ctx, replica.Host, defaultInt(replica.AgentPort, 9090), map[string]interface{}{
 			"task_id":     fmt.Sprintf("%s-replica-%d", deployment.ID, i+1),
 			"instance_id": "",
 			"config":      replicaConfig,
@@ -549,7 +560,7 @@ func (s *ClusterDeployService) deployHAReplicaViaMasterAgent(ctx context.Context
 		"mysql_user":     defaultString(req.MySQLUser, "root"),
 		"mysql_password": req.MySQLPassword,
 	}
-	return s.agentClient.callAgent(ctx, req.MasterHost, masterAgentPort, "/agent/tasks/deploy", map[string]interface{}{
+	return s.agentClient.DeployCluster(ctx, req.MasterHost, masterAgentPort, map[string]interface{}{
 		"task_id":     fmt.Sprintf("%s-legacy-replica-%d", deploymentID, index+1),
 		"instance_id": "",
 		"config":      config,
@@ -889,6 +900,62 @@ func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallb
 		port = 9090
 	}
 	return deploymentHost{Address: host.Address, AgentPort: port}, nil
+}
+
+func (s *ClusterDeployService) sshPasswordsForMHA(ctx context.Context, req DeployMHARequest) (map[string]string, error) {
+	passwords := map[string]string{}
+	addByID := func(id string) error {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil
+		}
+		host, err := s.hostRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(host.SSHCredential) == "" {
+			return fmt.Errorf("host %s has no SSH credential", host.Name)
+		}
+		plain, err := utils.Decrypt(host.SSHCredential, s.encKey)
+		if err != nil {
+			return fmt.Errorf("decrypt SSH credential for host %s: %w", host.Name, err)
+		}
+		passwords[host.Address] = plain
+		return nil
+	}
+	if err := addByID(req.ManagerHostID); err != nil {
+		return nil, err
+	}
+	if err := addByID(req.MasterHostID); err != nil {
+		return nil, err
+	}
+	for _, id := range req.ReplicaHostIDs {
+		if err := addByID(id); err != nil {
+			return nil, err
+		}
+	}
+	// Some callers provide slave_hosts directly instead of replica_host_ids.
+	if len(req.SlaveHosts) > 0 {
+		hosts, err := s.hostRepo.List(ctx, 1000, 0)
+		if err == nil {
+			for _, slave := range req.SlaveHosts {
+				if _, ok := passwords[slave.Host]; ok {
+					continue
+				}
+				for _, host := range hosts {
+					if sameHost(host.Address, slave.Host) && strings.TrimSpace(host.SSHCredential) != "" {
+						plain, decErr := utils.Decrypt(host.SSHCredential, s.encKey)
+						if decErr != nil {
+							return nil, fmt.Errorf("decrypt SSH credential for host %s: %w", host.Name, decErr)
+						}
+						passwords[host.Address] = plain
+						break
+					}
+				}
+			}
+		}
+	}
+	return passwords, nil
 }
 
 func (s *ClusterDeployService) deployPseudoCluster(ctx context.Context, clusterType, clusterID, name string, primaryNodes []pseudoNode, replicaNodes []pseudoNode) (*DeployResponse, error) {

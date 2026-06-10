@@ -1795,13 +1795,69 @@ func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req Deploy
 		}, nil
 	}
 
+	message := fmt.Sprintf("replica %s re-pointed to new master %s (%s:%d)", cfg.InstanceID, cfg.NewMasterID, cfg.NewMasterHost, cfg.NewMasterPort)
+	if cfg.Force {
+		repaired, repairErr := repairForcedReplicaGTID(ctx, host, port, user, pass)
+		if repairErr != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  80,
+				Message:   fmt.Sprintf("replica rebuild completed but forced GTID repair failed: %v", repairErr),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		if repaired {
+			message += "; skipped one failed GTID transaction during forced rebuild"
+		}
+	}
+
 	return &TaskResult{
 		TaskID:    req.TaskID,
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("replica %s re-pointed to new master %s (%s:%d)", cfg.InstanceID, cfg.NewMasterID, cfg.NewMasterHost, cfg.NewMasterPort),
+		Message:   message,
 		Timestamp: time.Now(),
 	}, nil
+}
+
+func repairForcedReplicaGTID(ctx context.Context, host string, port int, user, pass string) (bool, error) {
+	time.Sleep(2 * time.Second)
+	repaired := false
+	const maxForcedGTIDSkips = 50
+	for i := 0; i < maxForcedGTIDSkips; i++ {
+		statusBytes, _ := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
+		status := cleanMySQLOutput(string(statusBytes))
+		if replicationThreadsRunning(status) {
+			return repaired, nil
+		}
+		gtid := failedReplicationGTID(status)
+		if gtid == "" {
+			return repaired, nil
+		}
+		sql := fmt.Sprintf(
+			"STOP REPLICA SQL_THREAD; SET GTID_NEXT='%s'; BEGIN; COMMIT; SET GTID_NEXT='AUTOMATIC'; START REPLICA SQL_THREAD;",
+			gtid,
+		)
+		if out, err := runFirstMySQL(ctx, host, port, user, pass,
+			strings.ReplaceAll(sql, "REPLICA", "SLAVE"),
+			sql,
+		); err != nil {
+			return repaired, fmt.Errorf("skip failed GTID %s: %v, output: %s", gtid, err, strings.TrimSpace(string(out)))
+		}
+		repaired = true
+		time.Sleep(2 * time.Second)
+	}
+	return repaired, fmt.Errorf("replication still not running after skipping %d failed GTID transactions", maxForcedGTIDSkips)
+}
+
+func failedReplicationGTID(status string) string {
+	re := regexp.MustCompile(`transaction '([0-9a-fA-F-]+:[0-9]+)'`)
+	matches := re.FindStringSubmatch(status)
+	if len(matches) == 2 {
+		return matches[1]
+	}
+	return ""
 }
 
 func (e *TaskExecutor) ExecuteBackupScan(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {

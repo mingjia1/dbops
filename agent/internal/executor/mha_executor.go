@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type MHAExecutor struct{}
@@ -33,6 +35,7 @@ type MHAConfig struct {
 	PingRetry     int      `json:"ping_retry"`
 	SSHUser       string   `json:"ssh_user"`
 	SSHPrivateKey string   `json:"ssh_private_key"`
+	SSHPasswords  map[string]string
 }
 
 type MHAManagerConfig struct {
@@ -150,6 +153,16 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	if v, ok := config["ssh_private_key"].(string); ok {
 		mc.SSHPrivateKey = v
 	}
+	if raw, ok := config["ssh_passwords"].(map[string]interface{}); ok {
+		mc.SSHPasswords = map[string]string{}
+		for host, value := range raw {
+			if pass, ok := value.(string); ok {
+				mc.SSHPasswords[host] = pass
+			}
+		}
+	} else if raw, ok := config["ssh_passwords"].(map[string]string); ok {
+		mc.SSHPasswords = raw
+	}
 	if v, ok := config["slave_hosts"].([]string); ok {
 		mc.SlaveHosts = v
 	} else if hosts, ok := config["slave_hosts"].([]interface{}); ok {
@@ -178,6 +191,11 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 func (e *MHAExecutor) DeployMHA(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMHAConfig(req.Config)
 
+	sshResult := e.configureMHAKeyAuth(ctx, config)
+	if sshResult.Status == "failed" {
+		return sshResult, nil
+	}
+
 	nodeResult := e.installMHANode(ctx, config)
 	if nodeResult.Status == "failed" {
 		return nodeResult, nil
@@ -192,11 +210,159 @@ func (e *MHAExecutor) DeployMHA(ctx context.Context, req DeployTaskRequest) (*Ta
 	return validateResult, nil
 }
 
+func (e *MHAExecutor) configureMHAKeyAuth(ctx context.Context, config MHAConfig) *TaskResult {
+	keyCmd := exec.CommandContext(ctx, "sh", "-c",
+		"mkdir -p /root/.ssh && chmod 700 /root/.ssh && "+
+			"[ -f /root/.ssh/id_rsa ] || ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa && "+
+			"cat /root/.ssh/id_rsa && printf '\\n---PUBLIC---\\n' && cat /root/.ssh/id_rsa.pub")
+	out, err := keyCmd.CombinedOutput()
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  5,
+			Message:   fmt.Sprintf("Failed to prepare MHA SSH key: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}
+	}
+	parts := strings.SplitN(string(out), "\n---PUBLIC---\n", 2)
+	if len(parts) != 2 {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  5,
+			Message:   "Failed to parse generated MHA SSH key",
+			Timestamp: time.Now(),
+		}
+	}
+	privateKey := strings.TrimSpace(parts[0]) + "\n"
+	publicKey := strings.TrimSpace(parts[1])
+	if publicKey == "" {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  5,
+			Message:   "Generated MHA SSH public key is empty",
+			Timestamp: time.Now(),
+		}
+	}
+
+	allHosts := uniqueStrings(append([]string{config.ManagerHost, config.MasterHost}, config.SlaveHosts...))
+	for _, host := range allHosts {
+		if isLocalHost(host) {
+			cmd := exec.CommandContext(ctx, "sh", "-c", installSSHKeyCommand(privateKey, publicKey))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return &TaskResult{
+					Status:    "failed",
+					Progress:  8,
+					Message:   fmt.Sprintf("Failed to authorize local MHA SSH key on %s: %v, output: %s", host, err, strings.TrimSpace(string(out))),
+					Timestamp: time.Now(),
+				}
+			}
+			continue
+		}
+		password := passwordForHost(config.SSHPasswords, host)
+		if password == "" {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  8,
+				Message:   fmt.Sprintf("Missing SSH password for MHA host %s", host),
+				Timestamp: time.Now(),
+			}
+		}
+		if err := runPasswordSSH(ctx, host, config.SSHUser, password, installSSHKeyCommand(privateKey, publicKey)); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  8,
+				Message:   fmt.Sprintf("Failed to authorize MHA SSH key on %s: %v", host, err),
+				Timestamp: time.Now(),
+			}
+		}
+	}
+
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  10,
+		Message:   fmt.Sprintf("MHA SSH key authorized on %d hosts", len(allHosts)),
+		Timestamp: time.Now(),
+	}
+}
+
+func installSSHKeyCommand(privateKey, publicKey string) string {
+	return "mkdir -p /root/.ssh && chmod 700 /root/.ssh && " +
+		"cat > /root/.ssh/id_rsa <<'EOF_KEY'\n" + privateKey + "EOF_KEY\n" +
+		"cat > /root/.ssh/id_rsa.pub <<'EOF_PUB'\n" + publicKey + "\nEOF_PUB\n" +
+		"touch /root/.ssh/authorized_keys && grep -qxF " + shellQuote(publicKey) + " /root/.ssh/authorized_keys || echo " + shellQuote(publicKey) + " >> /root/.ssh/authorized_keys && " +
+		"chmod 600 /root/.ssh/id_rsa /root/.ssh/authorized_keys && chmod 644 /root/.ssh/id_rsa.pub"
+}
+
+func runPasswordSSH(ctx context.Context, host, user, password, command string) error {
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), cfg)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	done := make(chan error, 1)
+	go func() { done <- session.Run(command) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		_ = session.Close()
+		return ctx.Err()
+	}
+}
+
+func passwordForHost(passwords map[string]string, host string) string {
+	if passwords == nil {
+		return ""
+	}
+	if pass := passwords[host]; pass != "" {
+		return pass
+	}
+	for candidate, pass := range passwords {
+		if sameIPHost(candidate, host) {
+			return pass
+		}
+	}
+	return ""
+}
+
+func sameIPHost(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func uniqueStrings(items []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 func (e *MHAExecutor) installMHANode(ctx context.Context, config MHAConfig) *TaskResult {
 	allHosts := append([]string{config.MasterHost}, config.SlaveHosts...)
 
 	for i, host := range allHosts {
-		installCmd := mhaShellCommand(ctx, host, config.SSHUser, config.SSHPrivateKey, "yum install -y mha4mysql-node || apt-get install -y mha4mysql-node; command -v save_binary_logs")
+		installCmd := mhaShellCommand(ctx, host, config.SSHUser, config.SSHPrivateKey, installMHACommand("node"))
 		if out, err := installCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
 				Status:    "failed",
@@ -217,38 +383,54 @@ func (e *MHAExecutor) installMHANode(ctx context.Context, config MHAConfig) *Tas
 
 func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig) *TaskResult {
 	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
-			"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%';",
+		"SET SESSION SQL_LOG_BIN=0; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
 		config.ManagerUser, config.ManagerPass, config.ManagerUser,
 	)
 
-	allNodes := []struct {
-		host string
-		port int
-	}{{host: config.MasterHost, port: config.MasterPort}}
+	cmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPassword, createUserSQL)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  35,
+			Message:   fmt.Sprintf("Failed to create MHA manager user on master %s:%d: %v, output: %s", config.MasterHost, config.MasterPort, err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}
+	}
+
 	for i, host := range config.SlaveHosts {
 		port := config.MasterPort
 		if i < len(config.SlavePorts) && config.SlavePorts[i] != 0 {
 			port = config.SlavePorts[i]
 		}
-		allNodes = append(allNodes, struct {
-			host string
-			port int
-		}{host: host, port: port})
-	}
-	for _, node := range allNodes {
-		cmd := mysqlExecCommand(ctx, node.host, node.port, config.MySQLUser, config.MySQLPassword, createUserSQL)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if repairErr := repairReplicaMHAUser(ctx, host, port, config); repairErr != nil {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  35,
-				Message:   fmt.Sprintf("Failed to create MHA manager user on %s:%d: %v, output: %s", node.host, node.port, err, strings.TrimSpace(string(out))),
+				Message:   fmt.Sprintf("Failed to prepare local MHA manager user on replica %s:%d: %v", host, port, repairErr),
+				Timestamp: time.Now(),
+			}
+		}
+		if repairErr := repairReplicaReplicationUser(ctx, host, port, config); repairErr != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  35,
+				Message:   fmt.Sprintf("Failed to prepare local MHA replication user on replica %s:%d: %v", host, port, repairErr),
+				Timestamp: time.Now(),
+			}
+		}
+		if err := waitForMySQLUser(ctx, host, port, config.ManagerUser, config.ManagerPass); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  35,
+				Message:   fmt.Sprintf("MHA manager user was not available on replica %s:%d: %v", host, port, err),
 				Timestamp: time.Now(),
 			}
 		}
 	}
 
-	installManagerCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "yum install -y mha4mysql-manager || apt-get install -y mha4mysql-manager; command -v masterha_check_ssh && command -v masterha_check_repl")
+	installManagerCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, installMHACommand("manager"))
 	if out, err := installManagerCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
@@ -275,6 +457,85 @@ func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig)
 		Message:   "MHA manager configured successfully",
 		Timestamp: time.Now(),
 	}
+}
+
+func repairReplicaMHAUser(ctx context.Context, host string, port int, config MHAConfig) error {
+	sql := fmt.Sprintf(
+		"SET SESSION SQL_LOG_BIN=0; "+
+			"SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF; "+
+			"DROP USER IF EXISTS '%s'@'%%'; "+
+			"CREATE USER '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; "+
+			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
+		config.ManagerUser, config.ManagerUser, config.ManagerPass, config.ManagerUser,
+	)
+	cmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		restoreCmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, "SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;")
+		_, _ = restoreCmd.CombinedOutput()
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func repairReplicaReplicationUser(ctx context.Context, host string, port int, config MHAConfig) error {
+	sql := fmt.Sprintf(
+		"SET SESSION SQL_LOG_BIN=0; "+
+			"SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; "+
+			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
+		config.ReplUser, config.ReplPass, config.ReplUser,
+	)
+	cmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		restoreCmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, "SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;")
+		_, _ = restoreCmd.CombinedOutput()
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func waitForMySQLUser(ctx context.Context, host string, port int, user, password string) error {
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for {
+		cmd := mysqlExecCommand(ctx, host, port, user, password, "SELECT 1")
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func installMHACommand(kind string) string {
+	pkg := "mha4mysql-node"
+	verify := "save_binary_logs"
+	if kind == "manager" {
+		pkg = "mha4mysql-manager"
+		verify = "masterha_check_ssh masterha_check_repl"
+	}
+	return fmt.Sprintf(
+		"missing=''; for bin in %[2]s; do command -v $bin >/dev/null 2>&1 || missing=\"$missing $bin\"; done; "+
+			"if [ -n \"$missing\" ]; then "+
+			"echo \"installing %[1]s; missing:$missing\"; "+
+			"if command -v yum >/dev/null 2>&1; then yum install -y %[1]s; "+
+			"elif command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; (dpkg --configure -a || true) && apt-get update && apt-get install -y --fix-missing %[1]s; "+
+			"else echo 'no supported package manager found'; exit 1; fi; "+
+			"fi; "+
+			"missing=''; for bin in %[2]s; do command -v $bin >/dev/null 2>&1 || missing=\"$missing $bin\"; done; "+
+			"if [ -n \"$missing\" ]; then echo \"missing MHA command(s) after installing %[1]s:$missing\"; exit 1; fi",
+		pkg, verify,
+	)
 }
 
 func generateMHAAppConfig(config MHAConfig) string {
@@ -306,23 +567,27 @@ func generateMHAAppConfig(config MHAConfig) string {
 }
 
 func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfig) *TaskResult {
-	sshCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "masterha_check_ssh --conf=/etc/mha/app1.cnf")
+	sshCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "perl -X $(command -v masterha_check_ssh) --conf=/etc/mha/app1.cnf")
 	if out, err := sshCmd.CombinedOutput(); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  70,
-			Message:   fmt.Sprintf("MHA SSH check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
-			Timestamp: time.Now(),
+		if !mhaOutputContains(string(out), "All SSH connection tests passed successfully") {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  70,
+				Message:   fmt.Sprintf("MHA SSH check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+				Timestamp: time.Now(),
+			}
 		}
 	}
 
-	replCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "masterha_check_repl --conf=/etc/mha/app1.cnf")
+	replCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "perl -X $(command -v masterha_check_repl) --conf=/etc/mha/app1.cnf")
 	if out, err := replCmd.CombinedOutput(); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  85,
-			Message:   fmt.Sprintf("MHA replication check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
-			Timestamp: time.Now(),
+		if !mhaOutputContains(string(out), "MySQL Replication Health is OK") {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  85,
+				Message:   fmt.Sprintf("MHA replication check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+				Timestamp: time.Now(),
+			}
 		}
 	}
 
@@ -333,6 +598,10 @@ func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfi
 			config.ManagerHost, config.MasterHost, config.MasterPort),
 		Timestamp: time.Now(),
 	}
+}
+
+func mhaOutputContains(output, marker string) bool {
+	return strings.Contains(output, marker)
 }
 
 func mhaShellCommand(ctx context.Context, host string, user string, privateKey string, command string) *exec.Cmd {

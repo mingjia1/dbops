@@ -150,6 +150,7 @@ func main() {
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
 	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
+	clusterDeployService.SetEncryptionKey(cfg.EncryptionKey)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
 	topologyController := controllers.NewTopologyController(topologyService)
