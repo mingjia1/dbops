@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -90,6 +91,7 @@ func (s *MigrationService) CreateTask(ctx context.Context, req CreateMigrationTa
 		Strategy:         req.Strategy,
 		Status:           models.MigrationStatusPending,
 		Progress:         0,
+		Config:           req.Config,
 	}
 	if err := s.repo.Create(ctx, task); err != nil {
 		return "", fmt.Errorf("failed to create migration task: %w", err)
@@ -118,6 +120,12 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 		"migration_type":     string(strategy),
 		"source_instance_id": task.SourceInstanceID,
 		"target_instance_id": task.TargetInstanceID,
+	}
+	for key, value := range parseMigrationTaskConfig(task.Config) {
+		if _, reserved := config[key]; reserved {
+			continue
+		}
+		config[key] = value
 	}
 
 	// Resolve the real managed host agent. Do not dispatch migration to localhost.
@@ -200,6 +208,18 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	}
 	s.auditMigrationExecution(ctx, task, out, result.Message)
 	return out, nil
+}
+
+func parseMigrationTaskConfig(raw string) map[string]interface{} {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]interface{}{}
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return map[string]interface{}{"raw_config": raw}
+	}
+	return parsed
 }
 
 func (s *MigrationService) ExecutePhysicalMigration(ctx context.Context, taskID string) (*MigrationTaskResult, error) {

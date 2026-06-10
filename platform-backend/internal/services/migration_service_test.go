@@ -34,6 +34,25 @@ func TestMigrationService_CreateTask(t *testing.T) {
 	assert.NotEmpty(t, taskID)
 }
 
+func TestMigrationService_CreateTaskPersistsConfig(t *testing.T) {
+	service := newTestMigrationService()
+	ctx := context.Background()
+
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "Config Migration",
+		SourceInstanceID: "source-001",
+		TargetInstanceID: "target-001",
+		Strategy:         models.MigrationStrategyReplication,
+		Config:           `{"replication_user":"repl","sync_delay_threshold":10}`,
+	})
+	require.NoError(t, err)
+
+	task, err := service.GetTask(ctx, taskID)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"replication_user":"repl","sync_delay_threshold":10}`, task.Config)
+}
+
 func TestMigrationService_ExecutePhysicalMigration(t *testing.T) {
 	service := newTestMigrationService()
 
@@ -219,6 +238,63 @@ func TestMigrationService_ExecuteFailureWritesAuditLog(t *testing.T) {
 	assert.Equal(t, "execute_migration", logs[0].Operation)
 	assert.Equal(t, "failed", logs[0].Result)
 	assert.Contains(t, logs[0].ErrorMsg, "cannot resolve agent endpoint")
+}
+
+func TestMigrationServiceExecuteForwardsStoredConfigToAgent(t *testing.T) {
+	var payload struct {
+		TaskID string                 `json:"task_id"`
+		Config map[string]interface{} `json:"config"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/migration", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"message": "success",
+			"data": map[string]interface{}{
+				"task_id":  payload.TaskID,
+				"status":   "running",
+				"progress": 5,
+				"message":  "migration accepted",
+			},
+		})
+	}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	db := newTestDB()
+	migrationRepo := repositories.NewMigrationRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	hostID := "migration-config-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Name: "migration-config-host", Address: u.Hostname(), AgentPort: agentPort, SSHPort: 22, SSHUser: "root"}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "migration-config-source", Name: "migration-config-source", HostID: &hostID}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "migration-config-target", Name: "migration-config-target", HostID: &hostID}))
+	service := NewMigrationService(migrationRepo, instanceRepo, hostRepo, NewAgentClient(""))
+	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+		Name:             "migration config",
+		SourceInstanceID: "migration-config-source",
+		TargetInstanceID: "migration-config-target",
+		Strategy:         models.MigrationStrategyReplication,
+		Config:           `{"replication_user":"repl","replication_password":"secret","sync_delay_threshold":10}`,
+	})
+	require.NoError(t, err)
+
+	result, err := service.ExecuteReplicationMigration(ctx, taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusMigrating, result.Status)
+	assert.Equal(t, "replication", payload.Config["migration_type"])
+	assert.Equal(t, "migration-config-source", payload.Config["source_instance_id"])
+	assert.Equal(t, "migration-config-target", payload.Config["target_instance_id"])
+	assert.Equal(t, "repl", payload.Config["replication_user"])
+	assert.Equal(t, "secret", payload.Config["replication_password"])
+	assert.Equal(t, float64(10), payload.Config["sync_delay_threshold"])
 }
 
 func TestMigrationServiceExecuteWithoutAgentClientFailsTask(t *testing.T) {
