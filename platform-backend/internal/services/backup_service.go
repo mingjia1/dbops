@@ -17,20 +17,28 @@ type BackupService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	policyRepo  *repositories.BackupRepository
+	taskRepo    *repositories.TaskRepository
 	agentClient *AgentClient
 	auditSvc    *AuditService
 	encKey      string
 }
 
-func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, policyRepo *repositories.BackupRepository, agentClient *AgentClient, encKey string, auditSvc ...*AuditService) *BackupService {
+func NewBackupService(hostRepo *repositories.HostRepository, instRepo *repositories.InstanceRepository, policyRepo *repositories.BackupRepository, agentClient *AgentClient, encKey string, opts ...interface{}) *BackupService {
 	var audit *AuditService
-	if len(auditSvc) > 0 {
-		audit = auditSvc[0]
+	var taskRepo *repositories.TaskRepository
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case *AuditService:
+			audit = v
+		case *repositories.TaskRepository:
+			taskRepo = v
+		}
 	}
 	return &BackupService{
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		policyRepo:  policyRepo,
+		taskRepo:    taskRepo,
 		agentClient: agentClient,
 		auditSvc:    audit,
 		encKey:      encKey,
@@ -229,6 +237,16 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 
 	taskID := fmt.Sprintf("backup-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
 	now := time.Now()
+	if s.taskRepo != nil {
+		_ = s.taskRepo.Create(ctx, &models.Task{
+			ID:         taskID,
+			TaskType:   "backup",
+			InstanceID: req.InstanceID,
+			Status:     "pending",
+			Progress:   0,
+			CreatedAt:  now,
+		})
+	}
 	config := map[string]interface{}{
 		"backup_type": req.BackupType,
 		"target_dir":  targetDir,
@@ -259,6 +277,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 				Message:    out.Message,
 				CreatedAt:  now,
 			})
+			if s.taskRepo != nil {
+				_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, "failed", 0, out.Message)
+			}
 			s.auditBackupExecution(ctx, out, "failed")
 			return out, nil
 		}
@@ -284,6 +305,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			Message:    out.Message,
 			CreatedAt:  now,
 		})
+		if s.taskRepo != nil {
+			_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, "failed", 0, out.Message)
+		}
 		s.auditBackupExecution(ctx, out, "failed")
 		return out, nil
 	}
@@ -306,6 +330,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			Message:    out.Message,
 			CreatedAt:  now,
 		})
+		if s.taskRepo != nil {
+			_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, "failed", 0, out.Message)
+		}
 		s.auditBackupExecution(ctx, out, "failed")
 		return out, nil
 	}
@@ -336,6 +363,21 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		Checksum:    out.Checksum,
 		CreatedAt:   now,
 	})
+	if s.taskRepo != nil {
+		progress := result.Progress
+		if progress == 0 && isTerminalBackupStatus(out.Status) {
+			progress = 100
+		}
+		_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, out.Status, progress, out.Message)
+		_ = s.taskRepo.AddLog(ctx, &models.TaskLog{
+			TaskID:    taskID,
+			LogID:     uuid.NewString(),
+			Timestamp: time.Now(),
+			Level:     backupTaskLogLevel(out.Status),
+			Message:   out.Message,
+			Context:   fmt.Sprintf("backup_type=%s file_path=%s checksum=%s", out.BackupType, out.FilePath, out.Checksum),
+		})
+	}
 	s.auditBackupExecution(ctx, out, backupAuditResult(out.Status))
 	return out, nil
 }
@@ -389,6 +431,17 @@ func isActiveBackupStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func backupTaskLogLevel(status string) string {
+	switch normalizeBackupAgentStatus(status) {
+	case "failed":
+		return "error"
+	case "completed":
+		return "info"
+	default:
+		return "info"
 	}
 }
 
