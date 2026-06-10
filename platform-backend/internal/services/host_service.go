@@ -391,7 +391,9 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 			action = "status"
 		}
 		for _, hostID := range req.HostIDs {
-			row, err := s.SubmitAgentAction(ctx, hostID, HostAgentActionRequest{Action: action, AgentPort: req.AgentPort})
+			submitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			row, err := s.SubmitAgentAction(submitCtx, hostID, HostAgentActionRequest{Action: action, AgentPort: req.AgentPort})
+			cancel()
 			if err != nil {
 				result.Failed++
 				result.Rows = append(result.Rows, HostAgentActionResult{
