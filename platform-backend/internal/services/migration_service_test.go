@@ -355,6 +355,29 @@ func TestMigrationServiceMonitorCompletedAgentStatusCompletesTask(t *testing.T) 
 	assert.Equal(t, 100, task.Progress)
 }
 
+func TestMigrationServiceMonitorAgentNoRecordFallsBackToStoredStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Contains(t, r.URL.Path, "/agent/tasks/")
+		require.Contains(t, r.URL.Path, "/progress")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    404,
+			"message": "no in-memory record",
+		})
+	}))
+	defer server.Close()
+	service, migrationRepo, taskID := newMigrationServiceWithAgent(t, server.URL)
+	require.NoError(t, migrationRepo.UpdateStatus(context.Background(), taskID, models.MigrationStatusCompleted, 100))
+
+	result, err := service.MonitorMigrationProgress(context.Background(), taskID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, models.MigrationStatusCompleted, result.Status)
+	assert.Equal(t, 100, result.Progress)
+}
+
 func TestMigrationServiceVerifyWithoutAgentClientFailsTask(t *testing.T) {
 	service, migrationRepo, taskID := newMigrationServiceWithoutAgent(t)
 
@@ -553,7 +576,9 @@ func newMigrationExecutionTestService(t *testing.T, agentStatus string, progress
 func newMigrationMonitorTestService(t *testing.T, agentStatus string, progress int, message string) (*MigrationService, *repositories.MigrationRepository, string, func()) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/agent/tasks/migration", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Contains(t, r.URL.Path, "/agent/tasks/")
+		require.Contains(t, r.URL.Path, "/progress")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"code":    200,
 			"message": "success",

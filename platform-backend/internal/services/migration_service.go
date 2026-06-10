@@ -243,7 +243,6 @@ func (s *MigrationService) OrchestrateMigration(ctx context.Context, taskID stri
 }
 
 func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID string) (*models.MigrationProgress, error) {
-	// Missing tasks must return an explicit error instead of fake progress.
 	task, err := s.repo.GetByID(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("task not found: %w", err)
@@ -262,15 +261,17 @@ func (s *MigrationService) MonitorMigrationProgress(ctx context.Context, taskID 
 	if s.agentClient == nil {
 		return nil, fmt.Errorf("agent client not configured")
 	}
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/migration", map[string]interface{}{
-		"task_id":     taskID,
-		"instance_id": task.SourceInstanceID,
-		"config": map[string]interface{}{
-			"monitor": true,
-		},
-	})
+	result, err := s.agentClient.GetTaskProgress(ctx, agentHost, agentPort, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("agent monitor call failed: %w", err)
+		if strings.Contains(err.Error(), "agent has no record of task") {
+			return &models.MigrationProgress{
+				TaskID:    taskID,
+				Status:    task.Status,
+				Progress:  task.Progress,
+				UpdatedAt: time.Now(),
+			}, nil
+		}
+		return nil, fmt.Errorf("agent progress query failed: %w", err)
 	}
 	status := normalizeMigrationStatus(result.Status)
 	if status == models.MigrationStatusFailed {
