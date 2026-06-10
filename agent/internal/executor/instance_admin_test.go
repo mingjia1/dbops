@@ -26,21 +26,19 @@ func TestExecuteInstanceAdminServiceControlValidatesMetadata(t *testing.T) {
 			wantMsg: "service control requires instance datadir metadata",
 		},
 		{
-			name: "start requires basedir",
+			name: "start requires port",
 			config: map[string]interface{}{
-				"action":      "service_control",
-				"verb":        "start",
-				"datadir":     "/data/mysql/3307",
-				"target_port": 3307,
+				"action":  "service_control",
+				"verb":    "start",
+				"datadir": "/data/mysql/3307",
 			},
-			wantMsg: "service control start requires instance basedir metadata",
+			wantMsg: "service control start requires instance port metadata",
 		},
 		{
 			name: "restart requires port",
 			config: map[string]interface{}{
 				"action":  "service_control",
 				"verb":    "restart",
-				"basedir": "/opt/mysql57",
 				"datadir": "/data/mysql/3307",
 			},
 			wantMsg: "service control restart requires instance port metadata",

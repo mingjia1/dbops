@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type SwitchService struct {
@@ -20,6 +21,7 @@ type SwitchService struct {
 	clusterRepo *repositories.ClusterDeployRepository
 	agentClient *AgentClient
 	auditSvc    *AuditService
+	encKey      string
 	// P1: 角色切换历史持久化, 之前是 in-memory map 重启即丢.
 	historyRepo *repositories.RoleSwitchHistoryRepository
 
@@ -41,6 +43,10 @@ func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositor
 		auditSvc:    audit,
 		history:     make(map[string][]RoleSwitchRecord),
 	}
+}
+
+func (s *SwitchService) SetEncryptionKey(key string) {
+	s.encKey = key
 }
 
 type SwitchClusterRequest struct {
@@ -269,11 +275,65 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 		}
 	}
 
+	if err := s.updateRealRoleTopology(ctx, req.ClusterID, result.NewMasterID, clusterType); err != nil {
+		result.Status = "partial_success"
+		result.Message = fmt.Sprintf("role switched but topology update failed: %v", err)
+		result.CompletedAt = time.Now()
+		s.recordHistory(ctx, result)
+		return result, nil
+	}
+
 	result.Status = "completed"
 	result.CompletedAt = time.Now()
 	result.Message = fmt.Sprintf("role switched within %s cluster: %s -> %s", clusterType, currentRole, req.TargetRole)
 	s.recordHistory(ctx, result)
 	return result, nil
+}
+
+func (s *SwitchService) updateRealRoleTopology(ctx context.Context, clusterID, newMasterID, clusterType string) error {
+	if newMasterID == "" {
+		return nil
+	}
+	instances, err := s.listClusterInstances(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	replicaIDs := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		if inst.ID != newMasterID {
+			replicaIDs = append(replicaIDs, inst.ID)
+		}
+	}
+	slaveIDs, _ := json.Marshal(replicaIDs)
+	for _, inst := range instances {
+		role := replicaRoleFor(clusterType)
+		masterID := newMasterID
+		slaveIDText := ""
+		if inst.ID == newMasterID {
+			role = primaryRoleFor(clusterType)
+			masterID = ""
+			slaveIDText = string(slaveIDs)
+		}
+		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			RunStatus:           defaultString(inst.Status.RunStatus, "running"),
+			HealthStatus:        defaultString(inst.Status.HealthStatus, "healthy"),
+			Role:                role,
+			ReplicationStatus:   clusterType,
+			SecondsBehindMaster: 0,
+		}); err != nil {
+			return err
+		}
+		if err := s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       clusterID,
+			MasterID:        masterID,
+			SlaveIDs:        slaveIDText,
+			ReplicationMode: clusterType,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SwitchService) buildResultSkeleton(req RoleSwitchRequest, clusterType string, inst *models.Instance, hostInfo *AgentHostInfo, currentRole, oldMasterID string, startedAt time.Time) *RoleSwitchResult {
@@ -366,6 +426,11 @@ func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo
 		"grace_period_sec": req.GracePeriodSec,
 		"cluster_type":     clusterType,
 	}
+	if target, err := s.instanceConnectionConfig(ctx, req.InstanceID); err == nil {
+		for k, v := range target {
+			config[k] = v
+		}
+	}
 
 	result, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-promote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
@@ -391,6 +456,11 @@ func (s *SwitchService) demoteInstance(ctx context.Context, host *AgentHostInfo,
 		"replication_pass": req.ReplicationPass,
 		"force":            req.Force,
 		"cluster_type":     clusterType,
+	}
+	if target, err := s.instanceConnectionConfig(ctx, req.InstanceID); err == nil {
+		for k, v := range target {
+			config[k] = v
+		}
 	}
 
 	result, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-demote", map[string]interface{}{
@@ -424,6 +494,11 @@ func (s *SwitchService) demoteOldMaster(ctx context.Context, clusterID, oldMaste
 		"force":        true,
 		"cluster_type": clusterType,
 	}
+	if target, err := s.instanceConnectionConfig(ctx, oldMasterID); err == nil {
+		for k, v := range target {
+			config[k] = v
+		}
+	}
 
 	result, err := s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-demote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
@@ -448,7 +523,7 @@ func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, n
 
 	rebuilt := make([]string, 0, len(allInsts))
 	for _, inst := range allInsts {
-		if inst.ID == newMasterID || inst.ID == oldMasterID {
+		if inst.ID == newMasterID {
 			continue
 		}
 		hostInfo, err := s.resolveAgentHost(ctx, inst)
@@ -464,6 +539,16 @@ func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, n
 			"target_role":   replicaRoleFor(clusterType),
 			"cluster_type":  clusterType,
 		}
+		if target, err := s.instanceConnectionConfig(ctx, inst.ID); err == nil {
+			for k, v := range target {
+				config[k] = v
+			}
+		}
+		if masterTarget, err := s.newMasterConnectionConfig(ctx, newMasterID); err == nil {
+			for k, v := range masterTarget {
+				config[k] = v
+			}
+		}
 
 		result, err := s.agentClient.callAgent(ctx, hostInfo.Address, hostInfo.Port, "/agent/tasks/role-replica-rebuild", map[string]interface{}{
 			"task_id":     uuid.New().String(),
@@ -476,6 +561,40 @@ func (s *SwitchService) rebuildReplicaTopology(ctx context.Context, clusterID, n
 		}
 	}
 	return rebuilt, nil
+}
+
+func (s *SwitchService) instanceConnectionConfig(ctx context.Context, instanceID string) (map[string]interface{}, error) {
+	conn, err := s.instRepo.GetConnection(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	pass, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"target_host": conn.Host,
+		"target_port": conn.Port,
+		"target_user": conn.Username,
+		"target_pass": pass,
+	}, nil
+}
+
+func (s *SwitchService) newMasterConnectionConfig(ctx context.Context, instanceID string) (map[string]interface{}, error) {
+	conn, err := s.instRepo.GetConnection(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	pass, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"new_master_host": conn.Host,
+		"new_master_port": conn.Port,
+		"new_master_user": conn.Username,
+		"new_master_pass": pass,
+	}, nil
 }
 
 func switchAgentTaskError(action string, result *AgentTaskResult) error {
@@ -718,5 +837,18 @@ func replicaRoleFor(clusterType string) string {
 		return "secondary"
 	default:
 		return "replica"
+	}
+}
+
+func primaryRoleFor(clusterType string) string {
+	switch clusterType {
+	case "ha", "mha":
+		return "master"
+	case "mgr":
+		return "primary"
+	case "pxc":
+		return "primary"
+	default:
+		return "primary"
 	}
 }

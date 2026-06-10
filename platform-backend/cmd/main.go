@@ -171,6 +171,7 @@ func main() {
 
 	switchHistoryRepo := repositories.NewRoleSwitchHistoryRepository(db)
 	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo, auditService)
+	switchService.SetEncryptionKey(cfg.EncryptionKey)
 	switchController := controllers.NewSwitchController(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 

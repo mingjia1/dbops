@@ -419,10 +419,10 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 			Timestamp: time.Now(),
 		}
 	}
+	_ = mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass,
+		fmt.Sprintf("ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';", escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass))).Run()
 
-	serverIDCmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, "SET GLOBAL server_id=1;")
-
-	if out, err := serverIDCmd.CombinedOutput(); err != nil {
+	if out, err := setServerID(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, 1); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  30,
@@ -440,9 +440,7 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 }
 
 func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveConfig) *TaskResult {
-	serverIDCmd := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, fmt.Sprintf("SET GLOBAL server_id=%d;", config.ServerID+2))
-
-	if out, err := serverIDCmd.CombinedOutput(); err != nil {
+	if out, err := setServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, config.ServerID+2); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  50,
@@ -482,6 +480,18 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 		}
 	}
 
+	changeMasterSQLNoKey := fmt.Sprintf(
+		"CHANGE MASTER TO "+
+			"MASTER_HOST='%s', "+
+			"MASTER_PORT=%d, "+
+			"MASTER_USER='%s', "+
+			"MASTER_PASSWORD='%s', "+
+			"MASTER_LOG_FILE='%s', "+
+			"MASTER_LOG_POS=%s;",
+		config.MasterHost, config.MasterPort,
+		config.ReplicateUser, config.ReplicatePass,
+		masterLogFile, masterLogPos,
+	)
 	changeMasterSQL := fmt.Sprintf(
 		"CHANGE MASTER TO "+
 			"MASTER_HOST='%s', "+
@@ -496,6 +506,18 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 		masterLogFile, masterLogPos,
 	)
 
+	changeSourceSQLNoKey := fmt.Sprintf(
+		"CHANGE REPLICATION SOURCE TO "+
+			"SOURCE_HOST='%s', "+
+			"SOURCE_PORT=%d, "+
+			"SOURCE_USER='%s', "+
+			"SOURCE_PASSWORD='%s', "+
+			"SOURCE_LOG_FILE='%s', "+
+			"SOURCE_LOG_POS=%s;",
+		config.MasterHost, config.MasterPort,
+		config.ReplicateUser, config.ReplicatePass,
+		masterLogFile, masterLogPos,
+	)
 	changeSourceSQL := fmt.Sprintf(
 		"CHANGE REPLICATION SOURCE TO "+
 			"SOURCE_HOST='%s', "+
@@ -510,7 +532,7 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 		masterLogFile, masterLogPos,
 	)
 
-	if out, err := runFirstMySQL(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, changeMasterSQL, changeSourceSQL); err != nil {
+	if out, err := runFirstMySQL(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, changeMasterSQLNoKey, changeMasterSQL, changeSourceSQLNoKey, changeSourceSQL); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  60,
@@ -536,6 +558,13 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 	}
 }
 
+func setServerID(ctx context.Context, host string, port int, user, pass string, serverID int) ([]byte, error) {
+	return runFirstMySQL(ctx, host, port, user, pass,
+		fmt.Sprintf("SET PERSIST server_id=%d; SET GLOBAL server_id=%d;", serverID, serverID),
+		fmt.Sprintf("SET GLOBAL server_id=%d;", serverID),
+	)
+}
+
 func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, error) {
 	legacyOut, legacyErr := mysqlExecCommand(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP SLAVE; RESET SLAVE ALL;").CombinedOutput()
 	legacyText := string(legacyOut)
@@ -556,6 +585,7 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 func runFirstMySQL(ctx context.Context, host string, port int, user, pass string, queries ...string) ([]byte, error) {
 	var lastOut []byte
 	var lastErr error
+	failures := make([]string, 0, len(queries))
 	for _, query := range queries {
 		cmd := mysqlExecCommand(ctx, host, port, user, pass, query)
 		out, err := cmd.CombinedOutput()
@@ -564,6 +594,10 @@ func runFirstMySQL(ctx context.Context, host string, port int, user, pass string
 		}
 		lastOut = out
 		lastErr = err
+		failures = append(failures, fmt.Sprintf("%s => %v: %s", strings.TrimSuffix(query, ";"), err, strings.TrimSpace(string(out))))
+	}
+	if len(failures) > 0 {
+		return []byte(strings.Join(failures, "\n")), lastErr
 	}
 	return lastOut, lastErr
 }
@@ -1460,8 +1494,23 @@ func parseRoleSwitchConfig(config map[string]interface{}) RoleSwitchConfig {
 	if v, ok := config["target_user"].(string); ok {
 		c.TargetUser = v
 	}
+	if c.TargetUser == "" {
+		if v, ok := config["mysql_user"].(string); ok {
+			c.TargetUser = v
+		}
+	}
 	if v, ok := config["target_pass"].(string); ok {
 		c.TargetPass = v
+	}
+	if c.TargetPass == "" {
+		if v, ok := config["mysql_password"].(string); ok {
+			c.TargetPass = v
+		}
+	}
+	if c.TargetPass == "" {
+		if v, ok := config["mysql_pass"].(string); ok {
+			c.TargetPass = v
+		}
 	}
 	if v, ok := config["new_master_server_uuid"].(string); ok {
 		c.NewMasterServerUUID = v
@@ -1505,7 +1554,19 @@ func runMySQLExec(ctx context.Context, host string, port int, user, pass, sql st
 	args := append(mysqlBaseArgs(host, port, user, pass), "-N", "-B", "-e", sql)
 	cmd := exec.CommandContext(ctx, "mysql", args...)
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return cleanMySQLOutput(string(out)), err
+}
+
+func cleanMySQLOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "mysql: [Warning]") {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
 func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
@@ -1528,14 +1589,20 @@ func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskReque
 		}, nil
 	}
 
-	role := "replica"
-	if !strings.Contains(output, "1") {
-		role = "primary"
+	fields := strings.Fields(strings.TrimSpace(output))
+	readOnly := len(fields) > 0 && (fields[0] == "1" || strings.EqualFold(fields[0], "ON"))
+	serverID := 0
+	if len(fields) > 1 {
+		serverID, _ = strconv.Atoi(fields[1])
 	}
 
-	slaveOutput, _ := runMySQLExec(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G")
-	slaveRunning := strings.Contains(slaveOutput, "Slave_IO_Running: Yes") &&
-		strings.Contains(slaveOutput, "Slave_SQL_Running: Yes")
+	slaveBytes, _ := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
+	slaveOutput := cleanMySQLOutput(string(slaveBytes))
+	slaveRunning := replicationThreadsRunning(slaveOutput)
+	role := "primary"
+	if slaveRunning || readOnly {
+		role = "replica"
+	}
 
 	return &TaskResult{
 		TaskID:    req.TaskID,
@@ -1543,7 +1610,20 @@ func (e *TaskExecutor) ExecuteRoleQuery(ctx context.Context, req DeployTaskReque
 		Progress:  100,
 		Message:   fmt.Sprintf("role=%s read_only_state_checked slave_running=%t", role, slaveRunning),
 		Timestamp: time.Now(),
+		Data: RoleQueryResult{
+			ClusterID:    cfg.ClusterID,
+			InstanceID:   cfg.InstanceID,
+			Role:         role,
+			ServerID:     serverID,
+			ReadOnly:     readOnly,
+			SlaveRunning: slaveRunning,
+		},
 	}, nil
+}
+
+func replicationThreadsRunning(status string) bool {
+	return (strings.Contains(status, "Slave_IO_Running: Yes") || strings.Contains(status, "Replica_IO_Running: Yes")) &&
+		(strings.Contains(status, "Slave_SQL_Running: Yes") || strings.Contains(status, "Replica_SQL_Running: Yes"))
 }
 
 func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
@@ -1555,27 +1635,34 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 
 	host, port, user, pass := resolveTargetConn(cfg)
 
-	steps := []struct {
-		sql   string
-		label string
-	}{
-		{"STOP SLAVE", "stop slave"},
-		{"STOP SLAVE IO_THREAD", "stop slave IO thread"},
-		{"SET GLOBAL read_only = OFF", "disable read_only"},
-		{"SET GLOBAL super_read_only = OFF", "disable super_read_only"},
-		{"RESET SLAVE ALL", "reset slave"},
+	if out, err := runFirstMySQL(ctx, host, port, user, pass, "STOP SLAVE;", "STOP REPLICA;"); err != nil && !cfg.Force {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  30,
+			Message:   fmt.Sprintf("promote step %q failed: %v, output: %s", "stop replication", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}, nil
 	}
-
-	for _, step := range steps {
-		if _, err := runMySQLExec(ctx, host, port, user, pass, step.sql); err != nil {
+	for _, sql := range []string{"SET GLOBAL read_only = OFF", "SET GLOBAL super_read_only = OFF"} {
+		if _, err := runMySQLExec(ctx, host, port, user, pass, sql); err != nil && !cfg.Force {
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "failed",
-				Progress:  30,
-				Message:   fmt.Sprintf("promote step %q failed: %v", step.label, err),
+				Progress:  40,
+				Message:   fmt.Sprintf("promote step %q failed: %v", sql, err),
 				Timestamp: time.Now(),
 			}, nil
 		}
+	}
+	if out, err := runFirstMySQL(ctx, host, port, user, pass, "RESET SLAVE ALL;", "RESET REPLICA ALL;"); err != nil && !cfg.Force {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  50,
+			Message:   fmt.Sprintf("promote step %q failed: %v, output: %s", "reset replication", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}, nil
 	}
 
 	// A3 part 3: MGR promote 之前发 'THISUUID' 永远失败 (或 force=true 时静默成功).
@@ -1676,16 +1763,34 @@ func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req Deploy
 
 	host, port, user, pass := resolveTargetConn(cfg)
 
-	changeSQL := fmt.Sprintf(
-		"STOP SLAVE; CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%d, MASTER_USER='%s', MASTER_PASSWORD='%s', MASTER_AUTO_POSITION=1; START SLAVE;",
+	if out, err := runFirstMySQL(ctx, host, port, user, pass, "STOP SLAVE; RESET SLAVE ALL;", "STOP REPLICA; RESET REPLICA ALL;"); err != nil {
+		resetOut := strings.TrimSpace(string(out))
+		if !strings.Contains(resetOut, "Slave is not configured") &&
+			!strings.Contains(resetOut, "Replica is not configured") &&
+			!strings.Contains(resetOut, "This server is not configured as slave") {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  30,
+				Message:   fmt.Sprintf("replica reset failed: %v, output: %s", err, resetOut),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+	changeMasterSQL := fmt.Sprintf(
+		"CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%d, MASTER_USER='%s', MASTER_PASSWORD='%s', MASTER_AUTO_POSITION=1; START SLAVE;",
 		cfg.NewMasterHost, cfg.NewMasterPort, cfg.NewMasterUser, cfg.NewMasterPass,
 	)
-	if _, err := runMySQLExec(ctx, host, port, user, pass, changeSQL); err != nil {
+	changeReplicaSQL := fmt.Sprintf(
+		"CHANGE REPLICATION SOURCE TO SOURCE_HOST='%s', SOURCE_PORT=%d, SOURCE_USER='%s', SOURCE_PASSWORD='%s', SOURCE_AUTO_POSITION=1; START REPLICA;",
+		cfg.NewMasterHost, cfg.NewMasterPort, cfg.NewMasterUser, cfg.NewMasterPass,
+	)
+	if out, err := runFirstMySQL(ctx, host, port, user, pass, changeMasterSQL, changeReplicaSQL); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
 			Progress:  50,
-			Message:   fmt.Sprintf("replica rebuild failed: %v", err),
+			Message:   fmt.Sprintf("replica rebuild failed: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -2029,6 +2134,9 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		}
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
 			fmt.Sprintf("SHOW GLOBAL VARIABLES LIKE '%s'", escapeSQL(pattern)))
+	case "show_replication_status":
+		out, runErr := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
+		output, err = string(out), runErr
 	case "set_variable":
 		name, _ := req.Config["name"].(string)
 		value, _ := req.Config["value"].(string)
@@ -2105,9 +2213,18 @@ func adminTarget(config map[string]interface{}) (string, int, string, string) {
 	}
 	user, _ := config["target_user"].(string)
 	if user == "" {
+		user, _ = config["mysql_user"].(string)
+	}
+	if user == "" {
 		user = "root"
 	}
 	pass, _ := config["target_pass"].(string)
+	if pass == "" {
+		pass, _ = config["mysql_password"].(string)
+	}
+	if pass == "" {
+		pass, _ = config["mysql_pass"].(string)
+	}
 	return host, port, user, pass
 }
 
@@ -2122,10 +2239,6 @@ func validateServiceControlConfig(config map[string]interface{}) error {
 		return fmt.Errorf("service control requires instance datadir metadata")
 	}
 	if verb == "start" || verb == "restart" {
-		basedir, _ := config["basedir"].(string)
-		if strings.TrimSpace(basedir) == "" {
-			return fmt.Errorf("service control %s requires instance basedir metadata", verb)
-		}
 		if configInt(config, "target_port") <= 0 {
 			return fmt.Errorf("service control %s requires instance port metadata", verb)
 		}
@@ -2154,13 +2267,13 @@ func controlInstanceService(ctx context.Context, config map[string]interface{}) 
 	case "stop":
 		return stopInstanceProcess(ctx, datadir)
 	case "start":
-		return startInstanceProcess(ctx, basedir, datadir, osUser, port)
+		return startInstanceProcess(ctx, basedir, datadir, osUser, port, configInt(config, "server_id"))
 	case "restart":
 		stopOutput, stopErr := stopInstanceProcess(ctx, datadir)
 		if stopErr != nil {
 			return stopOutput, stopErr
 		}
-		startOutput, startErr := startInstanceProcess(ctx, basedir, datadir, osUser, port)
+		startOutput, startErr := startInstanceProcess(ctx, basedir, datadir, osUser, port, configInt(config, "server_id"))
 		return strings.TrimSpace(stopOutput + "\n" + startOutput), startErr
 	default:
 		return "", fmt.Errorf("invalid service action")
@@ -2214,31 +2327,42 @@ func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
 	return fmt.Sprintf("killed pid=%d datadir=%s", pid, datadir), nil
 }
 
-func startInstanceProcess(ctx context.Context, basedir, datadir, osUser string, port int) (string, error) {
+func startInstanceProcess(ctx context.Context, basedir, datadir, osUser string, port int, serverID int) (string, error) {
 	if pid, ok := instancePID(datadir); ok && processMatchesDatadir(pid, datadir) {
 		return fmt.Sprintf("already running pid=%d datadir=%s", pid, datadir), nil
-	}
-	if basedir == "" {
-		return "", fmt.Errorf("basedir is required to start instance")
 	}
 	if port <= 0 {
 		return "", fmt.Errorf("target_port is required to start instance")
 	}
-	mysqld := filepath.Join(basedir, "bin", "mysqld")
-	if _, err := os.Stat(mysqld); err != nil {
-		return "", fmt.Errorf("mysqld not found at %s: %w", mysqld, err)
+	mysqld := "mysqld"
+	if basedir != "" {
+		mysqld = filepath.Join(basedir, "bin", "mysqld")
+		if _, err := os.Stat(mysqld); err != nil {
+			return "", fmt.Errorf("mysqld not found at %s: %w", mysqld, err)
+		}
+	}
+	if serverID <= 0 {
+		serverID = port
 	}
 	args := []string{
 		"--no-defaults",
 		"--daemonize",
-		"--basedir=" + basedir,
 		"--datadir=" + datadir,
 		"--port=" + fmt.Sprintf("%d", port),
+		"--server-id=" + fmt.Sprintf("%d", serverID),
+		"--log-bin=mysql-bin",
+		"--binlog-format=ROW",
+		"--gtid-mode=ON",
+		"--enforce-gtid-consistency=ON",
+		"--log-slave-updates=ON",
 		"--bind-address=0.0.0.0",
 		"--socket=" + filepath.Join(datadir, "mysql.sock"),
 		"--pid-file=" + filepath.Join(datadir, "mysql.pid"),
 		"--log-error=" + filepath.Join(datadir, "error.log"),
 		"--user=" + osUser,
+	}
+	if basedir != "" {
+		args = append(args, "--basedir="+basedir)
 	}
 	if out, err := exec.CommandContext(ctx, mysqld, args...).CombinedOutput(); err != nil {
 		return strings.TrimSpace(string(out)), err

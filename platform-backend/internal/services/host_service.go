@@ -97,6 +97,7 @@ type BatchCreateHostRow struct {
 type HostAgentActionRequest struct {
 	Action    string `json:"action" binding:"required"`
 	AgentPort int    `json:"agent_port"`
+	Sync      bool   `json:"sync"`
 }
 
 type HostAgentActionResult struct {
@@ -637,7 +638,7 @@ func agentStartCommand(port int, token string) string {
 }
 
 func agentStopCommand() string {
-	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); if [ \"$exe\" = \"/opt/dbops-agent/agent\" ]; then kill \"${p##*/}\" 2>/dev/null || true; fi; done"
+	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); case \"$exe\" in /opt/dbops-agent/agent*) kill \"${p##*/}\" 2>/dev/null || true ;; esac; done\nsleep 0.5"
 }
 
 func shellEscape(value string) string {

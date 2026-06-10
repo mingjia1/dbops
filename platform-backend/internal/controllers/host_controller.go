@@ -109,7 +109,7 @@ func (c *HostController) AgentAction(ctx *gin.Context) {
 		return
 	}
 
-	if services.IsLongRunningAgentAction(req.Action) {
+	if services.IsLongRunningAgentAction(req.Action) && !req.Sync {
 		result, err := c.service.SubmitAgentAction(ctx.Request.Context(), id, req)
 		if err != nil {
 			utils.InternalServerErrorResponse(ctx, "Failed to submit host agent action", err)
