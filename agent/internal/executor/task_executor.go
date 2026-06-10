@@ -591,34 +591,41 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 		}, nil
 	}
 
-	backupCmd := exec.CommandContext(ctx, "xtrabackup",
-		"--backup",
-		"--target-dir="+backupDir,
-		"--host="+config.MySQLHost,
-		"--port="+fmt.Sprintf("%d", config.MySQLPort),
-		"--user="+config.MySQLUser,
-		"--password="+config.MySQLPass,
-	)
-	if config.BackupType == "incremental" {
-		if config.BaseBackupPath == "" {
-			return &TaskResult{
-				Status:    "failed",
-				Progress:  0,
-				Message:   "incremental backup requires a completed full backup",
-				Timestamp: time.Now(),
-			}, nil
-		}
-		backupCmd.Args = append(backupCmd.Args, "--incremental-basedir="+config.BaseBackupPath)
-	}
-
-	// A3 part 1: --stream=xbstream 写到 stdout, 之前 Stdout=nil 把流扔了,
-	// sha256sum 必然拿不到文件, 然后假装 "checksum-unavailable" + 报 completed.
-	// 修: 把 xbstream 流到磁盘, sha256sum 才能算出真 hash.
-	if out, err := backupCmd.CombinedOutput(); err != nil {
+	if config.BackupType == "incremental" && config.BaseBackupPath == "" {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  0,
-			Message:   fmt.Sprintf("Xtrabackup backup failed: %v\n%s", err, strings.TrimSpace(string(out))),
+			Message:   "incremental backup requires a completed full backup",
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	var lastBackupErr string
+	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
+		_ = os.RemoveAll(backupDir)
+		backupCmd := exec.CommandContext(ctx, "xtrabackup",
+			"--backup",
+			"--target-dir="+backupDir,
+			"--host="+host,
+			"--port="+fmt.Sprintf("%d", config.MySQLPort),
+			"--user="+config.MySQLUser,
+			"--password="+config.MySQLPass,
+		)
+		if config.BackupType == "incremental" {
+			backupCmd.Args = append(backupCmd.Args, "--incremental-basedir="+config.BaseBackupPath)
+		}
+		if out, err := backupCmd.CombinedOutput(); err != nil {
+			lastBackupErr = fmt.Sprintf("host=%s: %v\n%s", host, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		lastBackupErr = ""
+		break
+	}
+	if lastBackupErr != "" {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "Xtrabackup backup failed: " + lastBackupErr,
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -703,28 +710,57 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 		}, nil
 	}
 
-	args := []string{
-		"--single-transaction",
-		"--routines",
-		"--events",
-		"--triggers",
-		"--all-databases",
-		"-h", defaultString(config.MySQLHost, "127.0.0.1"),
-		"-P", fmt.Sprintf("%d", config.MySQLPort),
-		"-u", defaultString(config.MySQLUser, "root"),
+	var lastDumpErr string
+	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
+		if err := outFile.Truncate(0); err != nil {
+			_ = outFile.Close()
+			_ = os.Remove(backupFile)
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("truncate logical backup file failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		if _, err := outFile.Seek(0, 0); err != nil {
+			_ = outFile.Close()
+			_ = os.Remove(backupFile)
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("seek logical backup file failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		args := []string{
+			"--single-transaction",
+			"--routines",
+			"--events",
+			"--triggers",
+			"--all-databases",
+			"-h", host,
+			"-P", fmt.Sprintf("%d", config.MySQLPort),
+			"-u", defaultString(config.MySQLUser, "root"),
+		}
+		cmd := exec.CommandContext(ctx, "mysqldump", args...)
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+		cmd.Stdout = outFile
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			lastDumpErr = fmt.Sprintf("host=%s: %v\n%s", host, err, strings.TrimSpace(stderr.String()))
+			continue
+		}
+		lastDumpErr = ""
+		break
 	}
-	cmd := exec.CommandContext(ctx, "mysqldump", args...)
-	cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
-	cmd.Stdout = outFile
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if lastDumpErr != "" {
 		_ = outFile.Close()
 		_ = os.Remove(backupFile)
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  0,
-			Message:   fmt.Sprintf("mysqldump backup failed: %v\n%s", err, strings.TrimSpace(stderr.String())),
+			Message:   "mysqldump backup failed: " + lastDumpErr,
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -2026,6 +2062,27 @@ func configInt(config map[string]interface{}, key string) int {
 		return int(v)
 	}
 	return 0
+}
+
+func backupMySQLHostCandidates(host string) []string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	candidates := []string{host}
+	if isLocalHost(host) {
+		candidates = append(candidates, "localhost", "127.0.0.1")
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && !seen[candidate] {
+			seen[candidate] = true
+			out = append(out, candidate)
+		}
+	}
+	return out
 }
 
 func defaultString(value, fallback string) string {
