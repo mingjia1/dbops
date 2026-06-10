@@ -250,7 +250,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	config := map[string]interface{}{
 		"backup_type": req.BackupType,
 		"target_dir":  targetDir,
-		"mysql_host":  conn.Host,
+		"mysql_host":  localMySQLHostForAgent(conn.Host, agentHost),
 		"mysql_port":  conn.Port,
 		"mysql_user":  conn.Username,
 		"mysql_pass":  password,
@@ -661,6 +661,16 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 	}
 	taskID := fmt.Sprintf("restore-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
 	startedAt := time.Now()
+	if s.taskRepo != nil {
+		_ = s.taskRepo.Create(ctx, &models.Task{
+			ID:         taskID,
+			TaskType:   "restore",
+			InstanceID: req.TargetInstanceID,
+			Status:     "pending",
+			Progress:   0,
+			CreatedAt:  startedAt,
+		})
+	}
 	out := &RestoreBackupResult{
 		BackupID:         req.BackupID,
 		TargetInstanceID: req.TargetInstanceID,
@@ -676,7 +686,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 			"instance_id": req.TargetInstanceID,
 			"config": map[string]interface{}{
 				"backup_path": backup.FilePath,
-				"mysql_host":  conn.Host,
+				"mysql_host":  localMySQLHostForAgent(conn.Host, agentHost),
 				"mysql_port":  conn.Port,
 				"mysql_user":  conn.Username,
 				"mysql_pass":  password,
@@ -692,6 +702,21 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 				out.CompletedAt = time.Now()
 			}
 		}
+	}
+	if s.taskRepo != nil {
+		progress := 0
+		if isTerminalBackupStatus(out.Status) {
+			progress = 100
+		}
+		_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, out.Status, progress, out.Message)
+		_ = s.taskRepo.AddLog(ctx, &models.TaskLog{
+			TaskID:    taskID,
+			LogID:     uuid.NewString(),
+			Timestamp: time.Now(),
+			Level:     backupTaskLogLevel(out.Status),
+			Message:   out.Message,
+			Context:   fmt.Sprintf("backup_id=%s target_instance_id=%s target_type=%s", req.BackupID, req.TargetInstanceID, req.TargetType),
+		})
 	}
 	restoreRecord := &models.RestoreRecord{
 		BackupID:         req.BackupID,
@@ -724,6 +749,15 @@ func (s *BackupService) DeleteBackupRecord(ctx context.Context, backupID string)
 	s.auditBackup(ctx, "delete_backup_record", "delete", "backup_record", backupID, "success", "",
 		fmt.Sprintf("backup_id=%s instance_id=%s file_path=%s", backup.ID, backup.InstanceID, backup.FilePath))
 	return nil
+}
+
+func localMySQLHostForAgent(mysqlHost, agentHost string) string {
+	mysqlHost = strings.TrimSpace(mysqlHost)
+	agentHost = strings.TrimSpace(agentHost)
+	if mysqlHost == "" || mysqlHost == agentHost {
+		return "127.0.0.1"
+	}
+	return mysqlHost
 }
 
 func dedupeDiscoveredBackups(items []DiscoveredBackup) []DiscoveredBackup {
