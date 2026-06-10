@@ -118,6 +118,12 @@ func TestTopologyService_InferClusterTopologyWhenRelationsMissing(t *testing.T) 
 	assert.Equal(t, "replica", instances[2].Role)
 }
 
+func TestTopologyService_ParseTopologySlaveIDsSupportsJSONAndCSV(t *testing.T) {
+	assert.Equal(t, []string{"replica-1", "replica-2"}, parseTopologySlaveIDs(`["replica-1","replica-2"]`))
+	assert.Equal(t, []string{"replica-1", "replica-2"}, parseTopologySlaveIDs("replica-1, replica-2,,"))
+	assert.Empty(t, parseTopologySlaveIDs(""))
+}
+
 func TestTopologyService_GetClusterTopologyInfersSinglePrimaryWhenRolesMissing(t *testing.T) {
 	mockRepo := new(MockInstanceRepo)
 	service := NewTestableTopologyService(mockRepo)
@@ -190,6 +196,38 @@ func TestTopologyService_BuildTopologyGraphUsesPersistedStatusAndMode(t *testing
 	assert.Equal(t, "unhealthy", byID["topo-replica"].Status)
 	require.Len(t, graph.Edges, 1)
 	assert.Equal(t, "semisync", graph.Edges[0].Label)
+}
+
+func TestTopologyService_BuildTopologyGraphParsesCSVSlaveIDs(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	repo := repositories.NewInstanceRepository(db)
+	service := NewTopologyService(repo)
+	clusterID := "cluster-topology-csv"
+
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "csv-master", Name: "csv-master", ClusterID: clusterID}))
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "csv-replica-1", Name: "csv-replica-1", ClusterID: clusterID}))
+	require.NoError(t, repo.Create(ctx, &models.Instance{ID: "csv-replica-2", Name: "csv-replica-2", ClusterID: clusterID}))
+	require.NoError(t, repo.UpsertStatus(ctx, "csv-master", &models.InstanceStatus{Role: "master", HealthStatus: "healthy"}))
+	require.NoError(t, repo.UpsertStatus(ctx, "csv-replica-1", &models.InstanceStatus{Role: "replica", HealthStatus: "healthy"}))
+	require.NoError(t, repo.UpsertStatus(ctx, "csv-replica-2", &models.InstanceStatus{Role: "replica", HealthStatus: "healthy"}))
+	require.NoError(t, repo.UpsertTopology(ctx, "csv-master", &models.InstanceTopology{
+		ClusterID:       clusterID,
+		SlaveIDs:        "csv-replica-1, csv-replica-2",
+		ReplicationMode: "async",
+	}))
+
+	graph, err := service.BuildTopologyGraph(ctx, clusterID)
+
+	require.NoError(t, err)
+	require.Len(t, graph.Edges, 2)
+	targets := map[string]bool{}
+	for _, edge := range graph.Edges {
+		assert.Equal(t, "csv-master", edge.SourceID)
+		targets[edge.TargetID] = true
+	}
+	assert.True(t, targets["csv-replica-1"])
+	assert.True(t, targets["csv-replica-2"])
 }
 
 func TestTopologyService_GetClusterTopologyUsesClusterQueryBeyondFirstPage(t *testing.T) {

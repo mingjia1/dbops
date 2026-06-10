@@ -11,6 +11,7 @@ const api = axios.create({
 
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
 const agentSubmitTimeoutMs = 30000
+const agentSubmitFastTimeoutMs = 8000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
 
 export const extractTaskPayload = (value: any): any => {
@@ -71,8 +72,10 @@ api.interceptors.response.use(
     if (error.response?.status === 404) {
       return Promise.reject(error)
     }
-    const errMsg = error.response?.data?.message || error.message || 'Request failed'
-    message.error(errMsg)
+    if (!(error.config as any)?.suppressGlobalError) {
+      const errMsg = error.response?.data?.message || error.message || 'Request failed'
+      message.error(errMsg)
+    }
     return Promise.reject(error)
   }
 )
@@ -323,7 +326,7 @@ export const hostApi = {
     api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 240000) }),
 
   submitBatchAgentAction: (hostIds: string[], action: string, agentPort?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitTimeoutMs }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true } as any),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

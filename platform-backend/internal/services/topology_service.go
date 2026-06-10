@@ -71,13 +71,7 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 	if instance.Topology.InstanceID != "" {
 		topology.MasterID = instance.Topology.MasterID
 		topology.ReplicationMode = instance.Topology.ReplicationMode
-
-		if instance.Topology.SlaveIDs != "" {
-			var slaveIDs []string
-			if err := json.Unmarshal([]byte(instance.Topology.SlaveIDs), &slaveIDs); err == nil {
-				topology.SlaveIDs = slaveIDs
-			}
-		}
+		topology.SlaveIDs = parseTopologySlaveIDs(instance.Topology.SlaveIDs)
 
 		if instance.Status.Role != "" {
 			topology.Role = instance.Status.Role
@@ -87,6 +81,29 @@ func (s *TopologyService) GetInstanceTopology(ctx context.Context, instanceID st
 	}
 
 	return topology, nil
+}
+
+func parseTopologySlaveIDs(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return []string{}
+	}
+	var slaveIDs []string
+	if err := json.Unmarshal([]byte(value), &slaveIDs); err == nil {
+		return compactTopologyIDs(slaveIDs)
+	}
+	return compactTopologyIDs(strings.Split(value, ","))
+}
+
+func compactTopologyIDs(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID string) (*ClusterTopologyResponse, error) {
