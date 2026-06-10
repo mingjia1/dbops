@@ -80,8 +80,12 @@ func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testin
 
 func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	ctx := context.Background()
+	payloads := make([]DeployTaskPayload, 0, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		var payload DeployTaskPayload
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		payloads = append(payloads, payload)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"ha-sync","status":"completed","progress":100,"message":"ha deployed"}}`))
 	}))
@@ -116,30 +120,45 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	}
 	createManagedInstance("ha-master", "ha-master", "host-master", 3306)
 	createManagedInstance("ha-replica", "ha-replica", "host-replica", 3307)
+	createManagedInstance("ha-replica-2", "ha-replica-2", "host-replica", 3308)
 
 	resp, err := service.DeployHA(ctx, DeployHARequest{
-		ClusterID:     "ha-real-sync",
-		Name:          "ha-real-sync",
-		MasterHostID:  "host-master",
-		ReplicaHostID: "host-replica",
+		ClusterID:    "ha-real-sync",
+		Name:         "ha-real-sync",
+		MasterHostID: "host-master",
+		ReplicaHosts: []SecondaryNode{
+			{Host: agentHost, Port: 3307, AgentPort: agentPort},
+			{Host: agentHost, Port: 3308, AgentPort: agentPort},
+		},
 		MasterPort:    3306,
-		ReplicaPort:   3307,
 		MySQLUser:     "root",
 		MySQLPassword: "rootpass",
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
+	require.Len(t, payloads, 3)
+	require.Equal(t, "ha-master", payloads[0].Config["deploy_mode"])
+	require.Equal(t, "ha-replica", payloads[1].Config["deploy_mode"])
+	require.Equal(t, "ha-replica", payloads[2].Config["deploy_mode"])
+	require.Equal(t, "127.0.0.1", payloads[0].Config["master_host"])
+	require.Equal(t, "127.0.0.1", payloads[1].Config["slave_host"])
 	master, err := instRepo.GetByID(ctx, "ha-master")
 	require.NoError(t, err)
 	require.Equal(t, "ha-real-sync", master.ClusterID)
 	require.Equal(t, "master", master.Status.Role)
 	require.Contains(t, master.Topology.SlaveIDs, "ha-replica")
+	require.Contains(t, master.Topology.SlaveIDs, "ha-replica-2")
 	replica, err := instRepo.GetByID(ctx, "ha-replica")
 	require.NoError(t, err)
 	require.Equal(t, "ha-real-sync", replica.ClusterID)
 	require.Equal(t, "slave", replica.Status.Role)
 	require.Equal(t, "ha-master", replica.Topology.MasterID)
+	replica2, err := instRepo.GetByID(ctx, "ha-replica-2")
+	require.NoError(t, err)
+	require.Equal(t, "ha-real-sync", replica2.ClusterID)
+	require.Equal(t, "slave", replica2.Status.Role)
+	require.Equal(t, "ha-master", replica2.Topology.MasterID)
 }
 
 func TestDestroyClusterWritesAuditLog(t *testing.T) {

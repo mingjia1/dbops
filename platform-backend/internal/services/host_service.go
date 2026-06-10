@@ -1112,6 +1112,7 @@ type BatchRegisterScannedInstanceResult struct {
 	Total      int                               `json:"total"`
 	Registered int                               `json:"registered"`
 	Skipped    int                               `json:"skipped"`
+	Updated    int                               `json:"updated"`
 	Rows       []BatchRegisterScannedInstanceRow `json:"rows"`
 }
 
@@ -1186,10 +1187,21 @@ func (s *HostService) RegisterScannedInstances(ctx context.Context, hostID strin
 			row.Status = "failed"
 			row.Message = "port is required"
 		} else if existingID, ok := managedPorts[item.Port]; ok {
-			row.Status = "skipped"
-			row.Message = "instance already managed"
 			row.InstanceID = existingID
-			result.Skipped++
+			if item.Password != "" {
+				if err := s.updateScannedInstancePassword(ctx, existingID, item.Password); err != nil {
+					row.Status = "failed"
+					row.Message = err.Error()
+				} else {
+					row.Status = "updated"
+					row.Message = "instance already managed; connection password updated"
+					result.Updated++
+				}
+			} else {
+				row.Status = "skipped"
+				row.Message = "instance already managed"
+				result.Skipped++
+			}
 		} else {
 			instanceID, err := s.RegisterScannedInstance(ctx, hostID, item)
 			if err != nil {
@@ -1205,4 +1217,15 @@ func (s *HostService) RegisterScannedInstances(ctx context.Context, hostID strin
 		result.Rows = append(result.Rows, row)
 	}
 	return result, nil
+}
+
+func (s *HostService) updateScannedInstancePassword(ctx context.Context, instanceID, password string) error {
+	encPwd, err := utils.Encrypt(password, s.encKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt password: %w", err)
+	}
+	if err := s.instanceRepo.UpdateConnectionPassword(ctx, instanceID, encPwd); err != nil {
+		return fmt.Errorf("failed to update connection password: %w", err)
+	}
+	return nil
 }

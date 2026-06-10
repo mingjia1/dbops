@@ -163,8 +163,10 @@ func TestInstanceDeployWritesFailedAuditLogOnPasswordDecryptFailure(t *testing.T
 }
 
 func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
+	var payload DeployTaskPayload
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/health-check", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"code":    200,
 			"message": "success",
@@ -217,9 +219,36 @@ func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "failed", result.Status)
+	assert.Equal(t, instanceID, payload.InstanceID)
+	assert.Equal(t, "10.1.81.41", payload.Config["target_host"])
+	assert.Equal(t, float64(3306), payload.Config["target_port"])
+	assert.Equal(t, "root", payload.Config["target_user"])
+	assert.Equal(t, "rootpass", payload.Config["target_pass"])
 	status, err := instRepo.GetStatus(context.Background(), instanceID)
 	require.NoError(t, err)
 	assert.Equal(t, "unhealthy", status.HealthStatus)
+}
+
+func TestResolveAgentMySQLTargetUsesLocalhostForSameManagedHost(t *testing.T) {
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewInstanceService(instRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key")
+	hostID := "same-host"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{
+		ID:        hostID,
+		Name:      "same-host",
+		Address:   "10.1.81.21",
+		AgentPort: 9090,
+		SSHPort:   22,
+		SSHUser:   "root",
+	}))
+	instance := &models.Instance{ID: "same-instance", HostID: &hostID}
+	conn := &models.InstanceConnection{InstanceID: instance.ID, Host: "10.1.81.21", Port: 23306}
+
+	assert.Equal(t, "127.0.0.1", service.resolveAgentMySQLTarget(context.Background(), instance, conn, "10.1.81.21"))
+	assert.Equal(t, "10.1.81.21", service.resolveAgentMySQLTarget(context.Background(), instance, conn, "10.1.81.22"))
 }
 
 func newInstanceAdminServiceWithoutAgent(t *testing.T) (*InstanceService, string) {

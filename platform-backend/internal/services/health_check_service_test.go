@@ -1,6 +1,7 @@
 package services
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 
@@ -45,5 +46,13 @@ func TestFailureStates_ConcurrentSafe(t *testing.T) {
 	state := svc.GetFailureState("inst-1")
 	if state == nil {
 		t.Fatalf("expected state to exist after concurrent writes")
+	}
+}
+
+func TestBatchHealthCheckTypesOnlyCheckLiveness(t *testing.T) {
+	got := batchHealthCheckTypes()
+	want := []string{"tcp", "mysql"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("batch health check types = %v, want %v", got, want)
 	}
 }

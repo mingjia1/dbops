@@ -142,8 +142,14 @@ func main() {
 			})
 
 			tasks.POST("/health-check", func(c *gin.Context) {
-				instanceID := c.Query("instance_id")
-				result, err := taskExecutor.ExecuteHealthCheck(c.Request.Context(), instanceID)
+				req := executor.DeployTaskRequest{InstanceID: c.Query("instance_id")}
+				if c.Request.ContentLength != 0 {
+					if err := c.ShouldBindJSON(&req); err != nil {
+						c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+						return
+					}
+				}
+				result, err := taskExecutor.ExecuteHealthCheck(c.Request.Context(), req)
 				if err != nil {
 					c.JSON(500, gin.H{"code": 500, "message": "Health check failed"})
 					return

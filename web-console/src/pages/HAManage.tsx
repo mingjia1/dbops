@@ -13,6 +13,13 @@ interface HAClusterStatus {
   history: any[]
 }
 
+const haNodeID = (node: any) => node?.instance_id || node?.id || '-'
+const haNodeEndpoint = (node: any) => {
+  if (!node) return '-'
+  if (node.host && node.port) return `${node.host}:${node.port}`
+  return node.host || '-'
+}
+
 const isFailedHAStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
@@ -223,16 +230,16 @@ const HAManage: React.FC = () => {
     }
   }
   const slaveColumns: ColumnsType<any> = [
-    { title: '实例ID', dataIndex: 'id', key: 'id' },
+    { title: '实例ID', key: 'id', render: (_, row) => haNodeID(row) },
+    { title: '地址', key: 'endpoint', render: (_, row) => haNodeEndpoint(row) },
     {
-      title: '状态',
-      dataIndex: 'status',
+      title: '健康',
       key: 'status',
-      render: (s: string) => (
-        <Tag color={s === 'running' ? 'success' : s === 'failed' ? 'error' : 'default'}>{s || 'unknown'}</Tag>
+      render: (_, row) => (
+        <Tag color={row?.is_healthy ? 'success' : 'error'}>{row?.is_healthy ? 'healthy' : 'unhealthy'}</Tag>
       ),
     },
-    { title: '延迟(s)', dataIndex: 'seconds_behind_master', key: 'seconds_behind_master' },
+    { title: '角色', dataIndex: 'role', key: 'role', render: (role: string) => <Tag>{role || '-'}</Tag> },
   ]
 
   const historyColumns: ColumnsType<any> = [
@@ -334,7 +341,12 @@ const HAManage: React.FC = () => {
                   <Descriptions bordered column={2}>
                     <Descriptions.Item label="集群ID">{status.cluster_id}</Descriptions.Item>
                     <Descriptions.Item label="主节点">
-                      {status.master ? <Tag color="blue">{status.master.id}</Tag> : '-'}
+                      {status.master ? (
+                        <Space>
+                          <Tag color="blue">{haNodeID(status.master)}</Tag>
+                          <span>{haNodeEndpoint(status.master)}</span>
+                        </Space>
+                      ) : '-'}
                     </Descriptions.Item>
                     <Descriptions.Item label="从节点数">{status.slaves?.length || 0}</Descriptions.Item>
                     <Descriptions.Item label="历史切换">{status.history?.length || 0}</Descriptions.Item>
@@ -344,7 +356,7 @@ const HAManage: React.FC = () => {
               {
                 key: 'slaves',
                 label: '从节点',
-                children: <Table columns={slaveColumns} dataSource={status.slaves || []} rowKey="id" />,
+                children: <Table columns={slaveColumns} dataSource={status.slaves || []} rowKey={(row) => haNodeID(row)} />,
               },
               {
                 key: 'history',

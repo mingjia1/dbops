@@ -1,17 +1,24 @@
 package controllers
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type HealthCheckController struct {
-	service *services.HealthCheckService
+	service         *services.HealthCheckService
+	instanceService *services.InstanceService
 }
 
-func NewHealthCheckController(service *services.HealthCheckService) *HealthCheckController {
-	return &HealthCheckController{service: service}
+func NewHealthCheckController(service *services.HealthCheckService, instanceService ...*services.InstanceService) *HealthCheckController {
+	ctrl := &HealthCheckController{service: service}
+	if len(instanceService) > 0 {
+		ctrl.instanceService = instanceService[0]
+	}
+	return ctrl
 }
 
 func (c *HealthCheckController) ExecuteHealthCheck(ctx *gin.Context) {
@@ -68,6 +75,34 @@ func (c *HealthCheckController) BatchHealthCheck(ctx *gin.Context) {
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	if c.instanceService != nil {
+		results := make([]services.HealthCheckResult, 0, len(req.InstanceIDs))
+		for _, instanceID := range req.InstanceIDs {
+			actionResult, err := c.instanceService.HealthCheck(ctx.Request.Context(), instanceID)
+			row := services.HealthCheckResult{
+				InstanceID: instanceID,
+				CheckType:  "agent_mysql",
+				CheckTime:  time.Now(),
+			}
+			if err != nil {
+				row.Status = "error"
+				row.IsHealthy = false
+				row.ErrorMessage = err.Error()
+			} else if actionResult != nil {
+				row.Status = actionResult.Status
+				row.IsHealthy = actionResult.Status == "completed" || actionResult.Status == "healthy" || actionResult.Status == "success"
+				if !row.IsHealthy {
+					row.ErrorMessage = actionResult.Message
+				}
+				row.Details.TCPReachable = row.IsHealthy
+				row.Details.MySQLAlive = row.IsHealthy
+			}
+			results = append(results, row)
+		}
+		utils.SuccessResponse(ctx, results)
 		return
 	}
 

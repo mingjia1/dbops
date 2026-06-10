@@ -471,6 +471,9 @@ func (s *HealthCheckService) BatchHealthCheck(ctx context.Context, instanceIDs [
 	for _, instanceID := range instanceIDs {
 		req := HealthCheckRequest{
 			InstanceID: instanceID,
+			Config: HealthCheckConfig{
+				CheckTypes: batchHealthCheckTypes(),
+			},
 		}
 		result, err := s.ExecuteHealthCheck(ctx, req)
 		if err != nil {
@@ -486,4 +489,8 @@ func (s *HealthCheckService) BatchHealthCheck(ctx context.Context, instanceIDs [
 	}
 
 	return results, nil
+}
+
+func batchHealthCheckTypes() []string {
+	return []string{"tcp", "mysql"}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,4 +98,62 @@ func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	assert.Equal(t, "submitted", result.Status)
 	assert.Equal(t, "install", result.Action)
 	assert.Equal(t, host.ID, result.HostID)
+}
+
+func TestRegisterScannedInstancesUpdatesPasswordForManagedPort(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	service := NewHostService(hostRepo, "test-encryption-key")
+	service.SetInstanceRepo(instanceRepo)
+
+	host := &models.Host{
+		ID:      "host-scan-existing",
+		Name:    "host-scan-existing",
+		Address: "10.0.0.21",
+		SSHPort: 22,
+		SSHUser: "root",
+	}
+	require.NoError(t, hostRepo.Create(ctx, host))
+
+	hostID := host.ID
+	instance := &models.Instance{
+		ID:     "instance-existing-23306",
+		Name:   "existing-23306",
+		HostID: &hostID,
+	}
+	require.NoError(t, instanceRepo.Create(ctx, instance))
+	oldPassword, err := utils.Encrypt("old-password", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, instanceRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID:        instance.ID,
+		Host:              host.Address,
+		Port:              23306,
+		Username:          "root",
+		PasswordEncrypted: oldPassword,
+	}))
+
+	result, err := service.RegisterScannedInstances(ctx, host.ID, BatchRegisterScannedInstanceRequest{
+		Instances: []RegisterScannedInstanceRequest{{
+			Port:     23306,
+			Name:     "existing-23306",
+			Username: "root",
+			Password: "new-password",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, 1, result.Updated)
+	assert.Equal(t, 0, result.Registered)
+	assert.Equal(t, "updated", result.Rows[0].Status)
+	assert.Equal(t, instance.ID, result.Rows[0].InstanceID)
+
+	conn, err := instanceRepo.GetConnection(ctx, instance.ID)
+	require.NoError(t, err)
+	plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
+	require.NoError(t, err)
+	assert.Equal(t, "new-password", plain)
 }

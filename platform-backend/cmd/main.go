@@ -155,7 +155,7 @@ func main() {
 	topologyController := controllers.NewTopologyController(topologyService)
 
 	healthCheckService := services.NewHealthCheckService(db, cfg.EncryptionKey)
-	healthCheckController := controllers.NewHealthCheckController(healthCheckService)
+	healthCheckController := controllers.NewHealthCheckController(healthCheckService, instanceService)
 
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)

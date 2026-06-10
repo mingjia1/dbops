@@ -404,10 +404,9 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		return nil, err
 	}
 	if req.PseudoMode {
-		return s.deployPseudoCluster(ctx, "ha", req.ClusterID, req.Name, []pseudoNode{
+		return s.deployPseudoCluster(ctx, "ha", req.ClusterID, req.Name, append([]pseudoNode{
 			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
-			{Host: req.ReplicaHost, Port: req.ReplicaPort, Role: "slave"},
-		}, nil)
+		}, haReplicaPseudoNodes(req.ReplicaHosts, "slave")...), nil)
 	}
 	deployment := &models.ClusterDeployment{
 		ID:          req.ClusterID,
@@ -419,19 +418,6 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
-	config := map[string]interface{}{
-		"deploy_mode":      "master-slave",
-		"master_host":      req.MasterHost,
-		"master_port":      req.MasterPort,
-		"slave_host":       req.ReplicaHost,
-		"slave_port":       req.ReplicaPort,
-		"replicate_user":   defaultString(req.ReplUser, s.defaults.ReplicationUser),
-		"replicate_pass":   defaultString(req.ReplPassword, s.defaults.ReplicationPass),
-		"mysql_user":       defaultString(req.MySQLUser, "root"),
-		"mysql_password":   req.MySQLPassword,
-		"replication_mode": "async",
-	}
-
 	agentPort := req.MasterAgentPort
 	if agentPort == 0 {
 		agentPort = 9090
@@ -439,10 +425,19 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 	if s.agentClient == nil {
 		return s.failDeployment(ctx, deployment, "ha", req.Name, "agent client not configured"), nil
 	}
+	masterConfig := map[string]interface{}{
+		"deploy_mode":    "ha-master",
+		"master_host":    "127.0.0.1",
+		"master_port":    req.MasterPort,
+		"replicate_user": defaultString(req.ReplUser, s.defaults.ReplicationUser),
+		"replicate_pass": defaultString(req.ReplPassword, s.defaults.ReplicationPass),
+		"mysql_user":     defaultString(req.MySQLUser, "root"),
+		"mysql_password": req.MySQLPassword,
+	}
 	result, err := s.agentClient.callAgent(ctx, req.MasterHost, agentPort, "/agent/tasks/deploy", map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
-		"config":      config,
+		"config":      masterConfig,
 	})
 	if err != nil {
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
@@ -456,12 +451,70 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		}, nil
 	}
 	status := normalizeDeployStatus(result.Status)
+	if isFailedDeployStatus(status) {
+		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+		return &DeployResponse{
+			DeploymentID: deployment.ID,
+			ClusterType:  "ha",
+			Name:         req.Name,
+			Status:       "failed",
+			Message:      result.Message,
+			CreatedAt:    deployment.CreatedAt,
+		}, nil
+	}
+	for i, replica := range req.ReplicaHosts {
+		replicaConfig := map[string]interface{}{
+			"deploy_mode":    "ha-replica",
+			"master_host":    req.MasterHost,
+			"master_port":    req.MasterPort,
+			"slave_host":     "127.0.0.1",
+			"slave_port":     replica.Port,
+			"server_id":      i + 2,
+			"replicate_user": defaultString(req.ReplUser, s.defaults.ReplicationUser),
+			"replicate_pass": defaultString(req.ReplPassword, s.defaults.ReplicationPass),
+			"mysql_user":     defaultString(req.MySQLUser, "root"),
+			"mysql_password": req.MySQLPassword,
+		}
+		result, err = s.agentClient.callAgent(ctx, replica.Host, defaultInt(replica.AgentPort, 9090), "/agent/tasks/deploy", map[string]interface{}{
+			"task_id":     fmt.Sprintf("%s-replica-%d", deployment.ID, i+1),
+			"instance_id": "",
+			"config":      replicaConfig,
+		})
+		if err != nil {
+			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+			return &DeployResponse{
+				DeploymentID: deployment.ID,
+				ClusterType:  "ha",
+				Name:         req.Name,
+				Status:       "failed",
+				Message:      fmt.Sprintf("HA replica deploy failed on %s:%d: %v", replica.Host, replica.Port, err),
+				CreatedAt:    deployment.CreatedAt,
+			}, nil
+		}
+		if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+			if strings.Contains(result.Message, "MySQL initialization failed") {
+				if legacyResult, legacyErr := s.deployHAReplicaViaMasterAgent(ctx, req, deployment.ID, i, replica, agentPort); legacyErr == nil && legacyResult != nil && !isFailedDeployStatus(normalizeDeployStatus(legacyResult.Status)) {
+					continue
+				}
+			}
+			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
+			return &DeployResponse{
+				DeploymentID: deployment.ID,
+				ClusterType:  "ha",
+				Name:         req.Name,
+				Status:       "failed",
+				Message:      fmt.Sprintf("HA replica deploy failed on %s:%d: %s", replica.Host, replica.Port, result.Message),
+				CreatedAt:    deployment.CreatedAt,
+			}, nil
+		}
+	}
+
+	status = "success"
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
 	if isSuccessfulDeployStatus(status) {
-		if err := s.syncClusterManagement(ctx, "ha", deployment.ID, []pseudoNode{
+		if err := s.syncClusterManagement(ctx, "ha", deployment.ID, append([]pseudoNode{
 			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
-			{Host: req.ReplicaHost, Port: req.ReplicaPort, Role: "slave"},
-		}); err != nil {
+		}, haReplicaPseudoNodes(req.ReplicaHosts, "slave")...)); err != nil {
 			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -481,6 +534,26 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		Message:      result.Message,
 		CreatedAt:    deployment.CreatedAt,
 	}, nil
+}
+
+func (s *ClusterDeployService) deployHAReplicaViaMasterAgent(ctx context.Context, req DeployHARequest, deploymentID string, index int, replica SecondaryNode, masterAgentPort int) (*AgentTaskResult, error) {
+	config := map[string]interface{}{
+		"deploy_mode":    "master-slave",
+		"master_host":    req.MasterHost,
+		"master_port":    req.MasterPort,
+		"slave_host":     replica.Host,
+		"slave_port":     replica.Port,
+		"server_id":      index + 2,
+		"replicate_user": defaultString(req.ReplUser, s.defaults.ReplicationUser),
+		"replicate_pass": defaultString(req.ReplPassword, s.defaults.ReplicationPass),
+		"mysql_user":     defaultString(req.MySQLUser, "root"),
+		"mysql_password": req.MySQLPassword,
+	}
+	return s.agentClient.callAgent(ctx, req.MasterHost, masterAgentPort, "/agent/tasks/deploy", map[string]interface{}{
+		"task_id":     fmt.Sprintf("%s-legacy-replica-%d", deploymentID, index+1),
+		"instance_id": "",
+		"config":      config,
+	})
 }
 
 func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deploymentID string) (*DeployResponse, error) {
@@ -741,20 +814,22 @@ type DeployPXCRequest struct {
 }
 
 type DeployHARequest struct {
-	Name            string `json:"name"`
-	ClusterID       string `json:"cluster_id"`
-	MasterHostID    string `json:"master_host_id"`
-	ReplicaHostID   string `json:"replica_host_id"`
-	MasterHost      string `json:"master_host"`
-	ReplicaHost     string `json:"replica_host"`
-	MasterPort      int    `json:"master_port"`
-	ReplicaPort     int    `json:"replica_port"`
-	MasterAgentPort int    `json:"master_agent_port"`
-	ReplUser        string `json:"repl_user"`
-	ReplPassword    string `json:"repl_password"`
-	MySQLUser       string `json:"mysql_user"`
-	MySQLPassword   string `json:"mysql_password"`
-	PseudoMode      bool   `json:"pseudo_mode"`
+	Name            string          `json:"name"`
+	ClusterID       string          `json:"cluster_id"`
+	MasterHostID    string          `json:"master_host_id"`
+	ReplicaHostID   string          `json:"replica_host_id"`
+	ReplicaHostIDs  []string        `json:"replica_host_ids"`
+	MasterHost      string          `json:"master_host"`
+	ReplicaHost     string          `json:"replica_host"`
+	ReplicaHosts    []SecondaryNode `json:"replica_hosts"`
+	MasterPort      int             `json:"master_port"`
+	ReplicaPort     int             `json:"replica_port"`
+	MasterAgentPort int             `json:"master_agent_port"`
+	ReplUser        string          `json:"repl_user"`
+	ReplPassword    string          `json:"repl_password"`
+	MySQLUser       string          `json:"mysql_user"`
+	MySQLPassword   string          `json:"mysql_password"`
+	PseudoMode      bool            `json:"pseudo_mode"`
 }
 
 type SlaveNode struct {
@@ -1069,11 +1144,10 @@ func (s *ClusterDeployService) resolveHARequestHosts(ctx context.Context, req *D
 	if req.Name == "" {
 		req.Name = defaultString(req.ClusterID, fmt.Sprintf("ha-%d", time.Now().Unix()))
 	}
-	master, err := s.resolveHostRef(ctx, req.MasterHostID, req.MasterHost)
-	if err != nil {
-		return err
+	if req.ReplicaPort == 0 {
+		req.ReplicaPort = 3307
 	}
-	replica, err := s.resolveHostRef(ctx, req.ReplicaHostID, req.ReplicaHost)
+	master, err := s.resolveHostRef(ctx, req.MasterHostID, req.MasterHost)
 	if err != nil {
 		return err
 	}
@@ -1083,19 +1157,65 @@ func (s *ClusterDeployService) resolveHARequestHosts(ctx context.Context, req *D
 			req.MasterAgentPort = master.AgentPort
 		}
 	}
-	if replica.Address != "" {
-		req.ReplicaHost = replica.Address
+
+	replicas := append([]SecondaryNode{}, req.ReplicaHosts...)
+	if len(req.ReplicaHostIDs) > 0 {
+		for _, id := range req.ReplicaHostIDs {
+			replica, err := s.resolveHostRef(ctx, id, "")
+			if err != nil {
+				return err
+			}
+			replicas = append(replicas, SecondaryNode{
+				Host:      replica.Address,
+				Port:      req.ReplicaPort,
+				AgentPort: replica.AgentPort,
+			})
+		}
+	}
+	if req.ReplicaHostID != "" || req.ReplicaHost != "" {
+		replica, err := s.resolveHostRef(ctx, req.ReplicaHostID, req.ReplicaHost)
+		if err != nil {
+			return err
+		}
+		if replica.Address != "" {
+			req.ReplicaHost = replica.Address
+			replicas = append(replicas, SecondaryNode{
+				Host:      replica.Address,
+				Port:      req.ReplicaPort,
+				AgentPort: replica.AgentPort,
+			})
+		}
+	}
+	for i := range replicas {
+		if replicas[i].Port == 0 {
+			replicas[i].Port = req.ReplicaPort
+		}
+		if replicas[i].AgentPort == 0 {
+			replicas[i].AgentPort = 9090
+		}
 	}
 	if req.MasterPort == 0 {
 		req.MasterPort = 3306
 	}
-	if req.ReplicaPort == 0 {
-		req.ReplicaPort = 3307
+	if req.MasterHost == "" || len(replicas) == 0 {
+		return fmt.Errorf("master_host and at least one replica host are required")
 	}
-	if req.MasterHost == "" || req.ReplicaHost == "" {
-		return fmt.Errorf("master_host and replica_host are required")
-	}
+	req.ReplicaHosts = uniqueHAReplicas(replicas)
 	return nil
+}
+
+func uniqueHAReplicas(nodes []SecondaryNode) []SecondaryNode {
+	seen := map[string]bool{}
+	out := make([]SecondaryNode, 0, len(nodes))
+	for _, node := range nodes {
+		key := fmt.Sprintf("%s:%d", node.Host, node.Port)
+		if node.Host == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, node)
+	}
+	return out
 }
 
 func normalizeDeployStatus(status string) string {
@@ -1155,6 +1275,14 @@ func slavePseudoNodes(nodes []SlaveNode, role string) []pseudoNode {
 }
 
 func secondaryPseudoNodes(nodes []SecondaryNode, role string) []pseudoNode {
+	out := make([]pseudoNode, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
+	}
+	return out
+}
+
+func haReplicaPseudoNodes(nodes []SecondaryNode, role string) []pseudoNode {
 	out := make([]pseudoNode, 0, len(nodes))
 	for _, node := range nodes {
 		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})

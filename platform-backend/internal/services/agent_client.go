@@ -131,6 +131,15 @@ func (c *AgentClient) ExecuteHealthCheck(ctx context.Context, hostAddr string, a
 	return c.callAgentGet(ctx, url)
 }
 
+func (c *AgentClient) ExecuteMySQLHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID:     "health-check-" + instanceID,
+		InstanceID: instanceID,
+		Config:     config,
+	}
+	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/health-check", payload)
+}
+
 func (c *AgentClient) ExecuteBackup(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID, instanceID string) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID:     taskID,

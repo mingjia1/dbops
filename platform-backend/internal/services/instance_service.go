@@ -192,8 +192,9 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 		return nil, err
 	}
 	// PasswordEncrypted 是 AES-GCM 密文, agent 端自己解密再连 MySQL.
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
 	cfg := map[string]interface{}{
-		"target_host": host,
+		"target_host": targetHost,
 		"target_port": port,
 		"target_user": conn.Username,
 		"target_pass": password,
@@ -416,6 +417,7 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if err != nil {
 		return nil, err
 	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
 	if s.agentClient == nil {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 		return &InstanceAdminResult{
@@ -425,7 +427,16 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 			Progress: 100,
 		}, nil
 	}
-	result, err := s.agentClient.ExecuteHealthCheck(ctx, agentHost, agentPort, id)
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	result, err := s.agentClient.ExecuteMySQLHealthCheck(ctx, agentHost, agentPort, id, map[string]interface{}{
+		"target_host": targetHost,
+		"target_port": conn.Port,
+		"target_user": conn.Username,
+		"target_pass": password,
+	})
 	if err != nil {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 		return &InstanceAdminResult{
@@ -650,6 +661,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err != nil {
 		return nil, err
 	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
 
 	if s.agentClient == nil {
 		return failedInstanceAdminResult("agent client not configured"), nil
@@ -659,7 +671,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		"instance_id": id,
 		"config": map[string]interface{}{
 			"action":      req.Action,
-			"target_host": conn.Host,
+			"target_host": targetHost,
 			"target_port": conn.Port,
 			"target_user": conn.Username,
 			"target_pass": password,
@@ -790,6 +802,7 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 	if err != nil {
 		return nil, err
 	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
 	if s.agentClient == nil {
 		return nil, fmt.Errorf("agent client not configured")
 	}
@@ -798,7 +811,7 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 		"instance_id": instance.ID,
 		"config": map[string]interface{}{
 			"action":      req.Action,
-			"target_host": conn.Host,
+			"target_host": targetHost,
 			"target_port": conn.Port,
 			"target_user": conn.Username,
 			"target_pass": password,
@@ -871,4 +884,18 @@ func (s *InstanceService) resolveAgentEndpoint(ctx context.Context, instance *mo
 		return "", 0, fmt.Errorf("cannot determine agent host")
 	}
 	return conn.Host, 9090, nil
+}
+
+func (s *InstanceService) resolveAgentMySQLTarget(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, agentHost string) string {
+	if conn == nil || strings.TrimSpace(conn.Host) == "" {
+		return "127.0.0.1"
+	}
+	if s.hostRepo != nil && instance != nil && instance.HostID != nil && *instance.HostID != "" {
+		if host, err := s.hostRepo.GetByID(ctx, *instance.HostID); err == nil && host != nil {
+			if sameHost(host.Address, conn.Host) && sameHost(host.Address, agentHost) {
+				return "127.0.0.1"
+			}
+		}
+	}
+	return conn.Host
 }

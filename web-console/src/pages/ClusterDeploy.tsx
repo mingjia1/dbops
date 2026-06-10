@@ -326,6 +326,7 @@ const ClusterDeploy: React.FC = () => {
         ...base,
         master_host_id: values.master_host_id,
         replica_host_id: values.replica_host_id,
+        replica_host_ids: values.replica_host_ids || (values.replica_host_id ? [values.replica_host_id] : []),
         master_port: values.mysql_port || 3306,
         replica_port: values.replica_port || 3307,
       }
@@ -431,7 +432,7 @@ const ClusterDeploy: React.FC = () => {
       <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
         <Input placeholder={`例如: ${arch}-cluster-01`} />
       </Form.Item>
-      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue>
+      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue={false}>
         <Checkbox>伪集群演练模式</Checkbox>
       </Form.Item>
       <Form.Item name="master_host_id" label="主节点主机" rules={[{ required: true, message: '请选择主节点' }]}>
