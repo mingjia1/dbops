@@ -17,6 +17,16 @@ interface MigrationTask {
   completed_at?: string
   error?: string
   error_message?: string
+  steps?: Array<{ name: string; status: string; message?: string; started_at?: string; completed_at?: string }>
+  logs?: string[]
+}
+
+const MIGRATION_SUBSTEPS: Record<string, string[]> = {
+  '数据导出': ['锁定源表', '执行 mysqldump/xtrabackup', '生成校验和', '记录导出位置'],
+  '数据传输': ['建立目标连接', '传输数据文件', '验证传输完整性'],
+  '数据导入': ['准备目标实例', '导入数据文件', '重建索引', '更新系统表'],
+  '一致性校验': ['表行数对比', 'CRC32 校验', 'GTID 一致性检查'],
+  '切换': ['停止源实例写入', '等待目标追上', '切换业务连接', '验证新主可用'],
 }
 
 const activeMigrationStatuses = new Set(['pending', 'preparing', 'migrating', 'running', 'verifying', 'switching'])
@@ -75,6 +85,8 @@ interface MigrationProgressResponse {
   data_transferred?: number
   estimated_time?: number
   updated_at?: string
+  steps?: Array<{ name: string; status: string; message?: string; started_at?: string; completed_at?: string }>
+  logs?: string[]
 }
 
 const formatBytes = (value?: number) => {
@@ -245,6 +257,8 @@ const MigrationManage: React.FC = () => {
           ...(task || {}),
           ...(progress ? { status: progress.status, progress: progress.progress } : {}),
           id: task?.id || progress?.task_id || activeMigration.id,
+          steps: Array.isArray(task?.steps) ? task.steps : (Array.isArray(progress?.steps) ? progress.steps : undefined),
+          logs: Array.isArray(task?.logs) ? task.logs : (Array.isArray(progress?.logs) ? progress.logs : undefined),
         }
         if (progress) {
           setProgressDetails(buildProgressDetails(progress))
@@ -449,21 +463,74 @@ const MigrationManage: React.FC = () => {
         <Progress percent={activeMigration.progress} status={migrationProgressStatus(activeMigration.status)} />
         
         <Divider />
-        
-        <Steps current={-1} direction="vertical">
-          {progressDetails.map((item, index) => (
-            <Steps.Step
-              key={index}
-              title={item.stage}
-              description={
-                <div>
-                  <Progress percent={item.progress} size="small" />
-                  <span>{item.details}</span>
-                </div>
+
+        {activeMigration.steps && activeMigration.steps.length > 0 ? (
+          <div>
+            <strong>详细步骤</strong>
+            <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeMigration.steps.findIndex((s) => s.status === 'running')}>
+              {activeMigration.steps.map((step, idx) => (
+                <Steps.Step
+                  key={idx}
+                  title={step.name}
+                  description={
+                    <div>
+                      <div style={{ color: '#888', fontSize: 12 }}>
+                        {step.message || ''}
+                        {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
+                        {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
+                      </div>
+                    </div>
+                  }
+                  status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
+                />
+              ))}
+            </Steps>
+          </div>
+        ) : (
+          <div>
+            <strong>迁移阶段</strong>
+            <Steps current={-1} direction="vertical" style={{ marginTop: 8 }}>
+              {progressDetails.map((item, index) => (
+                <Steps.Step
+                  key={index}
+                  title={item.stage}
+                  description={
+                    <div>
+                      <Progress percent={item.progress} size="small" />
+                      <span>{item.details}</span>
+                    </div>
+                  }
+                />
+              ))}
+            </Steps>
+          </div>
+        )}
+
+        <Divider />
+        <strong>当前阶段子步骤</strong>
+        <div style={{ marginTop: 8 }}>
+          {(MIGRATION_SUBSTEPS[activeMigration.status === 'verifying' ? '一致性校验' : activeMigration.status === 'switching' ? '切换' : '数据导出'] || MIGRATION_SUBSTEPS['数据导出']).map((substep, idx) => (
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              {idx < ((MIGRATION_SUBSTEPS[activeMigration.status === 'verifying' ? '一致性校验' : activeMigration.status === 'switching' ? '切换' : '数据导出'] || MIGRATION_SUBSTEPS['数据导出']).length) - 1 ?
+                <span style={{ color: '#52c41a' }}>&#10003;</span> :
+                <span style={{ color: '#1677ff' }}>&#9679;</span>
               }
-            />
+              <span>{substep}</span>
+            </div>
           ))}
-        </Steps>
+        </div>
+
+        {activeMigration.logs && activeMigration.logs.length > 0 && (
+          <>
+            <Divider />
+            <strong>迁移日志</strong>
+            <div style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, maxHeight: 200, overflow: 'auto', fontFamily: 'monospace', fontSize: 12, marginTop: 8 }}>
+              {activeMigration.logs.map((log, idx) => (
+                <div key={idx}>{log}</div>
+              ))}
+            </div>
+          </>
+        )}
       </Card>
     )
   )

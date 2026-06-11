@@ -16,6 +16,26 @@ const DEFAULT_MYSQL_CREDENTIAL = {
 const DEFAULT_CREDENTIAL_ACK_KEY = 'dbops.clusterDeploy.defaultMysqlCredentialAck'
 const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证']
 
+const DEPLOY_SUBSTEPS: Record<string, string[]> = {
+  '环境检查': ['检查主机连通性', '验证端口可用性', '检查磁盘空间', '检查系统依赖'],
+  '安装二进制': ['下载 MySQL 安装包', '解压安装包', '创建数据目录', '设置文件权限'],
+  '配置集群': ['生成 my.cnf', '配置复制用户', '配置复制参数', '写入集群拓扑'],
+  '启动节点': ['启动 MySQL 服务', '等待端口就绪', '执行健康检查', '验证服务状态'],
+  '集群验证': ['检查复制延迟', '验证 GTID 一致性', '执行数据校验', '生成部署报告'],
+}
+
+interface DeployNodeProgress {
+  instance_id?: string
+  name?: string
+  host?: string
+  port?: number
+  role?: string
+  status?: string
+  current_step?: string
+  progress?: number
+  message?: string
+}
+
 interface DeployResult {
   deployment_id: string
   cluster_id: string
@@ -26,7 +46,9 @@ interface DeployResult {
   message: string
   started_at: string
   finished_at?: string
-  nodes?: Array<{ instance_id?: string; name?: string; host?: string; port?: number; role?: string }>
+  nodes?: DeployNodeProgress[]
+  steps?: Array<{ name: string; status: string; message?: string; started_at?: string; completed_at?: string }>
+  logs?: string[]
 }
 
 const normalizeStatus = (status?: string) => (status || '').trim().toLowerCase()
@@ -116,6 +138,8 @@ const ClusterDeploy: React.FC = () => {
     started_at: data.started_at || data.created_at,
     finished_at: data.finished_at || data.updated_at,
     nodes: Array.isArray(data.nodes) ? data.nodes : [],
+    steps: Array.isArray(data.steps) ? data.steps : [],
+    logs: Array.isArray(data.logs) ? data.logs : [],
   })
 
   const loadDeployments = async () => {
@@ -227,6 +251,8 @@ const ClusterDeploy: React.FC = () => {
           message: data.message || dep.message,
           finished_at: data.finished_at,
           nodes: Array.isArray(data.nodes) ? data.nodes : dep.nodes,
+          steps: Array.isArray(data.steps) ? data.steps : dep.steps,
+          logs: Array.isArray(data.logs) ? data.logs : dep.logs,
         }
         patchDeployment(next)
         if (isTerminalDeployStatus(next.status)) loadDeployments()
@@ -649,6 +675,81 @@ const ClusterDeploy: React.FC = () => {
             style={{ marginTop: 16 }}
           />
           <div style={{ marginTop: 8, color: '#666' }}>{activeDeployment.message}</div>
+
+          {activeDeployment.steps && activeDeployment.steps.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <strong>详细步骤</strong>
+              <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeDeployment.steps.findIndex((s) => s.status === 'running')}>
+                {activeDeployment.steps.map((step, idx) => (
+                  <Steps.Step
+                    key={idx}
+                    title={step.name}
+                    description={
+                      <div>
+                        <div style={{ color: '#888', fontSize: 12 }}>
+                          {step.message || ''}
+                          {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
+                          {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
+                        </div>
+                      </div>
+                    }
+                    status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
+                  />
+                ))}
+              </Steps>
+            </div>
+          )}
+
+          {!activeDeployment.steps || activeDeployment.steps.length === 0 ? (
+            <div style={{ marginTop: 16 }}>
+              <strong>当前阶段子步骤</strong>
+              <div style={{ marginTop: 8 }}>
+                {(DEPLOY_SUBSTEPS[activeDeployment.stage || ''] || DEPLOY_SUBSTEPS['环境检查']).map((substep, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    {idx < (DEPLOY_SUBSTEPS[activeDeployment.stage || ''] || DEPLOY_SUBSTEPS['环境检查']).length - 1 ?
+                      <span style={{ color: '#52c41a' }}>&#10003;</span> :
+                      <span style={{ color: '#1677ff' }}>&#9679;</span>
+                    }
+                    <span>{substep}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {activeDeployment.nodes && activeDeployment.nodes.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <strong>节点进度</strong>
+              <div style={{ marginTop: 8 }}>
+                {activeDeployment.nodes.map((node, idx) => (
+                  <Card key={idx} size="small" style={{ marginBottom: 8 }}
+                    title={`${node.name || node.instance_id || `节点 ${idx + 1}`} (${node.host || '-'}:${node.port || '-'})`}
+                    extra={<Tag color={node.role === 'master' || node.role === 'primary' ? 'blue' : 'default'}>{node.role || '-'}</Tag>}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>状态: <Tag color={node.status === 'healthy' ? 'success' : node.status === 'deploying' ? 'processing' : 'warning'}>{node.status || 'unknown'}</Tag></span>
+                      {node.current_step && <span>步骤: {node.current_step}</span>}
+                    </div>
+                    {typeof node.progress === 'number' && (
+                      <Progress percent={node.progress} size="small" style={{ marginTop: 4 }} />
+                    )}
+                    {node.message && <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>{node.message}</div>}
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeDeployment.logs && activeDeployment.logs.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <strong>部署日志</strong>
+              <div style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, maxHeight: 200, overflow: 'auto', fontFamily: 'monospace', fontSize: 12, marginTop: 8 }}>
+                {activeDeployment.logs.map((log, idx) => (
+                  <div key={idx}>{log}</div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>

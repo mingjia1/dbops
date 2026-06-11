@@ -14,6 +14,7 @@ import {
   Select,
   Space,
   Spin,
+  Steps,
   Switch,
   Table,
   Tag,
@@ -31,6 +32,39 @@ import {
 import { instanceApi, upgradeApi, versionApi, type Instance, type VersionEntry } from '../services/api'
 
 const { Title, Paragraph } = Typography
+
+const UPGRADE_STAGES = ['预检查', '备份数据', '停止服务', '安装新版本', '数据升级', '启动服务', '验证']
+
+const UPGRADE_SUBSTEPS: Record<string, string[]> = {
+  '预检查': ['检查磁盘空间', '验证版本兼容性', '检查实例状态', '验证备份状态'],
+  '备份数据': ['执行全量备份', '验证备份完整性', '记录备份路径'],
+  '停止服务': ['通知应用断开连接', '等待事务完成', '停止 MySQL 服务'],
+  '安装新版本': ['下载安装包', '解压新版本', '替换二进制文件', '验证安装路径'],
+  '数据升级': ['执行 mysql_upgrade', '应用系统表变更', '验证数据字典'],
+  '启动服务': ['启动 MySQL 服务', '等待端口就绪', '执行健康检查'],
+  '验证': ['连接测试', '查询系统变量', '执行数据校验', '生成升级报告'],
+}
+
+interface UpgradeStep {
+  name: string
+  status: string
+  message?: string
+  started_at?: string
+  completed_at?: string
+}
+
+interface ActiveUpgrade {
+  task_id: string
+  instance_id: string
+  status: string
+  progress: number
+  stage?: string
+  message?: string
+  steps?: UpgradeStep[]
+  logs?: string[]
+  started_at: string
+  finished_at?: string
+}
 
 interface UpgradeHistory {
   id: string
@@ -74,6 +108,8 @@ const UpgradeManage: React.FC = () => {
   const [reportLoading, setReportLoading] = useState(false)
   const [reportResult, setReportResult] = useState<any>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [activeUpgrade, setActiveUpgrade] = useState<ActiveUpgrade | null>(null)
+  const [upgradeStep, setUpgradeStep] = useState(0)
   const [planForm] = Form.useForm()
   const [compatForm] = Form.useForm()
   const [inPlaceForm] = Form.useForm()
@@ -99,6 +135,35 @@ const UpgradeManage: React.FC = () => {
     const timer = window.setInterval(loadData, 5000)
     return () => window.clearInterval(timer)
   }, [history])
+
+  useEffect(() => {
+    if (!activeUpgrade) return
+    if (terminalUpgradeStatuses.has((activeUpgrade.status || '').toLowerCase())) return
+    const timer = window.setInterval(async () => {
+      try {
+        const res: any = await upgradeApi.get(activeUpgrade.task_id)
+        const data = res?.data
+        if (data) {
+          setActiveUpgrade((prev) => prev ? {
+            ...prev,
+            status: data.status || prev.status,
+            progress: typeof data.progress === 'number' ? data.progress : prev.progress,
+            stage: data.stage || prev.stage,
+            message: data.message || prev.message,
+            steps: Array.isArray(data.steps) ? data.steps : prev.steps,
+            logs: Array.isArray(data.logs) ? data.logs : prev.logs,
+            finished_at: data.finished_at,
+          } : prev)
+          const stageIdx = data.stage ? UPGRADE_STAGES.indexOf(data.stage) : -1
+          if (stageIdx >= 0) setUpgradeStep(stageIdx)
+          if (terminalUpgradeStatuses.has((data.status || '').toLowerCase())) {
+            loadData()
+          }
+        }
+      } catch {}
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [activeUpgrade?.task_id, activeUpgrade?.status])
 
   const instanceOptions = useMemo(
     () => instances.map((i) => ({
@@ -218,6 +283,20 @@ const UpgradeManage: React.FC = () => {
       if (!res?.data?.task_id && !res?.data?.id) {
         throw new Error('upgrade API did not return task_id')
       }
+      const taskId = res?.data?.task_id || res?.data?.id
+      const activeUpgradeData: ActiveUpgrade = {
+        task_id: taskId,
+        instance_id: values.instance_id,
+        status: res?.data?.status || 'running',
+        progress: typeof res?.data?.progress === 'number' ? res.data.progress : 0,
+        stage: UPGRADE_STAGES[0],
+        message: '升级任务已提交',
+        started_at: new Date().toISOString(),
+        steps: [],
+        logs: [],
+      }
+      setActiveUpgrade(activeUpgradeData)
+      setUpgradeStep(0)
       message.success('升级任务已提交')
       setInPlaceOpen(false)
       inPlaceForm.resetFields()
@@ -350,6 +429,86 @@ const UpgradeManage: React.FC = () => {
       </Card>
 
       <Table columns={columns} dataSource={history} rowKey="id" scroll={{ x: 1000 }} />
+
+      {activeUpgrade && (
+        <Card
+          title="升级进度"
+          style={{ marginTop: 16 }}
+          extra={
+            <Space>
+              <Tag color={isCompletedUpgradeStatus(activeUpgrade.status) ? 'success' : isFailedUpgradeStatus(activeUpgrade.status) ? 'error' : 'processing'}>
+                {activeUpgrade.status}
+              </Tag>
+              {activeUpgrade.finished_at && <span>完成于 {new Date(activeUpgrade.finished_at).toLocaleString()}</span>}
+            </Space>
+          }
+        >
+          <Steps
+            current={upgradeStep}
+            size="small"
+            items={UPGRADE_STAGES.map((title) => ({ title }))}
+            status={isFailedUpgradeStatus(activeUpgrade.status) ? 'error' : isCompletedUpgradeStatus(activeUpgrade.status) ? 'finish' : 'process'}
+          />
+          <Progress
+            percent={activeUpgrade.progress}
+            status={isCompletedUpgradeStatus(activeUpgrade.status) ? 'success' : isFailedUpgradeStatus(activeUpgrade.status) ? 'exception' : 'active'}
+            style={{ marginTop: 16 }}
+          />
+          <div style={{ marginTop: 8, color: '#666' }}>{activeUpgrade.message}</div>
+
+          {activeUpgrade.steps && activeUpgrade.steps.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <strong>详细步骤</strong>
+              <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeUpgrade.steps.findIndex((s) => s.status === 'running')}>
+                {activeUpgrade.steps.map((step, idx) => (
+                  <Steps.Step
+                    key={idx}
+                    title={step.name}
+                    description={
+                      <div>
+                        <div style={{ color: '#888', fontSize: 12 }}>
+                          {step.message || ''}
+                          {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
+                          {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
+                        </div>
+                      </div>
+                    }
+                    status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
+                  />
+                ))}
+              </Steps>
+            </div>
+          )}
+
+          {!activeUpgrade.steps || activeUpgrade.steps.length === 0 ? (
+            <div style={{ marginTop: 16 }}>
+              <strong>当前阶段子步骤</strong>
+              <div style={{ marginTop: 8 }}>
+                {(UPGRADE_SUBSTEPS[activeUpgrade.stage || ''] || UPGRADE_SUBSTEPS['预检查']).map((substep, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    {idx < (UPGRADE_SUBSTEPS[activeUpgrade.stage || ''] || UPGRADE_SUBSTEPS['预检查']).length - 1 ?
+                      <span style={{ color: '#52c41a' }}>&#10003;</span> :
+                      <span style={{ color: '#1677ff' }}>&#9679;</span>
+                    }
+                    <span>{substep}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {activeUpgrade.logs && activeUpgrade.logs.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <strong>升级日志</strong>
+              <div style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, maxHeight: 200, overflow: 'auto', fontFamily: 'monospace', fontSize: 12, marginTop: 8 }}>
+                {activeUpgrade.logs.map((log, idx) => (
+                  <div key={idx}>{log}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Modal
         title="规划升级路径"

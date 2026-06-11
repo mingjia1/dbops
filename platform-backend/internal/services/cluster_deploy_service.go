@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,29 @@ type ClusterDeployService struct {
 	auditSvc    *AuditService
 	defaults    config.ClusterDefaults
 	encKey      string
+	progressMu  sync.RWMutex
+	progress    map[string]*DeploymentProgress
+}
+
+type DeploymentProgress struct {
+	Stage    string
+	Progress int
+	Message  string
+	Steps    []DeployStep
+	Logs     []string
+	Nodes    []DeployNodeProgress
+}
+
+type DeployNodeProgress struct {
+	InstanceID  string
+	Name        string
+	Host        string
+	Port        int
+	Role        string
+	Status      string
+	CurrentStep string
+	Progress    int
+	Message     string
 }
 
 type deploymentHost struct {
@@ -54,11 +78,76 @@ func NewClusterDeployService(
 		agentClient: agentClient,
 		auditSvc:    audit,
 		defaults:    defaults,
+		progress:    make(map[string]*DeploymentProgress),
 	}
 }
 
 func (s *ClusterDeployService) SetEncryptionKey(key string) {
 	s.encKey = key
+}
+
+func (s *ClusterDeployService) updateProgress(deploymentID, stage, message string, progressPct int) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	p, ok := s.progress[deploymentID]
+	if !ok {
+		p = &DeploymentProgress{}
+		s.progress[deploymentID] = p
+	}
+	p.Stage = stage
+	p.Progress = progressPct
+	p.Message = message
+	p.Logs = append(p.Logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), message))
+}
+
+func (s *ClusterDeployService) addStep(deploymentID, name, status string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	p := s.getOrCreateProgress(deploymentID)
+	now := time.Now()
+	step := DeployStep{Name: name, Status: status, StartedAt: &now}
+	p.Steps = append(p.Steps, step)
+}
+
+func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, message string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	p, ok := s.progress[deploymentID]
+	if !ok {
+		return
+	}
+	now := time.Now()
+	for i := range p.Steps {
+		if p.Steps[i].Name == name {
+			p.Steps[i].Status = status
+			p.Steps[i].Message = message
+			if status == "completed" || status == "failed" {
+				p.Steps[i].CompletedAt = &now
+			}
+			return
+		}
+	}
+}
+
+func (s *ClusterDeployService) getOrCreateProgress(deploymentID string) *DeploymentProgress {
+	p, ok := s.progress[deploymentID]
+	if !ok {
+		p = &DeploymentProgress{}
+		s.progress[deploymentID] = p
+	}
+	return p
+}
+
+func (s *ClusterDeployService) getProgress(deploymentID string) *DeploymentProgress {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	return s.progress[deploymentID]
+}
+
+func (s *ClusterDeployService) clearProgress(deploymentID string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	delete(s.progress, deploymentID)
 }
 
 func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (resp *DeployResponse, err error) {
@@ -580,14 +669,38 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 	if err != nil {
 		return nil, err
 	}
-	return &DeployResponse{
+	nodes := s.deploymentNodes(ctx, dep.ID)
+	prog := s.getProgress(deploymentID)
+	resp := &DeployResponse{
 		DeploymentID: dep.ID,
 		ClusterType:  dep.ClusterType,
 		Name:         dep.Name,
 		Status:       dep.Status,
+		Stage:        dep.Name,
+		Progress:     0,
+		Message:      "",
 		CreatedAt:    dep.CreatedAt,
-		Nodes:        s.deploymentNodes(ctx, dep.ID),
-	}, nil
+		Nodes:        nodes,
+	}
+	if prog != nil {
+		resp.Stage = prog.Stage
+		resp.Progress = prog.Progress
+		resp.Message = prog.Message
+		resp.Steps = prog.Steps
+		resp.Logs = prog.Logs
+		for i := range resp.Nodes {
+			for _, np := range prog.Nodes {
+				if resp.Nodes[i].InstanceID == np.InstanceID {
+					resp.Nodes[i].Status = np.Status
+					resp.Nodes[i].CurrentStep = np.CurrentStep
+					resp.Nodes[i].Progress = np.Progress
+					resp.Nodes[i].Message = np.Message
+					break
+				}
+			}
+		}
+	}
+	return resp, nil
 }
 
 func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offset int) ([]DeployResponse, error) {
@@ -879,17 +992,35 @@ type DeployResponse struct {
 	ClusterType  string       `json:"cluster_type"`
 	Name         string       `json:"name"`
 	Status       string       `json:"status"`
+	Stage        string       `json:"stage,omitempty"`
+	Progress     int          `json:"progress"`
 	Message      string       `json:"message"`
+	StartedAt    *time.Time   `json:"started_at,omitempty"`
+	FinishedAt   *time.Time   `json:"finished_at,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	Nodes        []DeployNode `json:"nodes,omitempty"`
+	Steps        []DeployStep `json:"steps,omitempty"`
+	Logs         []string     `json:"logs,omitempty"`
 }
 
 type DeployNode struct {
-	InstanceID string `json:"instance_id"`
-	Name       string `json:"name"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Role       string `json:"role"`
+	InstanceID   string `json:"instance_id"`
+	Name         string `json:"name"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	Role         string `json:"role"`
+	Status       string `json:"status,omitempty"`
+	CurrentStep  string `json:"current_step,omitempty"`
+	Progress     int    `json:"progress,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+type DeployStep struct {
+	Name        string     `json:"name"`
+	Status      string     `json:"status"`
+	Message     string     `json:"message,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallbackAddress string) (deploymentHost, error) {
