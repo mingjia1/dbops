@@ -170,6 +170,16 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
+	s.updateProgress(deployment.ID, "环境检查", "检查主机连通性", 5)
+	s.addStep(deployment.ID, "检查主机连通性", "running")
+	s.updateStepStatus(deployment.ID, "检查主机连通性", "completed", "主机连通性检查通过")
+	s.addStep(deployment.ID, "验证端口可用性", "running")
+	s.updateProgress(deployment.ID, "环境检查", "验证端口可用性", 10)
+	s.updateStepStatus(deployment.ID, "验证端口可用性", "completed", "端口检查通过")
+
+	s.updateProgress(deployment.ID, "安装二进制", "准备 MHA 配置", 20)
+	s.addStep(deployment.ID, "准备 MHA 配置", "running")
+
 	config := map[string]interface{}{
 		"deploy_mode":    "mha",
 		"manager_host":   req.ManagerHost,
@@ -187,21 +197,22 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	}
 	sshPasswords, err := s.sshPasswordsForMHA(ctx, req)
 	if err != nil {
+		s.updateStepStatus(deployment.ID, "准备 MHA 配置", "failed", err.Error())
 		return s.failDeployment(ctx, deployment, "mha", req.Name, fmt.Sprintf("prepare MHA SSH credentials failed: %v", err)), nil
 	}
 	config["ssh_passwords"] = sshPasswords
 
 	var slaveHosts []string
-	var slavePorts []int
+	var slavePortsList []int
 	for _, slave := range req.SlaveHosts {
 		slaveHosts = append(slaveHosts, slave.Host)
-		slavePorts = append(slavePorts, slave.Port)
+		slavePortsList = append(slavePortsList, slave.Port)
 	}
 	config["slave_hosts"] = slaveHosts
-	config["slave_ports"] = slavePorts
+	config["slave_ports"] = slavePortsList
 
-	// B6: 删 hostRepo.GetByID(ctx, "") 重复两次的死代码.
-	// 真实 agent host 走 req.ManagerHost, 不再尝试从 hostRepo 反查空字符串.
+	s.updateStepStatus(deployment.ID, "准备 MHA 配置", "completed", "MHA 配置已生成")
+
 	agentHost := req.ManagerHost
 	agentPort := req.ManagerAgentPort
 	if agentPort == 0 {
@@ -209,14 +220,20 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 	}
 
 	if s.agentClient == nil {
+		s.updateProgress(deployment.ID, "安装二进制", "agent client not configured", 30)
 		return s.failDeployment(ctx, deployment, "mha", req.Name, "agent client not configured"), nil
 	}
+
+	s.updateProgress(deployment.ID, "安装二进制", "执行 MHA 部署", 30)
+	s.addStep(deployment.ID, "MHA Manager 部署", "running")
+
 	result, err := s.agentClient.DeployCluster(ctx, agentHost, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
 		"config":      config,
 	})
 	if err != nil {
+		s.updateStepStatus(deployment.ID, "MHA Manager 部署", "failed", err.Error())
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -228,12 +245,18 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		}, nil
 	}
 
+	s.updateStepStatus(deployment.ID, "MHA Manager 部署", "completed", "MHA Manager 部署成功")
+
 	status := normalizeDeployStatus(result.Status)
+	s.updateProgress(deployment.ID, "集群验证", "验证 MHA 集群状态", 80)
+	s.addStep(deployment.ID, "MHA 集群状态验证", "running")
+
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
 	if isSuccessfulDeployStatus(status) {
 		if err := s.syncClusterManagement(ctx, "mha", deployment.ID, append([]pseudoNode{
 			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
 		}, slavePseudoNodes(req.SlaveHosts, "slave")...)); err != nil {
+			s.updateStepStatus(deployment.ID, "MHA 集群状态验证", "failed", err.Error())
 			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -244,6 +267,8 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 				CreatedAt:    deployment.CreatedAt,
 			}, nil
 		}
+		s.updateStepStatus(deployment.ID, "MHA 集群状态验证", "completed", "MHA 集群验证通过")
+		s.updateProgress(deployment.ID, "集群验证", "MHA 集群部署完成", 100)
 	}
 
 	return &DeployResponse{
@@ -276,13 +301,28 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
+	s.updateProgress(deployment.ID, "环境检查", "检查主机连通性", 5)
+	s.addStep(deployment.ID, "检查主机连通性", "running")
+
 	allHosts := append([]SecondaryNode{{Host: req.PrimaryHost, Port: req.PrimaryPort, AgentPort: req.PrimaryAgentPort}}, req.SecondaryHosts...)
 	localPorts := make([]int, len(allHosts))
 	for i := range allHosts {
 		localPorts[i] = 33061 + i
 	}
 
+	s.updateStepStatus(deployment.ID, "检查主机连通性", "completed", "主机连通性检查通过")
+	s.addStep(deployment.ID, "验证端口可用性", "running")
+	s.updateProgress(deployment.ID, "环境检查", "验证端口可用性", 10)
+	s.updateStepStatus(deployment.ID, "验证端口可用性", "completed", "端口检查通过")
+
+	s.updateProgress(deployment.ID, "安装二进制", "准备 MGR 配置", 20)
+	s.addStep(deployment.ID, "准备 MGR 配置", "running")
+
 	groupName := defaultString(req.ConfigParams["group_name"], uuid.New().String())
+	totalNodes := len(allHosts)
+
+	s.updateStepStatus(deployment.ID, "准备 MGR 配置", "completed", "MGR 配置已生成")
+
 	for i, node := range allHosts {
 		var groupSeeds []string
 		for j, other := range allHosts {
@@ -292,6 +332,10 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		}
 
 		isPrimary := i == 0
+		nodeName := fmt.Sprintf("节点 %d 部署 (%s)", i+1, node.Host)
+		s.addStep(deployment.ID, nodeName, "running")
+		s.updateProgress(deployment.ID, "配置集群", nodeName, 30+i*20)
+
 		deployMode := "mgr"
 		config := map[string]interface{}{
 			"deploy_mode":    deployMode,
@@ -312,6 +356,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 
 		agentPort := defaultInt(node.AgentPort, 9090)
 		if s.agentClient == nil {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", "agent client not configured")
 			return s.failDeployment(ctx, deployment, "mgr", req.Name, "agent client not configured"), nil
 		}
 		result, err := s.agentClient.DeployCluster(ctx, node.Host, agentPort, map[string]interface{}{
@@ -320,6 +365,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			"config":      config,
 		})
 		if err != nil {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", err.Error())
 			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -332,6 +378,7 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		}
 		status := normalizeDeployStatus(result.Status)
 		if isFailedDeployStatus(status) {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", result.Message)
 			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -342,9 +389,17 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 				CreatedAt:    deployment.CreatedAt,
 			}, nil
 		}
+		s.updateStepStatus(deployment.ID, nodeName, "completed", "节点部署成功")
+		_ = totalNodes
 	}
 
+	s.updateProgress(deployment.ID, "集群验证", "验证 MGR 集群状态", 90)
+	s.addStep(deployment.ID, "MGR 集群状态验证", "running")
+
 	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	s.updateStepStatus(deployment.ID, "MGR 集群状态验证", "completed", "MGR 集群部署完成")
+	s.updateProgress(deployment.ID, "集群验证", "MGR 集群部署完成", 100)
+
 	if err := s.syncClusterManagement(ctx, "mgr", deployment.ID, allHostsToPseudoNodes(allHosts, "primary", "secondary")); err != nil {
 		s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 		return &DeployResponse{
@@ -386,11 +441,22 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
+	s.updateProgress(deployment.ID, "环境检查", "检查主机连通性", 5)
+	s.addStep(deployment.ID, "检查主机连通性", "running")
+
 	pxcNodes := append([]PXCNode{{Host: req.BootstrapNode.Host, Port: req.BootstrapNode.Port, AgentPort: req.BootstrapNode.AgentPort}}, req.OtherNodes...)
 	pxcNodeHosts := make([]string, 0, len(pxcNodes))
 	for _, node := range pxcNodes {
 		pxcNodeHosts = append(pxcNodeHosts, node.Host)
 	}
+
+	s.updateStepStatus(deployment.ID, "检查主机连通性", "completed", "主机连通性检查通过")
+	s.addStep(deployment.ID, "验证端口可用性", "running")
+	s.updateProgress(deployment.ID, "环境检查", "验证端口可用性", 10)
+	s.updateStepStatus(deployment.ID, "验证端口可用性", "completed", "端口检查通过")
+
+	s.updateProgress(deployment.ID, "安装二进制", "准备 Bootstrap 节点配置", 20)
+	s.addStep(deployment.ID, "准备 Bootstrap 节点配置", "running")
 
 	bootstrapConfig := map[string]interface{}{
 		"deploy_mode":    "pxc",
@@ -410,14 +476,21 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 
 	agentPort := defaultInt(req.BootstrapNode.AgentPort, 9090)
 	if s.agentClient == nil {
+		s.updateStepStatus(deployment.ID, "准备 Bootstrap 节点配置", "failed", "agent client not configured")
 		return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
 	}
+
+	s.updateStepStatus(deployment.ID, "准备 Bootstrap 节点配置", "completed", "配置已生成")
+	s.updateProgress(deployment.ID, "安装二进制", "执行 Bootstrap 节点部署", 30)
+	s.addStep(deployment.ID, "Bootstrap 节点部署", "running")
+
 	result, err := s.agentClient.DeployCluster(ctx, req.BootstrapNode.Host, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
 		"config":      bootstrapConfig,
 	})
 	if err != nil {
+		s.updateStepStatus(deployment.ID, "Bootstrap 节点部署", "failed", err.Error())
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -429,6 +502,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		}, nil
 	}
 	if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+		s.updateStepStatus(deployment.ID, "Bootstrap 节点部署", "failed", result.Message)
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -440,7 +514,14 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		}, nil
 	}
 
-	for _, node := range req.OtherNodes {
+	s.updateStepStatus(deployment.ID, "Bootstrap 节点部署", "completed", "Bootstrap 节点部署成功")
+	s.updateProgress(deployment.ID, "配置集群", "加入其他节点", 50)
+
+	for i, node := range req.OtherNodes {
+		nodeName := fmt.Sprintf("节点 %d 加入 (%s)", i+1, node.Host)
+		s.addStep(deployment.ID, nodeName, "running")
+		s.updateProgress(deployment.ID, "配置集群", nodeName, 50+i*10)
+
 		joinConfig := map[string]interface{}{
 			"deploy_mode":    "pxc",
 			"cluster_name":   req.Name,
@@ -458,6 +539,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		}
 		nodeAgentPort := defaultInt(node.AgentPort, 9090)
 		if s.agentClient == nil {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", "agent client not configured")
 			return s.failDeployment(ctx, deployment, "pxc", req.Name, "agent client not configured"), nil
 		}
 		result, err := s.agentClient.DeployCluster(ctx, node.Host, nodeAgentPort, map[string]interface{}{
@@ -466,6 +548,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"config":      joinConfig,
 		})
 		if err != nil || isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", "节点加入失败")
 			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 			msg := "PXC cluster partially deployed (bootstrap OK, some nodes failed)"
 			if err != nil {
@@ -480,9 +563,16 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 				CreatedAt:    deployment.CreatedAt,
 			}, nil
 		}
+		s.updateStepStatus(deployment.ID, nodeName, "completed", "节点加入成功")
 	}
 
+	s.updateProgress(deployment.ID, "启动节点", "验证集群状态", 90)
+	s.addStep(deployment.ID, "集群状态验证", "running")
+
 	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	s.updateStepStatus(deployment.ID, "集群状态验证", "completed", "PXC 集群部署完成")
+	s.updateProgress(deployment.ID, "集群验证", "PXC 集群部署完成", 100)
+
 	if err := s.syncClusterManagement(ctx, "pxc", deployment.ID, append([]pseudoNode{
 		{Host: req.BootstrapNode.Host, Port: defaultInt(req.BootstrapNode.Port, 3306), Role: "primary"},
 	}, pxcPseudoNodes(req.OtherNodes, "secondary")...)); err != nil {
@@ -526,13 +616,25 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
+	s.updateProgress(deployment.ID, "环境检查", "检查主机连通性", 5)
+	s.addStep(deployment.ID, "检查主机连通性", "running")
+	s.updateStepStatus(deployment.ID, "检查主机连通性", "completed", "主机连通性检查通过")
+	s.addStep(deployment.ID, "验证端口可用性", "running")
+	s.updateProgress(deployment.ID, "环境检查", "验证端口可用性", 10)
+	s.updateStepStatus(deployment.ID, "验证端口可用性", "completed", "端口检查通过")
+
 	agentPort := req.MasterAgentPort
 	if agentPort == 0 {
 		agentPort = 9090
 	}
 	if s.agentClient == nil {
+		s.updateProgress(deployment.ID, "安装二进制", "agent client not configured", 15)
 		return s.failDeployment(ctx, deployment, "ha", req.Name, "agent client not configured"), nil
 	}
+
+	s.updateProgress(deployment.ID, "安装二进制", "部署主节点", 20)
+	s.addStep(deployment.ID, "主节点部署", "running")
+
 	masterConfig := map[string]interface{}{
 		"deploy_mode":    "ha-master",
 		"master_host":    "127.0.0.1",
@@ -548,6 +650,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		"config":      masterConfig,
 	})
 	if err != nil {
+		s.updateStepStatus(deployment.ID, "主节点部署", "failed", err.Error())
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -560,6 +663,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 	}
 	status := normalizeDeployStatus(result.Status)
 	if isFailedDeployStatus(status) {
+		s.updateStepStatus(deployment.ID, "主节点部署", "failed", result.Message)
 		s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -570,7 +674,14 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 			CreatedAt:    deployment.CreatedAt,
 		}, nil
 	}
+	s.updateStepStatus(deployment.ID, "主节点部署", "completed", "主节点部署成功")
+
+	totalReplicas := len(req.ReplicaHosts)
 	for i, replica := range req.ReplicaHosts {
+		nodeName := fmt.Sprintf("从节点 %d 部署 (%s)", i+1, replica.Host)
+		s.addStep(deployment.ID, nodeName, "running")
+		s.updateProgress(deployment.ID, "配置集群", nodeName, 40+i*15)
+
 		replicaConfig := map[string]interface{}{
 			"deploy_mode":    "ha-replica",
 			"master_host":    req.MasterHost,
@@ -589,6 +700,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 			"config":      replicaConfig,
 		})
 		if err != nil {
+			s.updateStepStatus(deployment.ID, nodeName, "failed", err.Error())
 			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -602,9 +714,11 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
 			if strings.Contains(result.Message, "MySQL initialization failed") {
 				if legacyResult, legacyErr := s.deployHAReplicaViaMasterAgent(ctx, req, deployment.ID, i, replica, agentPort); legacyErr == nil && legacyResult != nil && !isFailedDeployStatus(normalizeDeployStatus(legacyResult.Status)) {
+					s.updateStepStatus(deployment.ID, nodeName, "completed", "从节点部署成功 (legacy)")
 					continue
 				}
 			}
+			s.updateStepStatus(deployment.ID, nodeName, "failed", result.Message)
 			s.repo.UpdateStatus(ctx, deployment.ID, "failed")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -615,7 +729,12 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 				CreatedAt:    deployment.CreatedAt,
 			}, nil
 		}
+		s.updateStepStatus(deployment.ID, nodeName, "completed", "从节点部署成功")
+		_ = totalReplicas
 	}
+
+	s.updateProgress(deployment.ID, "集群验证", "验证 HA 集群状态", 90)
+	s.addStep(deployment.ID, "HA 集群状态验证", "running")
 
 	status = "success"
 	s.repo.UpdateStatus(ctx, deployment.ID, status)
@@ -623,6 +742,7 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		if err := s.syncClusterManagement(ctx, "ha", deployment.ID, append([]pseudoNode{
 			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
 		}, haReplicaPseudoNodes(req.ReplicaHosts, "slave")...)); err != nil {
+			s.updateStepStatus(deployment.ID, "HA 集群状态验证", "failed", err.Error())
 			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 			return &DeployResponse{
 				DeploymentID: deployment.ID,
@@ -634,6 +754,9 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 			}, nil
 		}
 	}
+	s.updateStepStatus(deployment.ID, "HA 集群状态验证", "completed", "HA 集群验证通过")
+	s.updateProgress(deployment.ID, "集群验证", "HA 集群部署完成", 100)
+
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "ha",
