@@ -396,11 +396,8 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	s.updateProgress(deployment.ID, "集群验证", "验证 MGR 集群状态", 90)
 	s.addStep(deployment.ID, "MGR 集群状态验证", "running")
 
-	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
-	s.updateStepStatus(deployment.ID, "MGR 集群状态验证", "completed", "MGR 集群部署完成")
-	s.updateProgress(deployment.ID, "集群验证", "MGR 集群部署完成", 100)
-
 	if err := s.syncClusterManagement(ctx, "mgr", deployment.ID, allHostsToPseudoNodes(allHosts, "primary", "secondary")); err != nil {
+		s.updateStepStatus(deployment.ID, "MGR 集群状态验证", "failed", err.Error())
 		s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -411,6 +408,9 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			CreatedAt:    deployment.CreatedAt,
 		}, nil
 	}
+	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	s.updateStepStatus(deployment.ID, "MGR 集群状态验证", "completed", "MGR 集群验证通过")
+	s.updateProgress(deployment.ID, "集群验证", "MGR 集群部署完成", 100)
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "mgr",
@@ -566,16 +566,13 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		s.updateStepStatus(deployment.ID, nodeName, "completed", "节点加入成功")
 	}
 
-	s.updateProgress(deployment.ID, "启动节点", "验证集群状态", 90)
+	s.updateProgress(deployment.ID, "启动节点", "验证 PXC 集群状态", 90)
 	s.addStep(deployment.ID, "集群状态验证", "running")
-
-	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
-	s.updateStepStatus(deployment.ID, "集群状态验证", "completed", "PXC 集群部署完成")
-	s.updateProgress(deployment.ID, "集群验证", "PXC 集群部署完成", 100)
 
 	if err := s.syncClusterManagement(ctx, "pxc", deployment.ID, append([]pseudoNode{
 		{Host: req.BootstrapNode.Host, Port: defaultInt(req.BootstrapNode.Port, 3306), Role: "primary"},
 	}, pxcPseudoNodes(req.OtherNodes, "secondary")...)); err != nil {
+		s.updateStepStatus(deployment.ID, "集群状态验证", "failed", err.Error())
 		s.repo.UpdateStatus(ctx, deployment.ID, "partial")
 		return &DeployResponse{
 			DeploymentID: deployment.ID,
@@ -586,6 +583,9 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			CreatedAt:    deployment.CreatedAt,
 		}, nil
 	}
+	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
+	s.updateStepStatus(deployment.ID, "集群状态验证", "completed", "PXC 集群验证通过")
+	s.updateProgress(deployment.ID, "集群验证", "PXC 集群部署完成", 100)
 	return &DeployResponse{
 		DeploymentID: deployment.ID,
 		ClusterType:  "pxc",

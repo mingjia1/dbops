@@ -466,6 +466,84 @@ func TestDeployPXCUsesResolvedAgentPorts(t *testing.T) {
 	require.Equal(t, "completed", deployment.Status)
 }
 
+func TestDeployMGRMarksValidationStepFailedWhenManagementSyncFails(t *testing.T) {
+	ctx := context.Background()
+	primaryServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer primaryServer.Close()
+	secondaryServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer secondaryServer.Close()
+	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
+	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-primary", Name: "mgr-unsynced-primary", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-secondary", Name: "mgr-unsynced-secondary", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
+
+	resp, err := service.DeployMGR(ctx, DeployMGRRequest{
+		ClusterID:        "mgr-unsynced",
+		Name:             "mgr-unsynced",
+		PrimaryHostID:    "mgr-unsynced-primary",
+		SecondaryHostIDs: []string{"mgr-unsynced-secondary"},
+		PrimaryPort:      3306,
+		ReplicaPort:      3307,
+		MySQLUser:        "root",
+		MySQLPassword:    "rootpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "management sync failed")
+	status, err := service.GetDeploymentStatus(ctx, "mgr-unsynced")
+	require.NoError(t, err)
+	require.Equal(t, "partial", status.Status)
+	require.Contains(t, status.Message, "MGR")
+	requireStepStatus(t, status.Steps, "MGR 集群状态验证", "failed")
+}
+
+func TestDeployPXCMarksValidationStepFailedWhenManagementSyncFails(t *testing.T) {
+	ctx := context.Background()
+	bootstrapServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer bootstrapServer.Close()
+	joinServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer joinServer.Close()
+	bootstrapHost, bootstrapAgentPort := splitTestServerHostPort(t, bootstrapServer.URL)
+	joinHost, joinAgentPort := splitTestServerHostPort(t, joinServer.URL)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-unsynced-bootstrap", Name: "pxc-unsynced-bootstrap", Address: bootstrapHost, SSHPort: 22, SSHUser: "root", AgentPort: bootstrapAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-unsynced-join", Name: "pxc-unsynced-join", Address: joinHost, SSHPort: 22, SSHUser: "root", AgentPort: joinAgentPort}))
+
+	resp, err := service.DeployPXC(ctx, DeployPXCRequest{
+		ClusterID:       "pxc-unsynced",
+		Name:            "pxc-unsynced",
+		BootstrapHostID: "pxc-unsynced-bootstrap",
+		OtherHostIDs:    []string{"pxc-unsynced-join"},
+		BootstrapNode:   BootstrapNode{Port: 3306},
+		OtherNodes:      []PXCNode{{Port: 3307}},
+		MySQLUser:       "root",
+		MySQLPassword:   "rootpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "management sync failed")
+	status, err := service.GetDeploymentStatus(ctx, "pxc-unsynced")
+	require.NoError(t, err)
+	require.Equal(t, "partial", status.Status)
+	require.Contains(t, status.Message, "PXC")
+	requireStepStatus(t, status.Steps, "集群状态验证", "failed")
+}
+
 func clusterDeployOKHandler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -482,6 +560,17 @@ func clusterDeployOKHandler(t *testing.T) http.HandlerFunc {
 			},
 		})
 	}
+}
+
+func requireStepStatus(t *testing.T, steps []DeployStep, name, status string) {
+	t.Helper()
+	for _, step := range steps {
+		if step.Name == name {
+			require.Equal(t, status, step.Status)
+			return
+		}
+	}
+	t.Fatalf("step %q not found in %#v", name, steps)
 }
 
 func splitTestServerHostPort(t *testing.T, rawURL string) (string, int) {
