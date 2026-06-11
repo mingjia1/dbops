@@ -265,7 +265,7 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicateUser,
 	)
 
-	nodeCmd := mysqlExecCommand(ctx, "127.0.0.1", config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
+	nodeCmd := pxcMysqlExecCommand(ctx, "127.0.0.1", config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
 	if out, err := nodeCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -307,7 +307,32 @@ if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/
   exit 0
 fi
 cleanup_policy_rcd() { rm -f /usr/sbin/policy-rc.d; }
-trap cleanup_policy_rcd EXIT
+restore_mysql_repo_lists() {
+  if [ -d /tmp/dbops-disabled-mysql-apt-lists ]; then
+    find /tmp/dbops-disabled-mysql-apt-lists -type f -name '*.list' -print0 2>/dev/null | while IFS= read -r -d '' file; do
+      rel=${file#/tmp/dbops-disabled-mysql-apt-lists/}
+      mkdir -p "/$(dirname "$rel")"
+      mv "$file" "/$rel"
+    done
+    rm -rf /tmp/dbops-disabled-mysql-apt-lists
+  fi
+}
+disable_expired_mysql_repo_lists() {
+  mkdir -p /tmp/dbops-disabled-mysql-apt-lists
+  find /etc/apt -type f -name '*.list' -print0 2>/dev/null | while IFS= read -r -d '' file; do
+    if grep -q 'repo\.mysql\.com' "$file"; then
+      target="/tmp/dbops-disabled-mysql-apt-lists${file}"
+      mkdir -p "$(dirname "$target")"
+      mv "$file" "$target"
+      echo "temporarily disabled apt source with expired MySQL repo signature: $file"
+    fi
+  done
+}
+cleanup() {
+  restore_mysql_repo_lists
+  cleanup_policy_rcd
+}
+trap cleanup EXIT
 cat > /usr/sbin/policy-rc.d <<'EOF_POLICY'
 #!/bin/sh
 exit 101
@@ -334,36 +359,92 @@ wait_dpkg_lock() {
   dpkg --configure -a || true
   return 0
 }
+apt_install_base_tools() {
+  apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils || true
+  if ! command -v wget >/dev/null 2>&1 && [ ! -x /usr/bin/wget ]; then
+    echo "required command wget is missing after apt install"
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1 && [ ! -x /usr/bin/curl ]; then
+    echo "required command curl is missing after apt install"
+    return 1
+  fi
+  echo "base apt tools are ready"
+}
+apt_install_pxc_tools() {
+  apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtrabackup-80 qpress socat || {
+    command -v xtrabackup >/dev/null 2>&1 &&
+    command -v qpress >/dev/null 2>&1 &&
+    command -v socat >/dev/null 2>&1
+  }
+}
+download_pxc_payload() {
+  echo "Extracting PXC common/client/server payload without running package maintainer scripts"
+  mkdir -p /opt/dbops-pxc /tmp/dbops-pxc-debs
+  cd /tmp/dbops-pxc-debs
+  versions=$(apt-cache madison percona-xtradb-cluster-server | awk '{print $3}')
+  if [ -z "$versions" ]; then
+    versions=$(apt-cache policy percona-xtradb-cluster-server | awk '/^[[:space:]]+[0-9]+:/{print $1}')
+  fi
+  if [ -z "$versions" ]; then
+    echo "no PXC server package versions found in configured apt sources"
+    return 1
+  fi
+  downloaded=0
+  for version in $versions; do
+    echo "trying PXC package version $version"
+    rm -f percona-xtradb-cluster-*.deb
+    if apt-get -o Acquire::Retries=3 download \
+      percona-xtradb-cluster-common="$version" \
+      percona-xtradb-cluster-client="$version" \
+      percona-xtradb-cluster-server="$version"; then
+      downloaded=1
+      break
+    fi
+    echo "PXC package version $version download failed; trying next available version"
+    sleep 3
+  done
+  if [ "$downloaded" != "1" ]; then
+    echo "failed to download any matching PXC common/client/server package set"
+    return 1
+  fi
+  for deb in percona-xtradb-cluster-*.deb; do
+    dpkg-deb -x "$deb" /opt/dbops-pxc
+  done
+  test -x /opt/dbops-pxc/usr/sbin/mysqld
+  test -x /opt/dbops-pxc/usr/bin/mysql
+  test -x /opt/dbops-pxc/usr/bin/mysqladmin
+  test -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so
+}
+show_pxc_apt_packages() {
+  echo "PXC packages from configured apt sources:"
+  apt-cache policy percona-xtradb-cluster percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtradb-cluster-server percona-xtrabackup-80 qpress socat || true
+  apt-cache search '^percona-xtradb-cluster' || true
+}
 wait_dpkg_lock
+disable_expired_mysql_repo_lists
 apt-get update
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
 dpkg --configure -a || true
 apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
 wait_dpkg_lock
-apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils
-if ! command -v percona-release >/dev/null 2>&1; then
-  cd /tmp
-  wget -q -O percona-release_latest.generic_all.deb https://repo.percona.com/apt/percona-release_latest.generic_all.deb
-  wait_dpkg_lock
-  dpkg -i percona-release_latest.generic_all.deb
+apt_install_base_tools
+if command -v percona-release >/dev/null 2>&1; then
+  percona-release setup -y pxc80 || true
+else
+  echo "percona-release is not installed; using existing apt sources for PXC packages"
 fi
-percona-release setup -y pxc80 || true
 wait_dpkg_lock
 apt-get update
+show_pxc_apt_packages
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
 dpkg --configure -a || true
 apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
 wait_dpkg_lock
-apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtrabackup-80 qpress socat
-echo "Extracting PXC server payload without running package maintainer scripts"
-mkdir -p /opt/dbops-pxc /tmp/dbops-pxc-debs
-cd /tmp/dbops-pxc-debs
-rm -f percona-xtradb-cluster-server_*.deb
-apt-get download percona-xtradb-cluster-server
-dpkg-deb -x percona-xtradb-cluster-server_*.deb /opt/dbops-pxc
-test -x /opt/dbops-pxc/usr/sbin/mysqld
+apt_install_pxc_tools
+download_pxc_payload
 `)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -525,7 +606,7 @@ func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, pass := range []string{config.MySQLPassword, ""} {
-			pingCmd := exec.CommandContext(ctx, "mysqladmin", "--socket", socket, "-u", "root", "ping")
+			pingCmd := exec.CommandContext(ctx, pxcMysqladminPath(), "--socket", socket, "-u", "root", "ping")
 			if pass != "" {
 				pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 			}
@@ -538,7 +619,7 @@ func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 		}
 		if config.MySQLPassword != "" {
 			_ = setPXCRootPassword(ctx, config)
-			pingCmd := exec.CommandContext(ctx, "mysqladmin", "-h", "127.0.0.1", "-P", strconv.Itoa(config.MySQLPort), "-u", "root", "ping")
+			pingCmd := exec.CommandContext(ctx, pxcMysqladminPath(), "-h", "127.0.0.1", "-P", strconv.Itoa(config.MySQLPort), "-u", "root", "ping")
 			pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPassword)
 			if out, err := pingCmd.CombinedOutput(); err == nil && strings.Contains(string(out), "mysqld is alive") {
 				return nil
@@ -555,7 +636,7 @@ func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 
 func setPXCRootPassword(ctx context.Context, config PXCConfig) error {
 	sql := fmt.Sprintf("ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;", escapeSQL(config.MySQLPassword), escapeSQL(config.MySQLPassword))
-	cmd := exec.CommandContext(ctx, "mysql", "--socket", filepathJoin(config.DataDir, "mysql.sock"), "-u", "root", "-e", sql)
+	cmd := exec.CommandContext(ctx, pxcMysqlPath(), "--socket", filepathJoin(config.DataDir, "mysql.sock"), "-u", "root", "-e", sql)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
@@ -602,6 +683,36 @@ func pxcMysqldPath() string {
 		}
 	}
 	return "/usr/sbin/mysqld"
+}
+
+func pxcMysqlPath() string {
+	for _, candidate := range []string{"/opt/dbops-pxc/usr/bin/mysql", "/usr/bin/mysql"} {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return "mysql"
+}
+
+func pxcMysqladminPath() string {
+	for _, candidate := range []string{"/opt/dbops-pxc/usr/bin/mysqladmin", "/usr/bin/mysqladmin"} {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return "mysqladmin"
+}
+
+func pxcMysqlExecCommand(ctx context.Context, host string, port int, user string, password string, sql string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, pxcMysqlPath(),
+		"-h", host,
+		"-P", fmt.Sprintf("%d", port),
+		"-u", defaultString(user, "root"),
+		"-e", sql)
+	if password != "" {
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
+	}
+	return cmd
 }
 
 func pxcPluginDir() string {
@@ -717,7 +828,7 @@ func (e *TaskExecutor) MonitorPXCSync(ctx context.Context, nodeHost string, node
 }
 
 func (e *TaskExecutor) monitorPXCSyncWithAuth(ctx context.Context, nodeHost string, nodePort int, user, pass string) *PXCSyncStatus {
-	statusCmd := mysqlExecCommand(ctx, nodeHost, nodePort, defaultString(user, "root"), pass, "SHOW STATUS LIKE 'wsrep_%';")
+	statusCmd := pxcMysqlExecCommand(ctx, nodeHost, nodePort, defaultString(user, "root"), pass, "SHOW STATUS LIKE 'wsrep_%';")
 	output, err := statusCmd.Output()
 	if err != nil {
 		return &PXCSyncStatus{
