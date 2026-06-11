@@ -337,6 +337,9 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 		s.updateProgress(deployment.ID, "配置集群", nodeName, 30+i*20)
 
 		deployMode := "mgr"
+		if !isPrimary {
+			deployMode = "mgr-member"
+		}
 		config := map[string]interface{}{
 			"deploy_mode":    deployMode,
 			"group_name":     groupName,

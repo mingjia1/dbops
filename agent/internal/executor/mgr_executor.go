@@ -120,6 +120,10 @@ func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTask
 	if groupResult.Status == "failed" {
 		return groupResult, nil
 	}
+	validateResult := e.validateGroupMemberOnline(ctx, config, true)
+	if validateResult.Status == "failed" {
+		return validateResult, nil
+	}
 
 	return &TaskResult{
 		TaskID:   req.TaskID,
@@ -180,6 +184,10 @@ func (e *MGRExecutor) ConfigureGroupMember(ctx context.Context, req DeployTaskRe
 	joinResult := e.joinGroup(ctx, config)
 	if joinResult.Status == "failed" {
 		return joinResult, nil
+	}
+	validateResult := e.validateGroupMemberOnline(ctx, config, false)
+	if validateResult.Status == "failed" {
+		return validateResult, nil
 	}
 
 	return &TaskResult{
@@ -430,6 +438,45 @@ func (e *MGRExecutor) configureRecoveryChannel(ctx context.Context, config MGRCo
 	}
 }
 
+func (e *MGRExecutor) validateGroupMemberOnline(ctx context.Context, config MGRConfig, requirePrimary bool) *TaskResult {
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for {
+		members, err := e.getGroupMembers(ctx, config)
+		if err == nil {
+			for _, member := range members {
+				if member.MemberHost != config.LocalAddress || member.MemberPort != config.MySQLPort {
+					continue
+				}
+				if member.MemberState == "ONLINE" && (!requirePrimary || member.MemberRole == "PRIMARY") {
+					return &TaskResult{
+						Status:    "completed",
+						Progress:  100,
+						Message:   fmt.Sprintf("MGR member %s:%d is %s/%s", member.MemberHost, member.MemberPort, member.MemberState, member.MemberRole),
+						Timestamp: time.Now(),
+					}
+				}
+				lastErr = fmt.Errorf("member %s:%d state is %s/%s", member.MemberHost, member.MemberPort, member.MemberState, member.MemberRole)
+			}
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("member %s:%d not found in replication_group_members", config.LocalAddress, config.MySQLPort)
+	}
+	return &TaskResult{
+		Status:    "failed",
+		Progress:  95,
+		Message:   fmt.Sprintf("MGR member validation failed: %v", lastErr),
+		Timestamp: time.Now(),
+	}
+}
+
 func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]GroupMemberStatus, error) {
 	querySQL := "SELECT MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, " +
 		"IF(COALESCE((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='group_replication_primary_member'), '') = '', " +
@@ -478,8 +525,10 @@ func (e *MGRExecutor) bootstrapPrimaryNode(ctx context.Context, config MGRConfig
 	_, _ = prepCmd.CombinedOutput()
 
 	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+			"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
+		config.ReplicateUser, config.ReplicatePass,
 		config.ReplicateUser, config.ReplicatePass,
 		config.ReplicateUser)
 
