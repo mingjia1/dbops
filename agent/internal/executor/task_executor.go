@@ -1635,6 +1635,27 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 
 	host, port, user, pass := resolveTargetConn(cfg)
 
+	if cfg.ClusterType == "pxc" {
+		for _, sql := range []string{"SET GLOBAL read_only = OFF", "SET GLOBAL super_read_only = OFF"} {
+			if _, err := runMySQLExec(ctx, host, port, user, pass, sql); err != nil && !cfg.Force {
+				return &TaskResult{
+					TaskID:    req.TaskID,
+					Status:    "failed",
+					Progress:  40,
+					Message:   fmt.Sprintf("PXC promote step %q failed: %v", sql, err),
+					Timestamp: time.Now(),
+				}, nil
+			}
+		}
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "completed",
+			Progress:  100,
+			Message:   fmt.Sprintf("PXC instance %s promoted to %s by disabling read_only", cfg.InstanceID, cfg.TargetRole),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
 	if out, err := runFirstMySQL(ctx, host, port, user, pass, "STOP SLAVE;", "STOP REPLICA;"); err != nil && !cfg.Force {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -1733,13 +1754,29 @@ func (e *TaskExecutor) ExecuteRoleDemote(ctx context.Context, req DeployTaskRequ
 		TaskID:    req.TaskID,
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("instance %s demoted to %s within %s cluster", cfg.InstanceID, cfg.TargetRole, cfg.ClusterType),
+		Message:   roleDemoteMessage(cfg),
 		Timestamp: time.Now(),
 	}, nil
 }
 
+func roleDemoteMessage(cfg RoleSwitchConfig) string {
+	if cfg.ClusterType == "pxc" {
+		return fmt.Sprintf("PXC instance %s demoted to %s by enabling read_only", cfg.InstanceID, cfg.TargetRole)
+	}
+	return fmt.Sprintf("instance %s demoted to %s within %s cluster", cfg.InstanceID, cfg.TargetRole, cfg.ClusterType)
+}
+
 func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	cfg := parseRoleSwitchConfig(req.Config)
+	if cfg.ClusterType == "pxc" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "completed",
+			Progress:  100,
+			Message:   fmt.Sprintf("PXC instance %s does not require async replica rebuild", cfg.InstanceID),
+			Timestamp: time.Now(),
+		}, nil
+	}
 	if cfg.NewMasterID == "" {
 		return &TaskResult{
 			TaskID:    req.TaskID,
