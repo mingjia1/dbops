@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
 type UpgradeService struct {
@@ -20,6 +21,7 @@ type UpgradeService struct {
 	// 真正派发到 agent 端 UpgradeExecutor.
 	agentClient *AgentClient
 	auditSvc    *AuditService
+	encKey      string
 	// P0: per-instance mutex 防止两个 admin 同时点同一实例的升级/迁移,
 	// 后跑的 dispatch 会写同 backupDir/同 importDir 互相覆盖.
 	locks sync.Map // map[instanceID]*sync.Mutex
@@ -36,6 +38,10 @@ func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *
 		agentClient:  agentClient,
 		auditSvc:     audit,
 	}
+}
+
+func (s *UpgradeService) SetEncryptionKey(key string) {
+	s.encKey = key
 }
 
 type PlanUpgradePathRequest struct {
@@ -867,6 +873,26 @@ func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.I
 		"upgrade_type":   upgradeType,
 		"target_version": targetVersion,
 		"instance_id":    instance.ID,
+	}
+	if conn, err := s.instanceRepo.GetConnection(ctx, instance.ID); err == nil {
+		cfg["instance_host"] = localMySQLHostForAgent(conn.Host, host)
+		cfg["instance_port"] = conn.Port
+		cfg["mysql_user"] = conn.Username
+		if s.encKey != "" {
+			if pass, decErr := utils.Decrypt(conn.PasswordEncrypted, s.encKey); decErr == nil {
+				cfg["mysql_pass"] = pass
+			}
+		}
+	}
+	if version, err := s.instanceRepo.GetVersion(ctx, instance.ID); err == nil {
+		if version.FullVersion != "" {
+			cfg["current_version"] = version.FullVersion
+		} else {
+			cfg["current_version"] = version.Version
+		}
+		if version.Flavor != "" {
+			cfg["target_flavor"] = version.Flavor
+		}
 	}
 	for k, v := range extraConfig {
 		cfg[k] = v

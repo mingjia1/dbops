@@ -117,6 +117,8 @@ func parseUpgradeConfig(config map[string]interface{}) UpgradeConfig {
 	}
 	if v, ok := config["instance_port"].(int); ok {
 		uc.InstancePort = v
+	} else if v, ok := config["instance_port"].(float64); ok {
+		uc.InstancePort = int(v)
 	}
 	if v, ok := config["mysql_user"].(string); ok {
 		uc.MySQLUser = v
@@ -150,9 +152,13 @@ func parseUpgradeConfig(config map[string]interface{}) UpgradeConfig {
 	}
 	if v, ok := config["binlog_sync_timeout"].(int); ok {
 		uc.BinlogSyncTimeout = v
+	} else if v, ok := config["binlog_sync_timeout"].(float64); ok {
+		uc.BinlogSyncTimeout = int(v)
 	}
 	if v, ok := config["upgrade_timeout"].(int); ok {
 		uc.UpgradeTimeout = v
+	} else if v, ok := config["upgrade_timeout"].(float64); ok {
+		uc.UpgradeTimeout = int(v)
 	}
 	if nodes, ok := config["rolling_nodes"].([]interface{}); ok {
 		for _, n := range nodes {
@@ -375,6 +381,10 @@ func (e *UpgradeExecutor) extractVersionFromOutput(output string) string {
 func (e *UpgradeExecutor) ExecuteInPlaceUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseUpgradeConfig(req.Config)
 
+	if upgradeTargetAlreadySatisfied(config) {
+		return e.validateAlreadySatisfiedUpgrade(ctx, req.TaskID, config), nil
+	}
+
 	if !config.SkipBackup {
 		backupResult := e.createPreUpgradeBackup(ctx, config)
 		if backupResult.Status == "failed" {
@@ -405,6 +415,50 @@ func (e *UpgradeExecutor) ExecuteInPlaceUpgrade(ctx context.Context, req DeployT
 
 	validationResult := e.validateUpgrade(ctx, config)
 	return validationResult, nil
+}
+
+func upgradeTargetAlreadySatisfied(config UpgradeConfig) bool {
+	current := normalizeUpgradeVersion(config.CurrentVersion)
+	target := normalizeUpgradeVersion(config.TargetVersion)
+	return current != "" && target != "" && (current == target || strings.HasPrefix(current, target+".") || strings.HasPrefix(current, target+"-"))
+}
+
+func normalizeUpgradeVersion(version string) string {
+	version = strings.ToLower(strings.TrimSpace(version))
+	version = strings.TrimPrefix(version, "v")
+	return version
+}
+
+func (e *UpgradeExecutor) validateAlreadySatisfiedUpgrade(ctx context.Context, taskID string, config UpgradeConfig) *TaskResult {
+	host := defaultString(config.InstanceHost, "127.0.0.1")
+	port := config.InstancePort
+	if port == 0 {
+		port = 3306
+	}
+	user := defaultString(config.MySQLUser, "root")
+	output, err := runMySQLExec(ctx, host, port, user, config.MySQLPass, "SELECT VERSION()")
+	if err != nil {
+		return &TaskResult{
+			TaskID:    taskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   fmt.Sprintf("target version already selected, but validation query failed: %v", err),
+			Timestamp: time.Now(),
+		}
+	}
+	actual := strings.TrimSpace(output)
+	return &TaskResult{
+		TaskID:    taskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("target version already satisfied: requested %s, running %s", config.TargetVersion, actual),
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"requested_version": config.TargetVersion,
+			"running_version":   actual,
+			"upgrade_method":    "already_satisfied",
+		},
+	}
 }
 
 func (e *UpgradeExecutor) createPreUpgradeBackup(ctx context.Context, config UpgradeConfig) *TaskResult {
@@ -973,6 +1027,26 @@ func (e *UpgradeExecutor) validateLogicalMigration(ctx context.Context, config U
 
 func (e *UpgradeExecutor) ExecuteRollingUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseUpgradeConfig(req.Config)
+
+	if upgradeTargetAlreadySatisfied(config) {
+		nodeCount := len(config.RollingNodes)
+		if nodeCount == 0 {
+			nodeCount = 1
+		}
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "completed",
+			Progress:  100,
+			Message:   fmt.Sprintf("rolling upgrade target version already satisfied on %d node(s): requested %s, current %s", nodeCount, config.TargetVersion, config.CurrentVersion),
+			Timestamp: time.Now(),
+			Data: map[string]interface{}{
+				"requested_version": config.TargetVersion,
+				"current_version":   config.CurrentVersion,
+				"upgrade_method":    "already_satisfied",
+				"node_count":        nodeCount,
+			},
+		}, nil
+	}
 
 	if len(config.RollingNodes) == 0 {
 		return &TaskResult{
