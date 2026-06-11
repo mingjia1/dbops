@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,6 +24,7 @@ type PXCConfig struct {
 	WSREPSSLEnabled bool     `json:"wsrep_ssl_enabled"`
 	MySQLUser       string   `json:"mysql_user"`
 	MySQLPassword   string   `json:"mysql_password"`
+	NodeHost        string   `json:"node_host"`
 }
 
 type GaleraConfig struct {
@@ -114,6 +116,9 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	if v, ok := config["mysql_password"].(string); ok {
 		pc.MySQLPassword = v
 	}
+	if v, ok := config["node_host"].(string); ok {
+		pc.NodeHost = v
+	}
 
 	return pc
 }
@@ -157,6 +162,7 @@ func parseGaleraConfig(config map[string]interface{}) GaleraConfig {
 
 func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parsePXCConfig(req.Config)
+	config.ReplicatePass = pxcOptionSafePassword(config.ReplicatePass)
 
 	if len(config.Nodes) == 0 {
 		return &TaskResult{
@@ -167,70 +173,110 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 			Timestamp: time.Now(),
 		}, nil
 	}
+	if config.NodeHost == "" {
+		config.NodeHost = config.Nodes[0]
+	}
+	if config.MySQLPassword == "" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   "PXC deployment requires mysql_password",
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if err := installPXCSystemPackage(ctx); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  20,
+			Message:   fmt.Sprintf("PXC package installation failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if err := stopStandalonePXC(ctx, config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  30,
+			Message:   fmt.Sprintf("Failed to stop existing standalone PXC process: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if err := preparePXCDataDir(ctx, config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  35,
+			Message:   fmt.Sprintf("PXC data directory preparation failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if err := writePXCConfig(ctx, config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  45,
+			Message:   fmt.Sprintf("PXC configuration failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if config.Bootstrap {
+		if err := initializePXCBootstrapDataDir(ctx, config); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  55,
+				Message:   fmt.Sprintf("Failed to initialize PXC bootstrap datadir %s: %v", config.DataDir, err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+	if err := startStandalonePXC(ctx, config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  60,
+			Message:   fmt.Sprintf("Failed to start PXC node %s: %v", config.NodeHost, err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if err := waitForPXCMySQL(ctx, config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  70,
+			Message:   fmt.Sprintf("PXC mysqld did not become reachable on %s:%d: %v", config.NodeHost, config.MySQLPort, err),
+			Timestamp: time.Now(),
+		}, nil
+	}
 
 	sstUserSQL := fmt.Sprintf(
 		"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; "+
-			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'localhost';",
-		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser,
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'localhost'; "+
+			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicateUser,
 	)
 
-	for i, node := range config.Nodes {
-		pingCmd := exec.CommandContext(ctx, "mysqladmin", "-h", normalizeLocalMySQLHost(node), "-P", fmt.Sprintf("%d", config.MySQLPort), "-u", defaultString(config.MySQLUser, "root"), "ping")
-		if config.MySQLPassword != "" {
-			pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPassword)
-		}
-		if out, err := pingCmd.CombinedOutput(); err != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  i * 30,
-				Message:   fmt.Sprintf("PXC node %s:%d is not reachable before configuration: %v, output: %s", node, config.MySQLPort, err, strings.TrimSpace(string(out))),
-				Timestamp: time.Now(),
-			}, nil
-		}
-
-		nodeCmd := mysqlExecCommand(ctx, node, config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
-		if out, err := nodeCmd.CombinedOutput(); err != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  i * 30,
-				Message:   fmt.Sprintf("Failed to create SST user on node %s: %v, output: %s", node, err, strings.TrimSpace(string(out))),
-				Timestamp: time.Now(),
-			}, nil
-		}
+	nodeCmd := mysqlExecCommand(ctx, "127.0.0.1", config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
+	if out, err := nodeCmd.CombinedOutput(); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("Failed to create SST user on node %s: %v, output: %s", config.NodeHost, err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}, nil
 	}
 
-	bootstrapNode := config.Nodes[0]
-	if config.Bootstrap {
-		bootstrapCmd := exec.CommandContext(ctx, "systemctl", "start", "mysql@bootstrap")
-		if err := bootstrapCmd.Run(); err != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  50,
-				Message:   fmt.Sprintf("Failed to bootstrap PXC node %s: %v", bootstrapNode, err),
-				Timestamp: time.Now(),
-			}, nil
-		}
-	}
-
-	for i := 1; i < len(config.Nodes); i++ {
-		node := config.Nodes[i]
-		startCmd := exec.CommandContext(ctx, "systemctl", "start", "mysql")
-		if err := startCmd.Run(); err != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  50 + i*10,
-				Message:   fmt.Sprintf("Failed to start PXC node %s: %v", node, err),
-				Timestamp: time.Now(),
-			}, nil
-		}
-		time.Sleep(3 * time.Second)
-	}
-
-	statusResult := e.MonitorPXCSync(ctx, bootstrapNode, config.WSREPPort)
+	statusResult := e.monitorPXCSyncWithAuth(ctx, "127.0.0.1", config.MySQLPort, config.MySQLUser, config.MySQLPassword)
 	if statusResult.ClusterStatus != "Primary" || !statusResult.Ready {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -245,9 +291,335 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		TaskID:    req.TaskID,
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("PXC cluster '%s' deployed successfully with %d nodes", config.ClusterName, len(config.Nodes)),
+		Message:   fmt.Sprintf("PXC node %s joined cluster '%s' status=%s size=%d", config.NodeHost, config.ClusterName, statusResult.ClusterStatus, statusResult.ClusterSize),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+func installPXCSystemPackage(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", `
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1; then
+  echo "PXC payload and client tools are already installed; skipping package installation"
+  exit 0
+fi
+cleanup_policy_rcd() { rm -f /usr/sbin/policy-rc.d; }
+trap cleanup_policy_rcd EXIT
+cat > /usr/sbin/policy-rc.d <<'EOF_POLICY'
+#!/bin/sh
+exit 101
+EOF_POLICY
+chmod +x /usr/sbin/policy-rc.d
+wait_dpkg_lock() {
+  for i in $(seq 1 120); do
+    if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "waiting for apt/dpkg lock ($i/120)"
+    fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>&1 || true
+    sleep 5
+  done
+  echo "apt/dpkg lock still held after waiting; attempting stale apt/dpkg cleanup"
+  ps -eo pid,etimes,comm,args | awk '$2 > 900 && ($3 ~ /^(apt|apt-get|dpkg|dpkg-deb|unattended-upgrade)$/) {print $1}' | xargs -r kill -TERM
+  sleep 10
+  ps -eo pid,etimes,comm,args | awk '$2 > 900 && ($3 ~ /^(apt|apt-get|dpkg|dpkg-deb|unattended-upgrade)$/) {print $1}' | xargs -r kill -KILL
+  if fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+    echo "apt/dpkg lock still held after stale cleanup"
+    fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>&1 || true
+    return 1
+  fi
+  dpkg --configure -a || true
+  return 0
+}
+wait_dpkg_lock
+apt-get update
+wait_dpkg_lock
+dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
+dpkg --configure -a || true
+apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+wait_dpkg_lock
+apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils
+if ! command -v percona-release >/dev/null 2>&1; then
+  cd /tmp
+  wget -q -O percona-release_latest.generic_all.deb https://repo.percona.com/apt/percona-release_latest.generic_all.deb
+  wait_dpkg_lock
+  dpkg -i percona-release_latest.generic_all.deb
+fi
+percona-release setup -y pxc80 || true
+wait_dpkg_lock
+apt-get update
+wait_dpkg_lock
+dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
+dpkg --configure -a || true
+apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+wait_dpkg_lock
+apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtrabackup-80 qpress socat
+echo "Extracting PXC server payload without running package maintainer scripts"
+mkdir -p /opt/dbops-pxc /tmp/dbops-pxc-debs
+cd /tmp/dbops-pxc-debs
+rm -f percona-xtradb-cluster-server_*.deb
+apt-get download percona-xtradb-cluster-server
+dpkg-deb -x percona-xtradb-cluster-server_*.deb /opt/dbops-pxc
+test -x /opt/dbops-pxc/usr/sbin/mysqld
+`)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func writePXCConfig(ctx context.Context, config PXCConfig) error {
+	clusterAddress := "gcomm://" + strings.Join(config.Nodes, ",")
+	serverID := 1000 + config.MySQLPort%50000 + len(config.NodeHost)
+	pluginDir := pxcPluginDir()
+	pluginDirLine := ""
+	if pluginDir != "" {
+		pluginDirLine = fmt.Sprintf("plugin-dir=%s\n", pluginDir)
+	}
+	providerPath := pxcProviderPath()
+	content := fmt.Sprintf(`[mysqld]
+server_id=%d
+port=%d
+bind-address=0.0.0.0
+datadir=%s
+socket=%s/mysql.sock
+pid-file=%s/mysql.pid
+log-error=%s
+%s
+log-bin=mysql-bin
+mysqlx=0
+binlog_format=ROW
+default_storage_engine=InnoDB
+innodb_autoinc_lock_mode=2
+log_slave_updates
+pxc_strict_mode=PERMISSIVE
+wsrep_provider=%s
+wsrep_cluster_name=%s
+wsrep_cluster_address=%s
+wsrep_node_address=%s
+wsrep_node_name=%s-%s
+wsrep_sst_method=%s
+wsrep_sst_auth="%s:%s"
+`, serverID, config.MySQLPort, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine, providerPath, config.ClusterName, clusterAddress, config.NodeHost, config.ClusterName, safeNodeName(config.NodeHost), defaultString(config.SSTMethod, "xtrabackup-v2"), config.ReplicateUser, config.ReplicatePass)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", "mkdir -p /etc/dbops-pxc /var/log/dbops-pxc && cat > "+shellQuote(pxcConfigPath(config))+" <<'EOF'\n"+content+"EOF\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func safeNodeName(host string) string {
+	replacer := strings.NewReplacer(".", "-", ":", "-")
+	return replacer.Replace(host)
+}
+
+func preparePXCDataDir(ctx context.Context, config PXCConfig) error {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
+set -euo pipefail
+datadir=%s
+case "$datadir" in
+  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
+  *) echo "refuse to prepare unsafe PXC datadir: $datadir"; exit 1 ;;
+esac
+mkdir -p "$datadir" /var/log/dbops-pxc /etc/dbops-pxc
+find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+chown -R mysql:mysql "$datadir" /var/log/dbops-pxc
+`, shellQuote(config.DataDir)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func initializePXCBootstrapDataDir(ctx context.Context, config PXCConfig) error {
+	clean := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
+set -euo pipefail
+datadir=%s
+case "$datadir" in
+  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
+  *) echo "refuse to clean unsafe PXC datadir: $datadir"; exit 1 ;;
+esac
+if [ -d "$datadir/mysql" ] && [ ! -f "$datadir/mysql.ibd" ]; then
+  find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
+`, shellQuote(config.DataDir)))
+	if out, err := clean.CombinedOutput(); err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	check := exec.CommandContext(ctx, "bash", "-lc", "test -f "+shellQuote(filepathJoin(config.DataDir, "mysql.ibd")))
+	if err := check.Run(); err == nil {
+		return nil
+	}
+	if err := writePXCInitConfig(ctx, config); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf("%s --defaults-file=%s --initialize-insecure --user=mysql", shellQuote(pxcMysqldPath()), shellQuote(pxcInitConfigPath(config))))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func writePXCInitConfig(ctx context.Context, config PXCConfig) error {
+	pluginDirLine := ""
+	if pluginDir := pxcPluginDir(); pluginDir != "" {
+		pluginDirLine = fmt.Sprintf("plugin-dir=%s\n", pluginDir)
+	}
+	content := fmt.Sprintf(`[mysqld]
+datadir=%s
+socket=%s/mysql.sock
+pid-file=%s/mysql.pid
+log-error=%s
+%smysqlx=0
+`, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", "mkdir -p /etc/dbops-pxc /var/log/dbops-pxc && cat > "+shellQuote(pxcInitConfigPath(config))+" <<'EOF'\n"+content+"EOF\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func stopStandalonePXC(ctx context.Context, config PXCConfig) error {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
+pid_file=%s
+if [ -f "$pid_file" ]; then
+  pid=$(cat "$pid_file" 2>/dev/null || true)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    for i in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 1; done
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pid_file"
+fi
+`, shellQuote(filepathJoin(config.DataDir, "mysql.pid"))))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func startStandalonePXC(ctx context.Context, config PXCConfig) error {
+	extra := ""
+	if config.Bootstrap {
+		extra = " --wsrep-new-cluster"
+	}
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf("nohup %s --defaults-file=%s --user=mysql%s >> %s 2>&1 &", shellQuote(pxcMysqldPath()), shellQuote(pxcConfigPath(config)), extra, shellQuote(pxcStartupLogPath(config))))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
+	socket := filepathJoin(config.DataDir, "mysql.sock")
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, pass := range []string{config.MySQLPassword, ""} {
+			pingCmd := exec.CommandContext(ctx, "mysqladmin", "--socket", socket, "-u", "root", "ping")
+			if pass != "" {
+				pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+			}
+			if out, err := pingCmd.CombinedOutput(); err == nil && strings.Contains(string(out), "mysqld is alive") {
+				if pass == "" && config.MySQLPassword != "" {
+					_ = setPXCRootPassword(ctx, config)
+				}
+				return nil
+			}
+		}
+		if config.MySQLPassword != "" {
+			_ = setPXCRootPassword(ctx, config)
+			pingCmd := exec.CommandContext(ctx, "mysqladmin", "-h", "127.0.0.1", "-P", strconv.Itoa(config.MySQLPort), "-u", "root", "ping")
+			pingCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPassword)
+			if out, err := pingCmd.CombinedOutput(); err == nil && strings.Contains(string(out), "mysqld is alive") {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+	return fmt.Errorf("timeout waiting for mysqld on port %d", config.MySQLPort)
+}
+
+func setPXCRootPassword(ctx context.Context, config PXCConfig) error {
+	sql := fmt.Sprintf("ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;", escapeSQL(config.MySQLPassword), escapeSQL(config.MySQLPassword))
+	cmd := exec.CommandContext(ctx, "mysql", "--socket", filepathJoin(config.DataDir, "mysql.sock"), "-u", "root", "-e", sql)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func filepathJoin(base, name string) string {
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		return name
+	}
+	return base + "/" + name
+}
+
+func pxcOptionSafePassword(password string) string {
+	if password == "" {
+		return password
+	}
+	replacer := strings.NewReplacer("#", "_", "\n", "_", "\r", "_")
+	return replacer.Replace(password)
+}
+
+func pxcConfigPath(config PXCConfig) string {
+	return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", config.MySQLPort)
+}
+
+func pxcInitConfigPath(config PXCConfig) string {
+	return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d-init.cnf", config.MySQLPort)
+}
+
+func pxcErrorLogPath(config PXCConfig) string {
+	return fmt.Sprintf("/var/log/dbops-pxc/pxc-%d-error.log", config.MySQLPort)
+}
+
+func pxcStartupLogPath(config PXCConfig) string {
+	return fmt.Sprintf("/var/log/dbops-pxc/pxc-%d-startup.log", config.MySQLPort)
+}
+
+func pxcMysqldPath() string {
+	for _, candidate := range []string{"/opt/dbops-pxc/usr/sbin/mysqld", "/usr/sbin/mysqld"} {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return "/usr/sbin/mysqld"
+}
+
+func pxcPluginDir() string {
+	for _, candidate := range []string{"/opt/dbops-pxc/usr/lib/mysql/plugin", "/usr/lib/mysql/plugin"} {
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func pxcProviderPath() string {
+	for _, candidate := range []string{"/opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so", "/usr/lib/galera4/libgalera_smm.so"} {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return "/usr/lib/galera4/libgalera_smm.so"
 }
 
 func (e *TaskExecutor) ConfigureGalera(ctx context.Context, nodeHost string, nodePort int, config map[string]interface{}) (*TaskResult, error) {
@@ -341,10 +713,11 @@ func (e *TaskExecutor) ConfigureGalera(ctx context.Context, nodeHost string, nod
 }
 
 func (e *TaskExecutor) MonitorPXCSync(ctx context.Context, nodeHost string, nodePort int) *PXCSyncStatus {
-	statusCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW STATUS LIKE 'wsrep_%';")
+	return e.monitorPXCSyncWithAuth(ctx, nodeHost, nodePort, "root", "")
+}
 
+func (e *TaskExecutor) monitorPXCSyncWithAuth(ctx context.Context, nodeHost string, nodePort int, user, pass string) *PXCSyncStatus {
+	statusCmd := mysqlExecCommand(ctx, nodeHost, nodePort, defaultString(user, "root"), pass, "SHOW STATUS LIKE 'wsrep_%';")
 	output, err := statusCmd.Output()
 	if err != nil {
 		return &PXCSyncStatus{

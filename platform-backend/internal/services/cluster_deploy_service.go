@@ -297,11 +297,18 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
+	pxcNodes := append([]PXCNode{{Host: req.BootstrapNode.Host, Port: req.BootstrapNode.Port, AgentPort: req.BootstrapNode.AgentPort}}, req.OtherNodes...)
+	pxcNodeHosts := make([]string, 0, len(pxcNodes))
+	for _, node := range pxcNodes {
+		pxcNodeHosts = append(pxcNodeHosts, node.Host)
+	}
+
 	bootstrapConfig := map[string]interface{}{
 		"deploy_mode":    "pxc",
 		"cluster_name":   req.Name,
 		"bootstrap":      true,
-		"nodes":          []string{req.BootstrapNode.Host},
+		"nodes":          pxcNodeHosts,
+		"node_host":      req.BootstrapNode.Host,
 		"mysql_port":     defaultInt(req.BootstrapNode.Port, 3306),
 		"wsrep_port":     defaultInt(req.WSREPPort, 4567),
 		"sst_method":     "xtrabackup-v2",
@@ -349,7 +356,8 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"deploy_mode":    "pxc",
 			"cluster_name":   req.Name,
 			"bootstrap":      false,
-			"nodes":          []string{node.Host},
+			"nodes":          pxcNodeHosts,
+			"node_host":      node.Host,
 			"mysql_port":     defaultInt(node.Port, 3306),
 			"wsrep_port":     defaultInt(req.WSREPPort, 4567),
 			"sst_method":     "xtrabackup-v2",

@@ -14,7 +14,7 @@ import (
 
 const (
 	agentDefaultTimeout    = 2 * time.Minute
-	agentDeploymentTimeout = 15 * time.Minute
+	agentDeploymentTimeout = 60 * time.Minute
 )
 
 type AgentClient struct {
@@ -196,7 +196,7 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("agent request failed: %w", err)
+		return nil, fmt.Errorf("agent request failed after timeout=%s: %w", client.Timeout, err)
 	}
 	defer resp.Body.Close()
 

@@ -109,3 +109,4 @@ agent/config/config.local.yaml
 backups/
 data/
 .omo/
+.cache/
