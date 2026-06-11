@@ -794,14 +794,15 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 	}
 	nodes := s.deploymentNodes(ctx, dep.ID)
 	prog := s.getProgress(deploymentID)
+	stage, progress, message := deploymentFallbackProgress(dep.ClusterType, dep.Status)
 	resp := &DeployResponse{
 		DeploymentID: dep.ID,
 		ClusterType:  dep.ClusterType,
 		Name:         dep.Name,
 		Status:       dep.Status,
-		Stage:        dep.Name,
-		Progress:     0,
-		Message:      "",
+		Stage:        stage,
+		Progress:     progress,
+		Message:      message,
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}
@@ -833,16 +834,44 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 	}
 	responses := make([]DeployResponse, 0, len(deployments))
 	for _, dep := range deployments {
+		stage, progress, message := deploymentFallbackProgress(dep.ClusterType, dep.Status)
+		if prog := s.getProgress(dep.ID); prog != nil {
+			stage = prog.Stage
+			progress = prog.Progress
+			message = prog.Message
+		}
 		responses = append(responses, DeployResponse{
 			DeploymentID: dep.ID,
 			ClusterType:  dep.ClusterType,
 			Name:         dep.Name,
 			Status:       dep.Status,
+			Stage:        stage,
+			Progress:     progress,
+			Message:      message,
 			CreatedAt:    dep.CreatedAt,
 			Nodes:        s.deploymentNodes(ctx, dep.ID),
 		})
 	}
 	return responses, nil
+}
+
+func deploymentFallbackProgress(clusterType, status string) (string, int, string) {
+	normalized := normalizeDeployStatus(status)
+	switch normalized {
+	case "success":
+		return "集群验证", 100, fmt.Sprintf("%s 集群部署完成", strings.ToUpper(clusterType))
+	case "failed":
+		return "集群验证", 100, fmt.Sprintf("%s 集群部署失败", strings.ToUpper(clusterType))
+	case "partial":
+		return "集群验证", 100, fmt.Sprintf("%s 集群部署部分完成", strings.ToUpper(clusterType))
+	case "pending":
+		return "环境检查", 0, "部署任务等待执行"
+	default:
+		if normalized == "" {
+			return "环境检查", 0, "部署任务等待执行"
+		}
+		return "配置集群", 50, fmt.Sprintf("%s 集群部署状态: %s", strings.ToUpper(clusterType), normalized)
+	}
 }
 
 func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (resp *DeployResponse, err error) {
@@ -1127,15 +1156,15 @@ type DeployResponse struct {
 }
 
 type DeployNode struct {
-	InstanceID   string `json:"instance_id"`
-	Name         string `json:"name"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	Role         string `json:"role"`
-	Status       string `json:"status,omitempty"`
-	CurrentStep  string `json:"current_step,omitempty"`
-	Progress     int    `json:"progress,omitempty"`
-	Message      string `json:"message,omitempty"`
+	InstanceID  string `json:"instance_id"`
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Role        string `json:"role"`
+	Status      string `json:"status,omitempty"`
+	CurrentStep string `json:"current_step,omitempty"`
+	Progress    int    `json:"progress,omitempty"`
+	Message     string `json:"message,omitempty"`
 }
 
 type DeployStep struct {

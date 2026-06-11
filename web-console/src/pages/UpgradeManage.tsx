@@ -34,6 +34,7 @@ import { instanceApi, upgradeApi, versionApi, type Instance, type VersionEntry }
 const { Title, Paragraph } = Typography
 
 const UPGRADE_STAGES = ['预检查', '备份数据', '停止服务', '安装新版本', '数据升级', '启动服务', '验证']
+const ROLLING_UPGRADE_STAGES = ['集群检查', '升级从库', '从库验证', '角色切换', '升级原主库', '重建拓扑', '最终验证']
 
 const UPGRADE_SUBSTEPS: Record<string, string[]> = {
   '预检查': ['检查磁盘空间', '验证版本兼容性', '检查实例状态', '验证备份状态'],
@@ -56,6 +57,9 @@ interface UpgradeStep {
 interface ActiveUpgrade {
   task_id: string
   instance_id: string
+  cluster_id?: string
+  strategy?: string
+  task_type?: string
   status: string
   progress: number
   stage?: string
@@ -93,6 +97,49 @@ const activeUpgradeStatuses = new Set(['pending', 'running', 'queued', 'executin
 const terminalUpgradeStatuses = new Set(['success', 'completed', 'failed', 'error', 'cancelled', 'canceled', 'timeout'])
 const isCompletedUpgradeStatus = (status?: string) => ['success', 'completed'].includes((status || '').toLowerCase())
 const isFailedUpgradeStatus = (status?: string) => ['failed', 'error', 'cancelled', 'canceled', 'timeout'].includes((status || '').toLowerCase())
+
+const clampProgress = (progress?: number) => {
+  if (typeof progress !== 'number' || Number.isNaN(progress)) return 0
+  return Math.max(0, Math.min(100, progress))
+}
+
+const upgradeStagesFor = (upgrade?: Pick<ActiveUpgrade, 'strategy' | 'task_type'> | Pick<UpgradeHistory, 'upgrade_type' | 'task_type'>) => {
+  const rawType = `${(upgrade as any)?.strategy || ''} ${(upgrade as any)?.upgrade_type || ''} ${(upgrade as any)?.task_type || ''}`.toLowerCase()
+  return rawType.includes('rolling') ? ROLLING_UPGRADE_STAGES : UPGRADE_STAGES
+}
+
+const inferStepIndex = (progress: number, stages: string[], status?: string, stage?: string) => {
+  const normalized = (status || '').toLowerCase()
+  if (isCompletedUpgradeStatus(normalized)) return stages.length - 1
+  if (isFailedUpgradeStatus(normalized)) return Math.min(stages.length - 1, Math.floor((clampProgress(progress) / 100) * stages.length))
+  if (stage) {
+    const idx = stages.indexOf(stage)
+    if (idx >= 0) return idx
+  }
+  return Math.min(stages.length - 1, Math.floor((clampProgress(progress) / 100) * stages.length))
+}
+
+const buildUpgradeSteps = (upgrade: ActiveUpgrade): UpgradeStep[] => {
+  if (upgrade.steps?.length) return upgrade.steps
+  const stages = upgradeStagesFor(upgrade)
+  const current = inferStepIndex(upgrade.progress, stages, upgrade.status, upgrade.stage)
+  return stages.map((name, idx) => {
+    let status = 'wait'
+    if (idx < current || isCompletedUpgradeStatus(upgrade.status)) status = 'completed'
+    else if (idx === current && !terminalUpgradeStatuses.has((upgrade.status || '').toLowerCase())) status = 'running'
+    else if (idx === current && isFailedUpgradeStatus(upgrade.status)) status = 'failed'
+    return {
+      name,
+      status,
+      message: idx === current ? (upgrade.message || '正在执行') : undefined,
+    }
+  })
+}
+
+const currentUpgradeStage = (upgrade: ActiveUpgrade) => {
+  const stages = upgradeStagesFor(upgrade)
+  return stages[inferStepIndex(upgrade.progress, stages, upgrade.status, upgrade.stage)] || stages[0]
+}
 
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
@@ -148,14 +195,15 @@ const UpgradeManage: React.FC = () => {
             ...prev,
             status: data.status || prev.status,
             progress: typeof data.progress === 'number' ? data.progress : prev.progress,
-            stage: data.stage || prev.stage,
-            message: data.message || prev.message,
-            steps: Array.isArray(data.steps) ? data.steps : prev.steps,
+            stage: data.stage || currentUpgradeStage({ ...prev, progress: typeof data.progress === 'number' ? data.progress : prev.progress, status: data.status || prev.status }),
+            message: data.message || data.error_message || prev.message,
+            task_type: data.task_type || prev.task_type,
+            steps: Array.isArray(data.steps) ? data.steps : undefined,
             logs: Array.isArray(data.logs) ? data.logs : prev.logs,
-            finished_at: data.finished_at,
+            finished_at: data.finished_at || data.completed_at,
           } : prev)
-          const stageIdx = data.stage ? UPGRADE_STAGES.indexOf(data.stage) : -1
-          if (stageIdx >= 0) setUpgradeStep(stageIdx)
+          const nextStages = upgradeStagesFor({ strategy: activeUpgrade.strategy, task_type: data.task_type || activeUpgrade.task_type })
+          setUpgradeStep(inferStepIndex(typeof data.progress === 'number' ? data.progress : activeUpgrade.progress, nextStages, data.status || activeUpgrade.status, data.stage))
           if (terminalUpgradeStatuses.has((data.status || '').toLowerCase())) {
             loadData()
           }
@@ -286,10 +334,13 @@ const UpgradeManage: React.FC = () => {
       const taskId = res?.data?.task_id || res?.data?.id
       const activeUpgradeData: ActiveUpgrade = {
         task_id: taskId,
-        instance_id: values.instance_id,
+        instance_id: values.instance_id || '',
+        cluster_id: values.cluster_id,
+        strategy,
+        task_type: strategy === 'rolling' ? 'upgrade_rolling' : strategy === 'logical' ? 'upgrade_logical' : 'upgrade_in_place',
         status: res?.data?.status || 'running',
         progress: typeof res?.data?.progress === 'number' ? res.data.progress : 0,
-        stage: UPGRADE_STAGES[0],
+        stage: upgradeStagesFor({ strategy })[0],
         message: '升级任务已提交',
         started_at: new Date().toISOString(),
         steps: [],
@@ -409,6 +460,11 @@ const UpgradeManage: React.FC = () => {
     { title: '时间', dataIndex: 'start_time', key: 'start_time', render: (v: string, r: UpgradeHistory) => v || r.created_at || '-' },
   ]
 
+  const activeUpgradeStages = activeUpgrade ? upgradeStagesFor(activeUpgrade) : UPGRADE_STAGES
+  const activeUpgradeSteps = activeUpgrade ? buildUpgradeSteps(activeUpgrade) : []
+  const activeUpgradeCurrentStage = activeUpgrade ? currentUpgradeStage(activeUpgrade) : UPGRADE_STAGES[0]
+  const activeUpgradeSubsteps = UPGRADE_SUBSTEPS[activeUpgradeCurrentStage] || UPGRADE_SUBSTEPS['预检查']
+
   return (
     <div>
       <Title level={4}>版本升级管理</Title>
@@ -446,7 +502,7 @@ const UpgradeManage: React.FC = () => {
           <Steps
             current={upgradeStep}
             size="small"
-            items={UPGRADE_STAGES.map((title) => ({ title }))}
+            items={activeUpgradeStages.map((title) => ({ title }))}
             status={isFailedUpgradeStatus(activeUpgrade.status) ? 'error' : isCompletedUpgradeStatus(activeUpgrade.status) ? 'finish' : 'process'}
           />
           <Progress
@@ -456,46 +512,42 @@ const UpgradeManage: React.FC = () => {
           />
           <div style={{ marginTop: 8, color: '#666' }}>{activeUpgrade.message}</div>
 
-          {activeUpgrade.steps && activeUpgrade.steps.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <strong>详细步骤</strong>
-              <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeUpgrade.steps.findIndex((s) => s.status === 'running')}>
-                {activeUpgrade.steps.map((step, idx) => (
-                  <Steps.Step
-                    key={idx}
-                    title={step.name}
-                    description={
-                      <div>
-                        <div style={{ color: '#888', fontSize: 12 }}>
-                          {step.message || ''}
-                          {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
-                          {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
-                        </div>
+          <div style={{ marginTop: 16 }}>
+            <strong>详细步骤</strong>
+            <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeUpgradeSteps.findIndex((s) => s.status === 'running')}>
+              {activeUpgradeSteps.map((step, idx) => (
+                <Steps.Step
+                  key={idx}
+                  title={step.name}
+                  description={
+                    <div>
+                      <div style={{ color: '#888', fontSize: 12 }}>
+                        {step.message || ''}
+                        {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
+                        {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
                       </div>
-                    }
-                    status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
-                  />
-                ))}
-              </Steps>
-            </div>
-          )}
+                    </div>
+                  }
+                  status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
+                />
+              ))}
+            </Steps>
+          </div>
 
-          {!activeUpgrade.steps || activeUpgrade.steps.length === 0 ? (
-            <div style={{ marginTop: 16 }}>
-              <strong>当前阶段子步骤</strong>
-              <div style={{ marginTop: 8 }}>
-                {(UPGRADE_SUBSTEPS[activeUpgrade.stage || ''] || UPGRADE_SUBSTEPS['预检查']).map((substep, idx) => (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    {idx < (UPGRADE_SUBSTEPS[activeUpgrade.stage || ''] || UPGRADE_SUBSTEPS['预检查']).length - 1 ?
-                      <span style={{ color: '#52c41a' }}>&#10003;</span> :
-                      <span style={{ color: '#1677ff' }}>&#9679;</span>
-                    }
-                    <span>{substep}</span>
-                  </div>
-                ))}
-              </div>
+          <div style={{ marginTop: 16 }}>
+            <strong>当前阶段子步骤</strong>
+            <div style={{ marginTop: 8 }}>
+              {activeUpgradeSubsteps.map((substep, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  {idx < activeUpgradeSubsteps.length - 1 ?
+                    <span style={{ color: '#52c41a' }}>&#10003;</span> :
+                    <span style={{ color: '#1677ff' }}>&#9679;</span>
+                  }
+                  <span>{substep}</span>
+                </div>
+              ))}
             </div>
-          ) : null}
+          </div>
 
           {activeUpgrade.logs && activeUpgrade.logs.length > 0 && (
             <div style={{ marginTop: 16 }}>
