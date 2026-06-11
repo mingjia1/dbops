@@ -300,9 +300,17 @@ func installPXCSystemPackage(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "bash", "-lc", `
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+export APT_LISTCHANGES_FRONTEND=none
 export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
-if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1; then
+patch_pxc_sst_path() {
+  script=/opt/dbops-pxc/usr/bin/wsrep_sst_xtrabackup-v2
+  if [ -f "$script" ]; then
+    sed -i 's#export PATH="/usr/sbin:/sbin:$PATH"#export PATH="/opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin:/usr/sbin:/sbin:$PATH"#' "$script"
+  fi
+}
+patch_pxc_sst_path
+if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v mysqladmin >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1; then
   echo "PXC payload and client tools are already installed; skipping package installation"
   exit 0
 fi
@@ -360,7 +368,7 @@ wait_dpkg_lock() {
   return 0
 }
 apt_install_base_tools() {
-  apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils || true
+  timeout 180s apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils || true
   if ! command -v wget >/dev/null 2>&1 && [ ! -x /usr/bin/wget ]; then
     echo "required command wget is missing after apt install"
     return 1
@@ -372,7 +380,7 @@ apt_install_base_tools() {
   echo "base apt tools are ready"
 }
 apt_install_pxc_tools() {
-  apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtrabackup-80 qpress socat || {
+  timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtrabackup-80 qpress socat || {
     command -v xtrabackup >/dev/null 2>&1 &&
     command -v qpress >/dev/null 2>&1 &&
     command -v socat >/dev/null 2>&1
@@ -423,11 +431,11 @@ show_pxc_apt_packages() {
 }
 wait_dpkg_lock
 disable_expired_mysql_repo_lists
-apt-get update
+timeout 180s apt-get update
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
 dpkg --configure -a || true
-apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
 wait_dpkg_lock
 apt_install_base_tools
 if command -v percona-release >/dev/null 2>&1; then
@@ -436,15 +444,16 @@ else
   echo "percona-release is not installed; using existing apt sources for PXC packages"
 fi
 wait_dpkg_lock
-apt-get update
+timeout 180s apt-get update
 show_pxc_apt_packages
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
 dpkg --configure -a || true
-apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
 wait_dpkg_lock
 apt_install_pxc_tools
 download_pxc_payload
+patch_pxc_sst_path
 `)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -454,7 +463,37 @@ download_pxc_payload
 }
 
 func writePXCConfig(ctx context.Context, config PXCConfig) error {
-	clusterAddress := "gcomm://" + strings.Join(config.Nodes, ",")
+	content := buildPXCConfigContent(config)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", "mkdir -p /etc/dbops-pxc /var/log/dbops-pxc && cat > "+shellQuote(pxcConfigPath(config))+" <<'EOF'\n"+content+"EOF\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func buildPXCConfigContent(config PXCConfig) string {
+	wsrepPort := config.WSREPPort
+	if wsrepPort == 0 {
+		wsrepPort = 4567
+	}
+	clusterNodes := make([]string, 0, len(config.Nodes))
+	for _, node := range config.Nodes {
+		if strings.Contains(node, ":") {
+			clusterNodes = append(clusterNodes, node)
+			continue
+		}
+		clusterNodes = append(clusterNodes, fmt.Sprintf("%s:%d", node, wsrepPort))
+	}
+	clusterAddress := "gcomm://" + strings.Join(clusterNodes, ",")
+	providerOptions := fmt.Sprintf("gmcast.listen_addr=tcp://0.0.0.0:%d", wsrepPort)
+	sstSection := ""
+	pxcEncryptClusterTraffic := "ON"
+	if !config.WSREPSSLEnabled {
+		providerOptions += ";socket.ssl=NO"
+		pxcEncryptClusterTraffic = "OFF"
+		sstSection = "\n[sst]\nencrypt=0\n"
+	}
 	serverID := 1000 + config.MySQLPort%50000 + len(config.NodeHost)
 	pluginDir := pxcPluginDir()
 	pluginDirLine := ""
@@ -462,10 +501,11 @@ func writePXCConfig(ctx context.Context, config PXCConfig) error {
 		pluginDirLine = fmt.Sprintf("plugin-dir=%s\n", pluginDir)
 	}
 	providerPath := pxcProviderPath()
-	content := fmt.Sprintf(`[mysqld]
+	return fmt.Sprintf(`[mysqld]
 server_id=%d
 port=%d
 bind-address=0.0.0.0
+basedir=/opt/dbops-pxc/usr
 datadir=%s
 socket=%s/mysql.sock
 pid-file=%s/mysql.pid
@@ -484,14 +524,9 @@ wsrep_cluster_address=%s
 wsrep_node_address=%s
 wsrep_node_name=%s-%s
 wsrep_sst_method=%s
-wsrep_sst_auth="%s:%s"
-`, serverID, config.MySQLPort, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine, providerPath, config.ClusterName, clusterAddress, config.NodeHost, config.ClusterName, safeNodeName(config.NodeHost), defaultString(config.SSTMethod, "xtrabackup-v2"), config.ReplicateUser, config.ReplicatePass)
-	cmd := exec.CommandContext(ctx, "bash", "-lc", "mkdir -p /etc/dbops-pxc /var/log/dbops-pxc && cat > "+shellQuote(pxcConfigPath(config))+" <<'EOF'\n"+content+"EOF\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+pxc_encrypt_cluster_traffic=%s
+wsrep_provider_options=%s
+%s`, serverID, config.MySQLPort, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine, providerPath, config.ClusterName, clusterAddress, config.NodeHost, config.ClusterName, safeNodeName(config.NodeHost), defaultString(config.SSTMethod, "xtrabackup-v2"), pxcEncryptClusterTraffic, providerOptions, sstSection)
 }
 
 func safeNodeName(host string) string {
@@ -508,6 +543,7 @@ case "$datadir" in
   *) echo "refuse to prepare unsafe PXC datadir: $datadir"; exit 1 ;;
 esac
 mkdir -p "$datadir" /var/log/dbops-pxc /etc/dbops-pxc
+chmod o+x "$(dirname "$datadir")" 2>/dev/null || true
 find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 chown -R mysql:mysql "$datadir" /var/log/dbops-pxc
 `, shellQuote(config.DataDir)))
@@ -593,7 +629,7 @@ func startStandalonePXC(ctx context.Context, config PXCConfig) error {
 	if config.Bootstrap {
 		extra = " --wsrep-new-cluster"
 	}
-	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf("nohup %s --defaults-file=%s --user=mysql%s >> %s 2>&1 &", shellQuote(pxcMysqldPath()), shellQuote(pxcConfigPath(config)), extra, shellQuote(pxcStartupLogPath(config))))
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf("nohup env PATH=%s:$PATH %s --defaults-file=%s --user=mysql%s >> %s 2>&1 &", shellQuote("/opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin"), shellQuote(pxcMysqldPath()), shellQuote(pxcConfigPath(config)), extra, shellQuote(pxcStartupLogPath(config))))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))

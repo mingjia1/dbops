@@ -458,6 +458,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	s.updateProgress(deployment.ID, "安装二进制", "准备 Bootstrap 节点配置", 20)
 	s.addStep(deployment.ID, "准备 Bootstrap 节点配置", "running")
 
+	sstMethod := defaultString(req.ConfigParams["sst_method"], "xtrabackup-v2")
 	bootstrapConfig := map[string]interface{}{
 		"deploy_mode":    "pxc",
 		"cluster_name":   req.Name,
@@ -466,7 +467,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		"node_host":      req.BootstrapNode.Host,
 		"mysql_port":     defaultInt(req.BootstrapNode.Port, 3306),
 		"wsrep_port":     defaultInt(req.WSREPPort, 4567),
-		"sst_method":     "xtrabackup-v2",
+		"sst_method":     sstMethod,
 		"replicate_user": s.defaults.SSTUser,
 		"replicate_pass": s.defaults.SSTPass,
 		"mysql_user":     req.MySQLUser,
@@ -530,7 +531,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"node_host":      node.Host,
 			"mysql_port":     defaultInt(node.Port, 3306),
 			"wsrep_port":     defaultInt(req.WSREPPort, 4567),
-			"sst_method":     "xtrabackup-v2",
+			"sst_method":     sstMethod,
 			"replicate_user": s.defaults.SSTUser,
 			"replicate_pass": s.defaults.SSTPass,
 			"mysql_user":     req.MySQLUser,
