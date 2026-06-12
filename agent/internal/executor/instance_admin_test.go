@@ -127,3 +127,9 @@ func TestExecuteInstanceAdminDecommissionRejectsUnsafeDatadir(t *testing.T) {
 	assert.Equal(t, "failed", result.Status)
 	assert.Contains(t, result.Message, "refuse to remove datadir outside managed paths")
 }
+
+func TestValidateDecommissionDatadirAllowsManagedTempDir(t *testing.T) {
+	datadir := filepath.Join(os.TempDir(), "dbops-mysql-24310")
+
+	require.NoError(t, validateDecommissionDatadir(datadir))
+}

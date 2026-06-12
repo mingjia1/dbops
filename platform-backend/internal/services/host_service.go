@@ -638,7 +638,7 @@ func agentStartCommand(port int, token string) string {
 }
 
 func agentStopCommand() string {
-	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); case \"$exe\" in /opt/dbops-agent/agent*) kill \"${p##*/}\" 2>/dev/null || true ;; esac; done\nsleep 0.5"
+	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\npkill -f '^/opt/dbops-agent/agent' 2>/dev/null || true\npkill -f '^/opt/mysql-ops-agent/mysql-ops-agent' 2>/dev/null || true\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); case \"$exe\" in /opt/dbops-agent/agent*|/opt/mysql-ops-agent/mysql-ops-agent*) kill \"${p##*/}\" 2>/dev/null || true ;; esac; done\nsleep 0.5"
 }
 
 func shellEscape(value string) string {
