@@ -53,3 +53,38 @@ func TestExecuteBackupScanRecognizesCompleteBackupFilesAndDirs(t *testing.T) {
 	_, partialIncluded := byName["full-003.xbstream.partial"]
 	assert.False(t, partialIncluded)
 }
+
+func TestExecuteColdDatadirBackupCreatesArchive(t *testing.T) {
+	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")
+	root := t.TempDir()
+	datadir := filepath.Join(root, "mysql-3307")
+	targetDir := filepath.Join(root, "backup")
+	require.NoError(t, os.MkdirAll(datadir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(datadir, "ibdata1"), []byte("data"), 0o644))
+
+	executor := NewTaskExecutor()
+	result, err := executor.ExecuteBackup(context.Background(), DeployTaskRequest{
+		TaskID: "cold-backup-test",
+		Config: map[string]interface{}{
+			"backup_type": "full",
+			"target_dir":  targetDir,
+			"mysql_host":  "127.0.0.1",
+			"mysql_port":  1,
+			"mysql_user":  "root",
+			"mysql_pass":  "wrong",
+			"datadir":     datadir,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "completed", result.Status)
+	data, ok := result.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "cold_datadir", data["backup_method"])
+	backupPath, _ := data["backup_path"].(string)
+	require.NotEmpty(t, backupPath)
+	require.FileExists(t, backupPath)
+	require.Greater(t, data["file_size"].(int64), int64(0))
+	require.NotEmpty(t, data["checksum"])
+}

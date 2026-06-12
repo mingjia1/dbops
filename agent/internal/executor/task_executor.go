@@ -1,13 +1,16 @@
 package executor
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +77,7 @@ type BackupConfig struct {
 	MySQLPort       int    `json:"mysql_port"`
 	MySQLUser       string `json:"mysql_user"`
 	MySQLPass       string `json:"mysql_pass"`
+	DataDir         string `json:"datadir"`
 	BaseBackupPath  string `json:"base_backup_path"`
 	BaseBackupLabel string `json:"base_backup_label"`
 	DatabaseSize    int64  `json:"database_size"`
@@ -682,6 +686,8 @@ func (e *TaskExecutor) ExecuteBackup(ctx context.Context, req DeployTaskRequest)
 		return e.executeLogicalBackup(ctx, config, "database size is below 10G, used mysqldump")
 	case "xtrabackup":
 		return e.executeXtrabackup(ctx, config, false)
+	case "cold_datadir":
+		return e.executeColdDatadirBackup(ctx, config)
 	default:
 		return &TaskResult{
 			Status:    "failed",
@@ -703,6 +709,9 @@ func (e *TaskExecutor) selectBackupMethod(ctx context.Context, config BackupConf
 		var err error
 		size, err = estimateMySQLDataSize(ctx, config)
 		if err != nil {
+			if config.BackupType == "full" && strings.TrimSpace(config.DataDir) != "" && !mysqlPortListening(config.MySQLHost, config.MySQLPort) {
+				return "cold_datadir", nil
+			}
 			return "", fmt.Errorf("estimate database size failed before backup method selection: %w", err)
 		}
 	}
@@ -764,6 +773,9 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 	}
 	if v, ok := config["mysql_pass"].(string); ok {
 		bc.MySQLPass = v
+	}
+	if v, ok := config["datadir"].(string); ok {
+		bc.DataDir = strings.TrimSpace(v)
 	}
 	if v, ok := config["base_backup_path"].(string); ok {
 		bc.BaseBackupPath = v
@@ -898,6 +910,144 @@ func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfi
 			"checksum":          checksum,
 		},
 	}, nil
+}
+
+func mysqlPortListening(host string, port int) bool {
+	if port <= 0 {
+		return false
+	}
+	candidates := backupMySQLHostCandidates(host)
+	if len(candidates) == 0 {
+		candidates = []string{"127.0.0.1"}
+	}
+	for _, candidate := range candidates {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(candidate, fmt.Sprintf("%d", port)), 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+	}
+	return false
+}
+
+func (e *TaskExecutor) executeColdDatadirBackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
+	datadir := filepath.Clean(strings.TrimSpace(config.DataDir))
+	if err := validateDecommissionDatadir(datadir); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "cold datadir backup refused: " + err.Error(),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if mysqlPortListening(config.MySQLHost, config.MySQLPort) {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "cold datadir backup refused: MySQL port is still listening",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if stat, err := os.Stat(datadir); err != nil || !stat.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("cold datadir backup source invalid: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if err := os.MkdirAll(config.TargetDir, 0o755); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create backup root failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	backupFile := fmt.Sprintf("%s/%s-cold-%d.tar.gz", config.TargetDir, config.BackupType, time.Now().UnixNano())
+	if err := createTarGz(datadir, backupFile); err != nil {
+		_ = os.Remove(backupFile)
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("cold datadir backup failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	sizeBytes, err := pathSize(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup size failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	checksum, err := checksumPath(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup checksum failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("Backup completed successfully. Path: %s, Checksum: %s. MySQL was offline, used cold datadir backup", backupFile, checksum),
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"backup_path":   backupFile,
+			"backup_type":   config.BackupType,
+			"backup_method": "cold_datadir",
+			"file_size":     sizeBytes,
+			"checksum":      checksum,
+		},
+	}, nil
+}
+
+func createTarGz(srcDir, destFile string) error {
+	out, err := os.Create(destFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	gz := gzip.NewWriter(out)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+	base := filepath.Dir(srcDir)
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(base, path)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(rel)
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		_, err = io.Copy(tw, in)
+		return err
+	})
 }
 
 func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupConfig, reason string) (*TaskResult, error) {

@@ -255,6 +255,7 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		"mysql_port":    conn.Port,
 		"mysql_user":    conn.Username,
 		"mysql_pass":    password,
+		"datadir":       conn.Datadir,
 	}
 	if req.BackupType == "incremental" {
 		base, err := s.policyRepo.LatestCompletedRecord(ctx, req.InstanceID, "full")
