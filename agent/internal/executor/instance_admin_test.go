@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -82,6 +83,19 @@ func TestExecuteInstanceAdminServiceControlDefaultsTrimmedStatus(t *testing.T) {
 	assert.Equal(t, "completed", result.Status)
 	assert.Contains(t, strings.ToLower(result.Message), "stopped")
 	assert.Contains(t, result.Message, datadir)
+}
+
+func TestProcessMatchesDatadirAllowsProcessCWD(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("process cwd matching uses /proc")
+	}
+	datadir := t.TempDir()
+	oldwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(datadir))
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	require.True(t, processMatchesDatadir(os.Getpid(), datadir))
 }
 
 func TestExecuteInstanceAdminDecommissionRemovesSafeDatadir(t *testing.T) {

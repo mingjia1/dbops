@@ -2610,12 +2610,16 @@ func processMatchesDatadir(pid int, datadir string) bool {
 	if pid <= 0 || datadir == "" {
 		return false
 	}
-	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return false
+	cleanDatadir := filepath.Clean(datadir)
+	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil && filepath.Clean(cwd) == cleanDatadir {
+		return true
 	}
-	cmd := strings.ReplaceAll(string(cmdline), "\x00", " ")
-	return strings.Contains(cmd, datadir)
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err == nil {
+		cmd := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		return strings.Contains(cmd, cleanDatadir)
+	}
+	return false
 }
 
 func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
