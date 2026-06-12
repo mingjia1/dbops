@@ -24,6 +24,7 @@ func main() {
 	taskExecutor := executor.NewTaskExecutor()
 	metricsCollector := collector.NewMetricsCollector()
 	toolInstaller := executor.NewToolInstaller()
+	environmentChecker := executor.NewEnvironmentChecker()
 
 	r := gin.Default()
 
@@ -389,6 +390,23 @@ func main() {
 				tools := []string{"mysql", "mysqld", "xtrabackup"}
 				result := toolInstaller.CheckToolsAvailable(tools)
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			// 环境检查端点
+			tasks.POST("/check-environment", func(c *gin.Context) {
+				var req executor.EnvironmentCheckRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result := environmentChecker.CheckEnvironment(c.Request.Context(), req)
+				statusCode := 200
+				if result.Status == "failed" {
+					statusCode = 500
+				}
+
+				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
 			})
 		}
 	}

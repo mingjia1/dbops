@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -236,7 +237,13 @@ func (s *HostService) Create(ctx context.Context, req CreateHostRequest) (*model
 	go func(hostID string) {
 		actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
 		defer cancel()
+
+		// 1. 安装Agent
 		_, _ = s.AgentAction(actionCtx, hostID, HostAgentActionRequest{Action: "install"})
+
+		// 2. 检查环境并自动安装工具
+		time.Sleep(2 * time.Second) // 等待Agent启动
+		_ = s.checkAndInstallTools(context.Background(), hostID)
 	}(host.ID)
 	return host, nil
 }
@@ -1229,4 +1236,115 @@ func (s *HostService) updateScannedInstancePassword(ctx context.Context, instanc
 		return fmt.Errorf("failed to update connection password: %w", err)
 	}
 	return nil
+}
+
+// ============== 环境检测和工具安装 ==============
+
+// EnvironmentCheckResult Agent环境检查结果
+type EnvironmentCheckResult struct {
+	Status    string                 `json:"status"`
+	Message   string                 `json:"message"`
+	OS        map[string]interface{} `json:"os"`
+	Tools     map[string]interface{} `json:"tools"`
+	Resources map[string]interface{} `json:"resources"`
+	Network   map[string]interface{} `json:"network"`
+	Issues    []string               `json:"issues"`
+}
+
+// checkAndInstallTools 检查环境并自动安装缺失的工具
+func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) error {
+	host, err := s.repo.GetByID(ctx, hostID)
+	if err != nil {
+		return err
+	}
+
+	port := host.AgentPort
+	if port == 0 {
+		port = 9090
+	}
+
+	// 1. 检查Agent是否健康
+	if ok, _ := s.agentHTTPHealth(ctx, host.Address, port); !ok {
+		return fmt.Errorf("agent not healthy")
+	}
+
+	// 2. 调用Agent环境检查API
+	checkReq := map[string]interface{}{
+		"check_tools":     true,
+		"check_resources": true,
+		"check_network":   true,
+	}
+
+	checkURL := fmt.Sprintf("http://%s:%d/agent/tasks/check-environment", host.Address, port)
+	checkResult, err := s.callAgentAPI(ctx, checkURL, checkReq)
+	if err != nil {
+		return fmt.Errorf("environment check failed: %w", err)
+	}
+
+	// 3. 解析检查结果
+	var envResult EnvironmentCheckResult
+	if data, ok := checkResult["data"].(map[string]interface{}); ok {
+		if status, ok := data["status"].(string); ok {
+			envResult.Status = status
+		}
+		if tools, ok := data["tools"].(map[string]interface{}); ok {
+			envResult.Tools = tools
+		}
+	}
+
+	// 4. 如果工具不全，自动安装
+	if envResult.Status == "warning" || envResult.Status == "failed" {
+		if tools, ok := envResult.Tools.(map[string]interface{}); ok {
+			if allReady, ok := tools["all_ready"].(bool); ok && !allReady {
+				// 调用Agent安装工具API
+				installReq := map[string]interface{}{
+					"tools":         []string{"mysql", "mysqld", "xtrabackup"},
+					"mysql_version": "8.0",
+					"force":         false,
+				}
+
+				installURL := fmt.Sprintf("http://%s:%d/agent/tasks/install-tools", host.Address, port)
+				_, _ = s.callAgentAPI(ctx, installURL, installReq)
+			}
+		}
+	}
+
+	return nil
+}
+
+// callAgentAPI 调用Agent API的通用方法
+func (s *HostService) callAgentAPI(ctx context.Context, url string, payload interface{}) (map[string]interface{}, error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request failed: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if s.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.agentToken)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+
+	return result, nil
 }
