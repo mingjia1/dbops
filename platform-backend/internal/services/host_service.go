@@ -1240,8 +1240,8 @@ func (s *HostService) updateScannedInstancePassword(ctx context.Context, instanc
 
 // ============== 环境检测和工具安装 ==============
 
-// EnvironmentCheckResult Agent环境检查结果
-type EnvironmentCheckResult struct {
+// AgentEnvironmentCheckResult Agent环境检查结果
+type AgentEnvironmentCheckResult struct {
 	Status    string                 `json:"status"`
 	Message   string                 `json:"message"`
 	OS        map[string]interface{} `json:"os"`
@@ -1282,7 +1282,7 @@ func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) e
 	}
 
 	// 3. 解析检查结果
-	var envResult EnvironmentCheckResult
+	var envResult AgentEnvironmentCheckResult
 	if data, ok := checkResult["data"].(map[string]interface{}); ok {
 		if status, ok := data["status"].(string); ok {
 			envResult.Status = status
@@ -1294,8 +1294,8 @@ func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) e
 
 	// 4. 如果工具不全，自动安装
 	if envResult.Status == "warning" || envResult.Status == "failed" {
-		if tools, ok := envResult.Tools.(map[string]interface{}); ok {
-			if allReady, ok := tools["all_ready"].(bool); ok && !allReady {
+		if envResult.Tools != nil {
+			if allReady, ok := envResult.Tools["all_ready"].(bool); ok && !allReady {
 				// 调用Agent安装工具API
 				installReq := map[string]interface{}{
 					"tools":         []string{"mysql", "mysqld", "xtrabackup"},
