@@ -894,7 +894,7 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err != nil {
 		return nil, err
 	}
-	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
+	if err := s.clearDestroyedClusterManagement(ctx, clusterID); err != nil {
 		return nil, err
 	}
 	if err := s.repo.UpdateStatus(ctx, clusterID, "destroyed"); err != nil {
@@ -1134,6 +1134,34 @@ func (s *ClusterDeployService) clearClusterManagement(ctx context.Context, clust
 			Role:                "",
 			ReplicationStatus:   "",
 			SecondsBehindMaster: 0,
+		})
+		_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       "",
+			MasterID:        "",
+			SlaveIDs:        "",
+			ReplicationMode: "",
+		})
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) clearDestroyedClusterManagement(ctx context.Context, clusterID string) error {
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		inst.ClusterID = ""
+		if err := s.instRepo.Update(ctx, inst); err != nil {
+			return err
+		}
+		_ = s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			RunStatus:           "stopped",
+			HealthStatus:        "unhealthy",
+			Role:                "",
+			ReplicationStatus:   "",
+			SecondsBehindMaster: -1,
 		})
 		_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
 			InstanceID:      inst.ID,

@@ -129,7 +129,11 @@ func TestExecuteInstanceAdminDecommissionRejectsUnsafeDatadir(t *testing.T) {
 }
 
 func TestValidateDecommissionDatadirAllowsManagedTempDir(t *testing.T) {
-	datadir := filepath.Join(os.TempDir(), "dbops-mysql-24310")
-
-	require.NoError(t, validateDecommissionDatadir(datadir))
+	for _, datadir := range []string{
+		filepath.Join(os.TempDir(), "dbops-mysql-24310"),
+		filepath.Join(os.TempDir(), "dbops-mha57-24320"),
+		filepath.Join(os.TempDir(), "dbops-pxc-24410"),
+	} {
+		require.NoError(t, validateDecommissionDatadir(datadir))
+	}
 }

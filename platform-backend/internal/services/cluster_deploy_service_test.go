@@ -227,6 +227,43 @@ func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
 	require.Contains(t, err.Error(), "backup service is required")
 }
 
+func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{
+		ID:        "destroyed-node",
+		Name:      "destroyed-node",
+		ClusterID: "destroyed-cluster",
+	}))
+	require.NoError(t, instRepo.UpsertStatus(ctx, "destroyed-node", &models.InstanceStatus{
+		RunStatus:           "running",
+		HealthStatus:        "healthy",
+		Role:                "master",
+		ReplicationStatus:   "mha",
+		SecondsBehindMaster: 0,
+	}))
+	require.NoError(t, instRepo.UpsertTopology(ctx, "destroyed-node", &models.InstanceTopology{
+		ClusterID:       "destroyed-cluster",
+		ReplicationMode: "mha",
+	}))
+
+	require.NoError(t, service.clearDestroyedClusterManagement(ctx, "destroyed-cluster"))
+
+	inst, err := instRepo.GetByID(ctx, "destroyed-node")
+	require.NoError(t, err)
+	require.Empty(t, inst.ClusterID)
+	require.Equal(t, "stopped", inst.Status.RunStatus)
+	require.Equal(t, "unhealthy", inst.Status.HealthStatus)
+	require.Empty(t, inst.Status.Role)
+	require.Empty(t, inst.Topology.ClusterID)
+	require.Empty(t, inst.Topology.ReplicationMode)
+}
+
 func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB()
