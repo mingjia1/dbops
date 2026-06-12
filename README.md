@@ -62,6 +62,21 @@ mysql-ops-platform/
 ├── platform-backend/     # 后端平台服务
 ├── agent/                # Agent 执行器
 ├── web-console/          # 前端 Web Console
+├── bin/                  # 服务启动脚本
+│   ├── init-ubuntu.sh    # Ubuntu 22.04 一键初始化
+│   ├── start-all.sh      # 启动所有服务
+│   ├── start-backend.sh  # 启动后端
+│   ├── start-agent.sh    # 启动 Agent
+│   ├── start-web.sh      # 启动前端
+│   └── stop-services.sh  # 停止所有服务
+├── scripts/              # 测试和诊断脚本
+│   ├── check_audit.go    # 审计日志检查
+│   ├── check_cluster_status.go  # 集群状态检查
+│   ├── execute_cluster_destroy.go  # 集群销毁脚本
+│   └── test_cluster_removal.sh  # 集群删除测试
+├── docs/                 # 文档
+│   ├── cluster_destroy_test_guide.md  # 集群销毁测试指南
+│   └── topology_optimization_summary.md  # 拓扑优化总结
 ├── docker-compose.dev.yml # 开发环境 Docker 配置
 ├── Makefile              # 构建脚本
 └── .monkeycode/          # 规范文档
@@ -73,6 +88,24 @@ mysql-ops-platform/
 ```
 
 ## 快速开始
+
+### Ubuntu 22.04 一键初始化（推荐）
+
+```bash
+# 克隆项目
+git clone <repo-url>
+cd dbops
+
+# 运行一键初始化脚本（需要 root 权限）
+sudo bash bin/init-ubuntu.sh
+```
+
+该脚本会自动安装：
+- Go 1.21+
+- Node.js 18.x
+- MySQL 8.0 Server + Client
+- Percona XtraBackup 8.0
+- Docker + Docker Compose
 
 ### 前置要求
 
@@ -161,7 +194,22 @@ cd web-console && npm install
 
 ### 3. 运行服务
 
-#### 使用 Makefile（推荐）
+#### 使用 bin 脚本（推荐）
+
+```bash
+# 启动所有服务（后端 + Agent + 前端）
+bash bin/start-all.sh
+
+# 或分别启动
+bash bin/start-backend.sh  # 后端
+bash bin/start-agent.sh    # Agent
+bash bin/start-web.sh      # 前端
+
+# 停止所有服务
+bash bin/stop-services.sh
+```
+
+#### 使用 Makefile
 
 ```bash
 # 运行后端
@@ -379,7 +427,8 @@ make build
 | 告警管理 | 🟢 已实现 | 规则配置、通道管理（邮件/钉钉/企业微信） |
 | 审批流程 | 🟢 已实现 | 申请/审批/驳回 |
 | 审计日志 | 🟢 已实现 | 操作记录全追踪 |
-| 拓扑视图 | 🟢 已实现 | 集群拓扑、实例关系展示 |
+| 拓扑视图 | 🟢 已实现 | 集群拓扑、实例关系展示、健康状态可视化 |
+| 集群销毁 | 🟢 已实现 | 备份验证 → 数据目录删除 → 平台元数据清理 |
 | 单点→集群切换 | 🔵 规划中 | 将独立实例接入 MHA/MGR/PXC |
 | 集群内角色切换 | 🔵 规划中 | 同一集群内主/从、Primary/Secondary 角色互转，副本拓扑重搭 |
 
@@ -505,6 +554,11 @@ Agent 需要以下工具才能正常工作：
 - **[快速入门指南](QUICKSTART.md)** - 10 分钟快速上手
 - **[详细安装指南](INSTALL.md)** - 完整的安装和部署文档
 
+### 功能文档
+
+- **[集群销毁测试指南](docs/cluster_destroy_test_guide.md)** - 集群销毁功能的完整测试流程
+- **[拓扑优化总结](docs/topology_optimization_summary.md)** - 拓扑视图优化技术文档
+
 ### 项目文档
 
 详细文档位于 `.monkeycode/specs/mysql-ops-platform/` 目录：
@@ -516,6 +570,15 @@ Agent 需要以下工具才能正常工作：
 ### 测试报告
 
 - `final_test_report.md`: 最终功能测试报告（系统生成的测试报告）
+
+### 脚本工具
+
+项目提供以下辅助脚本（位于 `scripts/` 目录）：
+
+- `check_audit.go`: 审计日志检查工具
+- `check_cluster_status.go`: 集群状态诊断工具
+- `execute_cluster_destroy.go`: 集群销毁直接执行脚本
+- `test_cluster_removal.sh`: 集群删除端到端测试脚本
 
 ## 快速链接
 
