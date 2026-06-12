@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -156,11 +157,28 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 	if _, err := s.repo.GetByID(ctx, id); err != nil {
 		return err
 	}
+	// 尝试备份和退役
 	backup, err := s.backupAndDecommission(ctx, id)
 	if err != nil {
+		// 如果是测试实例或无法确定agent主机，允许跳过备份直接删除
+		if strings.Contains(err.Error(), "cannot determine agent host") {
+			log.Printf("WARN: Skipping backup for instance %s (no agent host configured): %v", id, err)
+			log.Printf("INFO: Deleting instance %s without backup (test instance or incomplete configuration)", id)
+
+			if delErr := s.repo.Delete(ctx, id); delErr != nil {
+				return delErr
+			}
+
+			s.auditInstanceDelete(ctx, id, "success", "deleted without backup (no agent host)", "")
+			return nil
+		}
+
+		// 其他错误仍然返回
 		s.auditInstanceDelete(ctx, id, "failed", err.Error(), "")
 		return err
 	}
+
+	// 正常流程：备份成功后删除
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
