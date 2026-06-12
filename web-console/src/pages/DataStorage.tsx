@@ -149,13 +149,6 @@ const DataStoragePage: React.FC = () => {
               </Col>
             </Row>
 
-            <Alert
-              style={{ marginTop: 16 }}
-              type="info"
-              showIcon
-              message={dialectInfo.desc}
-            />
-
             <Card
               title={<><FileTextOutlined /> 各表数据量</>}
               style={{ marginTop: 16 }}

@@ -572,7 +572,7 @@ const BackupManage: React.FC = () => {
         <Table
           rowKey="file_path"
           size="small"
-          pagination={{ pageSize: 8 }}
+          pagination={{ pageSize: 10 }}
           dataSource={discovered}
           columns={[
             { title: '文件', dataIndex: 'file_name', key: 'file_name', render: (name) => <Tag color="blue">{name}</Tag> },

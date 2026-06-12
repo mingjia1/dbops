@@ -338,7 +338,7 @@ const HostList: React.FC = () => {
           dataSource={hosts}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20 }}
+          pagination={{ pageSize: 10 }}
           locale={{
             emptyText: (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无主机">

@@ -283,16 +283,6 @@ const InstanceList: React.FC = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      {presetHostObj && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message={`已按主机筛选: ${presetHostObj.name}`}
-          description={<Space><span>主机地址: {presetHostObj.address}:{presetHostObj.ssh_port}</span><Button size="small" type="link" onClick={() => navigate(`/dashboard/hosts/${presetHostObj.id}`)}>打开主机详情</Button></Space>}
-          closable
-        />
-      )}
       <Card
         title={<Space><DatabaseOutlined /><span>实例管理</span></Space>}
         extra={
@@ -320,7 +310,7 @@ const InstanceList: React.FC = () => {
           dataSource={instances}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20 }}
+          pagination={{ pageSize: 10 }}
           locale={{
             emptyText: (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无实例">

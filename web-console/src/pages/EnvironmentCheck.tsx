@@ -248,13 +248,6 @@ const EnvironmentCheck: React.FC = () => {
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无主机，请先在主机管理中添加" />
             ) : (
               <>
-                <Alert
-                  type="info"
-                  showIcon
-                  style={{ marginBottom: 12 }}
-                  message="说明"
-                  description="平台会使用主机管理中保存的 SSH 凭据；如果 Agent 不可用，可先选择主机并点击安装 Agent。"
-                />
                 <Table
                   rowKey="id"
                   size="small"

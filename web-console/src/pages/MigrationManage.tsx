@@ -132,7 +132,6 @@ const PhysicalFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Alert message="物理迁移说明" description="通过物理文件拷贝方式迁移数据，适用于大数据量、快速迁移场景。" type="info" showIcon style={{ marginBottom: 16 }} />
       <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
         <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
       </Form.Item>
@@ -164,7 +163,6 @@ const ReplicationFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Alert message="复制迁移说明" description="通过主从复制方式迁移数据，支持在线迁移、增量同步。" type="info" showIcon style={{ marginBottom: 16 }} />
       <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
         <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
       </Form.Item>
@@ -195,7 +193,6 @@ const GTIDFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Alert message="GTID迁移说明" description="基于GTID的事务级迁移，支持断点续传、精确一致性。" type="info" showIcon style={{ marginBottom: 16 }} />
       <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
         <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
       </Form.Item>
@@ -629,20 +626,6 @@ const MigrationManage: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Alert
-        type="warning"
-        showIcon
-        icon={<ExclamationCircleOutlined />}
-        style={{ marginBottom: 16 }}
-        message="迁移注意事项"
-        description={
-          <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-            <li>迁移会占用源实例 IO, 建议在业务低峰期执行</li>
-            <li>Switch 操作将切换业务流量, 不可逆, 需提前通知业务方</li>
-            <li>迁移出错时可使用"取消"按钮中止, 但已传输数据需手动清理</li>
-          </ul>
-        }
-      />
       <Card title="数据迁移管理">
       <Tabs
         activeKey={currentTab}
@@ -657,12 +640,6 @@ const MigrationManage: React.FC = () => {
       {renderProgressMonitor()}
 
       <Divider />
-
-      <Descriptions title="迁移任务列表" bordered column={1}>
-        <Descriptions.Item label="说明">
-          查看所有迁移任务的状态和进度，支持验证和切换操作
-        </Descriptions.Item>
-      </Descriptions>
 
       <Table
         columns={columns}

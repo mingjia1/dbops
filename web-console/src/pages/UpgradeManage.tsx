@@ -468,12 +468,6 @@ const UpgradeManage: React.FC = () => {
   return (
     <div>
       <Title level={4}>版本升级管理</Title>
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="升级前必须确认目标实例版本、数据存在性和备份状态。源版本由选中实例自动识别。"
-      />
 
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
@@ -639,7 +633,10 @@ const UpgradeManage: React.FC = () => {
             </Tag>
             <Paragraph style={{ marginTop: 12 }}>错误: {compatResult.error_count || 0}，警告: {compatResult.warning_count || 0}</Paragraph>
             {(compatResult.incompatibilities || []).map((item: any, index: number) => (
-              <Alert key={index} style={{ marginTop: 8 }} type={item.level === 'error' ? 'error' : 'warning'} message={item.description} description={item.solution} />
+              <div key={index} style={{ marginTop: 8, padding: 8, background: item.level === 'error' ? '#fff2f0' : '#fffbe6', border: `1px solid ${item.level === 'error' ? '#ffccc7' : '#ffe58f'}`, borderRadius: 4 }}>
+                <div style={{ fontWeight: 500 }}>{item.description}</div>
+                {item.solution && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>解决方案: {item.solution}</div>}
+              </div>
             ))}
           </Card>
         )}
@@ -654,7 +651,6 @@ const UpgradeManage: React.FC = () => {
         okButtonProps={{ danger: true }}
         width={720}
       >
-        <Alert type="error" showIcon icon={<ExclamationCircleOutlined />} style={{ marginBottom: 16 }} message="升级任务会影响实例或集群可用性，必须先完成备份并有回滚方案。" />
         <Form form={inPlaceForm} layout="vertical" onFinish={executeUpgrade} initialValues={{ backup_enabled: false, strategy: 'inplace', parallelism: 4, batch_size: 1000, max_in_parallel: 1, health_check_interval: 30 }}>
           <Form.Item name="strategy" label="升级策略" rules={[{ required: true }]}>
             <Select options={strategyOptions} />

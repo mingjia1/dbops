@@ -147,7 +147,7 @@ const AgentManage: React.FC = () => {
           dataSource={hosts}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20 }}
+          pagination={{ pageSize: 10 }}
         />
       </Card>
 

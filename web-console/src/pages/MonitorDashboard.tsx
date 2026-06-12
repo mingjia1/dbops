@@ -177,14 +177,6 @@ const MonitorDashboard: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="监控仪表盘"
-        description="实时显示 MySQL 实例的运行指标: QPS/TPS、连接数、CPU/内存/磁盘使用率、InnoDB 缓冲池命中率、DML 流量统计、慢查询数等。"
-      />
-
       <Row gutter={[16, 16]}>
         <Col span={6}>
           <Card>

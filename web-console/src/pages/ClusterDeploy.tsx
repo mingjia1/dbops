@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Collapse, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Steps, Table, Tabs, Tag,
+  Button, Card, Checkbox, Col, Collapse, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag, Tooltip,
 } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, instanceApi, type Host, type Instance } from '../services/api'
 
@@ -53,16 +53,24 @@ interface DeployResult {
 
 const normalizeStatus = (status?: string) => (status || '').trim().toLowerCase()
 
-const isCompletedDeployStatus = (status?: string) =>
-  ['success', 'completed', 'succeeded', 'ok'].includes(normalizeStatus(status))
+const getStatusCategory = (status?: string) => {
+  const norm = normalizeStatus(status)
+  if (['success', 'completed', 'succeeded', 'ok'].includes(norm)) return 'success'
+  if (['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(norm)) return 'failed'
+  if (['partial', 'partial_success'].includes(norm)) return 'partial'
+  if (norm === 'destroyed') return 'destroyed'
+  if (norm === 'running') return 'running'
+  if (norm === 'pending') return 'pending'
+  return norm || 'unknown'
+}
 
-const isFailedDeployStatus = (status?: string) =>
-  ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalizeStatus(status))
+const isCompletedDeployStatus = (status?: string) => getStatusCategory(status) === 'success'
 
-const isPartialDeployStatus = (status?: string) =>
-  ['partial', 'partial_success'].includes(normalizeStatus(status))
+const isFailedDeployStatus = (status?: string) => getStatusCategory(status) === 'failed'
 
-const isDestroyedDeployStatus = (status?: string) => normalizeStatus(status) === 'destroyed'
+const isPartialDeployStatus = (status?: string) => getStatusCategory(status) === 'partial'
+
+const isDestroyedDeployStatus = (status?: string) => getStatusCategory(status) === 'destroyed'
 
 const isTerminalDeployStatus = (status?: string) =>
   isCompletedDeployStatus(status) || isFailedDeployStatus(status) || isPartialDeployStatus(status) || isDestroyedDeployStatus(status)
@@ -100,6 +108,9 @@ const ClusterDeploy: React.FC = () => {
   const [submitting, setSubmitting] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [deployments, setDeployments] = useState<DeployResult[]>([])
+  const [statusFilter, setStatusFilter] = useState<string[]>(['success'])
+  const [archFilter, setArchFilter] = useState<ArchType | 'all'>('all')
+  const [showHistory, setShowHistory] = useState(false)
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
   const [credential, setCredential] = useState(DEFAULT_MYSQL_CREDENTIAL)
@@ -145,14 +156,19 @@ const ClusterDeploy: React.FC = () => {
   const loadDeployments = async () => {
     setHistoryLoading(true)
     try {
-      const res: any = await clusterDeployApi.list(100, 0)
-      setDeployments((Array.isArray(res?.data) ? res.data : []).map(normalizeDeployment))
+      const res: any = await clusterDeployApi.list(1000, 0)
+      const allData = (Array.isArray(res?.data) ? res.data : []).map(normalizeDeployment)
+      setDeployments(allData)
     } catch {
       setDeployments([])
     } finally {
       setHistoryLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadDeployments()
+  }, [])
 
   const deploymentNodes = (record: DeployResult) => {
     if (record.nodes?.length) {
@@ -328,23 +344,28 @@ const ClusterDeploy: React.FC = () => {
             <li>删除平台纳管关系和拓扑</li>
           </ol>
           <p style={{ color: '#ff4d4f', marginTop: 8 }}>⚠️ 此操作会删除数据库服务和数据目录，无法撤销</p>
+          <p style={{ color: '#ff4d4f' }}>⚠️ 如果备份失败，销毁操作将被拒绝</p>
         </div>
       ),
       okText: '确认销毁',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
-        const res: any = await clusterDeployApi.destroy(record.deployment_id)
-        const next: DeployResult = {
-          ...record,
-          status: 'destroyed',
-          progress: 100,
-          message: res?.data?.message || '集群已销毁',
-          finished_at: new Date().toISOString(),
+        try {
+          const res: any = await clusterDeployApi.destroy(record.deployment_id)
+          const next: DeployResult = {
+            ...record,
+            status: 'destroyed',
+            progress: 100,
+            message: res?.data?.message || '集群已销毁',
+            finished_at: new Date().toISOString(),
+          }
+          patchDeployment(next)
+          loadDeployments()
+          message.success('集群销毁成功：已完成备份验证和远程清理')
+        } catch (err: any) {
+          message.error(`销毁失败: ${err?.response?.data?.message || err?.message || '未知错误'}`)
         }
-        patchDeployment(next)
-        loadDeployments()
-        message.success('集群已销毁')
       },
     })
   }
@@ -402,20 +423,20 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const columns: ColumnsType<DeployResult> = [
-    { title: '部署ID', dataIndex: 'deployment_id', key: 'deployment_id', width: 200 },
-    { title: '集群ID', dataIndex: 'cluster_id', key: 'cluster_id' },
+    { title: '部署ID', dataIndex: 'deployment_id', key: 'deployment_id', width: 180, ellipsis: true },
+    { title: '集群ID', dataIndex: 'cluster_id', key: 'cluster_id', width: 150, ellipsis: true },
     {
       title: '架构',
       dataIndex: 'cluster_type',
       key: 'cluster_type',
-      width: 100,
+      width: 80,
       render: (type: ArchType) => <Tag color={type === 'ha' ? 'cyan' : type === 'mha' ? 'blue' : type === 'mgr' ? 'green' : 'orange'}>{type.toUpperCase()}</Tag>,
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 110,
       render: (status: string) => {
         if (isCompletedDeployStatus(status)) return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
         if (isDestroyedDeployStatus(status)) return <Tag color="default">已销毁</Tag>
@@ -425,18 +446,20 @@ const ClusterDeploy: React.FC = () => {
         return <Tag color="processing" icon={<ReloadOutlined spin />}>进行中</Tag>
       },
     },
-    { title: '当前阶段', dataIndex: 'stage', key: 'stage', render: (stage: string) => stage || '-' },
+    { title: '当前阶段', dataIndex: 'stage', key: 'stage', width: 100, ellipsis: true, render: (stage: string) => stage || '-' },
     {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
-      width: 180,
+      width: 140,
       render: (progress: number, record) => <Progress percent={deploymentProgress(record.status, progress)} size="small" status={deploymentProgressStatus(record.status)} />,
     },
-    { title: '信息', dataIndex: 'message', key: 'message' },
+    { title: '信息', dataIndex: 'message', key: 'message', ellipsis: true },
     {
       title: '节点信息',
       key: 'nodes',
+      width: 200,
+      ellipsis: true,
       render: (_, record) => {
         const nodes = deploymentNodes(record)
         if (nodes.length === 0) return '-'
@@ -447,10 +470,11 @@ const ClusterDeploy: React.FC = () => {
         )
       },
     },
-    { title: '开始时间', dataIndex: 'started_at', key: 'started_at', render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
+    { title: '开始时间', dataIndex: 'started_at', key: 'started_at', width: 160, render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
     {
       title: '操作',
       key: 'action',
+      width: 80,
       render: (_, record) => (
         <Button size="small" danger icon={<DeleteOutlined />} disabled={isDestroyedDeployStatus(record.status)} onClick={() => destroyDeployment(record)}>
           销毁
@@ -466,165 +490,240 @@ const ClusterDeploy: React.FC = () => {
     onFinish: (values: any) => void,
     options?: { simpleReplica?: boolean },
   ) => (
-    <Form form={form} layout="vertical" onFinish={onFinish}>
-      <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
-        <Input placeholder={`例如: ${arch}-cluster-01`} />
-      </Form.Item>
-      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue={false}>
-        <Checkbox>伪集群演练模式</Checkbox>
-      </Form.Item>
-      <Form.Item name="master_host_id" label="主节点主机" rules={[{ required: true, message: '请选择主节点' }]}>
-        <Select options={hostOptions} placeholder="选择主节点主机" />
-      </Form.Item>
+    <Form form={form} layout="horizontal" labelCol={{ span: 4 }} wrapperCol={{ span: 20 }} onFinish={onFinish}>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
+            <Input placeholder={`${arch}-cluster-01`} />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="pseudo_mode" label="演练模式" valuePropName="checked" initialValue={false}>
+            <Checkbox>伪集群演练</Checkbox>
+          </Form.Item>
+        </Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="master_host_id" label="主节点" rules={[{ required: true }]}>
+            <Select options={hostOptions} placeholder="选择主节点主机" />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="mysql_port" label="主端口" initialValue={3309}>
+            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      </Row>
       {!options?.simpleReplica && (
-        <Form.Item
-          name="replica_host_ids"
-          label="从节点主机"
-          rules={[
-            { required: true, message: '请选择从节点' },
-            { validator: (_, value) => (Array.isArray(value) && value.length >= 1 ? Promise.resolve() : Promise.reject(new Error('至少选择 1 个从节点'))) },
-          ]}
-        >
-          <Select mode="multiple" options={hostOptions} placeholder="至少选择 1 个从节点" maxTagCount={5} />
-        </Form.Item>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item name="replica_host_ids" label="从节点" rules={[{ required: true }]}>
+              <Select mode="multiple" options={hostOptions} placeholder="至少选择1个从节点" maxTagCount={2} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>{extraFields}</Col>
+        </Row>
       )}
-      <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
-        <Input />
-      </Form.Item>
-      <Form.Item name="repl_password" label="复制密码" rules={[{ required: true }]} initialValue="ReplPass#2026">
-        <Input.Password />
-      </Form.Item>
-      <Form.Item name="mysql_port" label="主节点端口" initialValue={3309}>
-        <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-      </Form.Item>
-      <Form.Item name="vip" label="VIP (可选)">
-        <Input placeholder="例如: 192.168.1.100" />
-      </Form.Item>
-      {extraFields}
-      <Form.Item>
+      {options?.simpleReplica && (
+        <Row gutter={16}>
+          <Col span={12}>{extraFields}</Col>
+        </Row>
+      )}
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
+            <Input />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="repl_password" label="复制密码" rules={[{ required: true }]} initialValue="ReplPass#2026">
+            <Input.Password />
+          </Form.Item>
+        </Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="vip" label="VIP">
+            <Input placeholder="可选" />
+          </Form.Item>
+        </Col>
+      </Row>
+      <Form.Item wrapperCol={{ offset: 4 }}>
         <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
-          启动 {arch.toUpperCase()} 部署
+          启动部署
         </Button>
       </Form.Item>
     </Form>
   )
 
+  const filteredDeployments = deployments.filter((d) => {
+    const statusMatch = statusFilter.length === 0 || statusFilter.includes(getStatusCategory(d.status))
+    const archMatch = archFilter === 'all' || d.cluster_type === archFilter
+    return statusMatch && archMatch
+  })
+
   return (
     <div style={{ padding: '24px' }}>
-      <Card title="部署历史" style={{ marginBottom: 16 }}>
-        {deployments.length === 0 ? (
-          <Empty description="暂无部署记录" />
+      <Card
+        title={
+          <Space>
+            <ClusterOutlined />
+            <span>集群部署</span>
+          </Space>
+        }
+        extra={
+          <Space>
+            <span style={{ fontSize: 13, color: '#666' }}>默认 MySQL 账号：</span>
+            <Popover
+              content={
+                <div style={{ minWidth: 280 }}>
+                  {showDefaultCredential && (
+                    <Space direction="vertical" size={8}>
+                      <Descriptions size="small" column={1} bordered>
+                        <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
+                        <Descriptions.Item label="密码">{credential.password}</Descriptions.Item>
+                      </Descriptions>
+                      <Button size="small" type="primary" onClick={acknowledgeDefaultCredential}>我已保存，隐藏默认密码</Button>
+                    </Space>
+                  )}
+                  {oneTimeCredential && (
+                    <Space direction="vertical" size={8}>
+                      <Descriptions size="small" column={1} bordered>
+                        <Descriptions.Item label="用户名">{oneTimeCredential.username}</Descriptions.Item>
+                        <Descriptions.Item label="密码">{oneTimeCredential.password}</Descriptions.Item>
+                      </Descriptions>
+                      <Button size="small" danger onClick={() => setOneTimeCredential(null)}>我已保存，立即隐藏</Button>
+                    </Space>
+                  )}
+                  {!showDefaultCredential && !oneTimeCredential && (
+                    <Descriptions size="small" column={1}>
+                      <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
+                      <Descriptions.Item label="密码">••••••••</Descriptions.Item>
+                    </Descriptions>
+                  )}
+                </div>
+              }
+              trigger="click"
+            >
+              <Button size="small" icon={<EyeOutlined />} type={showDefaultCredential ? 'primary' : 'default'}>查看</Button>
+            </Popover>
+            <Button size="small" icon={<KeyOutlined />} onClick={openCredentialModal}>修改</Button>
+            {!showDefaultCredential && !oneTimeCredential && (
+              <Tag icon={<CheckCircleOutlined />} color="success">已确认</Tag>
+            )}
+            <Button type="primary" icon={<ClusterOutlined />} onClick={() => setShowHistory(!showHistory)}>
+              {showHistory ? '返回部署' : '部署历史'}
+            </Button>
+          </Space>
+        }
+      >
+        {showHistory ? (
+          <div>
+            <Space style={{ marginBottom: 16 }}>
+              <Select
+                mode="multiple"
+                placeholder="筛选状态"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                style={{ minWidth: 200 }}
+                maxTagCount="responsive"
+                options={[
+                  { label: '成功', value: 'success' },
+                  { label: '失败', value: 'failed' },
+                  { label: '部分完成', value: 'partial' },
+                  { label: '运行中', value: 'running' },
+                  { label: '待开始', value: 'pending' },
+                  { label: '已销毁', value: 'destroyed' },
+                ]}
+              />
+              <Select
+                placeholder="筛选架构"
+                value={archFilter}
+                onChange={setArchFilter}
+                style={{ width: 120 }}
+                options={[
+                  { label: '全部架构', value: 'all' },
+                  { label: 'HA', value: 'ha' },
+                  { label: 'MHA', value: 'mha' },
+                  { label: 'MGR', value: 'mgr' },
+                  { label: 'PXC', value: 'pxc' },
+                ]}
+              />
+            </Space>
+            {filteredDeployments.length === 0 ? (
+              <Empty description="暂无符合条件的部署记录" />
+            ) : (
+              <Table
+                columns={columns}
+                dataSource={filteredDeployments}
+                rowKey="deployment_id"
+                loading={historyLoading}
+                scroll={{ x: 'max-content' }}
+                pagination={{
+                  defaultPageSize: 10,
+                  showSizeChanger: true,
+                  showQuickJumper: true,
+                  showTotal: (t) => `共 ${t} 条记录`,
+                }}
+              />
+            )}
+          </div>
         ) : (
-          <Table columns={columns} dataSource={deployments} rowKey="deployment_id" loading={historyLoading} />
-        )}
-      </Card>
-
-      <Collapse
-        defaultActiveKey={[]}
-        items={[{
-          key: 'deploy',
-          label: <Space><ClusterOutlined /><span>集群部署</span></Space>,
-          extra: <Button size="small" onClick={(e) => { e.stopPropagation(); showDeployNotes() }}>操作说明</Button>,
-          children: (
-            <>
-        <Card size="small" title="默认创建的 MySQL 实例账号" extra={<Button size="small" onClick={openCredentialModal}>修改</Button>} style={{ marginBottom: 16 }}>
-          {showDefaultCredential && (
-            <Space direction="vertical" size={8}>
-              <Descriptions size="small" column={1} bordered>
-                <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
-                <Descriptions.Item label="密码">{credential.password}</Descriptions.Item>
-              </Descriptions>
-              <Button size="small" onClick={acknowledgeDefaultCredential}>我已保存，隐藏默认密码</Button>
-            </Space>
-          )}
-          {oneTimeCredential && (
-            <Space direction="vertical" size={8}>
-              <Descriptions size="small" column={1} bordered>
-                <Descriptions.Item label="用户名">{oneTimeCredential.username}</Descriptions.Item>
-                <Descriptions.Item label="密码">{oneTimeCredential.password}</Descriptions.Item>
-              </Descriptions>
-              <Button size="small" danger onClick={() => setOneTimeCredential(null)}>我已保存，立即隐藏</Button>
-            </Space>
-          )}
-          {!showDefaultCredential && !oneTimeCredential && (
-            <Descriptions size="small" column={2}>
-              <Descriptions.Item label="用户名">{credential.username}</Descriptions.Item>
-              <Descriptions.Item label="密码">已隐藏</Descriptions.Item>
-            </Descriptions>
-          )}
-        </Card>
-
-        <Tabs
-          activeKey={tab}
-          onChange={(key) => setTab(key as ArchType)}
-          items={[
-            {
-              key: 'ha',
-              label: 'HA 主从',
-              children: renderForm('ha', haForm,
-                <>
-                  <Form.Item name="replica_host_id" label="从节点主机" rules={[{ required: true, message: '请选择从节点' }]}>
-                    <Select options={hostOptions} placeholder="选择从节点主机" />
-                  </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
-                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
-                </>,
-                (values) => runDeploy('ha', values, clusterDeployApi.deployHA),
-                { simpleReplica: true },
-              ),
-            },
-            {
-              key: 'mha',
-              label: 'MHA 部署',
-              children: renderForm('mha', mhaForm,
-                <>
-                  <Form.Item name="manager_host_id" label="MHA Manager 主机" rules={[{ required: true }]}>
+          <Tabs
+            activeKey={tab}
+            onChange={(key) => setTab(key as ArchType)}
+            items={[
+              {
+                key: 'ha',
+                label: 'HA 主从',
+                children: renderForm('ha', haForm,
+                  <>
+                    <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]}>
+                      <Select options={hostOptions} placeholder="选择从节点主机" />
+                    </Form.Item>
+                    <Form.Item name="replica_port" label="从端口" initialValue={3310}>
+                      <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </>,
+                  (values) => runDeploy('ha', values, clusterDeployApi.deployHA),
+                  { simpleReplica: true },
+                ),
+              },
+              {
+                key: 'mha',
+                label: 'MHA 部署',
+                children: renderForm('mha', mhaForm,
+                  <Form.Item name="manager_host_id" label="Manager" rules={[{ required: true }]}>
                     <Select options={hostOptions} placeholder="选择 Manager 主机" />
-                  </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
-                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
-                </>,
-                (values) => runDeploy('mha', values, clusterDeployApi.deployMHA),
-              ),
-            },
-            {
-              key: 'mgr',
-              label: 'MGR 部署',
-              children: renderForm('mgr', mgrForm,
-                <>
+                  </Form.Item>,
+                  (values) => runDeploy('mha', values, clusterDeployApi.deployMHA),
+                ),
+              },
+              {
+                key: 'mgr',
+                label: 'MGR 部署',
+                children: renderForm('mgr', mgrForm,
                   <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
                     <Input />
-                  </Form.Item>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
-                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
-                </>,
-                (values) => runDeploy('mgr', values, clusterDeployApi.deployMGR),
-              ),
-            },
-            {
-              key: 'pxc',
-              label: 'PXC 部署',
-              children: renderForm('pxc', pxcForm,
-                <>
-                  <Form.Item name="replica_port" label="从节点端口" initialValue={3310}>
-                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
+                  </Form.Item>,
+                  (values) => runDeploy('mgr', values, clusterDeployApi.deployMGR),
+                ),
+              },
+              {
+                key: 'pxc',
+                label: 'PXC 部署',
+                children: renderForm('pxc', pxcForm,
                   <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
-                </>,
-                (values) => runDeploy('pxc', values, clusterDeployApi.deployPXC),
-              ),
-            },
-          ]}
-        />
-            </>
-          ),
-        }]}
-      />
+                  </Form.Item>,
+                  (values) => runDeploy('pxc', values, clusterDeployApi.deployPXC),
+                ),
+              },
+            ]}
+          />
+        )}
+      </Card>
 
       <Modal
         title="修改默认 MySQL 实例账号"

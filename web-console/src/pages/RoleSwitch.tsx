@@ -188,12 +188,6 @@ const RoleSwitch: React.FC = () => {
   return (
     <div style={{ padding: '24px' }}>
       <Card title={<Space><RetweetOutlined /><span>集群内角色切换</span></Space>}>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="角色切换只允许在同一个集群、同一种高可用架构内执行。选择集群后，架构会自动锁定。"
-        />
         <Form form={form} layout="vertical" style={{ maxWidth: 760 }}>
           <Form.Item label="集群ID" required>
             <Select

@@ -725,11 +725,9 @@ const HostDetail: React.FC = () => {
           </Form.Item>
 
           {scanMode === 'default' && (
-            <Alert
-              type="info"
-              showIcon
-              message="将扫描 3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306 等常见 MySQL 端口"
-            />
+            <div style={{ marginBottom: 12, padding: 8, background: '#f0f0f0', borderRadius: 4, fontSize: 13 }}>
+              将扫描 3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306 等常见 MySQL 端口
+            </div>
           )}
 
           {scanMode === 'custom' && (
@@ -774,13 +772,6 @@ const HostDetail: React.FC = () => {
         cancelText="取消"
         width={560}
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="纳管说明"
-          description="系统已通过 SSH 获取到该实例的端口/版本/数据目录等信息, 你只需要补充连接用户名与密码即可完成纳管。"
-        />
         <Form form={registerForm} layout="vertical">
           <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
             <Input />

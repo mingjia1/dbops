@@ -263,14 +263,6 @@ const HAManage: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Alert
-        type="error"
-        showIcon
-        icon={<ExclamationCircleOutlined />}
-        style={{ marginBottom: 16 }}
-        message="危险操作警告"
-        description="故障转移会导致短暂的服务中断, 并可能造成数据丢失。在执行前请确保已完成备份, 并知会相关业务方。所有操作将记录在审计日志中。"
-      />
       <Card
         title={
           <Space>
