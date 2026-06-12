@@ -166,6 +166,20 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 			{Host: req.MasterHost, Port: req.MasterPort, Role: "master"},
 		}, slavePseudoNodes(req.SlaveHosts, "slave"))
 	}
+
+	// 检查cluster_id是否已存在
+	existing, err := s.repo.GetByID(ctx, req.ClusterID)
+	if err == nil && existing != nil {
+		// 如果已存在且状态为failed或destroyed，删除旧记录
+		if existing.Status == "failed" || existing.Status == "destroyed" {
+			if delErr := s.repo.Delete(ctx, req.ClusterID); delErr != nil {
+				return nil, fmt.Errorf("failed to clean up existing failed deployment: %w", delErr)
+			}
+		} else {
+			return nil, fmt.Errorf("cluster_id '%s' already exists with status '%s'", req.ClusterID, existing.Status)
+		}
+	}
+
 	deployment := &models.ClusterDeployment{
 		ID:          req.ClusterID,
 		ClusterType: "mha",
@@ -297,6 +311,20 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			{Host: req.PrimaryHost, Port: req.PrimaryPort, Role: "primary"},
 		}, secondaryPseudoNodes(req.SecondaryHosts, "secondary"))
 	}
+
+	// 检查cluster_id是否已存在
+	existing, err := s.repo.GetByID(ctx, req.ClusterID)
+	if err == nil && existing != nil {
+		// 如果已存在且状态为failed或destroyed，删除旧记录
+		if existing.Status == "failed" || existing.Status == "destroyed" {
+			if delErr := s.repo.Delete(ctx, req.ClusterID); delErr != nil {
+				return nil, fmt.Errorf("failed to clean up existing failed deployment: %w", delErr)
+			}
+		} else {
+			return nil, fmt.Errorf("cluster_id '%s' already exists with status '%s'", req.ClusterID, existing.Status)
+		}
+	}
+
 	deployment := &models.ClusterDeployment{
 		ID:          req.ClusterID,
 		ClusterType: "mgr",
@@ -440,6 +468,20 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		nodes = append(nodes, pxcPseudoNodes(req.OtherNodes, "secondary")...)
 		return s.deployPseudoCluster(ctx, "pxc", req.ClusterID, req.Name, nodes, nil)
 	}
+
+	// 检查cluster_id是否已存在
+	existing, err := s.repo.GetByID(ctx, req.ClusterID)
+	if err == nil && existing != nil {
+		// 如果已存在且状态为failed或destroyed，删除旧记录
+		if existing.Status == "failed" || existing.Status == "destroyed" {
+			if delErr := s.repo.Delete(ctx, req.ClusterID); delErr != nil {
+				return nil, fmt.Errorf("failed to clean up existing failed deployment: %w", delErr)
+			}
+		} else {
+			return nil, fmt.Errorf("cluster_id '%s' already exists with status '%s'", req.ClusterID, existing.Status)
+		}
+	}
+
 	deployment := &models.ClusterDeployment{
 		ID:          req.ClusterID,
 		ClusterType: "pxc",
