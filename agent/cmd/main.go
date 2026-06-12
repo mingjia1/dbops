@@ -23,6 +23,7 @@ func main() {
 
 	taskExecutor := executor.NewTaskExecutor()
 	metricsCollector := collector.NewMetricsCollector()
+	toolInstaller := executor.NewToolInstaller()
 
 	r := gin.Default()
 
@@ -364,6 +365,30 @@ func main() {
 				}
 
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": metrics})
+			})
+
+			// 工具安装端点
+			tasks.POST("/install-tools", func(c *gin.Context) {
+				var req executor.InstallToolsRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result := toolInstaller.InstallTools(c.Request.Context(), req)
+				statusCode := 200
+				if result.Status == "failed" {
+					statusCode = 500
+				}
+
+				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+			})
+
+			// 检查工具可用性端点
+			tasks.GET("/check-tools", func(c *gin.Context) {
+				tools := []string{"mysql", "mysqld", "xtrabackup"}
+				result := toolInstaller.CheckToolsAvailable(tools)
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 		}
 	}
