@@ -20,6 +20,7 @@ type ClusterDeployService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	agentClient *AgentClient
+	backupSvc   *BackupService
 	auditSvc    *AuditService
 	defaults    config.ClusterDefaults
 	encKey      string
@@ -84,6 +85,10 @@ func NewClusterDeployService(
 
 func (s *ClusterDeployService) SetEncryptionKey(key string) {
 	s.encKey = key
+}
+
+func (s *ClusterDeployService) SetBackupService(backupSvc *BackupService) {
+	s.backupSvc = backupSvc
 }
 
 func (s *ClusterDeployService) updateProgress(deploymentID, stage, message string, progressPct int) {
@@ -885,6 +890,9 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		return nil, err
 	}
 	nodes := s.deploymentNodes(ctx, clusterID)
+	if err := s.decommissionClusterInstances(ctx, clusterID); err != nil {
+		return nil, err
+	}
 	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
 		return nil, err
 	}
@@ -896,10 +904,95 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		ClusterType:  dep.ClusterType,
 		Name:         dep.Name,
 		Status:       "destroyed",
-		Message:      fmt.Sprintf("Cluster %s destroyed from platform management; database services were not stopped", clusterID),
+		Message:      fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", clusterID),
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}, nil
+}
+
+func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string) error {
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	if len(instances) == 0 {
+		return fmt.Errorf("no instances found for cluster %s; cannot proceed with backup and decommission", clusterID)
+	}
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if err := s.backupAndDecommissionClusterInstance(ctx, inst.ID); err != nil {
+			return fmt.Errorf("decommission cluster instance %s failed: %w", inst.ID, err)
+		}
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) backupAndDecommissionClusterInstance(ctx context.Context, instanceID string) error {
+	if s.backupSvc == nil {
+		return fmt.Errorf("backup service is required before destroying cluster instance %s", instanceID)
+	}
+	backup, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{
+		InstanceID: instanceID,
+		BackupType: "full",
+	})
+	if err != nil {
+		return fmt.Errorf("full backup before destroy failed: %w", err)
+	}
+	if err := validateRemovalBackup(backup); err != nil {
+		return err
+	}
+	if err := s.decommissionClusterInstance(ctx, instanceID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) decommissionClusterInstance(ctx context.Context, instanceID string) error {
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client is required before destroying cluster instance %s", instanceID)
+	}
+	inst, err := s.instRepo.GetByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	conn, err := s.instRepo.GetConnection(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance connection not found: %w", err)
+	}
+	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+	if err != nil {
+		return err
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id":     "decommission-" + uuid.NewString(),
+		"instance_id": instanceID,
+		"config": map[string]interface{}{
+			"action":      "decommission",
+			"target_host": localMySQLHostForAgent(conn.Host, agentHost),
+			"target_port": conn.Port,
+			"target_user": conn.Username,
+			"target_pass": password,
+			"basedir":     conn.Basedir,
+			"datadir":     conn.Datadir,
+			"os_user":     conn.OSUser,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return fmt.Errorf("decommission returned empty result")
+	}
+	if !isSuccessfulTaskStatus(result.Status) {
+		return fmt.Errorf("decommission failed: %s", result.Message)
+	}
+	return nil
 }
 
 func (s *ClusterDeployService) failDeployment(ctx context.Context, deployment *models.ClusterDeployment, clusterType, name, message string) *DeployResponse {

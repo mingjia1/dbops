@@ -18,6 +18,7 @@ type InstanceService struct {
 	hostRepo    *repositories.HostRepository
 	taskRepo    *repositories.TaskRepository
 	agentClient *AgentClient
+	backupSvc   *BackupService
 	auditSvc    *AuditService // P0: 删/更新/部署 写 audit, SOC2 合规
 	encKey      string
 }
@@ -31,6 +32,10 @@ func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *reposit
 		auditSvc:    auditSvc,
 		encKey:      encKey,
 	}
+}
+
+func (s *InstanceService) SetBackupService(backupSvc *BackupService) {
+	s.backupSvc = backupSvc
 }
 
 func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest) (*models.Instance, error) {
@@ -148,20 +153,97 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 }
 
 func (s *InstanceService) Delete(ctx context.Context, id string) error {
+	if _, err := s.repo.GetByID(ctx, id); err != nil {
+		return err
+	}
+	backup, err := s.backupAndDecommission(ctx, id)
+	if err != nil {
+		s.auditInstanceDelete(ctx, id, "failed", err.Error(), "")
+		return err
+	}
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
 	// P0: 写 audit, 之前删 instance 0 记录, SOC2 不通过.
-	if s.auditSvc != nil {
-		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
-			UserID:       userIDFromCtx(ctx),
-			Action:       "delete",
-			ResourceType: "instance",
-			ResourceID:   id,
-			Result:       "success",
-		})
+	s.auditInstanceDelete(ctx, id, "success", "", fmt.Sprintf("backup_id=%s backup_path=%s", backup.ID, backup.FilePath))
+	return nil
+}
+
+func (s *InstanceService) backupAndDecommission(ctx context.Context, id string) (*BackupTaskResult, error) {
+	backup, err := s.executeRemovalBackup(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRemovalBackup(backup); err != nil {
+		return backup, err
+	}
+	if err := s.decommissionRemoteInstance(ctx, id); err != nil {
+		return backup, err
+	}
+	return backup, nil
+}
+
+func (s *InstanceService) executeRemovalBackup(ctx context.Context, id string) (*BackupTaskResult, error) {
+	if s.backupSvc == nil {
+		return nil, fmt.Errorf("backup service is required before removing instance %s", id)
+	}
+	backup, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{
+		InstanceID: id,
+		BackupType: "full",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("full backup before removal failed: %w", err)
+	}
+	return backup, nil
+}
+
+func validateRemovalBackup(backup *BackupTaskResult) error {
+	if backup == nil {
+		return fmt.Errorf("full backup before removal returned empty result")
+	}
+	if !isSuccessfulTaskStatus(backup.Status) {
+		return fmt.Errorf("full backup before removal did not complete: status=%s message=%s", backup.Status, backup.Message)
+	}
+	if strings.TrimSpace(backup.FilePath) == "" {
+		return fmt.Errorf("full backup before removal completed without backup path")
+	}
+	if backup.FileSize <= 0 {
+		return fmt.Errorf("full backup before removal completed with invalid file size: %d", backup.FileSize)
+	}
+	if strings.TrimSpace(backup.Checksum) == "" {
+		return fmt.Errorf("full backup before removal completed without checksum")
 	}
 	return nil
+}
+
+func (s *InstanceService) decommissionRemoteInstance(ctx context.Context, id string) error {
+	result, err := s.AdminAction(ctx, id, InstanceAdminRequest{Action: "decommission"})
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return fmt.Errorf("decommission returned empty result")
+	}
+	if !isSuccessfulTaskStatus(result.Status) {
+		return fmt.Errorf("decommission failed: %s", result.Message)
+	}
+	return nil
+}
+
+func (s *InstanceService) auditInstanceDelete(ctx context.Context, id, result, errorMsg, details string) {
+	if s.auditSvc == nil {
+		return
+	}
+	_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID:       userIDFromCtx(ctx),
+		Operation:    "delete_instance",
+		Action:       "delete",
+		ResourceType: "instance",
+		ResourceID:   id,
+		Result:       result,
+		ErrorMsg:     errorMsg,
+		Details:      details,
+	})
 }
 
 func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models.InstanceVersion, error) {

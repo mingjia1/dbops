@@ -318,8 +318,20 @@ const ClusterDeploy: React.FC = () => {
   const destroyDeployment = (record: DeployResult) => {
     Modal.confirm({
       title: `销毁集群 ${record.deployment_id}?`,
-      content: '销毁只清理平台纳管关系、拓扑和角色状态，不会停止或删除数据库服务。',
+      content: (
+        <div>
+          <p><strong>销毁流程：</strong></p>
+          <ol style={{ paddingLeft: 20 }}>
+            <li>对所有实例执行完整备份</li>
+            <li>验证备份文件（路径、大小、校验和）</li>
+            <li>清理远程主机上的数据库目录和服务</li>
+            <li>删除平台纳管关系和拓扑</li>
+          </ol>
+          <p style={{ color: '#ff4d4f', marginTop: 8 }}>⚠️ 此操作会删除数据库服务和数据目录，无法撤销</p>
+        </div>
+      ),
       okText: '确认销毁',
+      okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
         const res: any = await clusterDeployApi.destroy(record.deployment_id)

@@ -123,6 +123,7 @@ func main() {
 	backupRepo := repositories.NewBackupRepository(db)
 	backupService := services.NewBackupService(hostRepo, instanceRepo, backupRepo, agentClient, cfg.EncryptionKey, auditService, taskRepo)
 	backupController := controllers.NewBackupController(backupService)
+	instanceService.SetBackupService(backupService)
 
 	clickhouse, err := storage.NewClickHouse(cfg.ClickHouseURL)
 	if err != nil {
@@ -151,6 +152,7 @@ func main() {
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
 	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
 	clusterDeployService.SetEncryptionKey(cfg.EncryptionKey)
+	clusterDeployService.SetBackupService(backupService)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
 	topologyController := controllers.NewTopologyController(topologyService)
@@ -161,9 +163,9 @@ func main() {
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)
 
-		upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient, auditService)
-		upgradeService.SetEncryptionKey(cfg.EncryptionKey)
-		upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
+	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient, auditService)
+	upgradeService.SetEncryptionKey(cfg.EncryptionKey)
+	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
 	versionCatalog := services.NewVersionCatalog()
 	versionController := controllers.NewVersionController(versionCatalog)

@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,4 +82,48 @@ func TestExecuteInstanceAdminServiceControlDefaultsTrimmedStatus(t *testing.T) {
 	assert.Equal(t, "completed", result.Status)
 	assert.Contains(t, strings.ToLower(result.Message), "stopped")
 	assert.Contains(t, result.Message, datadir)
+}
+
+func TestExecuteInstanceAdminDecommissionRemovesSafeDatadir(t *testing.T) {
+	executor := NewTaskExecutor()
+	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")
+	root := t.TempDir()
+	datadir := filepath.Join(root, "mysql-3307")
+	require.NoError(t, os.MkdirAll(datadir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(datadir, "mysql.pid"), []byte("999999"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(datadir, "ibdata1"), []byte("data"), 0o644))
+
+	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
+		TaskID: "decommission-test",
+		Config: map[string]interface{}{
+			"action":      "decommission",
+			"datadir":     datadir,
+			"target_port": 3307,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.Contains(t, result.Message, "removed datadir=")
+	_, statErr := os.Stat(datadir)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestExecuteInstanceAdminDecommissionRejectsUnsafeDatadir(t *testing.T) {
+	executor := NewTaskExecutor()
+
+	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
+		TaskID: "decommission-test",
+		Config: map[string]interface{}{
+			"action":      "decommission",
+			"datadir":     "/data/mysql",
+			"target_port": 3307,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "refuse to remove datadir outside managed paths")
 }

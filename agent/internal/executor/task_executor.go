@@ -2284,6 +2284,11 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			return adminFailed(req.TaskID, err.Error()), nil
 		}
 		output, err = controlInstanceService(ctx, req.Config)
+	case "decommission":
+		if err := validateServiceControlConfig(req.Config); err != nil {
+			return adminFailed(req.TaskID, err.Error()), nil
+		}
+		output, err = decommissionInstance(ctx, req.Config)
 	default:
 		return adminFailed(req.TaskID, "unsupported action: "+action), nil
 	}
@@ -2390,6 +2395,52 @@ func controlInstanceService(ctx context.Context, config map[string]interface{}) 
 	}
 }
 
+func decommissionInstance(ctx context.Context, config map[string]interface{}) (string, error) {
+	datadir, _ := config["datadir"].(string)
+	datadir = filepath.Clean(strings.TrimSpace(datadir))
+	if err := validateDecommissionDatadir(datadir); err != nil {
+		return "", err
+	}
+	stopOutput, stopErr := stopInstanceProcess(ctx, datadir)
+	if stopErr != nil {
+		return stopOutput, stopErr
+	}
+	if err := os.RemoveAll(datadir); err != nil {
+		return stopOutput, fmt.Errorf("remove datadir %s failed: %w", datadir, err)
+	}
+	if _, err := os.Stat(datadir); !os.IsNotExist(err) {
+		if err == nil {
+			return stopOutput, fmt.Errorf("datadir still exists after removal: %s", datadir)
+		}
+		return stopOutput, fmt.Errorf("verify datadir removal failed: %w", err)
+	}
+	return strings.TrimSpace(stopOutput + "\nremoved datadir=" + datadir), nil
+}
+
+func validateDecommissionDatadir(datadir string) error {
+	if datadir == "" || datadir == "." || datadir == string(filepath.Separator) {
+		return fmt.Errorf("refuse to remove unsafe datadir: %q", datadir)
+	}
+	clean := filepath.Clean(datadir)
+	if clean != datadir {
+		return fmt.Errorf("refuse to remove unclean datadir: %q", datadir)
+	}
+	allowedPrefixes := []string{
+		"/data/mysql/",
+		"/var/lib/mysql/",
+		"/opt/dbops-mysql/",
+	}
+	if os.Getenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST") == "1" {
+		allowedPrefixes = append(allowedPrefixes, filepath.Clean(os.TempDir())+string(filepath.Separator))
+	}
+	for _, prefix := range allowedPrefixes {
+		if strings.HasPrefix(clean, prefix) && strings.TrimPrefix(clean, prefix) != "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("refuse to remove datadir outside managed paths: %s", datadir)
+}
+
 func instancePID(datadir string) (int, bool) {
 	raw, err := os.ReadFile(filepath.Join(datadir, "mysql.pid"))
 	if err != nil {
@@ -2420,6 +2471,10 @@ func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
 		return "already stopped: pid file not found", nil
 	}
 	if !processMatchesDatadir(pid, datadir) {
+		if !processExists(pid) {
+			_ = os.Remove(filepath.Join(datadir, "mysql.pid"))
+			return fmt.Sprintf("already stopped: stale pid file removed pid=%d datadir=%s", pid, datadir), nil
+		}
 		return "", fmt.Errorf("refuse to stop pid %d: process does not match datadir %s", pid, datadir)
 	}
 	if out, err := exec.CommandContext(ctx, "kill", "-TERM", fmt.Sprintf("%d", pid)).CombinedOutput(); err != nil {
@@ -2435,6 +2490,19 @@ func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
 		return string(out), err
 	}
 	return fmt.Sprintf("killed pid=%d datadir=%s", pid, datadir), nil
+}
+
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+		return true
+	}
+	if err := exec.Command("kill", "-0", fmt.Sprintf("%d", pid)).Run(); err == nil {
+		return true
+	}
+	return false
 }
 
 func startInstanceProcess(ctx context.Context, basedir, datadir, osUser string, port int, serverID int) (string, error) {

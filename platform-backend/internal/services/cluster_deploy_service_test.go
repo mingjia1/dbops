@@ -169,7 +169,9 @@ func TestDestroyClusterWritesAuditLog(t *testing.T) {
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	backupSvc := &BackupService{}
 	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
+	service.SetBackupService(backupSvc)
 
 	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
 		ID:          "destroy-audit-cluster",
@@ -178,23 +180,50 @@ func TestDestroyClusterWritesAuditLog(t *testing.T) {
 		Status:      "completed",
 	}))
 
-	resp, err := service.DestroyCluster(ctx, "destroy-audit-cluster")
+	_, err := service.DestroyCluster(ctx, "destroy-audit-cluster")
 
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, "destroyed", resp.Status)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no instances found for cluster")
 	logs, err := auditRepo.ListByResource(context.Background(), "cluster_deployment", "destroy-audit-cluster", 10, 0)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, "destroy_cluster", logs[0].Operation)
 	require.Equal(t, "destroy", logs[0].Action)
-	require.Equal(t, "success", logs[0].Result)
+	require.Equal(t, "failed", logs[0].Result)
+}
 
-	deployments, err := service.ListDeployments(ctx, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, deployments, 1)
-	require.Equal(t, "destroy-audit-cluster", deployments[0].DeploymentID)
-	require.Equal(t, "destroyed", deployments[0].Status)
+func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "destroy-user")
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          "ha-cluster-001",
+		ClusterType: "ha",
+		Name:        "ha-test",
+		Status:      "completed",
+	}))
+	hostID := "host-001"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Name: "host-001", Address: "10.1.1.10", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{
+		ID:        "inst-001",
+		Name:      "master",
+		ClusterID: "ha-cluster-001",
+		HostID:    &hostID,
+	}))
+	require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID: "inst-001",
+		Host:       "10.1.1.10",
+		Port:       3306,
+	}))
+
+	_, err := service.DestroyCluster(ctx, "ha-cluster-001")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "backup service is required")
 }
 
 func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
