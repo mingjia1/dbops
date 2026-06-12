@@ -350,6 +350,34 @@ func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
 	assert.Equal(t, resp.TaskID, tasks[0].ID)
 }
 
+func TestUpgradeService_ExecuteRollingUpgrade_HydratesRolesAndNodeIDs(t *testing.T) {
+	db := newTestDB()
+	defer db.Close()
+	ctx := context.Background()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "cluster-node-1", "cluster-hydrate")
+	createUpgradeTestInstance(t, ctx, instanceRepo, "cluster-node-2", "cluster-hydrate")
+	require.NoError(t, instanceRepo.UpsertStatus(ctx, "cluster-node-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
+	require.NoError(t, instanceRepo.UpsertStatus(ctx, "cluster-node-2", &models.InstanceStatus{Role: "secondary", HealthStatus: "healthy"}))
+
+	resp, err := service.ExecuteRollingUpgrade(ctx, ExecuteRollingUpgradeRequest{
+		ClusterID:     "cluster-hydrate",
+		PlanID:        "plan-hydrate",
+		TargetVersion: "8.0.36",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Instances, 2)
+	assert.Equal(t, "primary", resp.Instances[0].Role)
+	assert.Equal(t, "secondary", resp.Instances[1].Role)
+	assert.Equal(t, []string{"cluster-node-1", "cluster-node-2"}, rollingNodeIDs(service.hydrateClusterInstances(ctx, []*models.Instance{
+		{ID: "cluster-node-1"},
+		{ID: "cluster-node-2"},
+	})))
+}
+
 func TestUpgradeService_ExecuteInPlaceRequiresBackupConfirmation(t *testing.T) {
 	db := newTestDB()
 	defer db.Close()

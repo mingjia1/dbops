@@ -526,6 +526,7 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
 		return nil, err
 	}
+	clusterInstances = s.hydrateClusterInstances(ctx, clusterInstances)
 	// P0: 派发前落 task, 用集群第一个实例 ID 作为 task.InstanceID (anchor).
 	taskID := s.createAndTrackTask("upgrade_rolling",
 		firstInstanceID(clusterInstances), req.PlanID)
@@ -552,6 +553,7 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			"max_in_parallel":       req.MaxInParallel,
 			"health_check_interval": req.HealthCheckInterval,
 			"cluster_id":            req.ClusterID,
+			"rolling_nodes":         rollingNodeIDs(clusterInstances),
 		})
 	}
 
@@ -570,6 +572,34 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			req.ClusterID, req.PlanID, req.TargetVersion, taskID, len(instances), req.MaxInParallel, req.HealthCheckInterval))
 
 	return response, nil
+}
+
+func (s *UpgradeService) hydrateClusterInstances(ctx context.Context, instances []*models.Instance) []*models.Instance {
+	if s == nil || s.instanceRepo == nil {
+		return instances
+	}
+	out := make([]*models.Instance, 0, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if full, err := s.instanceRepo.GetByID(ctx, inst.ID); err == nil && full != nil {
+			out = append(out, full)
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out
+}
+
+func rollingNodeIDs(instances []*models.Instance) []string {
+	ids := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		if inst != nil && inst.ID != "" {
+			ids = append(ids, inst.ID)
+		}
+	}
+	return ids
 }
 
 type RollbackUpgradeRequest struct {
