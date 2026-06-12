@@ -161,7 +161,7 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	require.Equal(t, "ha-master", replica2.Topology.MasterID)
 }
 
-func TestDestroyClusterWritesAuditLog(t *testing.T) {
+func TestDestroyClusterWithNoManagedInstancesDestroysMetadata(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "deploy-auditor-002")
 	db := newTestDB()
 	hostRepo := repositories.NewHostRepository(db)
@@ -180,16 +180,17 @@ func TestDestroyClusterWritesAuditLog(t *testing.T) {
 		Status:      "completed",
 	}))
 
-	_, err := service.DestroyCluster(ctx, "destroy-audit-cluster")
+	resp, err := service.DestroyCluster(ctx, "destroy-audit-cluster")
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "no instances found for cluster")
+	require.NoError(t, err)
+	require.Equal(t, "destroyed", resp.Status)
+	require.Contains(t, resp.Message, "no managed instances")
 	logs, err := auditRepo.ListByResource(context.Background(), "cluster_deployment", "destroy-audit-cluster", 10, 0)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, "destroy_cluster", logs[0].Operation)
 	require.Equal(t, "destroy", logs[0].Action)
-	require.Equal(t, "failed", logs[0].Result)
+	require.Equal(t, "success", logs[0].Result)
 }
 
 func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {

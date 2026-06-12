@@ -890,7 +890,8 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		return nil, err
 	}
 	nodes := s.deploymentNodes(ctx, clusterID)
-	if err := s.decommissionClusterInstances(ctx, clusterID); err != nil {
+	decommissioned, err := s.decommissionClusterInstances(ctx, clusterID)
+	if err != nil {
 		return nil, err
 	}
 	if err := s.clearClusterManagement(ctx, clusterID); err != nil {
@@ -899,34 +900,38 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err := s.repo.UpdateStatus(ctx, clusterID, "destroyed"); err != nil {
 		return nil, err
 	}
+	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", clusterID)
+	if decommissioned == 0 {
+		message = fmt.Sprintf("Cluster %s deployment metadata destroyed; no managed instances were found to back up or decommission", clusterID)
+	}
 	return &DeployResponse{
 		DeploymentID: dep.ID,
 		ClusterType:  dep.ClusterType,
 		Name:         dep.Name,
 		Status:       "destroyed",
-		Message:      fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", clusterID),
+		Message:      message,
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}, nil
 }
 
-func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string) error {
+func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string) (int, error) {
 	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(instances) == 0 {
-		return fmt.Errorf("no instances found for cluster %s; cannot proceed with backup and decommission", clusterID)
+		return 0, nil
 	}
 	for _, inst := range instances {
 		if inst == nil {
 			continue
 		}
 		if err := s.backupAndDecommissionClusterInstance(ctx, inst.ID); err != nil {
-			return fmt.Errorf("decommission cluster instance %s failed: %w", inst.ID, err)
+			return 0, fmt.Errorf("decommission cluster instance %s failed: %w", inst.ID, err)
 		}
 	}
-	return nil
+	return len(instances), nil
 }
 
 func (s *ClusterDeployService) backupAndDecommissionClusterInstance(ctx context.Context, instanceID string) error {
