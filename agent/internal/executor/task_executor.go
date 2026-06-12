@@ -1550,6 +1550,17 @@ func resolveTargetConn(cfg RoleSwitchConfig) (string, int, string, string) {
 	return "127.0.0.1", 3306, "root", ""
 }
 
+func resolveMGRPrimaryUUID(ctx context.Context, host string, port int, user, pass string, cfg RoleSwitchConfig) (string, error) {
+	if strings.TrimSpace(cfg.NewMasterServerUUID) != "" {
+		return strings.TrimSpace(cfg.NewMasterServerUUID), nil
+	}
+	uuid, err := runMySQLExec(ctx, host, port, user, pass, "SELECT @@server_uuid")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(uuid), nil
+}
+
 func runMySQLExec(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
 	args := append(mysqlBaseArgs(host, port, user, pass), "-N", "-B", "-e", sql)
 	cmd := exec.CommandContext(ctx, "mysql", args...)
@@ -1635,6 +1646,38 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 
 	host, port, user, pass := resolveTargetConn(cfg)
 
+	if cfg.ClusterType == "mgr" {
+		uuid, err := resolveMGRPrimaryUUID(ctx, host, port, user, pass, cfg)
+		if err != nil || uuid == "" {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  80,
+				Message:   fmt.Sprintf("MGR promote requires target server_uuid: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		mgrSQL := fmt.Sprintf("SELECT group_replication_set_as_primary('%s')", uuid)
+		if _, err := runMySQLExec(ctx, host, port, user, pass, mgrSQL); err != nil {
+			if !cfg.Force {
+				return &TaskResult{
+					TaskID:    req.TaskID,
+					Status:    "failed",
+					Progress:  60,
+					Message:   fmt.Sprintf("MGR set_as_primary failed: %v (use force=true to skip)", err),
+					Timestamp: time.Now(),
+				}, nil
+			}
+		}
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "completed",
+			Progress:  100,
+			Message:   fmt.Sprintf("MGR instance %s promoted to %s with server_uuid %s", cfg.InstanceID, cfg.TargetRole, uuid),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
 	if cfg.ClusterType == "pxc" {
 		for _, sql := range []string{"SET GLOBAL read_only = OFF", "SET GLOBAL super_read_only = OFF"} {
 			if _, err := runMySQLExec(ctx, host, port, user, pass, sql); err != nil && !cfg.Force {
@@ -1684,32 +1727,6 @@ func (e *TaskExecutor) ExecuteRolePromote(ctx context.Context, req DeployTaskReq
 			Message:   fmt.Sprintf("promote step %q failed: %v, output: %s", "reset replication", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
-	}
-
-	// A3 part 3: MGR promote 之前发 'THISUUID' 永远失败 (或 force=true 时静默成功).
-	// 修: 用 cfg.NewMasterServerUUID, 由 backend 解析新 primary 的 @@server_uuid 后下发.
-	if cfg.ClusterType == "mgr" {
-		if cfg.NewMasterServerUUID == "" {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  80,
-				Message:   "MGR promote requires new_master_server_uuid in request config",
-				Timestamp: time.Now(),
-			}, nil
-		}
-		mgrSQL := fmt.Sprintf("SELECT group_replication_set_as_primary('%s')", cfg.NewMasterServerUUID)
-		if _, err := runMySQLExec(ctx, host, port, user, pass, mgrSQL); err != nil {
-			if !cfg.Force {
-				return &TaskResult{
-					TaskID:    req.TaskID,
-					Status:    "failed",
-					Progress:  60,
-					Message:   fmt.Sprintf("MGR set_as_primary failed: %v (use force=true to skip)", err),
-					Timestamp: time.Now(),
-				}, nil
-			}
-		}
 	}
 
 	return &TaskResult{

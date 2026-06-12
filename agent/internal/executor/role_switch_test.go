@@ -162,6 +162,14 @@ func TestExecuteRolePromote_MGR_NoMySQL(t *testing.T) {
 	assert.Contains(t, []string{"failed", "completed"}, res.Status)
 }
 
+func TestResolveMGRPrimaryUUID_PrefersConfig(t *testing.T) {
+	got, err := resolveMGRPrimaryUUID(context.Background(), "127.0.0.1", 1, "root", "", RoleSwitchConfig{
+		NewMasterServerUUID: "uuid-from-config",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "uuid-from-config", got)
+}
+
 func TestExecuteRoleDemote_NoMySQL(t *testing.T) {
 	e := NewTaskExecutor()
 	req := DeployTaskRequest{
