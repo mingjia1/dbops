@@ -101,28 +101,46 @@ const TopologyView: React.FC = () => {
     try {
       const res: any = await instanceApi.list(1000, 0)
       const list: Instance[] = res?.data || []
-      setInstances(list)
 
-      const ids = Array.from(new Set(list.map((i) => i.cluster_id).filter(Boolean))) as string[]
+      // 只保留有集群ID的实例（过滤掉已销毁集群的残留实例）
+      const validInstances = list.filter((i) => i.cluster_id && i.cluster_id.trim() !== '')
+      setInstances(validInstances)
+
+      const ids = Array.from(new Set(validInstances.map((i) => i.cluster_id).filter(Boolean))) as string[]
       const loaded: Record<string, ClusterGraph> = {}
+
       await Promise.all(ids.map(async (clusterId) => {
         try {
           const [topologyRes, graphRes]: any[] = await Promise.all([
             topologyApi.getCluster(clusterId),
             topologyApi.getGraph(clusterId),
           ])
+
+          // 验证返回的图数据是否有效
+          const nodes = graphRes?.data?.nodes || []
+          const edges = graphRes?.data?.edges || []
+
+          // 如果图为空，可能集群已被销毁，跳过
+          if (nodes.length === 0) {
+            console.warn(`Cluster ${clusterId} has no topology nodes, possibly destroyed`)
+            return
+          }
+
           loaded[clusterId] = {
             clusterId,
-            mode: topologyRes?.data?.replication_mode || graphRes?.data?.edges?.[0]?.label || 'unknown',
-            nodes: graphRes?.data?.nodes || [],
-            edges: graphRes?.data?.edges || [],
+            mode: topologyRes?.data?.replication_mode || edges?.[0]?.label || 'async',
+            nodes,
+            edges,
           }
-        } catch {
-          loaded[clusterId] = { clusterId, mode: 'unknown', nodes: [], edges: [] }
+        } catch (error) {
+          console.warn(`Failed to load topology for cluster ${clusterId}:`, error)
+          // 不添加到loaded中，避免显示空/错误的拓扑
         }
       }))
+
       setGraphs(loaded)
-    } catch {
+    } catch (error) {
+      console.error('Failed to fetch topology data:', error)
       setInstances([])
       setGraphs({})
     } finally {
@@ -158,11 +176,21 @@ const TopologyView: React.FC = () => {
   ]
 
   const renderTopologyGraph = (nodes: TopologyNode[], edges: TopologyEdge[]) => {
+    if (nodes.length === 0) {
+      return (
+        <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>
+          <DatabaseOutlined style={{ fontSize: 48, marginBottom: 12 }} />
+          <div>暂无拓扑节点</div>
+        </div>
+      )
+    }
+
     const width = 920
     const height = Math.max(180, Math.ceil(nodes.length / 4) * 150)
     const positions = new Map<string, { x: number; y: number }>()
     let primaryIndex = 0
     let replicaIndex = 0
+
     nodes.forEach((node) => {
       const isPrimary = primaryRoles.has(node.role)
       const slot = isPrimary ? primaryIndex++ : replicaIndex++
@@ -195,19 +223,24 @@ const TopologyView: React.FC = () => {
                   markerEnd="url(#topology-arrow)"
                 />
                 <text x={(source.x + target.x) / 2 + 30} y={(source.y + target.y) / 2 + 22} fontSize="12" fill="#595959">
-                  {edge.label || edge.type || 'replication'}
+                  {edge.label || 'async'}
                 </text>
               </g>
             )
           })}
           {nodes.map((node) => {
             const pos = positions.get(node.id) || { x: 0, y: 0 }
-            const color = primaryRoles.has(node.role) ? '#1677ff' : '#52c41a'
+            const isPrimary = primaryRoles.has(node.role)
+            const color = isPrimary ? '#1677ff' : '#52c41a'
+            const isHealthy = node.status === 'healthy' || node.status === 'running'
+            const borderColor = isHealthy ? color : '#ff4d4f'
+
             return (
               <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
-                <rect width="150" height="64" rx="6" fill="#fff" stroke={color} strokeWidth="2" />
+                <rect width="150" height="64" rx="6" fill="#fff" stroke={borderColor} strokeWidth="2" />
                 <text x="12" y="24" fontSize="13" fontWeight="600" fill="#262626">{node.name || node.id}</text>
-                <text x="12" y="45" fontSize="12" fill={color}>{node.role || 'unknown'} / {node.status || 'unknown'}</text>
+                <text x="12" y="45" fontSize="12" fill={color}>{node.role || 'unknown'}</text>
+                <text x="12" y="60" fontSize="11" fill={isHealthy ? '#52c41a' : '#ff4d4f'}>{node.status || 'unknown'}</text>
               </g>
             )
           })}
@@ -249,7 +282,19 @@ const TopologyView: React.FC = () => {
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             {visibleClusterIds.map((clusterId) => {
               const graph = graphs[clusterId]
+
+              // 如果图数据不存在或为空，跳过该集群（可能已被销毁）
+              if (!graph || (graph.nodes.length === 0 && instances.filter((i) => i.cluster_id === clusterId).length === 0)) {
+                return null
+              }
+
               const clusterInstances = instances.filter((i) => i.cluster_id === clusterId)
+
+              // 如果没有实例且没有图数据，跳过
+              if (clusterInstances.length === 0 && graph.nodes.length === 0) {
+                return null
+              }
+
               const nodes = graph?.nodes?.length ? graph.nodes : clusterInstances.map((i) => ({
                 id: i.id,
                 name: i.name,
@@ -258,22 +303,58 @@ const TopologyView: React.FC = () => {
                 cluster_id: clusterId,
               }))
               const edges = graph?.edges?.length ? graph.edges : inferEdgesFromInstances(clusterInstances)
+
+              // 计算集群健康状态
+              const healthyCount = nodes.filter((n) => n.status === 'healthy' || n.status === 'running').length
+              const primaryCount = nodes.filter((n) => primaryRoles.has(n.role)).length
+              const replicaCount = nodes.length - primaryCount
+              const clusterHealth = healthyCount === nodes.length ? 'success' : healthyCount > 0 ? 'warning' : 'error'
+
               return (
-                <Card key={clusterId} size="small" title={<Space><ApartmentOutlined />{clusterId}<Tag>{graph?.mode || 'unknown'}</Tag></Space>}>
+                <Card
+                  key={clusterId}
+                  size="small"
+                  title={
+                    <Space>
+                      <ApartmentOutlined />
+                      <span>{clusterId}</span>
+                      <Tag color="blue">{graph?.mode || 'async'}</Tag>
+                      <Tag color={clusterHealth}>
+                        {healthyCount}/{nodes.length} 健康
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {primaryCount}主 {replicaCount}从
+                      </Text>
+                    </Space>
+                  }
+                >
                   {renderTopologyGraph(nodes, edges)}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
-                    {nodes.map((node) => (
-                      <div key={node.id} style={{ width: 220, minHeight: 92, border: '1px solid #d9d9d9', borderRadius: 6, padding: 12 }}>
-                        <Space direction="vertical" size={4}>
-                          <Text strong>{node.name || node.id}</Text>
-                          <Space>
-                            <Tag color={roleColor(node.role)}>{node.role || 'unknown'}</Tag>
-                            <Tag color={statusColor(node.status)}>{node.status || 'unknown'}</Tag>
+                    {nodes.map((node) => {
+                      const isHealthy = node.status === 'healthy' || node.status === 'running'
+                      return (
+                        <div
+                          key={node.id}
+                          style={{
+                            width: 220,
+                            minHeight: 92,
+                            border: `1px solid ${isHealthy ? '#d9d9d9' : '#ff7875'}`,
+                            borderRadius: 6,
+                            padding: 12,
+                            backgroundColor: isHealthy ? '#fff' : '#fff2f0',
+                          }}
+                        >
+                          <Space direction="vertical" size={4}>
+                            <Text strong>{node.name || node.id}</Text>
+                            <Space>
+                              <Tag color={roleColor(node.role)}>{node.role || 'unknown'}</Tag>
+                              <Tag color={statusColor(node.status)}>{node.status || 'unknown'}</Tag>
+                            </Space>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{node.id}</Text>
                           </Space>
-                          <Text type="secondary" style={{ fontSize: 12 }}>{node.id}</Text>
-                        </Space>
-                      </div>
-                    ))}
+                        </div>
+                      )
+                    })}
                   </div>
                   <Table
                     size="small"
@@ -281,7 +362,7 @@ const TopologyView: React.FC = () => {
                     columns={[
                       { title: '源节点', dataIndex: 'source_id', key: 'source_id' },
                       { title: '目标节点', dataIndex: 'target_id', key: 'target_id' },
-                      { title: '关系', dataIndex: 'label', key: 'label', render: (v) => <Tag>{v || 'replication'}</Tag> },
+                      { title: '复制模式', dataIndex: 'label', key: 'label', render: (v) => <Tag>{v || 'async'}</Tag> },
                     ]}
                     dataSource={edges.map((edge, index) => ({ ...edge, key: `${edge.source_id}-${edge.target_id}-${index}` }))}
                     locale={{ emptyText: '暂无复制关系' }}

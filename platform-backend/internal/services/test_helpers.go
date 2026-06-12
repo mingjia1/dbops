@@ -10,6 +10,7 @@ import (
 type InstanceRepositoryInterface interface {
 	GetByID(ctx context.Context, id string) (*models.Instance, error)
 	List(ctx context.Context, limit, offset int) ([]models.Instance, error)
+	ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error)
 	Create(ctx context.Context, instance *models.Instance) error
 	Update(ctx context.Context, instance *models.Instance) error
 	Delete(ctx context.Context, id string) error

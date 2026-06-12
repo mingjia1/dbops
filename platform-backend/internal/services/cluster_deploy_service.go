@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -1151,26 +1152,45 @@ func (s *ClusterDeployService) clearDestroyedClusterManagement(ctx context.Conte
 	if err != nil {
 		return err
 	}
+
+	// 清除所有实例的集群关联和拓扑信息
 	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+
+		// 1. 清除集群关联
 		inst.ClusterID = ""
 		if err := s.instRepo.Update(ctx, inst); err != nil {
-			return err
+			return fmt.Errorf("failed to clear cluster_id for instance %s: %w", inst.ID, err)
 		}
-		_ = s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+
+		// 2. 更新实例状态为已停止
+		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			InstanceID:          inst.ID,
 			RunStatus:           "stopped",
-			HealthStatus:        "unhealthy",
+			HealthStatus:        "offline",
 			Role:                "",
 			ReplicationStatus:   "",
 			SecondsBehindMaster: -1,
-		})
-		_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+		}); err != nil {
+			// 记录日志但不阻断流程
+			log.Printf("WARN: failed to update status for destroyed instance %s: %v", inst.ID, err)
+		}
+
+		// 3. 彻底清除拓扑信息
+		if err := s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
 			InstanceID:      inst.ID,
 			ClusterID:       "",
 			MasterID:        "",
 			SlaveIDs:        "",
 			ReplicationMode: "",
-		})
+		}); err != nil {
+			// 记录日志但不阻断流程
+			log.Printf("WARN: failed to clear topology for destroyed instance %s: %v", inst.ID, err)
+		}
 	}
+
 	return nil
 }
 

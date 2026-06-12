@@ -47,6 +47,14 @@ func (m *MockInstanceRepo) Delete(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
+func (m *MockInstanceRepo) ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error) {
+	args := m.Called(ctx, clusterID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Instance), args.Error(1)
+}
+
 type MockTaskRepo struct {
 	mock.Mock
 }

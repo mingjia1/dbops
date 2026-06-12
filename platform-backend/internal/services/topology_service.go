@@ -7,14 +7,14 @@ import (
 	"log"
 	"strings"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/internal/models"
 )
 
 type TopologyService struct {
-	repo *repositories.InstanceRepository
+	repo InstanceRepositoryInterface
 }
 
-func NewTopologyService(repo *repositories.InstanceRepository) *TopologyService {
+func NewTopologyService(repo InstanceRepositoryInterface) *TopologyService {
 	return &TopologyService{repo: repo}
 }
 
@@ -116,17 +116,31 @@ func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID stri
 		return nil, fmt.Errorf("cluster not found or has no instances")
 	}
 
-	var topologyInstances []InstanceTopologyResponse
+	// 过滤掉已经被清除集群关联的实例（即已销毁集群的残留）
+	var validInstances []InstanceTopologyResponse
 	for _, inst := range instances {
-		topologyInst, err := s.GetInstanceTopology(ctx, inst.ID)
-		if err != nil {
+		// 跳过已经没有集群ID的实例
+		if inst.ClusterID == "" {
+			log.Printf("INFO: skipping instance %s with empty cluster_id in topology query", inst.ID)
 			continue
 		}
-		topologyInstances = append(topologyInstances, *topologyInst)
+
+		topologyInst, err := s.GetInstanceTopology(ctx, inst.ID)
+		if err != nil {
+			log.Printf("WARN: failed to get topology for instance %s: %v", inst.ID, err)
+			continue
+		}
+		validInstances = append(validInstances, *topologyInst)
 	}
-	inferClusterTopology(topologyInstances)
+
+	// 如果所有实例都已被清除，返回错误
+	if len(validInstances) == 0 {
+		return nil, fmt.Errorf("cluster has no valid instances (possibly destroyed)")
+	}
+
+	inferClusterTopology(validInstances)
 	replicationMode := "async"
-	for _, inst := range topologyInstances {
+	for _, inst := range validInstances {
 		if inst.ReplicationMode != "" {
 			replicationMode = inst.ReplicationMode
 			break
@@ -136,7 +150,7 @@ func (s *TopologyService) GetClusterTopology(ctx context.Context, clusterID stri
 	return &ClusterTopologyResponse{
 		ClusterID:       clusterID,
 		ReplicationMode: replicationMode,
-		Instances:       topologyInstances,
+		Instances:       validInstances,
 	}, nil
 }
 
@@ -148,30 +162,58 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 
 	var nodes []TopologyNode
 	nodeIDs := make(map[string]bool)
+	instanceMap := make(map[string]*models.Instance)
+
+	// 预加载所有实例信息到map中
 	for _, topologyInst := range clusterTopology.Instances {
 		inst, err := s.repo.GetByID(ctx, topologyInst.InstanceID)
 		if err != nil {
-			// B5: instanceMap 拿不到时不要塞零值, 跳过该节点 + 记 warn,
-			// 避免前端出现"未命名节点"假象.
 			log.Printf("WARN: topology node %s has no matching instance row, skipping: %v", topologyInst.InstanceID, err)
 			continue
 		}
+		// 再次确认实例仍属于该集群（防止并发修改）
+		if inst.ClusterID != clusterID {
+			log.Printf("INFO: instance %s no longer belongs to cluster %s, skipping", inst.ID, clusterID)
+			continue
+		}
+		instanceMap[inst.ID] = inst
+	}
+
+	// 构建节点列表（只包含有效实例）
+	for _, topologyInst := range clusterTopology.Instances {
+		inst, exists := instanceMap[topologyInst.InstanceID]
+		if !exists {
+			continue
+		}
+
 		node := TopologyNode{
 			ID:        topologyInst.InstanceID,
 			Name:      inst.Name,
-			Role:      topologyInst.Role,
+			Role:      normalizeDisplayRole(topologyInst.Role),
 			Status:    "unknown",
 			ClusterID: topologyInst.ClusterID,
 		}
+
+		// 优先使用健康状态，其次使用运行状态
 		if inst.Status.HealthStatus != "" {
 			node.Status = inst.Status.HealthStatus
 		} else if inst.Status.RunStatus != "" {
 			node.Status = inst.Status.RunStatus
 		}
+
 		nodeIDs[node.ID] = true
 		nodes = append(nodes, node)
 	}
 
+	// 如果没有有效节点，返回空图
+	if len(nodes) == 0 {
+		return &TopologyGraph{
+			Nodes: []TopologyNode{},
+			Edges: []TopologyEdge{},
+		}, nil
+	}
+
+	// 构建边列表（只连接存在的节点）
 	var edges []TopologyEdge
 	edgeKeys := make(map[string]bool)
 	addEdge := func(edge TopologyEdge) {
@@ -185,13 +227,19 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 		edgeKeys[key] = true
 		edges = append(edges, edge)
 	}
+
 	for _, topologyInst := range clusterTopology.Instances {
+		// 只处理仍在instanceMap中的实例
+		if _, exists := instanceMap[topologyInst.InstanceID]; !exists {
+			continue
+		}
+
 		if topologyInst.MasterID != "" {
 			edge := TopologyEdge{
 				SourceID: topologyInst.MasterID,
 				TargetID: topologyInst.InstanceID,
 				Type:     "replication",
-				Label:    topologyInst.ReplicationMode,
+				Label:    normalizeReplicationLabel(topologyInst.ReplicationMode),
 			}
 			addEdge(edge)
 		}
@@ -201,7 +249,7 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 				SourceID: topologyInst.InstanceID,
 				TargetID: slaveID,
 				Type:     "replication",
-				Label:    topologyInst.ReplicationMode,
+				Label:    normalizeReplicationLabel(topologyInst.ReplicationMode),
 			}
 			addEdge(edge)
 		}
@@ -211,6 +259,30 @@ func (s *TopologyService) BuildTopologyGraph(ctx context.Context, clusterID stri
 		Nodes: nodes,
 		Edges: edges,
 	}, nil
+}
+
+// normalizeDisplayRole 规范化角色显示名称
+func normalizeDisplayRole(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	switch role {
+	case "slave", "secondary":
+		return "replica"
+	case "primary_master":
+		return "primary"
+	case "":
+		return "unknown"
+	default:
+		return role
+	}
+}
+
+// normalizeReplicationLabel 规范化复制关系标签
+func normalizeReplicationLabel(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "async"
+	}
+	return mode
 }
 
 func inferClusterTopology(instances []InstanceTopologyResponse) {
