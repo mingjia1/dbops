@@ -117,7 +117,7 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 	case "mha":
 		mhaExecutor := NewMHAExecutor()
 		return mhaExecutor.DeployMHA(ctx, req)
-	case "mgr":
+	case "mgr", "mgr-member", "mgr-single-primary":
 		mgrExecutor := NewMGRExecutor()
 		if bootstrap, ok := req.Config["bootstrap"].(bool); ok && !bootstrap {
 			return mgrExecutor.ConfigureGroupMember(ctx, req)
@@ -128,6 +128,13 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 	default:
 		return e.deploySingleInstance(ctx, req)
 	}
+}
+
+// isDataDirInitialized checks if the MySQL data directory has been initialized
+// by looking for ibdata1 (InnoDB system tablespace) which is always created during --initialize-insecure.
+func isDataDirInitialized(dataDir string) bool {
+	info, err := os.Stat(filepath.Join(dataDir, "ibdata1"))
+	return err == nil && info.Size() > 0
 }
 
 func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
@@ -165,6 +172,16 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			Timestamp: time.Now(),
 		}, nil
 	}
+
+	// Check if data directory exists and has been initialized.
+	// If so, skip initialization and just start MySQL.
+	needInit := true
+	if _, err := os.Stat(dataDir); err == nil {
+		if isDataDirInitialized(dataDir) {
+			needInit = false
+		}
+	}
+
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
@@ -217,26 +234,33 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 	}
 
-	initArgs := []string{
-		"--no-defaults",
-		"--initialize-insecure",
-		"--datadir=" + dataDir,
-	}
-	if osUser != "" {
-		initArgs = append(initArgs, "--user="+osUser)
-	}
-	if basedir != "" {
-		initArgs = append(initArgs, "--basedir="+basedir)
-	}
-	initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		return &TaskResult{
-			TaskID:    req.TaskID,
-			Status:    "failed",
-			Progress:  0,
-			Message:   fmt.Sprintf("MySQL initialization failed: %v, output: %s", err, strings.TrimSpace(string(out))),
-			Timestamp: time.Now(),
-		}, nil
+	// Only run initialization if the data directory hasn't been initialized yet.
+	if needInit {
+		// Percona/Percona XtraDB Cluster mysqld requires the data directory to NOT
+		// exist when running --initialize-insecure. Remove it if we just created it.
+		os.RemoveAll(dataDir)
+
+		initArgs := []string{
+			"--no-defaults",
+			"--initialize-insecure",
+			"--datadir=" + dataDir,
+		}
+		if osUser != "" {
+			initArgs = append(initArgs, "--user="+osUser)
+		}
+		if basedir != "" {
+			initArgs = append(initArgs, "--basedir="+basedir)
+		}
+		initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
+		if out, err := initCmd.CombinedOutput(); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("MySQL initialization failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+				Timestamp: time.Now(),
+			}, nil
+		}
 	}
 
 	startArgs := []string{

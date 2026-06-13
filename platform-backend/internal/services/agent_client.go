@@ -100,7 +100,9 @@ func (c *AgentClient) DeployInstance(ctx context.Context, hostAddr string, agent
 		Config:     cfg,
 	}
 
-	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/deploy", payload, agentDeploymentTimeout)
+	detachedCtx, cancel := context.WithTimeout(context.Background(), agentDeploymentTimeout)
+	defer cancel()
+	return c.callAgentWithTimeout(detachedCtx, hostAddr, agentPort, "/agent/tasks/deploy", payload, agentDeploymentTimeout)
 }
 
 func isSHA256Hex(value string) bool {

@@ -424,29 +424,65 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 	}
 	instance.Connection = *conn
 
-	result, err := s.agentClient.DeployInstance(ctx, agentHost, agentPort, instance, task.ID, mysqlPassword)
-	if err != nil {
+	// Retry logic: if deployment fails due to existing data directory,
+	// auto-increment port and try again (up to 3 times).
+	maxRetries := 3
+	currentPort := conn.Port
+	var lastResult *AgentTaskResult
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Auto-increment port for retry
+			currentPort = conn.Port + attempt
+			conn.Port = currentPort
+			instance.Connection = *conn
+			taskRepo.UpdateStatus(ctx, task.ID, "running", 0)
+		}
+
+		result, err := s.agentClient.DeployInstance(ctx, agentHost, agentPort, instance, task.ID, mysqlPassword)
+		lastResult = result
+		lastErr = err
+
+		if err == nil && result.Status == "completed" {
+			break
+		}
+
+		// Check if the failure is due to existing data directory
+		if err == nil && result.Status == "failed" &&
+			(strings.Contains(result.Message, "Can't create directory") ||
+				strings.Contains(result.Message, "already exists") ||
+				strings.Contains(result.Message, "File exists")) {
+			// Retry with different port
+			continue
+		}
+
+		// Other failure - don't retry
+		break
+	}
+
+	if lastErr != nil {
 		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
 		resp := &DeployResult{
 			TaskID:   task.ID,
 			Status:   "failed",
 			Progress: 0,
-			Message:  fmt.Sprintf("Deploy failed: %v", err),
+			Message:  fmt.Sprintf("Deploy failed: %v", lastErr),
 		}
-		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, err.Error(), map[string]interface{}{
+		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, lastErr.Error(), map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
 		})
 		return resp, nil
 	}
 
-	taskRepo.UpdateStatus(ctx, task.ID, result.Status, result.Progress)
+	taskRepo.UpdateStatus(ctx, task.ID, lastResult.Status, lastResult.Progress)
 
 	resp := &DeployResult{
 		TaskID:   task.ID,
-		Status:   result.Status,
-		Progress: result.Progress,
-		Message:  "MySQL instance deploy: " + result.Message,
+		Status:   lastResult.Status,
+		Progress: lastResult.Progress,
+		Message:  "MySQL instance deploy: " + lastResult.Message,
 	}
 	s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, "", map[string]interface{}{
 		"agent_host": agentHost,

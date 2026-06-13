@@ -439,13 +439,17 @@ func (e *MGRExecutor) configureRecoveryChannel(ctx context.Context, config MGRCo
 }
 
 func (e *MGRExecutor) validateGroupMemberOnline(ctx context.Context, config MGRConfig, requirePrimary bool) *TaskResult {
+	// Resolve the local MySQL @@hostname so we can match MEMBER_HOST regardless
+	// of whether the caller passed IP, hostname, or FQDN.
+	localHostname := e.resolveLocalMySQLHostname(ctx, config)
+
 	deadline := time.Now().Add(30 * time.Second)
 	var lastErr error
 	for {
 		members, err := e.getGroupMembers(ctx, config)
 		if err == nil {
 			for _, member := range members {
-				if member.MemberHost != config.LocalAddress || member.MemberPort != config.MySQLPort {
+				if !memberMatchesLocal(member, config, localHostname) {
 					continue
 				}
 				if member.MemberState == "ONLINE" && (!requirePrimary || member.MemberRole == "PRIMARY") {
@@ -475,6 +479,28 @@ func (e *MGRExecutor) validateGroupMemberOnline(ctx context.Context, config MGRC
 		Message:   fmt.Sprintf("MGR member validation failed: %v", lastErr),
 		Timestamp: time.Now(),
 	}
+}
+
+func (e *MGRExecutor) resolveLocalMySQLHostname(ctx context.Context, config MGRConfig) string {
+	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, "SELECT @@hostname")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func memberMatchesLocal(member GroupMemberStatus, config MGRConfig, localHostname string) bool {
+	if member.MemberPort != config.MySQLPort {
+		return false
+	}
+	if member.MemberHost == config.LocalAddress {
+		return true
+	}
+	if localHostname != "" && member.MemberHost == localHostname {
+		return true
+	}
+	return false
 }
 
 func (e *MGRExecutor) getGroupMembers(ctx context.Context, config MGRConfig) ([]GroupMemberStatus, error) {

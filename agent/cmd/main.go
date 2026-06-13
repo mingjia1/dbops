@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -70,7 +71,9 @@ func main() {
 					return
 				}
 
-				result, err := taskExecutor.ExecuteDeploy(c.Request.Context(), req)
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+				defer cancel()
+				result, err := taskExecutor.ExecuteDeploy(ctx, req)
 				if err != nil {
 					c.JSON(500, gin.H{"code": 500, "message": "Execution failed"})
 					return

@@ -122,7 +122,7 @@ func chownRecursive(path string, uid, gid int) error {
 
 // downloadFile fetches URL to dest. If expectedSHA256 is non-empty, verifies.
 func downloadFile(ctx context.Context, url, dest, expectedSHA256 string) error {
-	c := &http.Client{Timeout: 30 * time.Minute}
+	c := &http.Client{Timeout: 60 * time.Minute}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
