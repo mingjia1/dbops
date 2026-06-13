@@ -115,6 +115,7 @@ func main() {
 	instanceController := controllers.NewInstanceController(instanceService)
 	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey, cfg.AgentToken)
 	hostService.SetInstanceRepo(instanceRepo)
+	hostService.SetAgentClient(agentClient)
 	hostController := controllers.NewHostController(hostService)
 
 	envCheckService := services.NewEnvironmentCheckService(hostRepo, agentClient, cfg.EncryptionKey)

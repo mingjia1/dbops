@@ -37,6 +37,7 @@ type HostService struct {
 	instanceRepo *repositories.InstanceRepository
 	encKey       string
 	agentToken   string
+	agentClient  *AgentClient
 
 	taskMu      sync.RWMutex
 	testResults map[string]*HostTestResult
@@ -57,6 +58,10 @@ func NewHostService(repo *repositories.HostRepository, encKey string, agentToken
 		testResults: make(map[string]*HostTestResult),
 		scanResults: make(map[string]*HostScanResult),
 	}
+}
+
+func (s *HostService) SetAgentClient(client *AgentClient) {
+	s.agentClient = client
 }
 
 func (s *HostService) SetInstanceRepo(repo *repositories.InstanceRepository) {
@@ -1263,16 +1268,38 @@ func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) e
 		port = 9090
 	}
 
-	// 1. 检查Agent是否健康
 	if ok, _ := s.agentHTTPHealth(ctx, host.Address, port); !ok {
 		return fmt.Errorf("agent not healthy")
 	}
 
-	// 2. 调用Agent环境检查API
 	checkReq := map[string]interface{}{
 		"check_tools":     true,
 		"check_resources": true,
 		"check_network":   true,
+	}
+
+	if s.agentClient != nil {
+		checkResult, err := s.agentClient.ExecuteEnvironmentCheck(ctx, host.Address, port, checkReq)
+		if err != nil {
+			return fmt.Errorf("environment check failed: %w", err)
+		}
+
+		if checkResult.Status == "warning" || checkResult.Status == "failed" {
+			if tools, ok := checkResult.Data["tools"].(map[string]interface{}); ok {
+				if allReady, _ := tools["all_ready"].(bool); !allReady {
+					installReq := map[string]interface{}{
+						"tools":         []string{"mysql", "mysqld", "xtrabackup"},
+						"mysql_version": "8.0",
+						"force":         false,
+					}
+					_, err = s.agentClient.ExecuteInstallTools(ctx, host.Address, port, installReq)
+					if err != nil {
+						return fmt.Errorf("tool installation failed: %w", err)
+					}
+				}
+			}
+		}
+		return nil
 	}
 
 	checkURL := fmt.Sprintf("http://%s:%d/agent/tasks/check-environment", host.Address, port)
@@ -1281,7 +1308,6 @@ func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) e
 		return fmt.Errorf("environment check failed: %w", err)
 	}
 
-	// 3. 解析检查结果
 	var envResult AgentEnvironmentCheckResult
 	if data, ok := checkResult["data"].(map[string]interface{}); ok {
 		if status, ok := data["status"].(string); ok {
@@ -1292,11 +1318,9 @@ func (s *HostService) checkAndInstallTools(ctx context.Context, hostID string) e
 		}
 	}
 
-	// 4. 如果工具不全，自动安装
 	if envResult.Status == "warning" || envResult.Status == "failed" {
 		if envResult.Tools != nil {
 			if allReady, ok := envResult.Tools["all_ready"].(bool); ok && !allReady {
-				// 调用Agent安装工具API
 				installReq := map[string]interface{}{
 					"tools":         []string{"mysql", "mysqld", "xtrabackup"},
 					"mysql_version": "8.0",

@@ -235,22 +235,26 @@ func (r *RelayPackageManager) ListPackages() []RelayPackageMeta {
 
 func (r *RelayPackageManager) GetPackagePath(fileName string) (string, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	pkgPath := r.packagePath(fileName)
 	if _, err := os.Stat(pkgPath); err != nil {
+		r.mu.RUnlock()
 		return "", fmt.Errorf("package %s not found in cache", fileName)
 	}
 
+	found := false
 	for i := range r.index.Packages {
 		if r.index.Packages[i].FileName == fileName {
 			r.index.Packages[i].AccessCount++
 			r.index.Packages[i].LastAccessed = time.Now()
-			r.saveIndex()
+			found = true
 			break
 		}
 	}
+	r.mu.RUnlock()
 
+	if found {
+		r.saveIndex()
+	}
 	return pkgPath, nil
 }
 
@@ -421,16 +425,19 @@ func (r *RelayPackageManager) computeSHA256(path string) (string, error) {
 
 func (r *RelayPackageManager) addToIndex(meta RelayPackageMeta) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	found := -1
 	for i := range r.index.Packages {
 		if r.index.Packages[i].FileName == meta.FileName {
-			r.index.Packages[i] = meta
-			r.saveIndex()
-			return
+			found = i
+			break
 		}
 	}
-	r.index.Packages = append(r.index.Packages, meta)
+	if found >= 0 {
+		r.index.Packages[found] = meta
+	} else {
+		r.index.Packages = append(r.index.Packages, meta)
+	}
+	r.mu.Unlock()
 	r.saveIndex()
 }
 
@@ -520,9 +527,8 @@ func (r *RelayPackageManager) ensureCacheSpace(requiredBytes int64) error {
 
 func (r *RelayPackageManager) evictLeastUsed(needBytes int64) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if len(r.index.Packages) == 0 {
+		r.mu.Unlock()
 		return
 	}
 
@@ -546,13 +552,12 @@ func (r *RelayPackageManager) evictLeastUsed(needBytes int64) {
 		survivors = append(survivors, pkg)
 	}
 	r.index.Packages = survivors
+	r.mu.Unlock()
 	r.saveIndex()
 }
 
 func (r *RelayPackageManager) cleanupExpired() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	cutoff := time.Now().Add(-time.Duration(r.cacheExpireHours) * time.Hour)
 	var valid []RelayPackageMeta
 	for _, pkg := range r.index.Packages {
@@ -564,13 +569,12 @@ func (r *RelayPackageManager) cleanupExpired() {
 		}
 	}
 	r.index.Packages = valid
+	r.mu.Unlock()
 	r.saveIndex()
 }
 
 func (r *RelayPackageManager) RemovePackage(fileName string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	pkgPath := r.packagePath(fileName)
 	_ = os.Remove(pkgPath)
 
@@ -581,6 +585,7 @@ func (r *RelayPackageManager) RemovePackage(fileName string) error {
 		}
 	}
 	r.index.Packages = remaining
+	r.mu.Unlock()
 	r.saveIndex()
 	return nil
 }

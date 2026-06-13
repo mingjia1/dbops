@@ -264,9 +264,6 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 	return result.Data, nil
 }
 
-// GetTaskProgress B8: 长任务 (backup/upgrade/migration/role-switch) 现在用
-// fire-and-forget 派发 (调 callAgent 拿到 202 + task_id 后立即返), 前端用此方法
-// 轮询 task 进度, 不再被 300s httpClient.Timeout 撞死.
 func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int, taskID string) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d/agent/tasks/%s/progress", host, port, taskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -305,6 +302,50 @@ func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int
 		return nil, fmt.Errorf("agent returned empty data")
 	}
 	return result.Data, nil
+}
+
+// ExecuteBlankHostInit: 空白主机一键初始化 (OS检测→装MySQL→配数据目录→启动→设密码)
+func (c *AgentClient) ExecuteBlankHostInit(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID:     taskID,
+		InstanceID: "",
+		Config:     config,
+	}
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/blank-host-init", payload, agentDeploymentTimeout)
+}
+
+// ExecuteGeneralClusterInit: 通用集群一键初始化 (HA主从/MHA/MGR/PXC)
+func (c *AgentClient) ExecuteGeneralClusterInit(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID:     taskID,
+		InstanceID: "",
+		Config:     config,
+	}
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/general-cluster-init", payload, agentDeploymentTimeout)
+}
+
+// ExecuteInstallTools: Agent端工具安装 (MySQL/XtraBackup)
+func (c *AgentClient) ExecuteInstallTools(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID: fmt.Sprintf("install-tools-%d", time.Now().UnixNano()),
+		Config: config,
+	}
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/install-tools", payload, 30*time.Minute)
+}
+
+// ExecuteEnvironmentCheck: Agent端独立环境检查 (OS/Tools/Resources/Network)
+func (c *AgentClient) ExecuteEnvironmentCheck(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID: fmt.Sprintf("env-check-%d", time.Now().UnixNano()),
+		Config: config,
+	}
+	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/check-environment", payload)
+}
+
+// ExecuteCheckTools: Agent端工具可用性检查
+func (c *AgentClient) ExecuteCheckTools(ctx context.Context, hostAddr string, agentPort int) (*AgentTaskResult, error) {
+	url := fmt.Sprintf("http://%s:%d/agent/tasks/check-tools", hostAddr, agentPort)
+	return c.callAgentGet(ctx, url)
 }
 
 func getInstanceConnection(instance *models.Instance) (*models.InstanceConnection, error) {

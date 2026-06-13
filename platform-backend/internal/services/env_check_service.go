@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -17,6 +18,8 @@ type EnvironmentCheckService struct {
 	hostRepo    *repositories.HostRepository
 	agentClient *AgentClient
 	encKey      string
+	resultsMu   sync.RWMutex
+	results     map[string]*EnvironmentCheckResult
 }
 
 func NewEnvironmentCheckService(hostRepo *repositories.HostRepository, agentClient *AgentClient, encKey string) *EnvironmentCheckService {
@@ -24,6 +27,7 @@ func NewEnvironmentCheckService(hostRepo *repositories.HostRepository, agentClie
 		hostRepo:    hostRepo,
 		agentClient: agentClient,
 		encKey:      encKey,
+		results:     make(map[string]*EnvironmentCheckResult),
 	}
 }
 
@@ -115,6 +119,9 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	}
 
 	result.Status = "completed"
+	s.resultsMu.Lock()
+	s.results[result.CheckID] = result
+	s.resultsMu.Unlock()
 	return result, nil
 }
 
@@ -191,12 +198,13 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 }
 
 func (s *EnvironmentCheckService) GetByID(ctx context.Context, checkID string) (*EnvironmentCheckResult, error) {
-	return &EnvironmentCheckResult{
-		CheckID:   checkID,
-		Status:    "completed",
-		CreatedAt: time.Now(),
-		Results:   []CheckResult{},
-	}, nil
+	s.resultsMu.RLock()
+	result, ok := s.results[checkID]
+	s.resultsMu.RUnlock()
+	if ok {
+		return result, nil
+	}
+	return nil, fmt.Errorf("check result not found: %s", checkID)
 }
 
 func (s *EnvironmentCheckService) Export(ctx context.Context, checkID string) (string, error) {
