@@ -256,7 +256,15 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	mysqlUser, _ := req.Config["mysql_user"].(string)
 	mysqlPass, _ := req.Config["mysql_pass"].(string)
 
-	fmt.Fprintf(os.Stderr, "DEBUG: deploySingleInstance - mysqlUser=%s, mysqlPass=%s\n", mysqlUser, mysqlPass)
+	// MGR配置参数
+	installType, _ := req.Config["install_type"].(string)
+	isPrimary, _ := req.Config["is_primary"].(bool)
+	groupName, _ := req.Config["group_name"].(string)
+	localAddress, _ := req.Config["local_address"].(string)
+	seeds, _ := req.Config["seeds"].(string)
+
+	fmt.Fprintf(os.Stderr, "DEBUG: deploySingleInstance - mysqlUser=%s, mysqlPass=%s, installType=%s, isPrimary=%v\n",
+		mysqlUser, mysqlPass, installType, isPrimary)
 
 	if host == "" {
 		host = "127.0.0.1"
@@ -386,6 +394,26 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		"--pid-file=" + filepath.Join(dataDir, "mysql.pid"),
 		"--log-error=" + filepath.Join(dataDir, "error.log"),
 	}
+
+	// 如果是MGR部署，添加MGR配置
+	if installType == "mgr" && groupName != "" && localAddress != "" {
+		startArgs = append(startArgs,
+			"--plugin-load-add=group_replication.so",
+			"--group_replication_group_name="+groupName,
+			"--group_replication_local_address="+localAddress,
+			"--group_replication_bootstrap_group=OFF",
+			"--disabled_storage_engines=MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY",
+		)
+
+		// 如果有seeds（副本节点），添加seeds配置
+		if seeds != "" {
+			startArgs = append(startArgs, "--group_replication_group_seeds="+seeds)
+		} else {
+			// 主节点也设置seeds为自己的地址，便于后续副本加入
+			startArgs = append(startArgs, "--group_replication_group_seeds="+localAddress)
+		}
+	}
+
 	if osUser != "" {
 		startArgs = append(startArgs, "--user="+osUser)
 	}
@@ -439,7 +467,19 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		retryHealthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "ping")
 		retryHealthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 		if retryHealthCmd.Run() == nil {
-			// Success!
+			// Success! Now initialize MGR if needed
+			if installType == "mgr" && groupName != "" {
+				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName); err != nil {
+					return &TaskResult{
+						TaskID:    req.TaskID,
+						Status:    "failed",
+						Progress:  90,
+						Message:   fmt.Sprintf("MGR initialization failed: %v", err),
+						Timestamp: time.Now(),
+					}, nil
+				}
+			}
+
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "completed",
@@ -468,6 +508,19 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}, nil
 	}
 
+	// Health check passed. Initialize MGR if needed
+	if installType == "mgr" && groupName != "" {
+		if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  90,
+				Message:   fmt.Sprintf("MGR initialization failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+
 	return &TaskResult{
 		TaskID:    req.TaskID,
 		Status:    "completed",
@@ -475,6 +528,79 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		Message:   fmt.Sprintf("MySQL instance deployed successfully on %s:%d", host, port),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// initializeMGR initializes MySQL Group Replication
+func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName string) error {
+	// 构建MySQL连接命令
+	baseCmd := []string{
+		"-h", host,
+		"-P", fmt.Sprintf("%d", port),
+		"-u", user,
+	}
+
+	env := append(os.Environ(), "MYSQL_PWD="+pass)
+
+	// 1. 创建复制用户（主节点和副本都需要）
+	replicationSQL := fmt.Sprintf(`
+		SET SQL_LOG_BIN=0;
+		CREATE USER IF NOT EXISTS 'repl'@'%%' IDENTIFIED BY 'repl';
+		GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%%';
+		GRANT CONNECTION_ADMIN ON *.* TO 'repl'@'%%';
+		GRANT BACKUP_ADMIN ON *.* TO 'repl'@'%%';
+		GRANT GROUP_REPLICATION_STREAM ON *.* TO 'repl'@'%%';
+		FLUSH PRIVILEGES;
+		SET SQL_LOG_BIN=1;
+		CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='repl' FOR CHANNEL 'group_replication_recovery';
+	`)
+
+	replCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", replicationSQL)...)
+	replCmd.Env = env
+	if out, err := replCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("create replication user failed: %v, output: %s", err, string(out))
+	}
+
+	// 2. 启动Group Replication
+	if isPrimary {
+		// 主节点：bootstrap group
+		bootstrapSQL := `
+			SET GLOBAL group_replication_bootstrap_group=ON;
+			START GROUP_REPLICATION;
+			SET GLOBAL group_replication_bootstrap_group=OFF;
+		`
+		bootCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", bootstrapSQL)...)
+		bootCmd.Env = env
+		if out, err := bootCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("bootstrap MGR failed: %v, output: %s", err, string(out))
+		}
+	} else {
+		// 副本节点：直接start
+		startSQL := "START GROUP_REPLICATION;"
+		startCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", startSQL)...)
+		startCmd.Env = env
+		if out, err := startCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("start MGR failed: %v, output: %s", err, string(out))
+		}
+	}
+
+	// 3. 等待MGR启动
+	time.Sleep(3 * time.Second)
+
+	// 4. 验证MGR状态
+	checkSQL := "SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;"
+	checkCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-N", "-e", checkSQL)...)
+	checkCmd.Env = env
+	out, err := checkCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("check MGR status failed: %v", err)
+	}
+
+	state := strings.TrimSpace(string(out))
+	if state != "ONLINE" {
+		return fmt.Errorf("MGR member state is '%s', expected 'ONLINE'", state)
+	}
+
+	return nil
 }
 
 func (e *TaskExecutor) deployMasterSlave(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
