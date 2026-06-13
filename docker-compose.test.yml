@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  redis-test:
+    image: redis:7-alpine
+    container_name: mysql-ops-redis-test
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse-test:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: mysql-ops-clickhouse-test
+    environment:
+      CLICKHOUSE_DB: mysql_ops_metrics
+      CLICKHOUSE_USER: mysql_ops
+      CLICKHOUSE_PASSWORD: mysql_ops_test
+    ports:
+      - "9001:9000"
+      - "8124:8123"
+    volumes:
+      - clickhouse_test_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql-test-target:
+    image: mysql:8.0
+    container_name: mysql-ops-target-test
+    environment:
+      MYSQL_ROOT_PASSWORD: root_test_password
+      MYSQL_DATABASE: testdb
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_test_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command: --default-authentication-plugin=mysql_native_password
+
+  mysql-test-slave:
+    image: mysql:8.0
+    container_name: mysql-ops-slave-test
+    environment:
+      MYSQL_ROOT_PASSWORD: root_test_password
+      MYSQL_DATABASE: testdb
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_slave_test_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_test_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command: --default-authentication-plugin=mysql_native_password
+    depends_on:
+      mysql-test-target:
+        condition: service_healthy
+
+  platform-backend-test:
+    build:
+      context: ./platform-backend
+      dockerfile: Dockerfile.test
+    container_name: mysql-ops-backend-test
+    environment:
+      DBOPS_DB_URL: "root:root_test_password@tcp(mysql-test-target:3306)/testdb?charset=utf8mb4&parseTime=true&loc=Local"
+      DBOPS_JWT_SECRET: "test_jwt_secret_key_must_be_at_least_32_chars_long"
+      DBOPS_ENCRYPTION_KEY: "test_aes_key_must_be_at_least_32_chars_long_xx"
+      DBOPS_AGENT_TOKEN: "test_agent_token_must_be_at_least_16_chars"
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      CLICKHOUSE_HOST: clickhouse-test
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: mysql_ops
+      CLICKHOUSE_PASSWORD: mysql_ops_test
+      CLICKHOUSE_DB: mysql_ops_metrics
+      LOG_LEVEL: debug
+    ports:
+      - "8081:8080"
+    depends_on:
+      mysql-test-target:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      clickhouse-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  agent-test:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile.test
+    container_name: mysql-ops-agent-test
+    environment:
+      DBOPS_PLATFORM_URL: http://platform-backend-test:8080
+      DBOPS_AGENT_TOKEN: "test_agent_token_must_be_at_least_16_chars"
+      AGENT_ID: test-agent-001
+      LOG_LEVEL: debug
+    ports:
+      - "9091:9090"
+    depends_on:
+      platform-backend-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  redis_test_data:
+  clickhouse_test_data:
+  mysql_test_data:
+  mysql_slave_test_data:
+
+networks:
+  default:
+    name: mysql-ops-test-network

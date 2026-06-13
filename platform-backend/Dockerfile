@@ -1,0 +1,41 @@
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o platform-backend ./cmd
+
+FROM alpine:3.20
+
+RUN apk --no-cache add ca-certificates tzdata wget dumb-init
+
+WORKDIR /app
+
+COPY --from=builder /app/platform-backend .
+
+ENV TZ=Asia/Shanghai
+ENV DB_HOST=localhost
+ENV DB_PORT=5432
+ENV DB_USER=mysql_ops
+ENV DB_PASSWORD=mysql_ops
+ENV DB_NAME=mysql_ops_platform
+ENV REDIS_HOST=localhost
+ENV REDIS_PORT=6379
+ENV CLICKHOUSE_HOST=localhost
+ENV CLICKHOUSE_PORT=9000
+ENV JWT_SECRET=jwt_secret_key
+ENV LOG_LEVEL=info
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget -q --spider http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["./platform-backend"]

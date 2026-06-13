@@ -1,269 +1,820 @@
-# MySQL DBA 平台
+# MySQL 运维平台
 
-一个基于 Python Django + Vue 3 的 MySQL 数据库智能运维平台，支持数据库部署、监控告警、版本升级、数据同步、AI 智能诊断和安全加固。
+MySQL 运维平台是一个大厂级别的 MySQL 数据库全生命周期管理平台，提供从环境检测、实例部署、版本升级、数据迁移到运维监控的完整解决方案。
 
-## 功能特性
+> **前置条件**: 平台负责 MySQL 层面的运维管理，**操作系统 (OS) 由用户自行提供**。部署节点上需预先安装 mysqld、xtrabackup、mysql client 等 MySQL 管理工具。
 
-### 核心模块
+## 架构
 
-| 模块 | 功能 |
-|------|------|
-| **实例管理** | MySQL 实例全生命周期 CRUD，支持单机/主从/PXC/MGR/MHA 等多种架构，连接测试与元数据采集 |
-| **数据库部署** | 通过 SSH + apt/yum 自动安装 MySQL 单机或集群，8 步标准流程（环境检查→安装→初始化→启动→密码设置→验证），集群模式额外 2 步（加入集群→集群配置） |
-| **监控告警** | MySQL 性能指标采集与可视化（ECharts 趋势图），阈值告警规则配置与告警事件管理，慢查询分析 |
-| **数据同步** | 全量/增量同步，单向/双向同步，自动冲突检测与解决 |
-| **版本升级** | MySQL 版本升级全流程管理（原地/蓝绿），升级前检查清单与 SSH 远程执行引擎 |
-| **参数管理** | MySQL 参数模板、实例参数对比、参数变更历史 |
-| **AI 能力** | 集成 AI 大模型（OpenAI/DeepSeek），SQL 生成与优化、故障诊断、索引建议，内置多轮会话 |
-| **安全加固** | 密码策略、访问控制、数据加密（Fernet）、安全审计日志、会话管理 |
-
-### 技术栈
-
-**后端:**
-- Python 3.11 + Django 5.2.14
-- Django REST Framework 3.17
-- SimpleJWT (JWT 认证)
-- Celery 5.3 (任务调度)
-- MariaDB 10.11 / MySQL 8.0+ (生产), SQLite (开发)
-- Redis 7.0 (缓存/Celery Broker)
-- paramiko 5.0 (SSH 远程执行)
-- cryptography (Fernet 加密)
-
-**前端:**
-- Vue 3 + Vite 5
-- Element Plus 2.5+ (UI 组件库)
-- Pinia 2 (状态管理)
-- ECharts 5 (图表可视化)
-- Axios (HTTP 客户端)
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.11+
-- Node.js 18+
-- MariaDB 10.11+ 或 MySQL 8.0+（可选，默认使用 SQLite 开发）
-- Redis 7.0+（可选，默认使用内存 Broker）
-
-### 安装依赖
-
-```bash
-# 安装 Python 依赖
-pip install -r requirements.txt
-
-# 安装前端依赖
-cd frontend
-npm install
+```
+┌───────────────┐     HTTP API      ┌──────────────────┐
+│   Backend     │ ────────────────→ │  Agent (host:9090)│
+│  (Gin :8080)  │ ←──────────────── │  mysqld/xtrabackup│
+│               │   Task Result     │  本地命令执行     │
+└───────┬───────┘                   └──────────────────┘
+        │
+        ▼
+┌───────────────┐
+│   MySQL DB    │
+│  存储配置/日志  │
+└───────────────┘
 ```
 
-### 初始化数据库
+- **Backend**: 核心管理平台，提供 REST API，管理者通过这里操作
+- **Agent**: 部署在每个目标节点上的执行器，接收 Backend 指令，在本地执行 MySQL 管理操作
+- **MySQL**: 平台自身的配置存储数据库（非被管理实例）
 
-```bash
-python manage.py migrate
-```
+## 特性
 
-### 创建管理员用户
+- **多数据库支持**: MySQL (Oracle)、Percona Server、MariaDB
+- **版本范围**: MySQL 5.6 至 8.4.x，MariaDB 10.x 至 11.x
+- **集群架构**: MHA、MGR、PXC
+- **完整流程**: 环境检测 → 实例部署 → 参数调优 → 备份恢复 → 高可用管理 → 版本升级 → 数据迁移 → 监控告警
+- **企业级特性**: 参数模板、审批流程、审计日志、拓扑视图
+- **高性能**: 支持 5000+ 实例、10000+ 告警规则、100+ 并发迁移任务
 
-```bash
-python manage.py shell -c "
-from accounts.models import User, Role
-admin_role = Role.objects.get(code='admin')
-admin = User.objects.create_user(username='superadmin', password='SuperAdmin@2026', email='admin@example.com')
-admin.role = admin_role
-admin.is_staff = True
-admin.is_superuser = True
-admin.save()
-print('管理员用户创建成功')
-"
-```
+## 技术栈
 
-### 启动服务
+### 后端
+- **语言**: Go 1.24+
+- **框架**: Gin
+- **数据库**: MySQL 5.6+
+- **缓存**: Redis 6+
+- **时序数据**: ClickHouse 22+
 
-```bash
-# 开发模式
-python manage.py runserver 0.0.0.0:8000     # 后端 (端口 8000)
-cd frontend && npm run dev                    # 前端 (端口 3000)
+### Agent
+- **语言**: Go 1.21+
+- **部署**: 静态二进制，部署在目标 MySQL 节点上
+- **工具**: mysqld, xtrabackup, mysql client
+- **通信**: HTTP REST API，由 Backend 主动调用
 
-# 生产模式 (Linux)
-bash start.sh                                 # 启动后端+前端
-bash stop.sh                                  # 停止服务
-
-# 生产模式 (Windows)
-start.bat                                     # 启动后端+前端
-stop.bat                                      # 停止服务
-```
-
-访问 http://localhost:3000 使用 `superadmin` / `SuperAdmin@2026` 登录。
+### 前端
+- **语言**: TypeScript
+- **框架**: React 18+
+- **UI 库**: Ant Design 5+
+- **状态管理**: Redux Toolkit
+- **图表**: Recharts
 
 ## 项目结构
 
 ```
-.
-├── accounts/              # 用户认证（登录/注册/角色/会话）
-├── instances/             # 核心模块
-│   ├── models/            #   模型包（Instance / 同步 / 升级 / 部署 / 参数）
-│   ├── deploy_engine.py   #   部署引擎（SSH + apt/yum 安装 MySQL）
-│   ├── deploy_views.py    #   部署 API
-│   ├── deploy_serializers.py
-│   └── tests_deploy.py    #   部署模块测试（43 个）
-├── monitor/               # 监控告警（指标/告警规则/慢查询）
-├── ai_service/            # AI 能力（多厂商 AI 会话/建议/SQL 优化）
-├── security/              # 安全加固（审计/加密/密码策略/访问控制）
-├── frontend/              # Vue 3 前端
-│   └── src/
-│       ├── api/           #   后端 API 封装
-│       ├── views/         #   页面组件
-│       └── router/        #   前端路由
-├── tests/                 # 全量集成测试（安全/权限/加密/配置）
-├── upgrade_engine.py      # 版本升级执行引擎（SSH）
-├── start.sh / stop.sh     # Linux 启停脚本
-├── start.bat / stop.bat   # Windows 启停脚本
-├── requirements.txt       # Python 依赖
-├── .github/workflows/     # CI 配置
-└── manage.py              # Django 管理脚本
+mysql-ops-platform/
+├── platform-backend/     # 后端平台服务
+│   ├── cmd/              # 主程序入口
+│   │   ├── main.go       # 后端主程序
+│   │   ├── destroy_cluster/  # 集群销毁工具
+│   │   └── list_clusters/    # 集群列表工具
+│   ├── internal/         # 内部实现
+│   │   ├── handlers/     # HTTP 处理器
+│   │   ├── services/     # 业务逻辑
+│   │   ├── models/       # 数据模型
+│   │   └── repositories/ # 数据访问层
+│   ├── config/           # 配置文件
+│   └── data/             # SQLite 数据文件
+├── agent/                # Agent 执行器
+│   ├── cmd/              # Agent 入口
+│   ├── internal/         # Agent 内部实现
+│   │   └── executor/     # 任务执行器
+│   └── config/           # Agent 配置
+├── web-console/          # 前端 Web Console
+│   ├── src/              # 源代码
+│   │   ├── pages/        # 页面组件
+│   │   ├── components/   # 公共组件
+│   │   └── services/     # API 服务
+│   ├── public/           # 静态资源
+│   └── dist/             # 构建产物
+├── bin/                  # Linux/Unix 启动脚本
+│   ├── init-ubuntu.sh    # Ubuntu 22.04 一键初始化
+│   ├── start-all.sh      # 启动所有服务
+│   ├── start-backend.sh  # 启动后端
+│   ├── start-agent.sh    # 启动 Agent
+│   ├── start-web.sh      # 启动前端
+│   └── stop-services.sh  # 停止所有服务
+├── scripts/              # 工具脚本
+│   ├── deploy_mysql.sh   # MySQL 部署脚本
+│   ├── init_57.sh        # MySQL 5.7 初始化
+│   ├── secure_mysql.sh   # MySQL 安全加固
+│   ├── grant_devbox.sh   # 开发环境权限
+│   ├── smoke_test.sh     # 冒烟测试
+│   └── write_units.sh    # systemd 单元生成
+├── docs/                 # 文档
+│   ├── MHA_CLUSTER_DESTROY_TEST_REPORT.md  # 集群销毁测试报告
+│   ├── cluster_destroy_test_guide.md       # 集群销毁测试指南
+│   ├── topology_optimization_summary.md    # 拓扑优化总结
+│   └── SCRIPT_FINAL_REPORT.md              # 脚本检查报告
+├── start.ps1 / start.bat         # Windows 启动所有服务
+├── start-server.ps1 / start-server.bat  # Windows 启动服务器（不含Agent）
+├── stop.ps1 / stop.bat           # Windows 停止服务
+├── restart.ps1 / restart.bat     # Windows 重启服务
+├── .env.example          # 环境变量模板
+├── docker-compose.dev.yml # 开发环境 Docker 配置
+├── Makefile              # 构建脚本
+└── .monkeycode/          # 规范文档
+    └── specs/
+        └── mysql-ops-platform/
+            ├── requirements.md   # 需求文档
+            ├── design.md         # 技术设计
+            └── tasklist.md       # 实施计划
 ```
 
-## API 文档
+## 快速开始
 
-### 用户认证
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| POST | `/api/accounts/login/` | 用户登录，返回 JWT Token |
-| POST | `/api/accounts/logout/` | 用户注销 |
-| POST | `/api/accounts/register/` | 用户注册 |
-| GET | `/api/accounts/me/` | 当前用户信息 |
-| POST | `/api/accounts/change-password/` | 修改密码 |
+### 前置准备
 
-### 实例管理
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/instances/` | 实例列表/创建 |
-| GET/PUT/DELETE | `/api/instances/{id}/` | 实例详情/更新/删除 |
-| POST | `/api/instances/{id}/test_connection/` | 测试连接 |
-| GET | `/api/dashboard/` | 实例仪表盘 |
-| GET | `/api/metadata-tree/` | 元数据树 |
+#### 基础环境要求
 
-### 数据库部署
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/deploy-plans/` | 部署计划列表/创建 |
-| POST | `/api/deploy-plans/{id}/approve/` | 批准计划 |
-| POST | `/api/deploy-plans/{id}/start/` | 启动部署（创建 8/10 步） |
-| POST | `/api/deploy-plans/{id}/cancel/` | 取消计划 |
-| POST | `/api/deploy-plans/{id}/reopen/` | 重新打开失败计划 |
-| GET | `/api/deploy-plans/statistics/` | 计划统计 |
-| GET/POST | `/api/deploy-hosts/` | 主机节点管理 |
-| GET | `/api/deploy-executions/` | 执行记录列表 |
-| POST | `/api/deploy-executions/{id}/execute_step/` | 单步执行（含重试） |
-| POST | `/api/deploy-executions/{id}/run/` | 批量执行全部步骤 |
-| POST | `/api/deploy-executions/{id}/confirm_init_data/` | 确认初始化数据（覆盖/换目录） |
-| GET | `/api/deploy-executions/{id}/steps/` | 查看步骤详情 |
-| GET | `/api/deploy-dashboard/` | 部署仪表盘 |
+| 组件 | 最低版本 | 推荐版本 | 说明 |
+|------|---------|---------|------|
+| **操作系统** | Ubuntu 20.04 / Windows 10 | Ubuntu 22.04 / Windows 11 | CentOS 7+ / macOS 也支持 |
+| **Go** | 1.21 | 1.22+ | 用于编译后端和Agent |
+| **Node.js** | 18.x | 20.x+ | 用于编译前端 |
+| **MySQL** | 5.7 | 8.0+ | 平台配置数据库 |
 
-部署流程（单机 8 步）：
-`环境检查` → `安装 MySQL` → `创建目录` → `初始化配置` → **`初始化数据`** → `启动服务` → `设置密码` → `部署验证`
+#### 必需的系统工具
 
-### 监控告警
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/monitor/metric-definitions/` | 指标定义管理 |
-| GET/POST | `/api/monitor/metric-data/` | 指标数据 |
-| GET/POST | `/api/monitor/alert-rules/` | 告警规则管理 |
-| GET/POST | `/api/monitor/alerts/` | 告警事件列表 |
-| POST | `/api/monitor/alerts/{id}/acknowledge/` | 确认告警 |
-| POST | `/api/monitor/alerts/{id}/resolve/` | 解决告警 |
-| GET | `/api/monitor/slow-queries/` | 慢查询列表 |
-| POST | `/api/monitor/slow-queries/{id}/explain/` | SQL 执行计划分析 |
-| GET | `/api/monitor/dashboard/` | 监控仪表盘 |
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install -y curl wget git vim net-tools lsof build-essential
+```
 
-### 数据同步
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/sync-tasks/` | 同步任务管理 |
-| POST | `/api/sync-tasks/{id}/start/` | 启动任务 |
-| POST | `/api/sync-tasks/{id}/stop/` | 停止任务 |
-| GET | `/api/sync-dashboard/` | 同步仪表盘 |
+**CentOS/RHEL:**
+```bash
+sudo yum install -y curl wget git vim net-tools lsof gcc make
+```
 
-### 版本升级
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/upgrade-plans/` | 升级计划管理 |
-| POST | `/api/upgrade-plans/{id}/approve/` | 批准升级 |
-| POST | `/api/upgrade-plans/{id}/start/` | 开始执行 |
-| POST | `/api/upgrade-plans/{id}/rollback/` | 回滚 |
-| GET | `/api/upgrade-dashboard/` | 升级仪表盘 |
+**Windows:**
+- Git Bash 或 PowerShell 5.1+
+- Visual C++ Redistributable（通常已内置）
 
-### 参数管理
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/api/mysql-parameters/` | MySQL 系统参数列表 |
-| GET/POST | `/api/parameter-templates/` | 参数模板 CRUD |
-| POST | `/api/parameter-templates/{id}/apply/` | 应用参数模板 |
-| GET/POST | `/api/instance-parameters/` | 实例参数管理 |
-| POST | `/api/instance-parameters/sync/` | 同步实例参数 |
-| POST | `/api/instance-parameters/{id}/apply/` | 应用参数变更 |
-| GET | `/api/parameter-dashboard/` | 参数仪表盘 |
+#### 必需的数据库服务
 
-### AI 能力
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/ai/providers/` | AI 提供商配置管理 |
-| POST | `/api/ai/providers/{id}/test_connection/` | 测试 API 连接 |
-| GET/POST | `/api/ai/chats/` | AI 会话列表/创建 |
-| POST | `/api/ai/chats/{id}/message/` | 发送消息（调 AI API） |
-| GET/POST | `/api/ai/advices/` | AI 建议列表 |
-| POST | `/api/ai/advices/{id}/acknowledge/` | 确认建议 |
-| POST | `/api/ai/advices/{id}/resolve/` | 解决建议 |
-| POST | `/api/ai/generate-sql/` | SQL 生成 |
-| POST | `/api/ai/optimize-sql/` | SQL 优化 |
-| POST | `/api/ai/diagnose/` | 故障诊断 |
-| GET | `/api/ai/dashboard/` | AI 服务仪表盘 |
+平台运行需要以下数据库：
 
-### 安全管理
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET/POST | `/api/security/security-audits/` | 安全审计（含导出） |
-| GET/POST | `/api/security/encryption-keys/` | 加密密钥管理（含轮换/吊销） |
-| GET/POST | `/api/security/password-policies/` | 密码策略管理 |
-| GET/POST | `/api/security/access-rules/` | 访问控制规则（含评估） |
-| GET/POST | `/api/security/audit-logs/` | 审计日志 |
-| GET/POST | `/api/security/session-policies/` | 会话策略 |
-| GET | `/api/security/dashboard/` | 安全仪表盘 |
+**1. MySQL（必需）**
+- **用途**: 存储平台配置、实例信息、用户数据、操作日志
+- **版本**: MySQL 5.7+ / 8.0+ 或 MariaDB 10.x+
+- **端口**: 3306（默认）
+- **最低配置**: 
+  - 内存: 512MB+
+  - 磁盘: 10GB+
+  - 连接数: 100+
+
+**2. Redis（可选，推荐）**
+- **用途**: 会话缓存、任务队列
+- **版本**: Redis 6.x+
+- **端口**: 6379（默认）
+- **最低配置**: 内存 256MB+
+
+**3. ClickHouse（可选）**
+- **用途**: 监控指标时序数据存储
+- **版本**: ClickHouse 22.x+
+- **端口**: 8123（HTTP）、9000（Native）
+- **最低配置**: 
+  - 内存: 2GB+
+  - 磁盘: 50GB+
+
+#### 必需的MySQL管理工具（Agent节点）
+
+Agent需要在目标MySQL节点上安装以下工具：
+
+**1. mysqld（MySQL Server）**
+```bash
+# Ubuntu/Debian
+sudo apt install -y mysql-server-8.0
+
+# CentOS/RHEL
+sudo yum install -y mysql-server
+```
+
+**2. xtrabackup（Percona XtraBackup）**
+```bash
+# Ubuntu/Debian
+wget https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb
+sudo dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
+sudo apt update
+sudo apt install -y percona-xtrabackup-80
+
+# CentOS/RHEL
+sudo yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm
+sudo percona-release enable-only tools release
+sudo yum install -y percona-xtrabackup-80
+```
+
+**3. mysql（MySQL Client）**
+```bash
+# Ubuntu/Debian
+sudo apt install -y mysql-client-8.0
+
+# CentOS/RHEL
+sudo yum install -y mysql
+```
+
+#### 环境变量配置
+
+复制模板文件并填写必需配置：
+
+```bash
+cp .env.example .env
+```
+
+**必需的环境变量：**
+
+```bash
+# 数据库连接（必需）
+DBOPS_DB_URL=root:password@tcp(localhost:3306)/dbops?charset=utf8mb4&parseTime=true
+
+# JWT密钥（必需，至少32字符）
+DBOPS_JWT_SECRET=your-secret-key-at-least-32-characters-long
+
+# 数据加密密钥（必需，至少32字符）
+DBOPS_ENCRYPTION_KEY=your-encryption-key-32-chars-min
+
+# Agent认证Token（必需，至少32字符）
+DBOPS_AGENT_TOKEN=your-agent-token-at-least-32-chars
+```
+
+**可选的环境变量：**
+
+```bash
+# Redis连接（可选）
+DBOPS_REDIS_URL=redis://localhost:6379/0
+
+# ClickHouse连接（可选）
+DBOPS_CLICKHOUSE_URL=http://localhost:8123
+
+# 日志级别（可选，默认info）
+DBOPS_LOG_LEVEL=info
+
+# 服务端口（可选）
+DBOPS_BACKEND_PORT=8080
+DBOPS_AGENT_PORT=9090
+DBOPS_WEB_PORT=3000
+```
+
+#### 防火墙配置
+
+**Ubuntu (ufw):**
+```bash
+sudo ufw allow 8080/tcp   # Backend API
+sudo ufw allow 9090/tcp   # Agent
+sudo ufw allow 3000/tcp   # Web Console
+sudo ufw reload
+```
+
+**CentOS (firewalld):**
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --permanent --add-port=9090/tcp
+sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --reload
+```
+
+**Windows Firewall:**
+```powershell
+# PowerShell (以管理员身份运行)
+New-NetFirewallRule -DisplayName "MySQL Ops Backend" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "MySQL Ops Agent" -Direction Inbound -LocalPort 9090 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "MySQL Ops Web" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+```
+
+#### 验证环境准备
+
+运行以下命令验证环境是否就绪：
+
+```bash
+# 验证Go
+go version
+# 预期输出: go version go1.21+ ...
+
+# 验证Node.js
+node --version
+# 预期输出: v18.x.x 或更高
+
+npm --version
+# 预期输出: 9.x.x 或更高
+
+# 验证MySQL（如果本地安装）
+mysql --version
+# 预期输出: mysql  Ver 8.0.x ...
+
+# 验证XtraBackup（Agent节点）
+xtrabackup --version
+# 预期输出: xtrabackup version 8.0.x ...
+
+# 验证mysqld（Agent节点）
+mysqld --version
+# 预期输出: mysqld  Ver 8.0.x ...
+```
+
+### Ubuntu 22.04 部署（推荐）
+
+#### 1. 一键环境初始化
+
+```bash
+# 克隆项目
+git clone <repo-url>
+cd dbops
+
+# 运行一键初始化脚本（需要 root 权限）
+sudo bash bin/init-ubuntu.sh
+```
+
+该脚本会自动安装：
+- Go 1.21+
+- Node.js 18.x
+- MySQL 8.0 Server + Client
+- Percona XtraBackup 8.0
+- Docker + Docker Compose（可选）
+
+#### 2. 配置环境变量
+
+```bash
+# 复制环境变量模板
+cp .env.example .env
+
+# 编辑配置文件，填写必需的环境变量
+vim .env
+```
+
+必需配置项：
+```bash
+DBOPS_DB_URL=root:password@tcp(localhost:3306)/dbops?charset=utf8mb4&parseTime=true
+DBOPS_JWT_SECRET=your-secret-key-min-32-chars
+DBOPS_ENCRYPTION_KEY=your-encryption-key-32-chars
+DBOPS_AGENT_TOKEN=your-agent-token-min-32-chars
+```
+
+#### 3. 启动服务
+
+```bash
+# 启动所有服务（后端 + Agent + 前端）
+bash bin/start-all.sh
+
+# 或分别启动
+bash bin/start-backend.sh  # 后端 (端口 8080)
+bash bin/start-agent.sh    # Agent (端口 9090)
+bash bin/start-web.sh      # 前端 (端口 3000)
+```
+
+#### 4. 访问服务
+
+- 前端控制台: http://localhost:3000
+- 后端 API: http://localhost:8080
+- Agent: http://localhost:9090
+
+#### 5. 停止服务
+
+```bash
+bash bin/stop-services.sh
+```
+
+### Windows 部署
+
+#### 1. 安装前置软件
+
+1. **安装 Go 1.21+**
+   - 下载: https://golang.org/dl/
+   - 安装到: `D:\Program Files\go`（或修改脚本中的路径）
+
+2. **安装 Node.js 18.x+**
+   - 下载: https://nodejs.org/
+   - 确保 npm 在 PATH 中
+
+3. **（可选）安装 Git**
+   - 下载: https://git-scm.com/download/win
+
+#### 2. 克隆项目
+
+```powershell
+git clone <repo-url>
+cd dbops
+```
+
+#### 3. 配置环境变量
+
+复制 `.env.example` 为 `.env` 并填写必需配置：
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+必需配置项：
+```
+DBOPS_DB_URL=root:password@tcp(localhost:3306)/dbops?charset=utf8mb4&parseTime=true
+DBOPS_JWT_SECRET=your-secret-key-min-32-chars
+DBOPS_ENCRYPTION_KEY=your-encryption-key-32-chars
+DBOPS_AGENT_TOKEN=your-agent-token-min-32-chars
+```
+
+#### 4. 启动服务
+
+**方式一：双击启动（推荐）**
+
+直接双击以下文件：
+- `start.bat` - 启动所有服务（后端 + Agent + 前端）
+- `start-server.bat` - 只启动服务器（后端 + 前端，不含Agent）
+
+**方式二：PowerShell 启动**
+
+```powershell
+# 启动所有服务（自动编译）
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+
+# 跳过编译，直接启动
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -SkipBuild
+
+# 只启动服务器（不含Agent）
+powershell -ExecutionPolicy Bypass -File .\start-server.ps1
+```
+
+启动脚本会自动：
+- 检测 Go 和 Node.js 环境
+- 编译后端和 Agent（如果源码有更新）
+- 安装前端依赖（如果 node_modules 缺失）
+- 构建前端（如果源码有更新）
+- 后台启动所有服务
+- 等待服务就绪并进行健康检查
+
+#### 5. 访问服务
+
+- 前端控制台: http://localhost:3000
+- 后端 API: http://localhost:8080
+- Agent: http://localhost:9090
+
+日志目录: `logs/`
+- `backend.log` / `backend.err` - 后端日志
+- `agent.log` / `agent.err` - Agent 日志
+- `web.log` / `web.err` - 前端日志
+
+#### 6. 停止服务
+
+**方式一：双击**
+- `stop.bat` - 停止所有服务
+
+**方式二：PowerShell**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\stop.ps1
+```
+
+#### 7. 重启服务
+
+**方式一：双击**
+- `restart.bat` - 重启所有服务
+
+**方式二：PowerShell**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\restart.ps1
+```
+
+### 开发环境快速启动（使用Docker）
+
+如果您已经安装了Docker和Docker Compose，可以使用以下命令快速启动包含所有依赖的开发环境：
+
+```bash
+# 启动所有服务（MySQL + Redis + ClickHouse + Backend + Agent + Frontend）
+make docker-up
+
+# 查看服务状态
+docker-compose -f docker-compose.dev.yml ps
+
+# 查看日志
+docker-compose -f docker-compose.dev.yml logs -f
+
+# 停止服务
+make docker-down
+```
+
+这将启动以下服务：
+- MySQL (port 3306) - 平台配置数据库
+- Redis (port 6379) - 缓存服务
+- ClickHouse (port 8123) - 监控数据存储
+- Backend (port 8080) - 后端API
+- Agent (port 9090) - Agent服务
+- Web Console (port 3000) - 前端控制台
+
+### 手动安装依赖
+
+如果不使用Docker，需要手动安装依赖：
+
+```bash
+# 安装后端依赖
+cd platform-backend && go mod tidy
+
+# 安装Agent依赖
+cd agent && go mod tidy
+
+# 安装前端依赖
+cd web-console && npm install
+```
+
+或使用Makefile：
+
+```bash
+make all
+```
+
+### 手动运行服务
+
+如果不使用Ubuntu/Windows脚本，可以手动运行各个服务：
+
+#### 使用 Makefile
+
+```bash
+# 运行后端
+make run-backend
+
+# 运行 Agent
+make run-agent
+
+# 运行前端
+make run-web
+```
+
+#### 直接运行
+
+```bash
+# 后端
+cd platform-backend && go run ./cmd
+
+# Agent
+cd agent && go run ./cmd
+
+# 前端
+cd web-console && npm run dev
+```
+
+### 访问服务
+
+服务启动后，可通过以下地址访问：
+
+- **前端控制台**: http://localhost:3000
+  - 登录页面: http://localhost:3000/login
+  - 仪表板: http://localhost:3000/dashboard
+
+- **后端 API**: http://localhost:8080
+  - 健康检查: http://localhost:8080/health
+  - API文档: http://localhost:8080/api/docs（如果启用）
+
+- **Agent**: http://localhost:9090
+  - 健康检查: http://localhost:9090/health
+
+### Standalone 模式（仅开发调试）
+
+如果没有运行数据库服务，平台可以以 Standalone 模式运行用于开发调试：
+
+```bash
+# 后端会自动检测数据库并跳过认证
+make run-backend
+```
+
+**Standalone 模式限制**:
+- ⚠️ 无法持久化数据（实例配置、用户信息等）
+- ⚠️ 只能查看空列表或 mock 数据
+- ⚠️ 无法执行需要数据库的操作（创建实例、保存配置等）
+- ⚠️ Agent 部署/备份任务仍需要本地 MySQL 工具支持
+
+**不推荐在生产环境使用 Standalone 模式。**
+
+## 开发指南
+
+### 后端开发
+
+后端使用 Go + Gin + GORM + PostgreSQL 开发：
+
+```bash
+cd platform-backend
+go mod tidy
+go run ./cmd
+```
+
+### Agent 开发
+
+Agent 使用 Go 开发，部署在数据库节点上：
+
+```bash
+cd agent
+go mod tidy
+go run ./cmd
+```
+
+### 前端开发
+
+前端使用 React + TypeScript + Ant Design 开发：
+
+```bash
+cd web-console
+npm install
+npm run dev
+```
 
 ## 测试
 
 ```bash
-# 运行全量测试（236 个）
-python -m pytest accounts/ security/ instances/ ai_service/ monitor/ tests/ -v
-
-# 仅部署模块测试（43 个）
-python -m pytest instances/tests_deploy.py -v
-
-# 仅 AI 模块测试（8 个）
-python -m pytest ai_service/ -v
-
-# 运行 Django 系统检查
-python manage.py check
+make test
 ```
 
-测试覆盖：6 个测试模块，236 个测试用例，涵盖部署引擎、权限边界、状态机、加密、SQL 安全、API 端点等。
+### 运行特定测试
 
-## 开发指南
+```bash
+# 后端单元测试
+cd platform-backend && go test ./internal/services/... -v
 
-### 添加新模块
+# Agent 单元测试
+cd agent && go test ./internal/executor/... -v
 
-1. 创建 Django app: `python manage.py startapp xxx`
-2. 在 `settings.py` 中注册 app
-3. 创建模型并生成迁移：`python manage.py makemigrations`
-4. 运行迁移：`python manage.py migrate`
-5. 创建 API views 和 serializers
-6. 配置 URL 路由
+# E2E 测试
+cd platform-backend && go test ./tests/e2e/... -v
 
-## 许可证
+# 性能测试
+cd platform-backend && go test ./tests/benchmark/... -bench=. -benchmem
+```
 
-MIT License
+## 构建
 
-## 联系方式
+```bash
+make build
+```
 
-- 项目地址：https://github.com/mingjia1/dbops
-- 问题反馈：https://github.com/mingjia1/dbops/issues
+构建产物：
+- `platform-backend/mysql-ops-platform`: 后端可执行文件（~20MB）
+- `agent/mysql-ops-agent`: Agent 可执行文件（~15MB）
+- `web-console/dist/`: 前端静态文件（~1.7MB）
+
+## 实施状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 环境检测 | 🟢 已实现 | Backend 编排，Agent 执行远程检测 |
+| 实例部署（从无到有） | 🟢 已实现 | Agent 执行 mysqld 初始化+启动+验证 |
+| 主机管理 | 🟢 已实现 | SSH 连接测试、凭据加密存储 |
+| 实例管理 | 🟢 已实现 | 全生命周期 CRUD、版本检测 |
+| 参数模板 | 🟢 已实现 | 模板创建/推荐/校验/应用 |
+| 集群部署 MHA | 🟢 已实现 | Manager + Node 自动化部署 |
+| 集群部署 MGR | 🟢 已实现 | Group Replication 自动化搭建 |
+| 集群部署 PXC | 🟢 已实现 | Percona XtraDB Cluster 自动化部署 |
+| 高可用/故障切换 | 🟢 已实现 | 自动故障检测 + VIP 漂移 + 主从切换 |
+| 版本升级 | 🟢 已实现 | In-Place / 逻辑迁移 / Rolling 三种策略 |
+| 数据迁移 | 🟢 已实现 | 物理迁移 / 复制迁移 / GTID 迁移 / 在线切换 |
+| 备份恢复 | 🟢 已实现 | Xtrabackup 物理备份、全量/增量 |
+| 监控指标 | 🟢 已实现 | 系统指标 + MySQL 指标采集 |
+| 告警管理 | 🟢 已实现 | 规则配置、通道管理（邮件/钉钉/企业微信） |
+| 审批流程 | 🟢 已实现 | 申请/审批/驳回 |
+| 审计日志 | 🟢 已实现 | 操作记录全追踪 |
+| 拓扑视图 | 🟢 已实现 | 集群拓扑、实例关系展示、健康状态可视化 |
+| 集群销毁 | 🟢 已实现 | 备份验证 → 数据目录删除 → 平台元数据清理 |
+| 单点→集群切换 | 🔵 规划中 | 将独立实例接入 MHA/MGR/PXC |
+| 集群内角色切换 | 🔵 规划中 | 同一集群内主/从、Primary/Secondary 角色互转，副本拓扑重搭 |
+
+## 部署
+
+### 使用 Docker
+
+```bash
+# 构建镜像
+docker-compose -f docker-compose.prod.yml build
+
+# 启动服务
+docker-compose -f docker-compose.prod.yml up -d
+
+# 查看日志
+docker-compose -f docker-compose.prod.yml logs -f
+```
+
+### 手动部署
+
+1. 准备服务器（Ubuntu 20.04+ / CentOS 8+）
+2. 安装系统依赖（见上文）
+3. 启动数据库服务（PostgreSQL、Redis、ClickHouse）
+4. 配置环境变量（见 `platform-backend/config/config.yaml`）
+5. 启动后端服务
+6. 在目标 MySQL 节点启动 Agent
+7. 使用 Nginx 反向代理前端服务
+
+## 故障排查
+
+### 后端启动失败
+
+```bash
+# 检查端口占用
+lsof -i :8080
+
+# 检查数据库连接
+psql -h localhost -U postgres -d mysql_ops_platform
+
+# 查看日志
+tail -f /var/log/mysql-ops-platform/backend.log
+```
+
+### Agent 无法连接
+
+```bash
+# 检查 Agent 健康状态
+curl http://localhost:9090/health
+
+# 检查工具安装
+which mysqld
+which xtrabackup
+which mysql
+
+# 查看日志
+tail -f /var/log/mysql-ops-platform/agent.log
+```
+
+### 前端页面空白
+
+```bash
+# 检查 Node.js 版本
+node --version
+
+# 重新安装依赖
+cd web-console && rm -rf node_modules && npm install
+
+# 检查构建
+npm run build
+```
+
+### API 返回 400 错误
+
+常见原因：
+- 请求参数格式不正确
+- 缺少必需的参数
+- 参数验证失败
+
+解决方法：
+- 检查 API 文档
+- 查看错误消息详情
+- 提供正确的参数格式
+
+### 数据库服务启动失败
+
+```bash
+# 检查 Docker 服务
+docker ps
+
+# 查看特定服务日志
+docker-compose -f docker-compose.dev.yml logs mysql
+docker-compose -f docker-compose.dev.yml logs redis
+docker-compose -f docker-compose.dev.yml logs clickhouse
+
+# 重新启动服务
+docker-compose -f docker-compose.dev.yml restart
+```
+
+## 已知问题和限制
+
+### Agent 工具依赖
+
+Agent 需要以下工具才能正常工作：
+
+- **mysqld**: 用于实例部署（如果未安装，部署任务会失败）
+- **xtrabackup**: 用于物理备份（如果未安装，备份任务会失败）
+- **mysql**: 用于执行 SQL 命令
+
+这些工具需要在目标 MySQL 节点上安装，且版本要与目标 MySQL 匹配。
+
+### IPv6 支持
+
+平台支持 IPv6 地址，但需要：
+
+- 确保 MySQL 实例绑定 IPv6 地址
+- 使用方括号格式：`[::1]:3306`
+- 检查防火墙规则允许 IPv6 连接
+
+## 文档
+
+### 快速开始
+
+- **[快速入门指南](QUICKSTART.md)** - 10 分钟快速上手
+- **[详细安装指南](INSTALL.md)** - 完整的安装和部署文档
+
+### 功能文档
+
+- **[MHA集群销毁测试报告](docs/MHA_CLUSTER_DESTROY_TEST_REPORT.md)** - MHA集群完整销毁功能验证报告
+- **[集群销毁测试指南](docs/cluster_destroy_test_guide.md)** - 集群销毁功能的完整测试流程
+- **[拓扑优化总结](docs/topology_optimization_summary.md)** - 拓扑视图优化技术文档
+- **[脚本检查报告](docs/SCRIPT_FINAL_REPORT.md)** - 项目脚本组织和语法检查报告
+
+### 项目文档
+
+详细文档位于 `.monkeycode/specs/mysql-ops-platform/` 目录：
+
+- `requirements.md`: 完整需求文档
+- `design.md`: 技术设计文档
+- `tasklist.md`: 实施计划
+
+### 测试报告
+
+- `final_test_report.md`: 最终功能测试报告（系统生成的测试报告）
+
+## 快速链接
+
+- [安装依赖](#1-安装依赖)
+- [运行服务](#3-运行服务)
+- [访问服务](#4-访问服务)
+- [故障排查](#故障排查)
+
+## License
+
+MIT
