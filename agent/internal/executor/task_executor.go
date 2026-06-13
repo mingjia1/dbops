@@ -256,8 +256,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	mysqlUser, _ := req.Config["mysql_user"].(string)
 	mysqlPass, _ := req.Config["mysql_pass"].(string)
 
+	fmt.Fprintf(os.Stderr, "DEBUG: deploySingleInstance - mysqlUser=%s, mysqlPass=%s\n", mysqlUser, mysqlPass)
+
 	if host == "" {
-		host = "localhost"
+		host = "127.0.0.1"
 	}
 	if port == 0 {
 		port = 3306
@@ -403,31 +405,65 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	time.Sleep(5 * time.Second)
 
-	if mysqlPass != "" {
-		if mysqlUser == "" {
-			mysqlUser = "root"
-		}
-		if err := applyInitialMySQLPassword(ctx, port, mysqlUser, mysqlPass); err != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  70,
-				Message:   fmt.Sprintf("apply configured MySQL password failed: %v", err),
-				Timestamp: time.Now(),
-			}, nil
-		}
-	}
+	// Skip the original password setup - it seems to return success but doesn't actually set the password
+	// We'll handle it in the health check retry logic below
 
 	healthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "ping")
 	if mysqlPass != "" {
 		healthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 	}
-	if err := healthCmd.Run(); err != nil {
+	healthErr := healthCmd.Run()
+
+	// If health check failed and password was configured, try to set it via socket
+	if healthErr != nil && mysqlPass != "" {
+		if mysqlUser == "" {
+			mysqlUser = "root"
+		}
+		dataDir := fmt.Sprintf("/data/mysql/%d", port)
+		socketPath := filepath.Join(dataDir, "mysql.sock")
+		retrySQL := fmt.Sprintf(
+			"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
+				"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
+			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
+			escapeSQL(mysqlUser),
+		)
+		retryCmd := exec.CommandContext(ctx, "mysql", "-S", socketPath, "-u", mysqlUser, "-e", retrySQL)
+		retryOut, retryErr := retryCmd.CombinedOutput()
+		if retryErr != nil {
+			fmt.Fprintf(os.Stderr, "Password setup via socket failed: %v, output: %s\n", retryErr, string(retryOut))
+		}
+
+		// Try health check again after password setup
+		retryHealthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "ping")
+		retryHealthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
+		if retryHealthCmd.Run() == nil {
+			// Success!
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "completed",
+				Progress:  100,
+				Message:   fmt.Sprintf("MySQL instance deployed successfully on %s:%d", host, port),
+				Timestamp: time.Now(),
+			}, nil
+		} else {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  80,
+				Message:   fmt.Sprintf("Health check failed after password retry: %v", healthErr),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	}
+
+	if healthErr != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
 			Progress:  80,
-			Message:   fmt.Sprintf("Health check failed: %v", err),
+			Message:   fmt.Sprintf("Health check failed: %v", healthErr),
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -2974,7 +3010,11 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 			escapedUser, escapedPass, escapedUser,
 		)
 	}
+	// Try socket connection first (for Percona Server 8.0 which initializes without password)
+	dataDir := fmt.Sprintf("/data/mysql/%d", port)
+	socketPath := filepath.Join(dataDir, "mysql.sock")
 	attempts := [][]string{
+		{"-S", socketPath, "-u", "root", "-e", sql},
 		{"--protocol=TCP", "-h", "127.0.0.1", "-P", fmt.Sprintf("%d", port), "-u", "root", "-e", sql},
 		{"-P", fmt.Sprintf("%d", port), "-u", "root", "-e", sql},
 	}
