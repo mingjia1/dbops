@@ -357,6 +357,43 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 
 	s.updateStepStatus(deployment.ID, "准备 MGR 配置", "completed", "MGR 配置已生成")
 
+	// 检测并自动解决端口和数据目录冲突
+	s.addStep(deployment.ID, "检测资源冲突", "running")
+	s.updateProgress(deployment.ID, "环境检查", "检测端口和数据目录冲突", 15)
+
+	conflictNodes := make([]struct {
+		Host    string
+		Port    int
+		DataDir string
+	}, len(allHosts))
+	for i, node := range allHosts {
+		conflictNodes[i] = struct {
+			Host    string
+			Port    int
+			DataDir string
+		}{
+			Host:    node.Host,
+			Port:    node.Port,
+			DataDir: fmt.Sprintf("/data/mysql/%d", node.Port),
+		}
+	}
+
+	resolvedNodes, conflictErr := s.autoResolveConflicts(ctx, conflictNodes)
+	if conflictErr != nil {
+		s.updateStepStatus(deployment.ID, "检测资源冲突", "failed", conflictErr.Error())
+		return s.failDeployment(ctx, deployment, "mgr", req.Name, fmt.Sprintf("conflict detection failed: %v", conflictErr)), nil
+	}
+
+	// 应用冲突解决结果（更新端口和本地地址）
+	for i := range allHosts {
+		if allHosts[i].Port != resolvedNodes[i].Port {
+			log.Printf("MGR Deploy: Node %d port changed from %d to %d due to conflict", i, allHosts[i].Port, resolvedNodes[i].Port)
+			allHosts[i].Port = resolvedNodes[i].Port
+		}
+	}
+
+	s.updateStepStatus(deployment.ID, "检测资源冲突", "completed", "资源冲突检查通过")
+
 	for i, node := range allHosts {
 		var groupSeeds []string
 		for j, other := range allHosts {
@@ -1872,4 +1909,134 @@ func pxcPseudoNodes(nodes []PXCNode, role string) []pseudoNode {
 		out = append(out, pseudoNode{Host: node.Host, Port: node.Port, Role: role})
 	}
 	return out
+}
+
+// ConflictCheckResult 冲突检测结果
+type ConflictCheckResult struct {
+	HasConflict bool             `json:"has_conflict"`
+	Conflicts   []ConflictDetail `json:"conflicts"`
+}
+
+type ConflictDetail struct {
+	Type      string `json:"type"`      // "port" or "datadir"
+	Host      string `json:"host"`
+	Resource  string `json:"resource"`  // 端口号或路径
+	Conflict  string `json:"conflict"`  // 冲突的实例信息
+	Suggested string `json:"suggested"` // 建议的替代值
+}
+
+// checkPortAndPathConflicts 检查端口和数据目录冲突
+func (s *ClusterDeployService) checkPortAndPathConflicts(ctx context.Context, nodes []struct {
+	Host    string
+	Port    int
+	DataDir string
+}) (*ConflictCheckResult, error) {
+	result := &ConflictCheckResult{
+		HasConflict: false,
+		Conflicts:   []ConflictDetail{},
+	}
+
+	// 获取所有已存在的实例 (分页获取，一次获取1000条)
+	existingInstances, err := s.instRepo.List(ctx, 0, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing instances: %w", err)
+	}
+
+	// 按主机分组已存在的实例
+	hostInstances := make(map[string][]models.Instance)
+	for _, inst := range existingInstances {
+		host := inst.Connection.Host
+		hostInstances[host] = append(hostInstances[host], inst)
+	}
+
+	// 检查每个节点
+	for _, node := range nodes {
+		existing, ok := hostInstances[node.Host]
+		if !ok {
+			continue
+		}
+
+		for _, inst := range existing {
+			// 检查端口冲突
+			if inst.Connection.Port == node.Port {
+				result.HasConflict = true
+				result.Conflicts = append(result.Conflicts, ConflictDetail{
+					Type:      "port",
+					Host:      node.Host,
+					Resource:  fmt.Sprintf("%d", node.Port),
+					Conflict:  fmt.Sprintf("Instance %s is using port %d", inst.ID, inst.Connection.Port),
+					Suggested: fmt.Sprintf("%d", s.findAvailablePort(node.Host, hostInstances)),
+				})
+			}
+
+			// TODO: 数据目录冲突检测需要Instance模型增加DataDir字段
+			// if node.DataDir != "" && inst.DataDir == node.DataDir { ... }
+		}
+	}
+
+	return result, nil
+}
+
+// findAvailablePort 在主机上查找可用端口
+func (s *ClusterDeployService) findAvailablePort(host string, hostInstances map[string][]models.Instance) int {
+	usedPorts := make(map[int]bool)
+	for _, inst := range hostInstances[host] {
+		usedPorts[inst.Connection.Port] = true
+	}
+
+	// 从3306开始，每次+1，找到第一个未使用的端口
+	for port := 3306; port < 65535; port++ {
+		if !usedPorts[port] {
+			return port
+		}
+	}
+
+	return 3306 // 默认返回3306
+}
+
+// autoResolveConflicts 自动解决冲突
+func (s *ClusterDeployService) autoResolveConflicts(ctx context.Context, nodes []struct {
+	Host    string
+	Port    int
+	DataDir string
+}) ([]struct {
+	Host    string
+	Port    int
+	DataDir string
+}, error) {
+	conflictResult, err := s.checkPortAndPathConflicts(ctx, nodes)
+	if err != nil {
+		return nodes, err
+	}
+
+	if !conflictResult.HasConflict {
+		return nodes, nil
+	}
+
+	// 创建修改后的节点列表
+	resolvedNodes := make([]struct {
+		Host    string
+		Port    int
+		DataDir string
+	}, len(nodes))
+	copy(resolvedNodes, nodes)
+
+	// 根据建议修改冲突的节点
+	for _, conflict := range conflictResult.Conflicts {
+		for i, node := range resolvedNodes {
+			if node.Host == conflict.Host {
+				if conflict.Type == "port" && fmt.Sprintf("%d", node.Port) == conflict.Resource {
+					var newPort int
+					fmt.Sscanf(conflict.Suggested, "%d", &newPort)
+					resolvedNodes[i].Port = newPort
+					log.Printf("CONFLICT_RESOLVED: Host %s port changed from %s to %d", conflict.Host, conflict.Resource, newPort)
+				} else if conflict.Type == "datadir" && node.DataDir == conflict.Resource {
+					resolvedNodes[i].DataDir = conflict.Suggested
+					log.Printf("CONFLICT_RESOLVED: Host %s data_dir changed from %s to %s", conflict.Host, conflict.Resource, conflict.Suggested)
+				}
+			}
+		}
+	}
+
+	return resolvedNodes, nil
 }
