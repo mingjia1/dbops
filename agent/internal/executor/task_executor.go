@@ -2931,7 +2931,8 @@ func mysqlExecCommand(ctx context.Context, host string, port int, user string, p
 		user = "root"
 	}
 	host = normalizeLocalMySQLHost(host)
-	cmd := exec.CommandContext(ctx, "mysql", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-e", sql)
+
+	cmd := exec.CommandContext(ctx, getMySQLBinary(), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-e", sql)
 	if password != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
 	}
@@ -2943,6 +2944,16 @@ func normalizeLocalMySQLHost(host string) string {
 		return "127.0.0.1"
 	}
 	return host
+}
+
+// getMySQLBinary returns the path to mysql command, preferring absolute path
+func getMySQLBinary() string {
+	mysqlPath := "/usr/bin/mysql"
+	if _, err := os.Stat(mysqlPath); err != nil {
+		// Fallback to PATH lookup if /usr/bin/mysql doesn't exist
+		mysqlPath = "mysql"
+	}
+	return mysqlPath
 }
 
 func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string) error {
@@ -2983,7 +2994,7 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 
 func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
 	args := []string{"-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-N", "-B", "-e", sql}
-	cmd := exec.CommandContext(ctx, "mysql", args...)
+	cmd := exec.CommandContext(ctx, getMySQLBinary(), args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

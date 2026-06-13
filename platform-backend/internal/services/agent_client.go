@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -166,6 +167,9 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d%s", hostAddr, agentPort, path)
+
+	// DEBUG: Log the Agent URL being called
+	log.Printf("[DEBUG] Calling Agent: %s with payload: %+v", url, payload)
 
 	body, err := json.Marshal(payload)
 	if err != nil {

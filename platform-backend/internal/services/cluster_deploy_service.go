@@ -1266,7 +1266,7 @@ type DeployMHARequest struct {
 type DeployMGRRequest struct {
 	Name             string            `json:"name"`
 	ClusterID        string            `json:"cluster_id"`
-	PrimaryHostID    string            `json:"master_host_id"`
+	PrimaryHostID    string            `json:"primary_host_id"`
 	SecondaryHostIDs []string          `json:"replica_host_ids"`
 	PrimaryHost      string            `json:"primary_host"`
 	PrimaryPort      int               `json:"primary_port"`
@@ -1388,6 +1388,8 @@ func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallb
 	if port == 0 {
 		port = 9090
 	}
+	// DEBUG: Log the resolved host
+	log.Printf("[DEBUG] resolveHostRef: hostID=%s -> Address='%s', AgentPort=%d", hostID, host.Address, port)
 	return deploymentHost{Address: host.Address, AgentPort: port}, nil
 }
 
@@ -1616,19 +1618,25 @@ func (s *ClusterDeployService) resolveMHARequestHosts(ctx context.Context, req *
 }
 
 func (s *ClusterDeployService) resolveMGRRequestHosts(ctx context.Context, req *DeployMGRRequest) error {
+	log.Printf("[DEBUG] resolveMGRRequestHosts: PrimaryHostID='%s', PrimaryHost='%s'", req.PrimaryHostID, req.PrimaryHost)
+
 	if req.Name == "" {
 		req.Name = defaultString(req.ClusterID, fmt.Sprintf("mgr-%d", time.Now().Unix()))
 	}
 	primary, err := s.resolveHostRef(ctx, req.PrimaryHostID, req.PrimaryHost)
 	if err != nil {
+		log.Printf("[DEBUG] resolveHostRef failed: %v", err)
 		return err
 	}
+	log.Printf("[DEBUG] resolveHostRef returned: Address='%s', AgentPort=%d", primary.Address, primary.AgentPort)
+
 	if primary.Address != "" {
 		req.PrimaryHost = primary.Address
 		if req.PrimaryAgentPort == 0 {
 			req.PrimaryAgentPort = primary.AgentPort
 		}
 	}
+	log.Printf("[DEBUG] After resolve: req.PrimaryHost='%s', req.PrimaryAgentPort=%d", req.PrimaryHost, req.PrimaryAgentPort)
 	if req.PrimaryPort == 0 {
 		req.PrimaryPort = 3306
 	}

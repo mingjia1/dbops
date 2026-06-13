@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,10 +32,10 @@ func main() {
 	logInstance := logger.New(cfg.LogLevel)
 	logInstance.Info("Starting MySQL Ops Platform API Server")
 
-	sqlitePath := cfg.SQLitePath
-	if sqlitePath == "" {
-		sqlitePath = cfg.DataDir + string(filepath.Separator) + "dbops.db"
-	}
+	// Force use old database file
+	sqlitePath := "./data/dbops.db"
+	logInstance.Info("Forcing SQLite path: " + sqlitePath)
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		logInstance.Warn("Failed to create data dir " + cfg.DataDir + ": " + err.Error())
 	}
