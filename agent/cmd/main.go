@@ -24,8 +24,16 @@ func main() {
 
 	taskExecutor := executor.NewTaskExecutor()
 	metricsCollector := collector.NewMetricsCollector()
-	toolInstaller := executor.NewToolInstaller()
 	environmentChecker := executor.NewEnvironmentChecker()
+
+	relayManager := executor.NewRelayPackageManager(cfg.Relay.CacheDir, cfg.Relay.MaxCacheSizeGB, cfg.Relay.CacheExpireHours)
+
+	var toolInstaller *executor.ToolInstaller
+	if cfg.Relay.Enabled && cfg.Relay.RelayHost != "" {
+		toolInstaller = executor.NewToolInstallerWithRelay(cfg.Relay.RelayHost, cfg.Relay.RelayPort, cfg.Relay.RelayToken)
+	} else {
+		toolInstaller = executor.NewToolInstaller()
+	}
 
 	r := gin.Default()
 
@@ -388,6 +396,40 @@ func main() {
 				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
 			})
 
+			// 空白主机初始化端点 (从空白主机到可运行的MySQL实例)
+			tasks.POST("/blank-host-init", func(c *gin.Context) {
+				var req executor.BlankHostInitRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result := toolInstaller.InitBlankHost(c.Request.Context(), req)
+				statusCode := 200
+				if result.Status == "failed" {
+					statusCode = 500
+				}
+
+				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+			})
+
+			// 通用集群初始化端点 (从空白主机到集群部署)
+			tasks.POST("/general-cluster-init", func(c *gin.Context) {
+				var req executor.GeneralClusterInitRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				result := toolInstaller.InitGeneralCluster(c.Request.Context(), req)
+				statusCode := 200
+				if result.Status == "failed" {
+					statusCode = 500
+				}
+
+				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+			})
+
 			// 检查工具可用性端点
 			tasks.GET("/check-tools", func(c *gin.Context) {
 				tools := []string{"mysql", "mysqld", "xtrabackup"}
@@ -410,6 +452,61 @@ func main() {
 				}
 
 				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+			})
+		}
+
+		relay := agent.Group("/relay")
+		{
+			relay.GET("/status", func(c *gin.Context) {
+				status := relayManager.GetStatus()
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": status})
+			})
+
+			relay.GET("/packages", func(c *gin.Context) {
+				pkgs := relayManager.ListPackages()
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": pkgs})
+			})
+
+			relay.POST("/fetch", func(c *gin.Context) {
+				var req executor.RelayPackageRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				result, err := relayManager.FetchAndCache(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Fetch failed: " + err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+
+			relay.GET("/packages/download", func(c *gin.Context) {
+				name := c.Query("name")
+				if name == "" {
+					c.JSON(400, gin.H{"code": 400, "message": "Missing package name"})
+					return
+				}
+				filePath, err := relayManager.GetPackagePath(name)
+				if err != nil || filePath == "" {
+					c.JSON(404, gin.H{"code": 404, "message": "Package not found"})
+					return
+				}
+				c.File(filePath)
+			})
+
+			relay.POST("/prefetch", func(c *gin.Context) {
+				var req executor.RelayPrefetchRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				results, err := relayManager.PrefetchPackages(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Prefetch failed: " + err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": results})
 			})
 		}
 	}

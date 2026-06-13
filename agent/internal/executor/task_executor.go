@@ -125,6 +125,10 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 		return mgrExecutor.DeployMGRSinglePrimary(ctx, req)
 	case "pxc":
 		return e.DeployPXC(ctx, req)
+	case "blank-host-init":
+		return e.deployBlankHostInit(ctx, req)
+	case "general-cluster-init":
+		return e.deployGeneralClusterInit(ctx, req)
 	default:
 		return e.deploySingleInstance(ctx, req)
 	}
@@ -135,6 +139,107 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 func isDataDirInitialized(dataDir string) bool {
 	info, err := os.Stat(filepath.Join(dataDir, "ibdata1"))
 	return err == nil && info.Size() > 0
+}
+
+func (e *TaskExecutor) deployBlankHostInit(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	ti := NewToolInstaller()
+	initReq := BlankHostInitRequest{
+		MySQLVersion:    configString(req.Config, "mysql_version"),
+		MySQLPort:       configInt(req.Config, "mysql_port"),
+		DataDir:         configString(req.Config, "data_dir"),
+		Basedir:         configString(req.Config, "basedir"),
+		RootPassword:    configString(req.Config, "root_password"),
+		ReplUser:        configString(req.Config, "repl_user"),
+		ReplPass:        configString(req.Config, "repl_pass"),
+		PackageURL:      configString(req.Config, "package_url"),
+		PackageChecksum: configString(req.Config, "package_checksum"),
+		Force:           configBool(req.Config, "force"),
+		SkipToolsCheck:  configBool(req.Config, "skip_tools_check"),
+	}
+	if initReq.MySQLPort == 0 {
+		initReq.MySQLPort = 3306
+	}
+	if initReq.MySQLVersion == "" {
+		initReq.MySQLVersion = "8.0"
+	}
+
+	result := ti.InitBlankHost(ctx, initReq)
+
+	stepsJSON, _ := json.Marshal(result.Steps)
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    result.Status,
+		Progress:  result.Progress,
+		Message:   result.Message,
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"steps":     string(stepsJSON),
+			"installed": result.Installed,
+		},
+	}, nil
+}
+
+func (e *TaskExecutor) deployGeneralClusterInit(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	ti := NewToolInstaller()
+
+	var nodes []GeneralClusterNode
+	if rawNodes, ok := req.Config["nodes"].([]interface{}); ok {
+		for _, n := range rawNodes {
+			if nodeMap, ok := n.(map[string]interface{}); ok {
+				node := GeneralClusterNode{
+					Host: configString(nodeMap, "host"),
+					Port: configInt(nodeMap, "port"),
+					Role: configString(nodeMap, "role"),
+				}
+				if node.Host != "" {
+					nodes = append(nodes, node)
+				}
+			}
+		}
+	}
+
+	sshPasswords := make(map[string]string)
+	if raw, ok := req.Config["ssh_passwords"].(map[string]interface{}); ok {
+		for host, val := range raw {
+			if pass, ok := val.(string); ok {
+				sshPasswords[host] = pass
+			}
+		}
+	}
+
+	initReq := GeneralClusterInitRequest{
+		ClusterType:   configString(req.Config, "cluster_type"),
+		MySQLVersion:  configString(req.Config, "mysql_version"),
+		Nodes:         nodes,
+		RootPassword:  configString(req.Config, "root_password"),
+		ReplUser:      configString(req.Config, "repl_user"),
+		ReplPass:      configString(req.Config, "repl_pass"),
+		VIP:           configString(req.Config, "vip"),
+		VIPInterface:  configString(req.Config, "vip_interface"),
+		ClusterName:   configString(req.Config, "cluster_name"),
+		SSHUser:       configString(req.Config, "ssh_user"),
+		SSHPasswords:  sshPasswords,
+		SSHPrivateKey: configString(req.Config, "ssh_private_key"),
+		SSTMethod:     configString(req.Config, "sst_method"),
+	}
+
+	if initReq.ClusterType == "" {
+		initReq.ClusterType = configString(req.Config, "deploy_mode")
+	}
+
+	result := ti.InitGeneralCluster(ctx, initReq)
+
+	stepsJSON, _ := json.Marshal(result.Steps)
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    result.Status,
+		Progress:  result.Progress,
+		Message:   result.Message,
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"steps": string(stepsJSON),
+		},
+	}, nil
 }
 
 func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
@@ -2743,6 +2848,20 @@ func configInt(config map[string]interface{}, key string) int {
 		return int(v)
 	}
 	return 0
+}
+
+func configString(config map[string]interface{}, key string) string {
+	if v, ok := config[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func configBool(config map[string]interface{}, key string) bool {
+	if v, ok := config[key].(bool); ok {
+		return v
+	}
+	return false
 }
 
 func backupMySQLHostCandidates(host string) []string {

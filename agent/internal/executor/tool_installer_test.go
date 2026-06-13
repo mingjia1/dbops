@@ -38,8 +38,8 @@ func TestInstallToolsRequest(t *testing.T) {
 	}
 }
 
-func TestDetectLinuxDistro(t *testing.T) {
+func TestDetectOSInfo(t *testing.T) {
 	installer := NewToolInstaller()
-	distro := installer.detectLinuxDistro()
-	t.Logf("Detected Linux distribution: %s", distro)
+	info := installer.detectOSInfo()
+	t.Logf("Detected OS: %s %s (%s/%s), PackageManager: %s", info.Distribution, info.Version, info.OS, info.Arch, info.PackageManager)
 }
