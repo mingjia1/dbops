@@ -420,6 +420,24 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	if basedir != "" {
 		startArgs = append(startArgs, "--basedir="+basedir)
 	}
+
+	// 在启动MySQL前，杀掉所有可能使用该数据目录的mysqld进程
+	// 这样可以避免端口和文件锁冲突
+	psCmd := exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf("ps aux | grep 'mysqld.*%s' | grep -v grep | awk '{print $2}'", dataDir))
+	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
+		pids := strings.TrimSpace(string(pidBytes))
+		if pids != "" {
+			fmt.Fprintf(os.Stderr, "Found mysqld process(es) using datadir %s, PIDs: %s, killing them\n", dataDir, pids)
+			for _, pid := range strings.Split(pids, "\n") {
+				if pid != "" {
+					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
+					killCmd.Run()
+				}
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}
+
 	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
 	if out, err := startCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -447,7 +465,6 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if mysqlUser == "" {
 			mysqlUser = "root"
 		}
-		dataDir := fmt.Sprintf("/data/mysql/%d", port)
 		socketPath := filepath.Join(dataDir, "mysql.sock")
 		retrySQL := fmt.Sprintf(
 			"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
@@ -541,18 +558,26 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 
 	env := append(os.Environ(), "MYSQL_PWD="+pass)
 
+	// 0. 关闭super-read-only以便创建用户
+	disableReadOnlySQL := `
+		SET GLOBAL super_read_only=0;
+		SET GLOBAL read_only=0;
+	`
+	disableCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", disableReadOnlySQL)...)
+	disableCmd.Env = env
+	if out, err := disableCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("disable read-only failed: %v, output: %s", err, string(out))
+	}
+
 	// 1. 创建复制用户（主节点和副本都需要）
-	replicationSQL := fmt.Sprintf(`
+	replicationSQL := `
 		SET SQL_LOG_BIN=0;
-		CREATE USER IF NOT EXISTS 'repl'@'%%' IDENTIFIED BY 'repl';
-		GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%%';
-		GRANT CONNECTION_ADMIN ON *.* TO 'repl'@'%%';
-		GRANT BACKUP_ADMIN ON *.* TO 'repl'@'%%';
-		GRANT GROUP_REPLICATION_STREAM ON *.* TO 'repl'@'%%';
+		CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED BY 'repl';
+		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO 'repl'@'%';
 		FLUSH PRIVILEGES;
 		SET SQL_LOG_BIN=1;
 		CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='repl' FOR CHANNEL 'group_replication_recovery';
-	`)
+	`
 
 	replCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", replicationSQL)...)
 	replCmd.Env = env

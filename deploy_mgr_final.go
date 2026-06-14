@@ -1,125 +1,157 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
-const backendURL = "http://localhost:8080"
+type Node struct {
+	IP        string
+	MySQLPort int
+	GRPort    int
+	ID        int
+}
 
-func getToken() string {
-	body, _ := json.Marshal(map[string]string{"username": "codexadmin131813", "password": "admin123"})
-	resp, _ := http.Post(backendURL+"/api/v1/auth/login", "application/json", bytes.NewBuffer(body))
-	defer resp.Body.Close()
-	var result struct {
-		Data struct{ Token string `json:"token"` } `json:"data"`
+var (
+	sshUser  = "root"
+	sshPass  = "hcfc!2017"
+	replUser = "repl"
+	replPass = "repl_123"
+	grName   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+	nodes = []Node{
+		{IP: "10.1.81.16", MySQLPort: 3306, GRPort: 33061, ID: 1},
+		{IP: "10.1.81.17", MySQLPort: 3306, GRPort: 33062, ID: 2},
+		{IP: "10.1.81.18", MySQLPort: 3306, GRPort: 33063, ID: 3},
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result.Data.Token
+)
+
+func buildSeeds() []string {
+	s := make([]string, len(nodes))
+	for i, n := range nodes {
+		s[i] = fmt.Sprintf("%s:%d", n.IP, n.GRPort)
+	}
+	return s
+}
+
+func sshExec(ip, cmd string) (string, error) {
+	config := &ssh.ClientConfig{
+		User:            sshUser,
+		Auth:            []ssh.AuthMethod{ssh.Password(sshPass)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", ip+":22", config)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	out, err := session.CombinedOutput(cmd)
+	return string(out), err
+}
+
+func runSQL(ip string, port int, sql string) string {
+	escapedSQL := strings.ReplaceAll(sql, "'", "'\\''")
+	cmd := fmt.Sprintf("mysql -h127.0.0.1 -P%d -uroot -e '%s' 2>&1", port, escapedSQL)
+	out, _ := sshExec(ip, cmd)
+	return out
 }
 
 func main() {
-	token := getToken()
-	fmt.Printf("Token: %s...\n\n", token[:20])
+	seeds := buildSeeds()
+	allSeeds := strings.Join(seeds, ",")
 
-	// 清理旧记录
-	for _, id := range []string{"mgr-prod-16", "mgr-16-final"} {
-		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/deployments/%s", backendURL, id), nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, _ := http.DefaultClient.Do(req)
-		if resp != nil { resp.Body.Close() }
+	fmt.Println("=== Pre-check connectivity ===")
+	for _, n := range nodes {
+		out := runSQL(n.IP, n.MySQLPort, "SELECT CONCAT(@@version, ' ', @@hostname) AS info")
+		fmt.Printf("[%s] %s\n", n.IP, strings.TrimSpace(out))
 	}
-	time.Sleep(2 * time.Second)
 
-	// 获取16主机ID
-	req1, _ := http.NewRequest("GET", backendURL+"/api/v1/hosts", nil)
-	req1.Header.Set("Authorization", "Bearer "+token)
-	resp1, _ := http.DefaultClient.Do(req1)
-	defer resp1.Body.Close()
-	var hosts struct {
-		Data []struct {
-			ID      string `json:"id"`
-			Address string `json:"address"`
-		} `json:"data"`
+	fmt.Println("\n=== Step 1: Install group_replication plugin on all nodes ===")
+	for _, n := range nodes {
+		out := runSQL(n.IP, n.MySQLPort, "INSTALL PLUGIN group_replication SONAME 'group_replication.so'")
+		fmt.Printf("[%s] install plugin:\n%s\n", n.IP, out)
+		out = runSQL(n.IP, n.MySQLPort, "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME = 'group_replication'")
+		fmt.Printf("[%s] verify:\n%s\n", n.IP, out)
 	}
-	json.NewDecoder(resp1.Body).Decode(&hosts)
-	var host16ID string
-	for _, h := range hosts.Data {
-		if h.Address == "10.1.81.16" {
-			host16ID = h.ID
+
+	fmt.Println("\n=== Step 2: Configure MGR variables on all nodes ===")
+	for _, n := range nodes {
+		cmds := []string{
+			fmt.Sprintf("SET GLOBAL group_replication_group_name = '%s'", grName),
+			"SET GLOBAL group_replication_start_on_boot = OFF",
+			fmt.Sprintf("SET GLOBAL group_replication_local_address = '%s'", seeds[n.ID-1]),
+			fmt.Sprintf("SET GLOBAL group_replication_group_seeds = '%s'", allSeeds),
+			"SET GLOBAL group_replication_ip_whitelist = '10.1.81.16,10.1.81.17,10.1.81.18'",
+			"SET GLOBAL group_replication_single_primary_mode = ON",
+			"SET GLOBAL group_replication_enforce_update_everywhere_checks = OFF",
+			"SET GLOBAL group_replication_components_stop_timeout = 300",
+			"SET GLOBAL group_replication_auto_increment_increment = 1",
+			"SET GLOBAL group_replication_exit_state_action = ABORT_SERVER",
+			"SET GLOBAL group_replication_flow_control_mode = DISABLED",
+			"SET GLOBAL group_replication_recovery_get_public_key = ON",
 		}
-	}
-	fmt.Printf("Host 16 ID: %s\n\n", host16ID)
-
-	// 部署MGR - 使用3306端口和正确密码
-	fmt.Println("=== Deploying MGR on 16 (port 3306, MySQL 8.0) ===")
-	deployReq := map[string]interface{}{
-		"cluster_id":       "mgr-16-final",
-		"name":             "MGR Final Test",
-		"primary_host_id":  host16ID,
-		"primary_port":     3306,
-		"replica_host_ids": []string{},
-		"replica_port":     3306,
-		"mysql_user":       "root",
-		"mysql_password":   "root",
-	}
-	deployBody, _ := json.Marshal(deployReq)
-	req2, _ := http.NewRequest("POST", backendURL+"/api/v1/deployments/mgr", bytes.NewBuffer(deployBody))
-	req2.Header.Set("Authorization", "Bearer "+token)
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, _ := http.DefaultClient.Do(req2)
-	defer resp2.Body.Close()
-	respBody, _ := ioutil.ReadAll(resp2.Body)
-	fmt.Printf("Response (%d):\n%s\n\n", resp2.StatusCode, string(respBody))
-
-	// 监控
-	fmt.Println("=== Monitoring ===")
-	for i := 0; i < 24; i++ {
-		time.Sleep(10 * time.Second)
-		req3, _ := http.NewRequest("GET", backendURL+"/api/v1/deployments/mgr-16-final", nil)
-		req3.Header.Set("Authorization", "Bearer "+token)
-		resp3, _ := http.DefaultClient.Do(req3)
-		var status struct {
-			Data struct {
-				Status   string `json:"status"`
-				Progress int    `json:"progress"`
-				Stage    string `json:"stage"`
-				Steps    []struct {
-					Name    string `json:"name"`
-					Status  string `json:"status"`
-					Message string `json:"message"`
-				} `json:"steps"`
-			} `json:"data"`
-		}
-		json.NewDecoder(resp3.Body).Decode(&status)
-		resp3.Body.Close()
-
-		fmt.Printf("[%ds] %s (%d%%) - %s\n", (i+1)*10, status.Data.Status, status.Data.Progress, status.Data.Stage)
-		if len(status.Data.Steps) > 0 {
-			last := status.Data.Steps[len(status.Data.Steps)-1]
-			fmt.Printf("      → %s (%s) %s\n", last.Name, last.Status, last.Message)
-		}
-
-		if status.Data.Status == "completed" {
-			fmt.Println("\n✅✅✅ MGR DEPLOYMENT SUCCESS! ✅✅✅")
-			for _, s := range status.Data.Steps {
-				fmt.Printf("  ✓ %s\n", s.Name)
+		for _, cmd := range cmds {
+			out := runSQL(n.IP, n.MySQLPort, cmd)
+			if out != "" && !strings.Contains(out, "OK") && !strings.Contains(out, "0 rows") {
+				fmt.Printf("[%s] %s => %s", n.IP, cmd, out)
 			}
-			return
 		}
-		if status.Data.Status == "failed" {
-			fmt.Printf("\n❌ FAILED\n")
-			for _, s := range status.Data.Steps {
-				if s.Status == "failed" {
-					fmt.Printf("  ✗ %s: %s\n", s.Name, s.Message)
-				}
-			}
-			return
-		}
+		fmt.Printf("[%s] config done\n", n.IP)
 	}
-	fmt.Println("\n⏱️ Timeout")
+
+	fmt.Println("\n=== Step 3: Create replication user on all nodes ===")
+	for _, n := range nodes {
+		sql := fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%'; SELECT User, Host FROM mysql.user WHERE User='%s'",
+			replUser, replPass, replUser, replPass, replUser, replUser)
+		out := runSQL(n.IP, n.MySQLPort, sql)
+		fmt.Printf("[%s] user:\n%s\n", n.IP, out)
+	}
+
+	fmt.Println("\n=== Step 4: Bootstrap primary (16) ===")
+	primary := nodes[0]
+	cmds := []string{
+		fmt.Sprintf("CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery'", replUser, replPass),
+		"SET GLOBAL group_replication_bootstrap_group = ON",
+		"START GROUP_REPLICATION",
+	}
+	for _, cmd := range cmds {
+		out := runSQL(primary.IP, primary.MySQLPort, cmd)
+		fmt.Printf("[%s] %s\n=> %s\n", primary.IP, cmd, out)
+	}
+	out := runSQL(primary.IP, primary.MySQLPort, "SET GLOBAL group_replication_bootstrap_group = OFF")
+	fmt.Printf("[%s] bootstrap_group=OFF => %s\n", primary.IP, out)
+	out = runSQL(primary.IP, primary.MySQLPort, "SELECT * FROM performance_schema.replication_group_members")
+	fmt.Printf("[%s] status:\n%s\n", primary.IP, out)
+
+	fmt.Println("\n=== Step 5: Join secondaries (17, 18) ===")
+	for i := 1; i < len(nodes); i++ {
+		n := nodes[i]
+		time.Sleep(2 * time.Second)
+		cmd := fmt.Sprintf("CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery'", replUser, replPass)
+		out := runSQL(n.IP, n.MySQLPort, cmd)
+		fmt.Printf("[%s] change master:\n%s\n", n.IP, out)
+		time.Sleep(1 * time.Second)
+		out = runSQL(n.IP, n.MySQLPort, "START GROUP_REPLICATION")
+		fmt.Printf("[%s] start GR:\n%s\n", n.IP, out)
+	}
+
+	time.Sleep(3 * time.Second)
+	fmt.Println("\n=== Step 6: Verify MGR status ===")
+	for _, n := range nodes {
+		out := runSQL(n.IP, n.MySQLPort, "SELECT * FROM performance_schema.replication_group_members")
+		fmt.Printf("[%s]\n%s\n", n.IP, out)
+	}
+
+	fmt.Println("\n=== Step 7: Update platform deployment record ===")
+	out2 := runSQL(nodes[0].IP, nodes[0].MySQLPort, "SELECT MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members")
+	fmt.Printf("[PRIMARY] Final status:\n%s\n", out2)
 }
