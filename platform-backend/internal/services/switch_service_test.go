@@ -14,6 +14,7 @@ import (
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -313,6 +314,145 @@ func TestClusterArchitectureSwitchWithoutAgentClientFails(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "failed", result.Status)
 	assert.Contains(t, result.Message, "agent client not configured")
+}
+
+func TestMultiInstanceSwitchToMGRUpdatesClusterMetadata(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	stub := newAgentStub()
+	defer stub.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	hostID := "multi-switch-host"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: hostID}))
+	enc, err := utils.Encrypt("Root#2026", "test-encryption-key-123456789012345678")
+	require.NoError(t, err)
+	for i, id := range []string{"mgr-node-1", "mgr-node-2", "mgr-node-3"} {
+		require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, HostID: &hostID, ClusterID: "", Name: id}))
+		require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+			InstanceID:        id,
+			Host:              "10.0.0." + strconv.Itoa(11+i),
+			Port:              3306 + i,
+			Username:          "root",
+			PasswordEncrypted: enc,
+		}))
+	}
+	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""), nil)
+	svc.SetEncryptionKey("test-encryption-key-123456789012345678")
+
+	result, err := svc.SingleToMGR(ctx, SwitchClusterRequest{
+		ClusterID:        "mgr-reconfig",
+		ClusterName:      "mgr-reconfig",
+		InstanceIDs:      []string{"mgr-node-1", "mgr-node-2", "mgr-node-3"},
+		ReplicationUser:  "repl",
+		ReplicationPass:  "repl@1234556",
+		ForceReconfigure: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.Equal(t, "mgr-reconfig", result.ClusterID)
+	assert.Len(t, stub.calls, 3)
+	dep, err := clusterRepo.GetByID(ctx, "mgr-reconfig")
+	require.NoError(t, err)
+	assert.Equal(t, "mgr", dep.ClusterType)
+	assert.Equal(t, "completed", dep.Status)
+	primary, err := instRepo.GetByID(ctx, "mgr-node-1")
+	require.NoError(t, err)
+	assert.Equal(t, "mgr-reconfig", primary.ClusterID)
+	assert.Equal(t, "primary", primary.Status.Role)
+	assert.Contains(t, primary.Topology.SlaveIDs, "mgr-node-2")
+	secondary, err := instRepo.GetByID(ctx, "mgr-node-2")
+	require.NoError(t, err)
+	assert.Equal(t, "mgr-reconfig", secondary.ClusterID)
+	assert.Equal(t, "secondary", secondary.Status.Role)
+	assert.Equal(t, "mgr-node-1", secondary.Topology.MasterID)
+}
+
+func TestMultiInstanceSwitchUpdatesClusterMetadataForPXCAndMHA(t *testing.T) {
+	tests := []struct {
+		name        string
+		target      string
+		clusterID   string
+		primaryRole string
+		replicaRole string
+		switchFn    func(*SwitchService, context.Context, SwitchClusterRequest) (*SwitchClusterResult, error)
+	}{
+		{
+			name:        "pxc",
+			target:      "pxc",
+			clusterID:   "pxc-reconfig",
+			primaryRole: "primary",
+			replicaRole: "secondary",
+			switchFn:    (*SwitchService).SingleToPXC,
+		},
+		{
+			name:        "mha",
+			target:      "mha",
+			clusterID:   "mha-reconfig",
+			primaryRole: "master",
+			replicaRole: "slave",
+			switchFn:    (*SwitchService).SingleToMHA,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := newTestDB()
+			stub := newAgentStub()
+			defer stub.Close()
+			hostRepo := repositories.NewHostRepository(db)
+			instRepo := repositories.NewInstanceRepository(db)
+			clusterRepo := repositories.NewClusterDeployRepository(db)
+			hostID := "multi-switch-host-" + tt.name
+			require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Address: stub.Host(), AgentPort: stub.Port(), SSHPort: 22, SSHUser: "root", Name: hostID}))
+			enc, err := utils.Encrypt("Root#2026", "test-encryption-key-123456789012345678")
+			require.NoError(t, err)
+			instanceIDs := []string{tt.name + "-node-1", tt.name + "-node-2", tt.name + "-node-3"}
+			for i, id := range instanceIDs {
+				require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, HostID: &hostID, ClusterID: "", Name: id}))
+				require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+					InstanceID:        id,
+					Host:              "10.0.1." + strconv.Itoa(11+i),
+					Port:              3306 + i,
+					Username:          "root",
+					PasswordEncrypted: enc,
+				}))
+			}
+			svc := NewSwitchService(hostRepo, instRepo, clusterRepo, NewAgentClient(""), nil)
+			svc.SetEncryptionKey("test-encryption-key-123456789012345678")
+
+			result, err := tt.switchFn(svc, ctx, SwitchClusterRequest{
+				ClusterID:        tt.clusterID,
+				ClusterName:      tt.clusterID,
+				InstanceIDs:      instanceIDs,
+				ReplicationUser:  "repl",
+				ReplicationPass:  "repl@1234556",
+				ForceReconfigure: true,
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "completed", result.Status)
+			assert.Equal(t, tt.target, result.TargetType)
+			assert.Len(t, stub.calls, 3)
+			dep, err := clusterRepo.GetByID(ctx, tt.clusterID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.target, dep.ClusterType)
+			assert.Equal(t, "completed", dep.Status)
+			primary, err := instRepo.GetByID(ctx, instanceIDs[0])
+			require.NoError(t, err)
+			assert.Equal(t, tt.primaryRole, primary.Status.Role)
+			assert.Equal(t, tt.target, primary.Topology.ReplicationMode)
+			replica, err := instRepo.GetByID(ctx, instanceIDs[1])
+			require.NoError(t, err)
+			assert.Equal(t, tt.replicaRole, replica.Status.Role)
+			assert.Equal(t, instanceIDs[0], replica.Topology.MasterID)
+		})
+	}
 }
 
 // --- TDD: MGR primary promotion ---

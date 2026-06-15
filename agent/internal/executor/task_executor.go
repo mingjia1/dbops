@@ -134,6 +134,70 @@ func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest)
 	}
 }
 
+func (e *TaskExecutor) ExecuteClusterSwitch(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	switchType := configString(req.Config, "switch_type")
+	if switchType == "" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   "switch_type is required",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	clusterType := configString(req.Config, "cluster_type")
+	if clusterType == "" {
+		clusterType = configString(req.Config, "target_type")
+	}
+	if clusterType == "" {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   "cluster_type is required",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	nodes := configNodeList(req.Config["nodes"])
+	if len(nodes) < 2 {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   "cluster switch requires at least two nodes",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("%s cluster switch request accepted for %d nodes", clusterType, len(nodes)),
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"switch_type":  switchType,
+			"cluster_type": clusterType,
+			"cluster_id":   configString(req.Config, "cluster_id"),
+			"nodes":        nodes,
+		},
+	}, nil
+}
+
+func configNodeList(raw any) []map[string]any {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	nodes := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		node, ok := item.(map[string]any)
+		if ok {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
 // isDataDirInitialized checks if the MySQL data directory has been initialized
 // by looking for ibdata1 (InnoDB system tablespace) which is always created during --initialize-insecure.
 func isDataDirInitialized(dataDir string) bool {

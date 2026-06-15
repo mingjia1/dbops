@@ -50,15 +50,24 @@ func (s *SwitchService) SetEncryptionKey(key string) {
 }
 
 type SwitchClusterRequest struct {
-	InstanceID  string `json:"instance_id" binding:"required"`
-	TargetType  string `json:"target_type" binding:"required"`
-	ClusterName string `json:"cluster_name"`
-	VIP         string `json:"vip"`
+	InstanceID       string   `json:"instance_id"`
+	InstanceIDs      []string `json:"instance_ids"`
+	TargetType       string   `json:"target_type"`
+	ClusterID        string   `json:"cluster_id"`
+	ClusterName      string   `json:"cluster_name"`
+	VIP              string   `json:"vip"`
+	ReplicationUser  string   `json:"replication_user"`
+	ReplicationPass  string   `json:"replication_pass"`
+	MySQLUser        string   `json:"mysql_user"`
+	MySQLPassword    string   `json:"mysql_password"`
+	ForceReconfigure bool     `json:"force_reconfigure"`
 }
 
 type SwitchClusterResult struct {
 	TaskID      string    `json:"task_id"`
+	ClusterID   string    `json:"cluster_id,omitempty"`
 	InstanceID  string    `json:"instance_id"`
+	InstanceIDs []string  `json:"instance_ids,omitempty"`
 	SourceType  string    `json:"source_type"`
 	TargetType  string    `json:"target_type"`
 	Status      string    `json:"status"`
@@ -111,6 +120,13 @@ func (s *SwitchService) SingleToPXC(ctx context.Context, req SwitchClusterReques
 }
 
 func (s *SwitchService) executeSwitch(ctx context.Context, req SwitchClusterRequest, sourceType, targetType string) (*SwitchClusterResult, error) {
+	req.TargetType = defaultString(req.TargetType, targetType)
+	if len(req.InstanceIDs) > 0 {
+		return s.executeMultiInstanceSwitch(ctx, req, sourceType, targetType)
+	}
+	if req.InstanceID == "" {
+		return nil, fmt.Errorf("instance_id or instance_ids is required")
+	}
 	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("instance not found: %w", err)
@@ -162,6 +178,144 @@ func (s *SwitchService) executeSwitch(ctx context.Context, req SwitchClusterRequ
 		TargetType:  targetType,
 		Status:      result.Status,
 		Message:     result.Message,
+		CompletedAt: time.Now(),
+	}
+	s.auditClusterSwitch(ctx, req, out)
+	return out, nil
+}
+
+func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req SwitchClusterRequest, sourceType, targetType string) (*SwitchClusterResult, error) {
+	if len(req.InstanceIDs) < 2 {
+		return nil, fmt.Errorf("instance_ids must contain at least two instances for %s reconfiguration", targetType)
+	}
+	clusterID := defaultString(req.ClusterID, req.ClusterName)
+	if clusterID == "" {
+		clusterID = fmt.Sprintf("%s-%s", targetType, uuid.NewString())
+	}
+	clusterName := defaultString(req.ClusterName, clusterID)
+
+	instances := make([]*models.Instance, 0, len(req.InstanceIDs))
+	hosts := make([]*AgentHostInfo, 0, len(req.InstanceIDs))
+	for _, id := range req.InstanceIDs {
+		inst, err := s.instRepo.GetByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s not found: %w", id, err)
+		}
+		if inst.ClusterID != "" && inst.ClusterID != clusterID && !req.ForceReconfigure {
+			return nil, fmt.Errorf("instance %s already belongs to cluster %s", id, inst.ClusterID)
+		}
+		hostInfo, err := s.resolveAgentHost(ctx, inst)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s host resolution failed: %w", id, err)
+		}
+		instances = append(instances, inst)
+		hosts = append(hosts, hostInfo)
+	}
+
+	if s.agentClient == nil {
+		out := &SwitchClusterResult{
+			ClusterID:   clusterID,
+			InstanceIDs: req.InstanceIDs,
+			SourceType:  sourceType,
+			TargetType:  targetType,
+			Status:      "failed",
+			Message:     "agent client not configured",
+			CompletedAt: time.Now(),
+		}
+		s.auditClusterSwitch(ctx, req, out)
+		return out, nil
+	}
+
+	if err := s.ensureClusterDeployment(ctx, clusterID, clusterName, targetType); err != nil {
+		return nil, err
+	}
+
+	nodeConfigs := make([]map[string]interface{}, 0, len(instances))
+	for i, inst := range instances {
+		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s connection not found: %w", inst.ID, err)
+		}
+		role := replicaRoleFor(targetType)
+		if i == 0 {
+			role = primaryRoleFor(targetType)
+		}
+		nodeConfigs = append(nodeConfigs, map[string]interface{}{
+			"instance_id": inst.ID,
+			"host":        conn.Host,
+			"port":        conn.Port,
+			"role":        role,
+			"agent_host":  hosts[i].Address,
+			"agent_port":  hosts[i].Port,
+		})
+	}
+
+	completed := 0
+	var lastMessage string
+	for i, inst := range instances {
+		config := map[string]interface{}{
+			"switch_type":       fmt.Sprintf("%s-to-%s", sourceType, targetType),
+			"cluster_id":        clusterID,
+			"cluster_name":      clusterName,
+			"cluster_type":      targetType,
+			"target_type":       targetType,
+			"instance_id":       inst.ID,
+			"instance_ids":      req.InstanceIDs,
+			"nodes":             nodeConfigs,
+			"role":              nodeConfigs[i]["role"],
+			"vip":               req.VIP,
+			"replication_user":  req.ReplicationUser,
+			"replication_pass":  req.ReplicationPass,
+			"mysql_user":        req.MySQLUser,
+			"mysql_password":    req.MySQLPassword,
+			"force_reconfigure": req.ForceReconfigure,
+		}
+		if target, err := s.instanceConnectionConfig(ctx, inst.ID); err == nil {
+			for k, v := range target {
+				config[k] = v
+			}
+		}
+		result, err := s.agentClient.callAgent(ctx, hosts[i].Address, hosts[i].Port, "/agent/tasks/cluster-switch", map[string]interface{}{
+			"task_id":     uuid.NewString(),
+			"instance_id": inst.ID,
+			"cluster_id":  clusterID,
+			"config":      config,
+		})
+		if err != nil {
+			lastMessage = fmt.Sprintf("instance %s switch call failed: %v", inst.ID, err)
+			continue
+		}
+		if taskErr := switchAgentTaskError("cluster switch", result); taskErr != nil {
+			lastMessage = fmt.Sprintf("instance %s %v", inst.ID, taskErr)
+			continue
+		}
+		completed++
+		lastMessage = result.Message
+	}
+
+	status := "completed"
+	if completed == 0 {
+		status = "failed"
+	} else if completed != len(instances) {
+		status = "partial_success"
+	}
+	if completed == len(instances) {
+		if err := s.applyClusterReconfigurationMetadata(ctx, clusterID, targetType, instances); err != nil {
+			status = "partial_success"
+			lastMessage = fmt.Sprintf("cluster switched but metadata update failed: %v", err)
+		} else {
+			_ = s.clusterRepo.UpdateStatus(ctx, clusterID, "completed")
+			lastMessage = fmt.Sprintf("%d standalone instances reconfigured as %s cluster", completed, targetType)
+		}
+	}
+
+	out := &SwitchClusterResult{
+		ClusterID:   clusterID,
+		InstanceIDs: req.InstanceIDs,
+		SourceType:  sourceType,
+		TargetType:  targetType,
+		Status:      status,
+		Message:     lastMessage,
 		CompletedAt: time.Now(),
 	}
 	s.auditClusterSwitch(ctx, req, out)
@@ -331,6 +485,68 @@ func (s *SwitchService) updateRealRoleTopology(ctx context.Context, clusterID, n
 			ReplicationMode: clusterType,
 		}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (s *SwitchService) ensureClusterDeployment(ctx context.Context, clusterID, clusterName, clusterType string) error {
+	if s.clusterRepo == nil {
+		return fmt.Errorf("cluster repository is not configured")
+	}
+	if dep, err := s.clusterRepo.GetByID(ctx, clusterID); err == nil && dep != nil {
+		return s.clusterRepo.UpdateStatus(ctx, clusterID, "running")
+	}
+	return s.clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          clusterID,
+		ClusterType: clusterType,
+		Name:        clusterName,
+		Status:      "running",
+	})
+}
+
+func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context, clusterID, clusterType string, instances []*models.Instance) error {
+	if len(instances) == 0 {
+		return nil
+	}
+	primaryID := instances[0].ID
+	replicaIDs := make([]string, 0, len(instances)-1)
+	for _, inst := range instances[1:] {
+		replicaIDs = append(replicaIDs, inst.ID)
+	}
+	slaveIDs, _ := json.Marshal(replicaIDs)
+	for i, inst := range instances {
+		full := *inst
+		full.ClusterID = clusterID
+		if err := s.instRepo.Update(ctx, &full); err != nil {
+			return fmt.Errorf("update instance %s cluster_id failed: %w", inst.ID, err)
+		}
+		role := replicaRoleFor(clusterType)
+		masterID := primaryID
+		slaveIDText := ""
+		if i == 0 {
+			role = primaryRoleFor(clusterType)
+			masterID = ""
+			slaveIDText = string(slaveIDs)
+		}
+		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
+			InstanceID:          inst.ID,
+			RunStatus:           defaultString(inst.Status.RunStatus, "running"),
+			HealthStatus:        defaultString(inst.Status.HealthStatus, "healthy"),
+			Role:                role,
+			ReplicationStatus:   clusterType,
+			SecondsBehindMaster: 0,
+		}); err != nil {
+			return fmt.Errorf("update instance %s status failed: %w", inst.ID, err)
+		}
+		if err := s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       clusterID,
+			MasterID:        masterID,
+			SlaveIDs:        slaveIDText,
+			ReplicationMode: clusterType,
+		}); err != nil {
+			return fmt.Errorf("update instance %s topology failed: %w", inst.ID, err)
 		}
 	}
 	return nil
@@ -734,9 +950,17 @@ func (s *SwitchService) auditClusterSwitch(ctx context.Context, req SwitchCluste
 	if result == nil {
 		return
 	}
-	details := fmt.Sprintf("instance_id=%s source_type=%s target_type=%s cluster_name=%s vip=%s status=%s message=%s",
-		req.InstanceID, result.SourceType, result.TargetType, req.ClusterName, req.VIP, result.Status, result.Message)
-	s.auditSwitch(ctx, "switch_cluster_architecture", "switch", "cluster_switch", req.InstanceID, switchAuditResult(result.Status), switchAuditError(result.Status, result.Message), details)
+	instanceIDs := req.InstanceIDs
+	if len(instanceIDs) == 0 && req.InstanceID != "" {
+		instanceIDs = []string{req.InstanceID}
+	}
+	resourceID := req.InstanceID
+	if resourceID == "" {
+		resourceID = result.ClusterID
+	}
+	details := fmt.Sprintf("cluster_id=%s instance_id=%s instance_ids=%s source_type=%s target_type=%s cluster_name=%s vip=%s status=%s message=%s",
+		result.ClusterID, req.InstanceID, strings.Join(instanceIDs, ","), result.SourceType, result.TargetType, req.ClusterName, req.VIP, result.Status, result.Message)
+	s.auditSwitch(ctx, "switch_cluster_architecture", "switch", "cluster_switch", resourceID, switchAuditResult(result.Status), switchAuditError(result.Status, result.Message), details)
 }
 
 func (s *SwitchService) auditRoleSwitch(ctx context.Context, result *RoleSwitchResult) {

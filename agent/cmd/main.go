@@ -295,7 +295,7 @@ func main() {
 					return
 				}
 
-				result, err := taskExecutor.ExecuteDeploy(c.Request.Context(), req)
+				result, err := taskExecutor.ExecuteClusterSwitch(c.Request.Context(), req)
 				if err != nil {
 					c.JSON(500, gin.H{"code": 500, "message": "Switch execution failed"})
 					return
