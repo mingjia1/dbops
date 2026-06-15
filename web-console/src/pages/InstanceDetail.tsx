@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   Button,
   Card,
+  Checkbox,
   Descriptions,
   Form,
   Input,
@@ -20,6 +21,7 @@ import {
   ArrowLeftOutlined,
   DeleteOutlined,
   EditOutlined,
+  KeyOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   ThunderboltOutlined,
@@ -86,6 +88,9 @@ const InstanceDetail: React.FC = () => {
   const [variableForm] = Form.useForm()
   const [configForm] = Form.useForm()
   const [serviceForm] = Form.useForm()
+  const [forceResetOpen, setForceResetOpen] = useState(false)
+  const [forceResetting, setForceResetting] = useState(false)
+  const [forceResetForm] = Form.useForm()
 
   useEffect(() => {
     fetchInstance()
@@ -311,6 +316,62 @@ const InstanceDetail: React.FC = () => {
     }
   }
 
+  const checkPasswordComplexity = (pw: string) => {
+    const errors: string[] = []
+    if (pw.length < 8) errors.push('至少8位')
+    if (!/[A-Z]/.test(pw)) errors.push('大写字母')
+    if (!/[a-z]/.test(pw)) errors.push('小写字母')
+    if (!/[0-9]/.test(pw)) errors.push('数字')
+    if (!/[^A-Za-z0-9]/.test(pw)) errors.push('特殊字符')
+    return errors
+  }
+
+  const getPasswordStrength = (pw: string) => {
+    if (!pw) return { level: 0, label: '', color: '' }
+    let score = 0
+    if (/[A-Z]/.test(pw)) score++
+    if (/[a-z]/.test(pw)) score++
+    if (/[0-9]/.test(pw)) score++
+    if (/[^A-Za-z0-9]/.test(pw)) score++
+    if (pw.length >= 8) score++
+    if (score <= 2) return { level: score, label: '弱', color: 'red' }
+    if (score <= 3) return { level: score, label: '中', color: 'orange' }
+    if (score <= 4) return { level: score, label: '强', color: 'lime' }
+    return { level: score, label: '非常强', color: 'green' }
+  }
+
+  const handleForceReset = async () => {
+    if (!id) return
+    const values = await forceResetForm.validateFields()
+    const useDefaultPassword = values.use_default_password === true
+    if (!useDefaultPassword) {
+      if (values.new_password !== values.confirm_password) {
+        message.error('两次输入的密码不一致')
+        return
+      }
+      const errors = checkPasswordComplexity(values.new_password)
+      if (errors.length > 0) {
+        message.error(`密码复杂度不足: ${errors.join(', ')}`)
+        return
+      }
+    }
+    setForceResetting(true)
+    try {
+      await instanceApi.forceResetPassword(id, {
+        username: values.username || 'root',
+        user_host: values.user_host || '%',
+        new_password: useDefaultPassword ? undefined : values.new_password,
+      })
+      message.success('密码强制重置成功，平台连接密码已同步更新')
+      setForceResetOpen(false)
+      forceResetForm.resetFields()
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err?.message || '强制重置密码失败')
+    } finally {
+      setForceResetting(false)
+    }
+  }
+
   const handleDelete = async () => {
     if (!id) return
     await instanceApi.delete(id)
@@ -353,6 +414,9 @@ const InstanceDetail: React.FC = () => {
           </Button>
           <Button icon={<ThunderboltOutlined />} loading={deploying} onClick={handleDeploy}>
             部署
+          </Button>
+          <Button icon={<KeyOutlined />} onClick={() => setForceResetOpen(true)}>
+            强制重置密码
           </Button>
           <Button icon={<EditOutlined />} onClick={openEdit}>编辑</Button>
           <Popconfirm title="确定删除此实例？" onConfirm={handleDelete} okText="确定" cancelText="取消">
@@ -543,6 +607,101 @@ const InstanceDetail: React.FC = () => {
         <div style={{ marginBottom: 8 }}>当前阶段：<b>{deployStage}</b></div>
         <Progress percent={deployProgress} status={deployStatus === 'failed' ? 'exception' : deployStatus === 'success' ? 'success' : 'active'} />
         {deployMessage && <div style={{ marginTop: 16, color: '#595959' }}>{deployMessage}</div>}
+      </Modal>
+
+      <Modal
+        title="强制重置 MySQL root 密码"
+        open={forceResetOpen}
+        onCancel={() => { setForceResetOpen(false); forceResetForm.resetFields() }}
+        onOk={handleForceReset}
+        confirmLoading={forceResetting}
+        okText="确认重置"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        width={500}
+      >
+        <div style={{ marginBottom: 16, color: '#faad14' }}>
+          注意：此操作将通过 SSH 跳过权限验证强制重置 MySQL root 密码。重置后平台连接密码将同步更新。
+        </div>
+        <Form form={forceResetForm} layout="vertical" autoComplete="off" initialValues={{ username: 'root', user_host: '%', use_default_password: true }}>
+          <Form.Item name="use_default_password" valuePropName="checked">
+            <Checkbox>使用部署默认 MySQL 密码</Checkbox>
+          </Form.Item>
+          <Form.Item name="username" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
+            <Input placeholder="root" />
+          </Form.Item>
+          <Form.Item name="user_host" label="账号 Host" rules={[{ required: true, message: '请输入账号 Host' }]}>
+            <Input placeholder="%" />
+          </Form.Item>
+          <Form.Item
+            name="new_password"
+            label="新密码"
+            dependencies={['use_default_password']}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (getFieldValue('use_default_password') || value) return Promise.resolve()
+                  return Promise.reject(new Error('请输入新密码'))
+                },
+              }),
+              { min: 8, message: '密码至少8位' },
+              { pattern: /[A-Z]/, message: '需要大写字母' },
+              { pattern: /[a-z]/, message: '需要小写字母' },
+              { pattern: /[0-9]/, message: '需要数字' },
+              { pattern: /[^A-Za-z0-9]/, message: '需要特殊字符' },
+            ]}
+          >
+            <Input.Password
+              placeholder="VFR$3edcXSW@1qaz"
+              autoComplete="new-password"
+              onChange={(e) => {
+                const pw = e.target.value
+                const strength = getPasswordStrength(pw)
+                forceResetForm.setFieldsValue({ _strength: strength })
+                forceResetForm.setFieldsValue({ _errors: checkPasswordComplexity(pw) })
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="确认密码"
+            dependencies={['new_password', 'use_default_password']}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (getFieldValue('use_default_password')) return Promise.resolve()
+                  if (!value) return Promise.reject(new Error('请再次输入新密码'))
+                  if (!value || getFieldValue('new_password') === value) return Promise.resolve()
+                  return Promise.reject(new Error('两次输入的密码不一致'))
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="再次输入新密码" autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item shouldUpdate={(prev, cur) => prev.new_password !== cur.new_password}>
+            {({ getFieldValue }) => {
+              const pw = getFieldValue('new_password') || ''
+              const errors = checkPasswordComplexity(pw)
+              const strength = getPasswordStrength(pw)
+              return (
+                <div>
+                  <div style={{ marginBottom: 4 }}>
+                    密码强度：
+                    <span style={{ color: strength.color, fontWeight: 'bold' }}>
+                      {strength.label || '未设置'}
+                    </span>
+                  </div>
+                  {errors.length > 0 && (
+                    <div style={{ fontSize: 12, color: '#ff4d4f' }}>
+                      缺少：{errors.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )
+            }}
+          </Form.Item>
+        </Form>
       </Modal>
     </Card>
   )

@@ -185,6 +185,23 @@ func (c *InstanceController) AdminAction(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, result)
 }
 
+func (c *InstanceController) ForceResetPassword(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	var req services.ForceResetPasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	if err := c.service.ForceResetInstancePassword(ctx.Request.Context(), id, req); err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to force reset password", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, gin.H{"message": "Password reset successfully"})
+}
+
 func (c *InstanceController) BatchUpdatePassword(ctx *gin.Context) {
 	var req services.BatchPasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

@@ -2669,8 +2669,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		if !validSQLName(username) {
 			return adminFailed(req.TaskID, "invalid username"), nil
 		}
-		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
-			fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password)))
+		output, err = changeMySQLUserPassword(ctx, host, port, user, pass, username, userHost, password)
 	case "grant_privileges":
 		username, _ := req.Config["username"].(string)
 		userHost, _ := req.Config["user_host"].(string)
@@ -3189,6 +3188,56 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func changeMySQLUserPassword(ctx context.Context, host string, port int, user, pass, username, userHost, password string) (string, error) {
+	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
+	output, err := runMySQLExecSafe(ctx, host, port, user, pass, alterSQL)
+	if err == nil || !strings.Contains(strings.ToLower(output), "read-only") {
+		return output, err
+	}
+
+	stateOut, _ := runMySQLExecSafe(ctx, host, port, user, pass, "SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
+	restoreReadOnly, restoreSuperReadOnly := parseReadOnlyState(stateOut)
+	disableSQL := "SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF"
+	if disableOut, disableErr := runMySQLExecSafe(ctx, host, port, user, pass, disableSQL); disableErr != nil {
+		return strings.TrimSpace(output + "\n" + disableOut), err
+	}
+	alterOut, alterErr := runMySQLExecSafe(ctx, host, port, user, pass, alterSQL)
+	restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))
+	restoreOut, restoreErr := runMySQLExecSafe(ctx, host, port, user, pass, restoreSQL)
+	combined := strings.TrimSpace(output + "\n" + alterOut + "\n" + restoreOut)
+	if alterErr != nil {
+		return combined, alterErr
+	}
+	if restoreErr != nil {
+		return combined, fmt.Errorf("password changed but failed to restore read_only state: %w", restoreErr)
+	}
+	return combined, nil
+}
+
+func parseReadOnlyState(output string) (bool, bool) {
+	fields := strings.Fields(output)
+	if len(fields) < 2 {
+		return false, false
+	}
+	return mysqlBool(fields[0]), mysqlBool(fields[1])
+}
+
+func mysqlBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "on", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func boolSQLValue(v bool) string {
+	if v {
+		return "ON"
+	}
+	return "OFF"
 }
 
 func adminFailed(taskID, msg string) *TaskResult {

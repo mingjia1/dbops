@@ -290,7 +290,7 @@ func TestInstanceAdminActionWithoutAgentClientReturnsFailedResult(t *testing.T) 
 	result, err := service.AdminAction(context.Background(), instanceID, InstanceAdminRequest{
 		Action:   "change_password",
 		Username: "root",
-		Password: "newpass",
+		Password: "NewPass#2026",
 	})
 
 	require.NoError(t, err)
@@ -388,7 +388,7 @@ func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
 		Host:         "10.1.81.41",
 		Ports:        []int{3307},
 		Username:     "root",
-		NewPassword:  "newpass",
+		NewPassword:  "NewPass#2026",
 		UpdateStored: true,
 	})
 
@@ -402,4 +402,41 @@ func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, "failed", rows[0]["status"])
 	assert.Contains(t, rows[0]["message"], "agent client not configured")
+}
+
+func TestInstanceAdminChangePasswordRejectsWeakPassword(t *testing.T) {
+	service, instanceID := newInstanceAdminServiceWithoutAgent(t)
+
+	result, err := service.AdminAction(context.Background(), instanceID, InstanceAdminRequest{
+		Action:   "change_password",
+		Username: "root",
+		Password: "weakpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "uppercase")
+}
+
+func TestBatchUpdatePasswordRejectsWeakPassword(t *testing.T) {
+	service, _ := newInstanceAdminServiceWithoutAgent(t)
+
+	result, err := service.BatchUpdatePassword(context.Background(), BatchPasswordRequest{
+		Host:        "10.1.81.41",
+		Ports:       []int{3307},
+		Username:    "root",
+		NewPassword: "weakpass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "uppercase")
+}
+
+func TestDefaultMySQLPasswordForConnection(t *testing.T) {
+	assert.Equal(t, "Hcfc@DboOps#2024_57", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-5.7.44"}))
+	assert.Equal(t, "Hcfc@DboOps#2024_56", defaultMySQLPasswordForConnection(&models.InstanceConnection{Basedir: "/opt/mysql-5.6"}))
+	assert.Equal(t, "Hcfc@DboOps#2024_80", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-8.0.36"}))
 }

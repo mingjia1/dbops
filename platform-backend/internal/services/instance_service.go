@@ -1,10 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"golang.org/x/crypto/ssh"
 )
 
 type InstanceService struct {
@@ -789,6 +793,11 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err := validateInstanceAdminMetadata(conn, req); err != nil {
 		return failedInstanceAdminResult(err.Error()), nil
 	}
+	if req.Action == "change_password" {
+		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+			return failedInstanceAdminResult(err.Error()), nil
+		}
+	}
 
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
 	if err != nil {
@@ -887,6 +896,9 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 }
 
 func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPasswordRequest) (*InstanceAdminResult, error) {
+	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+		return failedInstanceAdminResult(err.Error()), nil
+	}
 	if req.UserHost == "" {
 		req.UserHost = "%"
 	}
@@ -1013,6 +1025,259 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+type ForceResetPasswordRequest struct {
+	Username    string `json:"username"`
+	UserHost    string `json:"user_host"`
+	NewPassword string `json:"new_password"`
+}
+
+func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id string, req ForceResetPasswordRequest) error {
+	if strings.TrimSpace(req.Username) == "" {
+		req.Username = "root"
+	}
+	if strings.TrimSpace(req.UserHost) == "" {
+		req.UserHost = "%"
+	}
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("instance not found: %w", err)
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return fmt.Errorf("instance connection not found: %w", err)
+	}
+	if strings.TrimSpace(req.NewPassword) == "" {
+		req.NewPassword = defaultMySQLPasswordForConnection(conn)
+	}
+	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+		return err
+	}
+	var host *models.Host
+	if instance.HostID != nil && *instance.HostID != "" {
+		host, err = s.hostRepo.GetByID(ctx, *instance.HostID)
+		if err != nil {
+			return fmt.Errorf("host not found: %w", err)
+		}
+	}
+	if host == nil {
+		return fmt.Errorf("instance has no associated host")
+	}
+	credential, err := utils.Decrypt(host.SSHCredential, s.encKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt host credential: %w", err)
+	}
+	client, err := sshClient(host, credential)
+	if err != nil {
+		return fmt.Errorf("SSH connection failed: %w", err)
+	}
+	defer client.Close()
+
+	datadir := defaultString(conn.Datadir, fmt.Sprintf("/data/mysql/%d", conn.Port))
+	basedir := strings.TrimRight(conn.Basedir, "/")
+	skipSocket := fmt.Sprintf("/tmp/mysql_fr_%d.sock", conn.Port)
+	skipPid := fmt.Sprintf("/tmp/mysql_fr_%d.pid", conn.Port)
+	defaultsFile := firstRemotePath(client, []string{
+		fmt.Sprintf("%s/my.cnf", datadir),
+		fmt.Sprintf("%s/etc/my.cnf", basedir),
+		"/etc/my.cnf",
+		"/etc/mysql/my.cnf",
+	})
+	mysqlBin := firstRemotePath(client, []string{
+		fmt.Sprintf("%s/bin/mysql", basedir),
+		"/usr/bin/mysql",
+		"/usr/local/bin/mysql",
+	})
+	mysqldBin := firstRemotePath(client, []string{
+		fmt.Sprintf("%s/bin/mysqld", basedir),
+		"/usr/sbin/mysqld",
+		"/usr/bin/mysqld",
+	})
+	if mysqlBin == "" || mysqldBin == "" {
+		return fmt.Errorf("mysql or mysqld binary not found for instance %s", id)
+	}
+	if out, err := runSSHCommand(client, "test -d "+shellQuote(datadir)+" && echo OK"); err != nil || strings.TrimSpace(out) != "OK" {
+		return fmt.Errorf("instance datadir not found: %s", datadir)
+	}
+
+	// Step 1: Stop MySQL
+	log.Printf("ForceResetPassword [%s]: stopping MySQL", id)
+	stopCmd := fmt.Sprintf(`pid="$(cat %s/mysql.pid %s/*.pid 2>/dev/null | head -n1)"; if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi; sleep 5; if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi`,
+		shellQuote(datadir), shellQuote(datadir))
+	if out, err := runSSHCommand(client, stopCmd); err != nil {
+		log.Printf("ForceResetPassword [%s]: stop target instance warning: %v output=%s", id, err, out)
+	}
+
+	// Step 2: Start with skip-grant-tables
+	log.Printf("ForceResetPassword [%s]: starting MySQL with skip-grant-tables", id)
+	defaultsArg := ""
+	if defaultsFile != "" {
+		defaultsArg = "--defaults-file=" + shellQuote(defaultsFile)
+	}
+	skipCmd := fmt.Sprintf(
+		"%s %s --datadir=%s --skip-grant-tables --skip-networking --socket=%s --daemonize --pid-file=%s 2>&1",
+		shellQuote(mysqldBin), defaultsArg, shellQuote(datadir), shellQuote(skipSocket), shellQuote(skipPid),
+	)
+	if out, err := runSSHCommand(client, skipCmd); err != nil {
+		return fmt.Errorf("failed to start MySQL with skip-grant-tables: %v, output: %s", err, out)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Step 3: Reset root password in skip-grant-tables mode
+	log.Printf("ForceResetPassword [%s]: clearing password for %s@%s", id, req.Username, req.UserHost)
+	resetSQL := fmt.Sprintf("UPDATE mysql.user SET authentication_string='', plugin='mysql_native_password' WHERE user='%s' AND host='%s'; FLUSH PRIVILEGES;",
+		escapeSQLValue(req.Username), escapeSQLValue(req.UserHost))
+	resetCmd := fmt.Sprintf(`%s -S %s -e %s 2>&1`, shellQuote(mysqlBin), shellQuote(skipSocket), shellQuote(resetSQL))
+	if out, err := runSSHCommand(client, resetCmd); err != nil {
+		_, _ = runSSHCommand(client, fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null", skipPid))
+		return fmt.Errorf("failed to reset root password: %v, output: %s", err, out)
+	}
+
+	// Step 4: Stop skip-grant-tables instance
+	log.Printf("ForceResetPassword [%s]: stopping skip-grant-tables instance", id)
+	_, _ = runSSHCommand(client, fmt.Sprintf("%s -S %s shutdown 2>/dev/null; sleep 2", shellQuote(firstRemotePath(client, []string{fmt.Sprintf("%s/bin/mysqladmin", basedir), "/usr/bin/mysqladmin", "/usr/local/bin/mysqladmin"})), shellQuote(skipSocket)))
+	_, _ = runSSHCommand(client, fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null; sleep 1", shellQuote(skipPid)))
+
+	// Step 5: Start MySQL normally
+	log.Printf("ForceResetPassword [%s]: starting MySQL normally", id)
+	var startErr error
+	for _, cmd := range []string{
+		fmt.Sprintf("%s %s --datadir=%s --daemonize --pid-file=%s/mysql.pid 2>&1", shellQuote(mysqldBin), defaultsArg, shellQuote(datadir), shellQuote(datadir)),
+		fmt.Sprintf("nohup %s %s --datadir=%s --pid-file=%s/mysql.pid >/tmp/mysql_fr_%d.out 2>&1 &", shellQuote(mysqldBin), defaultsArg, shellQuote(datadir), shellQuote(datadir), conn.Port),
+	} {
+		_, startErr = runSSHCommand(client, cmd)
+		if startErr == nil {
+			break
+		}
+	}
+	if startErr != nil {
+		return fmt.Errorf("failed to start MySQL normally: %v", startErr)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Step 6: Set new password using a temp SQL file (avoids shell expansion issues)
+	log.Printf("ForceResetPassword [%s]: setting new password", id)
+	sqlContent := fmt.Sprintf(
+		"ALTER USER '%s'@'%s' IDENTIFIED WITH mysql_native_password BY '%s';\nFLUSH PRIVILEGES;\n",
+		escapeSQLValue(req.Username), escapeSQLValue(req.UserHost), escapeSQLValue(req.NewPassword),
+	)
+	sqlFile := fmt.Sprintf("/tmp/mysql_fr_%d.sql", conn.Port)
+	if _, err := runSSHCommand(client, fmt.Sprintf("cat > %s << 'SQLEOF'\n%sSQLEOF\n", shellQuote(sqlFile), sqlContent)); err != nil {
+		return fmt.Errorf("failed to write SQL file: %w", err)
+	}
+	passwordSet := false
+	for _, cmd := range []string{
+		fmt.Sprintf(`%s -u %s -h 127.0.0.1 -P %d < %s 2>&1`, shellQuote(mysqlBin), shellQuote(req.Username), conn.Port, shellQuote(sqlFile)),
+		fmt.Sprintf(`%s -u %s -S %s/mysql.sock < %s 2>&1`, shellQuote(mysqlBin), shellQuote(req.Username), shellQuote(datadir), shellQuote(sqlFile)),
+	} {
+		if out, err := runSSHCommand(client, cmd); err == nil {
+			passwordSet = true
+			break
+		} else {
+			log.Printf("ForceResetPassword [%s]: alter attempt failed: %v, output: %s", id, err, out)
+		}
+	}
+	_, _ = runSSHCommand(client, fmt.Sprintf("rm -f %s", shellQuote(sqlFile)))
+	if !passwordSet {
+		return fmt.Errorf("failed to set new password - all ALTER USER attempts failed")
+	}
+
+	// Step 7: Update stored password
+	if req.Username == conn.Username {
+		enc, encErr := utils.Encrypt(req.NewPassword, s.encKey)
+		if encErr != nil {
+			return fmt.Errorf("failed to encrypt new password: %w", encErr)
+		}
+		if updateErr := s.repo.UpdateConnectionPassword(ctx, id, enc); updateErr != nil {
+			return fmt.Errorf("failed to update stored password: %w", updateErr)
+		}
+	}
+
+	// Step 8: Verify via temp SQL file
+	verifyFile := fmt.Sprintf("/tmp/mysql_fr_verify_%d.sql", conn.Port)
+	_, _ = runSSHCommand(client, fmt.Sprintf("echo 'SELECT 1' > %s", shellQuote(verifyFile)))
+	if out, err := runSSHCommand(client, fmt.Sprintf(
+		`MYSQL_PWD=%s %s -u %s -h 127.0.0.1 -P %d < %s 2>&1`,
+		shellQuote(req.NewPassword), shellQuote(mysqlBin), shellQuote(req.Username), conn.Port, shellQuote(verifyFile),
+	)); err == nil {
+		log.Printf("ForceResetPassword [%s]: verification OK: %s", id, out)
+	} else {
+		return fmt.Errorf("password reset completed but verification failed: %v output=%s", err, out)
+	}
+	_, _ = runSSHCommand(client, fmt.Sprintf("rm -f %s", shellQuote(verifyFile)))
+
+	log.Printf("ForceResetPassword [%s]: completed successfully", id)
+	return nil
+}
+
+func sshClient(host *models.Host, credential string) (*ssh.Client, error) {
+	auth := []ssh.AuthMethod{ssh.Password(credential)}
+	if signer, err := ssh.ParsePrivateKey([]byte(credential)); err == nil {
+		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+	}
+	config := &ssh.ClientConfig{
+		User:            host.SSHUser,
+		Auth:            auth,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+	return ssh.Dial("tcp", net.JoinHostPort(host.Address, strconv.Itoa(host.SSHPort)), config)
+}
+
+func runSSHCommand(client *ssh.Client, command string) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	var out bytes.Buffer
+	session.Stdout = &out
+	session.Stderr = &out
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(command)
+	}()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(60 * time.Second):
+		_ = session.Close()
+		return out.String(), fmt.Errorf("ssh command timed out")
+	}
+}
+
+func escapeSQLValue(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func firstRemotePath(client *ssh.Client, paths []string) string {
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" || strings.Contains(p, "//") {
+			continue
+		}
+		out, err := runSSHCommand(client, fmt.Sprintf("test -f %s && echo OK", shellQuote(p)))
+		if err == nil && strings.TrimSpace(out) == "OK" {
+			return p
+		}
+	}
+	return ""
+}
+
+func defaultMySQLPasswordForConnection(conn *models.InstanceConnection) string {
+	if conn != nil {
+		switch {
+		case strings.Contains(conn.VersionID, "5.7") || strings.Contains(conn.Basedir, "5.7"):
+			return "Hcfc@DboOps#2024_57"
+		case strings.Contains(conn.VersionID, "5.6") || strings.Contains(conn.Basedir, "5.6"):
+			return "Hcfc@DboOps#2024_56"
+		}
+	}
+	return "Hcfc@DboOps#2024_80"
 }
 
 func (s *InstanceService) passwordCandidates(conn *models.InstanceConnection, explicit string) []string {

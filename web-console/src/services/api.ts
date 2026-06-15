@@ -234,6 +234,9 @@ export const instanceApi = {
     update_stored?: boolean
   }) =>
     api.post('/instances/admin/batch-password', data),
+
+  forceResetPassword: (id: string, data: { new_password?: string; username?: string; user_host?: string } = {}) =>
+    api.post(`/instances/${id}/force-reset-password`, data),
 }
 
 export interface Host {
