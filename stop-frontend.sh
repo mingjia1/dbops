@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# stop-frontend.sh - Stop Vue frontend dev server on Linux
+# stop-frontend.sh - Stop React web console dev server on Linux
 # Usage: ./stop-frontend.sh
 #
 
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_FILE="$PROJECT_DIR/.frontend.pid"
+PID_FILE="$PROJECT_DIR/logs/frontend.pid"
 
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")

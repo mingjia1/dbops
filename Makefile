@@ -25,10 +25,10 @@ build-web:
 run: run-backend run-agent run-web
 
 run-backend:
-	cd platform-backend && go run ./cmd
+	cd platform-backend && go run ./cmd/main.go
 
 run-agent:
-	cd agent && go run ./cmd
+	cd agent && go run ./cmd/main.go
 
 run-web:
 	cd web-console && npm run dev
@@ -64,7 +64,7 @@ lint:
 	cd agent && golangci-lint run
 
 db-migrate:
-	cd platform-backend && go run ./cmd migrate
+	cd platform-backend && go run ./cmd/main.go migrate
 
 help:
 	@echo "MySQL Ops Platform Makefile"

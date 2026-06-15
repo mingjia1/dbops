@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o platform-backend ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o platform-backend ./cmd/main.go
 
 FROM alpine:3.20
 
@@ -20,16 +20,10 @@ WORKDIR /app
 COPY --from=builder /app/platform-backend .
 
 ENV TZ=Asia/Shanghai
-ENV DB_HOST=localhost
-ENV DB_PORT=5432
-ENV DB_USER=mysql_ops
-ENV DB_PASSWORD=mysql_ops
-ENV DB_NAME=mysql_ops_platform
-ENV REDIS_HOST=localhost
-ENV REDIS_PORT=6379
-ENV CLICKHOUSE_HOST=localhost
-ENV CLICKHOUSE_PORT=9000
-ENV JWT_SECRET=jwt_secret_key
+ENV DBOPS_DB_URL=""
+ENV DBOPS_JWT_SECRET=""
+ENV DBOPS_ENCRYPTION_KEY=""
+ENV DBOPS_AGENT_TOKEN=""
 ENV LOG_LEVEL=info
 
 EXPOSE 8080

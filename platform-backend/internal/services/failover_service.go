@@ -259,45 +259,74 @@ func (s *FailoverService) ExecuteManualFailover(ctx context.Context, req Failove
 }
 
 func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPreflightRequest) (*FailoverPreflightResult, error) {
-	master, err := s.GetCurrentMaster(ctx, req.ClusterID)
+	instances, err := s.listHydratedClusterInstances(ctx, req.ClusterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current master: %w", err)
+		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
 	}
-	slaves, err := s.GetSlaves(ctx, req.ClusterID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get slaves: %w", err)
+	if len(instances) == 0 {
+		return nil, fmt.Errorf("cluster %s has no managed instances", req.ClusterID)
 	}
+
+	clusterType := inferFailoverClusterType(instances)
+	platformMaster := selectPlatformPrimary(instances)
+	realPrimaryID := ""
+	maxReplicationLag := 0
+	gtidConsistent := true
+	inspectionWarnings := []string{}
+
+	if clusterType == "mgr" {
+		realPrimaryID, maxReplicationLag, gtidConsistent, inspectionWarnings = s.inspectMGRPrimary(ctx, instances)
+	} else {
+		maxReplicationLag = maxStoredReplicationLag(instances)
+	}
+
+	master := platformMaster
+	if master == nil && realPrimaryID != "" {
+		master = findInstanceByID(instances, realPrimaryID)
+	}
+	slaves := s.nonPrimaryInfos(ctx, instances, instanceIDOf(master), realPrimaryID)
 
 	result := &FailoverPreflightResult{
 		ClusterID:          req.ClusterID,
 		TargetMasterID:     strings.TrimSpace(req.TargetMasterID),
-		CurrentMasterID:    master.InstanceID,
-		PlatformPrimaryID:  master.InstanceID,
+		CurrentMasterID:    instanceIDOf(master),
+		PlatformPrimaryID:  instanceIDOf(platformMaster),
+		RealPrimaryID:      realPrimaryID,
 		SlaveCount:         len(slaves),
-		GTIDConsistent:     true,
+		MaxReplicationLag:  maxReplicationLag,
+		GTIDConsistent:     gtidConsistent,
 		TopologyConsistent: true,
 		CheckedAt:          time.Now(),
 		BlockingReasons:    []string{},
-		Warnings:           []string{},
+		Warnings:           inspectionWarnings,
 	}
 
-	masterCheck, err := s.healthService.ExecuteHealthCheck(ctx, HealthCheckRequest{
-		InstanceID: master.InstanceID,
-		Config: HealthCheckConfig{
-			CheckTypes: []string{"tcp", "mysql"},
-		},
-	})
-	if err != nil || masterCheck == nil || !masterCheck.IsHealthy {
-		result.CurrentMasterHealthy = false
-		msg := "current master is unhealthy"
-		if err != nil {
-			msg = fmt.Sprintf("%s: %v", msg, err)
-		} else if masterCheck != nil && masterCheck.ErrorMessage != "" {
-			msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
-		}
-		result.BlockingReasons = append(result.BlockingReasons, msg)
+	if platformMaster == nil {
+		result.TopologyConsistent = false
+		result.BlockingReasons = append(result.BlockingReasons, "platform primary is not recorded")
+	}
+	if master == nil {
+		result.TopologyConsistent = false
+		result.BlockingReasons = append(result.BlockingReasons, "failed to determine current primary")
 	} else {
-		result.CurrentMasterHealthy = true
+		masterCheck, err := s.healthService.ExecuteHealthCheck(ctx, HealthCheckRequest{
+			InstanceID: master.InstanceID,
+			Config: HealthCheckConfig{
+				CheckTypes: []string{"tcp", "mysql"},
+			},
+		})
+		if err != nil || masterCheck == nil || !masterCheck.IsHealthy {
+			result.CurrentMasterHealthy = false
+			msg := "current master is unhealthy"
+			if err != nil {
+				msg = fmt.Sprintf("%s: %v", msg, err)
+			} else if masterCheck != nil && masterCheck.ErrorMessage != "" {
+				msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
+			}
+			result.BlockingReasons = append(result.BlockingReasons, msg)
+		} else {
+			result.CurrentMasterHealthy = true
+		}
 	}
 
 	targetSeen := result.TargetMasterID == ""
@@ -332,29 +361,17 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 		result.BlockingReasons = append(result.BlockingReasons, "target master must be a non-primary instance in the cluster")
 	}
 
-	instances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
-	}
-	clusterType := inferFailoverClusterType(instances)
 	if clusterType == "mgr" {
-		realPrimaryID, lag, consistent, warnings := s.inspectMGRPrimary(ctx, instances)
-		result.RealPrimaryID = realPrimaryID
-		result.MaxReplicationLag = lag
-		result.GTIDConsistent = consistent
-		result.Warnings = append(result.Warnings, warnings...)
 		if realPrimaryID == "" {
 			result.TopologyConsistent = false
 			result.BlockingReasons = append(result.BlockingReasons, "failed to determine real MGR primary")
-		} else if realPrimaryID != result.PlatformPrimaryID {
+		} else if result.PlatformPrimaryID != "" && realPrimaryID != result.PlatformPrimaryID {
 			result.TopologyConsistent = false
 			result.BlockingReasons = append(result.BlockingReasons, fmt.Sprintf("platform primary %s does not match real MGR primary %s", result.PlatformPrimaryID, realPrimaryID))
 		}
-		if !consistent {
+		if !gtidConsistent {
 			result.BlockingReasons = append(result.BlockingReasons, "GTID/applier state is not consistent")
 		}
-	} else {
-		result.MaxReplicationLag = maxStoredReplicationLag(instances)
 	}
 
 	if result.MaxReplicationLag > 30 {
@@ -366,6 +383,116 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 		result.Pass = true
 	}
 	return result, nil
+}
+
+func (s *FailoverService) listHydratedClusterInstances(ctx context.Context, clusterID string) ([]*models.Instance, error) {
+	items, err := s.instanceRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*models.Instance, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		full, err := s.instanceRepo.GetByID(ctx, item.ID)
+		if err != nil {
+			out = append(out, item)
+			continue
+		}
+		out = append(out, full)
+	}
+	return out, nil
+}
+
+func selectPlatformPrimary(instances []*models.Instance) *MasterInfo {
+	for _, inst := range instances {
+		if inst == nil || !isFailoverPrimaryRole(inst.Status.Role) {
+			continue
+		}
+		return masterInfoFromInstance(inst)
+	}
+	return nil
+}
+
+func findInstanceByID(instances []*models.Instance, id string) *MasterInfo {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	for _, inst := range instances {
+		if inst != nil && inst.ID == id {
+			return masterInfoFromInstance(inst)
+		}
+	}
+	return nil
+}
+
+func masterInfoFromInstance(inst *models.Instance) *MasterInfo {
+	if inst == nil {
+		return nil
+	}
+	return &MasterInfo{
+		InstanceID: inst.ID,
+		Host:       inst.Connection.Host,
+		Port:       inst.Connection.Port,
+		Role:       inst.Status.Role,
+		IsHealthy:  inst.Status.HealthStatus != "unhealthy",
+	}
+}
+
+func instanceIDOf(master *MasterInfo) string {
+	if master == nil {
+		return ""
+	}
+	return master.InstanceID
+}
+
+func isFailoverPrimaryRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "master", "primary", "primary_master":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFailoverReplicaRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "slave", "replica", "secondary":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *FailoverService) nonPrimaryInfos(ctx context.Context, instances []*models.Instance, platformPrimaryID, realPrimaryID string) []MasterInfo {
+	out := make([]MasterInfo, 0, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if inst.ID == platformPrimaryID || inst.ID == realPrimaryID || isFailoverPrimaryRole(inst.Status.Role) {
+			continue
+		}
+		if !isFailoverReplicaRole(inst.Status.Role) && (platformPrimaryID != "" || realPrimaryID != "") {
+			continue
+		}
+		info := masterInfoFromInstance(inst)
+		if info == nil {
+			continue
+		}
+		if info.Host == "" || info.Port == 0 {
+			conn, err := s.getInstanceConnection(ctx, inst.ID)
+			if err != nil {
+				continue
+			}
+			info.Host = conn.Host
+			info.Port = conn.Port
+		}
+		out = append(out, *info)
+	}
+	return out
 }
 
 func prioritizeManualCandidate(newMasterID string, candidates []string) []string {

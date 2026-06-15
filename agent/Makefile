@@ -3,7 +3,7 @@
 all: build
 
 build:
-	go build -o bin/agent ./cmd
+	go build -o bin/agent ./cmd/main.go
 
 test:
 	go test ./... -v
@@ -13,4 +13,4 @@ clean:
 	rm -f agent
 
 docker-build:
-	docker build -t agent:latest -f Dockerfile.test .
+	docker build -t agent:latest -f Dockerfile .

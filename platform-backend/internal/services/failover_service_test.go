@@ -144,3 +144,63 @@ func TestRecordFailoverHistoryPersistsResult(t *testing.T) {
 		t.Fatalf("unexpected history row: %+v", history[0])
 	}
 }
+
+func TestSelectPlatformPrimaryUsesHydratedStatus(t *testing.T) {
+	instances := []*models.Instance{
+		{
+			ID: "node-1",
+			Status: models.InstanceStatus{
+				Role: "secondary",
+			},
+		},
+		{
+			ID: "node-2",
+			Connection: models.InstanceConnection{
+				Host: "10.1.81.17",
+				Port: 3306,
+			},
+			Status: models.InstanceStatus{
+				Role:         "primary",
+				HealthStatus: "healthy",
+			},
+		},
+	}
+
+	primary := selectPlatformPrimary(instances)
+	if primary == nil {
+		t.Fatalf("expected platform primary")
+	}
+	if primary.InstanceID != "node-2" || primary.Host != "10.1.81.17" || primary.Port != 3306 {
+		t.Fatalf("unexpected primary: %+v", primary)
+	}
+}
+
+func TestNonPrimaryInfosExcludesRealMGRPrimaryWhenPlatformPrimaryMissing(t *testing.T) {
+	svc := &FailoverService{}
+	instances := []*models.Instance{
+		{
+			ID: "node-1",
+			Connection: models.InstanceConnection{
+				Host: "10.1.81.16",
+				Port: 3306,
+			},
+			Status: models.InstanceStatus{Role: "secondary"},
+		},
+		{
+			ID: "node-2",
+			Connection: models.InstanceConnection{
+				Host: "10.1.81.17",
+				Port: 3306,
+			},
+			Status: models.InstanceStatus{Role: "secondary"},
+		},
+	}
+
+	slaves := svc.nonPrimaryInfos(context.Background(), instances, "", "node-1")
+	if len(slaves) != 1 {
+		t.Fatalf("expected one non-primary, got %d: %+v", len(slaves), slaves)
+	}
+	if slaves[0].InstanceID != "node-2" {
+		t.Fatalf("unexpected non-primary: %+v", slaves[0])
+	}
+}

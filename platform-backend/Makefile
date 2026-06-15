@@ -3,7 +3,7 @@
 all: build
 
 build:
-	go build -o bin/platform ./cmd
+	go build -o bin/platform ./cmd/main.go
 
 test:
 	go test ./... -v
@@ -13,4 +13,4 @@ clean:
 	rm -f platform-backend
 
 docker-build:
-	docker build -t platform-backend:latest -f Dockerfile.test .
+	docker build -t platform-backend:latest -f Dockerfile .
