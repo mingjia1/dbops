@@ -258,7 +258,7 @@ func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, inst.ClusterID)
 	require.Equal(t, "stopped", inst.Status.RunStatus)
-	require.Equal(t, "unhealthy", inst.Status.HealthStatus)
+	require.Equal(t, "offline", inst.Status.HealthStatus)
 	require.Empty(t, inst.Status.Role)
 	require.Empty(t, inst.Topology.ClusterID)
 	require.Empty(t, inst.Topology.ReplicationMode)

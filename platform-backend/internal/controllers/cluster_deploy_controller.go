@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
@@ -116,6 +117,10 @@ func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
 
 	response, err := c.service.DestroyCluster(ctx.Request.Context(), deploymentID)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			utils.NotFoundResponse(ctx, "Deployment not found")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to destroy cluster deployment", err)
 		return
 	}

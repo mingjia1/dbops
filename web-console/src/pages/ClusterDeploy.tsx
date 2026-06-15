@@ -361,9 +361,10 @@ const ClusterDeploy: React.FC = () => {
             finished_at: new Date().toISOString(),
           }
           patchDeployment(next)
-          loadDeployments()
+          await loadDeployments()
           message.success('集群销毁成功：已完成备份验证和远程清理')
         } catch (err: any) {
+          await loadDeployments()
           message.error(`销毁失败: ${err?.response?.data?.message || err?.message || '未知错误'}`)
         }
       },
