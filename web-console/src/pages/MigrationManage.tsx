@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Alert, Modal } from 'antd'
-import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, StopOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Modal } from 'antd'
+import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, StopOutlined } from '@ant-design/icons'
 import { migrationApi, instanceApi } from '../services/api'
 
 interface MigrationTask {

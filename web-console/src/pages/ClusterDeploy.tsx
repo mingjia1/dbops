@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Col, Collapse, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag, Tooltip,
+  Button, Card, Checkbox, Col, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -195,19 +195,6 @@ const ClusterDeploy: React.FC = () => {
   const acknowledgeDefaultCredential = () => {
     localStorage.setItem(DEFAULT_CREDENTIAL_ACK_KEY, '1')
     setShowDefaultCredential(false)
-  }
-
-  const showDeployNotes = () => {
-    Modal.info({
-      title: '集群部署操作说明',
-      content: (
-        <div>
-          <p>真实部署会在目标主机上安装或配置 MySQL 实例，并可能修改复制、服务和数据目录配置。</p>
-          <p>伪集群演练模式只把已有实例写入平台集群拓扑，用于验证管理、拓扑、角色切换和销毁流程，不会停止或删除数据库服务。</p>
-        </div>
-      ),
-      okText: '知道了',
-    })
   }
 
   const submitCredentialChange = async () => {

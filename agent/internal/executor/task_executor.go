@@ -2,6 +2,7 @@ package executor
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -1064,6 +1065,8 @@ func (e *TaskExecutor) ExecuteBackup(ctx context.Context, req DeployTaskRequest)
 	switch method {
 	case "mysqldump":
 		return e.executeLogicalBackup(ctx, config, "database size is below 10G, used mysqldump")
+	case "mysqlbinlog":
+		return e.executeGTIDIncrementalBackup(ctx, config)
 	case "xtrabackup":
 		return e.executeXtrabackup(ctx, config, false)
 	case "cold_datadir":
@@ -1082,6 +1085,9 @@ const xtrabackupSizeThresholdBytes int64 = 10 * 1024 * 1024 * 1024
 
 func (e *TaskExecutor) selectBackupMethod(ctx context.Context, config BackupConfig) (string, error) {
 	if strings.EqualFold(config.BackupType, "incremental") {
+		if isLogicalDumpBackupPath(config.BaseBackupPath) {
+			return "mysqlbinlog", nil
+		}
 		return "xtrabackup", nil
 	}
 	size := config.DatabaseSize
@@ -1310,6 +1316,162 @@ func mysqlPortListening(host string, port int) bool {
 	return false
 }
 
+func isLogicalDumpBackupPath(path string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(path))
+	return strings.HasSuffix(normalized, ".sql") || strings.HasSuffix(normalized, ".sql.gz")
+}
+
+func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
+	if strings.TrimSpace(config.BaseBackupPath) == "" {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "incremental backup requires a completed full backup",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if !isLogicalDumpBackupPath(config.BaseBackupPath) {
+		return e.executeXtrabackup(ctx, config, false)
+	}
+	if _, err := exec.LookPath("mysqlbinlog"); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "mysqlbinlog is required for incremental backup based on mysqldump full backup but was not found on target host",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	baseGTID, err := parseGTIDFromDump(config.BaseBackupPath)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("parse GTID from base mysqldump failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	binlogs, err := fetchBinaryLogFiles(ctx, config)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("fetch binary log list failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if len(binlogs) == 0 {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "no binary logs found for GTID incremental backup",
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if err := os.MkdirAll(config.TargetDir, 0o755); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("create backup root failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	backupFile := fmt.Sprintf("%s/%s-%d.sql", config.TargetDir, config.BackupType, time.Now().UnixNano())
+	var lastErr string
+	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
+		_ = os.Remove(backupFile)
+		args := []string{
+			"--read-from-remote-server",
+			"--host=" + host,
+			"--port=" + fmt.Sprintf("%d", config.MySQLPort),
+			"--user=" + defaultString(config.MySQLUser, "root"),
+			"--password=" + config.MySQLPass,
+			"--exclude-gtids=" + baseGTID,
+			"--result-file=" + backupFile,
+		}
+		args = append(args, binlogs...)
+		cmd := exec.CommandContext(ctx, "mysqlbinlog", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			lastErr = fmt.Sprintf("host=%s: %v\n%s", host, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		lastErr = ""
+		break
+	}
+	if lastErr != "" {
+		_ = os.Remove(backupFile)
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "mysqlbinlog incremental backup failed: " + lastErr,
+			Timestamp: time.Now(),
+		}, nil
+	}
+	sizeBytes, err := pathSize(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup size failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	checksum, err := checksumPath(backupFile)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  80,
+			Message:   fmt.Sprintf("calculate backup checksum failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("Incremental backup completed successfully. Path: %s, Checksum: %s", backupFile, checksum),
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"backup_path":       backupFile,
+			"backup_type":       config.BackupType,
+			"backup_method":     "mysqlbinlog",
+			"base_backup_path":  config.BaseBackupPath,
+			"base_backup_label": config.BaseBackupLabel,
+			"base_backup_gtid":  baseGTID,
+			"file_size":         sizeBytes,
+			"checksum":          checksum,
+		},
+	}, nil
+}
+
+func fetchBinaryLogFiles(ctx context.Context, config BackupConfig) ([]string, error) {
+	var lastErr error
+	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
+		cmd := exec.CommandContext(ctx, "mysql", "-N", "-B",
+			"-h", host,
+			"-P", fmt.Sprintf("%d", config.MySQLPort),
+			"-u", defaultString(config.MySQLUser, "root"),
+			"-e", "SHOW BINARY LOGS;",
+		)
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			lastErr = fmt.Errorf("host=%s: %v %s", host, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		logs := make([]string, 0)
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && strings.TrimSpace(fields[0]) != "" {
+				logs = append(logs, fields[0])
+			}
+		}
+		return logs, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no MySQL host candidates available")
+}
+
 func (e *TaskExecutor) executeColdDatadirBackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
 	datadir := filepath.Clean(strings.TrimSpace(config.DataDir))
 	if err := validateDecommissionDatadir(datadir); err != nil {
@@ -1478,16 +1640,32 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 			"--events",
 			"--triggers",
 			"--all-databases",
+			"--set-gtid-purged=ON",
 			"-h", host,
 			"-P", fmt.Sprintf("%d", config.MySQLPort),
 			"-u", defaultString(config.MySQLUser, "root"),
 		}
-		cmd := exec.CommandContext(ctx, "mysqldump", args...)
-		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
-		cmd.Stdout = outFile
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stderr, err := runMysqldumpToFile(ctx, outFile, config.MySQLPass, args)
+		if err != nil && strings.Contains(stderr.String(), "set-gtid-purged") {
+			if resetErr := resetBackupOutputFile(outFile); resetErr != nil {
+				_ = outFile.Close()
+				_ = os.Remove(backupFile)
+				return &TaskResult{
+					Status:    "failed",
+					Progress:  0,
+					Message:   fmt.Sprintf("reset logical backup file failed: %v", resetErr),
+					Timestamp: time.Now(),
+				}, nil
+			}
+			retryArgs := make([]string, 0, len(args)-1)
+			for _, arg := range args {
+				if arg != "--set-gtid-purged=ON" {
+					retryArgs = append(retryArgs, arg)
+				}
+			}
+			stderr, err = runMysqldumpToFile(ctx, outFile, config.MySQLPass, retryArgs)
+		}
+		if err != nil {
 			lastDumpErr = fmt.Sprintf("host=%s: %v\n%s", host, err, strings.TrimSpace(stderr.String()))
 			continue
 		}
@@ -1512,6 +1690,7 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 			Timestamp: time.Now(),
 		}, nil
 	}
+	gtid, gtidErr := parseGTIDFromDump(backupFile)
 	sizeBytes, err := pathSize(backupFile)
 	if err != nil {
 		return &TaskResult{
@@ -1534,6 +1713,9 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 	if reason != "" {
 		msg += ". " + reason
 	}
+	if config.BackupType == "full" && gtidErr != nil {
+		msg += ". GTID was not found in mysqldump; GTID incremental backup will not be available from this full backup"
+	}
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  100,
@@ -1541,12 +1723,75 @@ func (e *TaskExecutor) executeLogicalBackup(ctx context.Context, config BackupCo
 		Timestamp: time.Now(),
 		Data: map[string]any{
 			"backup_path":   backupFile,
-			"backup_type":   "logical",
+			"backup_type":   config.BackupType,
 			"backup_method": "mysqldump",
+			"gtid_purged":   gtid,
+			"gtid_executed": gtid,
 			"file_size":     sizeBytes,
 			"checksum":      checksum,
 		},
 	}, nil
+}
+
+func resetBackupOutputFile(file *os.File) error {
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	_, err := file.Seek(0, 0)
+	return err
+}
+
+func runMysqldumpToFile(ctx context.Context, outFile *os.File, password string, args []string) (bytes.Buffer, error) {
+	cmd := exec.CommandContext(ctx, "mysqldump", args...)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
+	cmd.Stdout = outFile
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	return stderr, cmd.Run()
+}
+
+func parseGTIDFromDump(path string) (string, error) {
+	reader, closeFn, err := openDumpReader(path)
+	if err != nil {
+		return "", err
+	}
+	defer closeFn()
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	re := regexp.MustCompile(`(?i)GTID_PURGED\s*=\s*(?:/\*![0-9]+\s*'\+'\*/\s*)?'([^']+)'`)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(strings.ToUpper(line), "GTID_PURGED") {
+			continue
+		}
+		matches := re.FindStringSubmatch(line)
+		if len(matches) > 1 && strings.TrimSpace(matches[1]) != "" {
+			return strings.TrimSpace(matches[1]), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("GTID_PURGED not found in dump")
+}
+
+func openDumpReader(path string) (io.Reader, func(), error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".gz") {
+		gzReader, err := gzip.NewReader(file)
+		if err != nil {
+			_ = file.Close()
+			return nil, func() {}, err
+		}
+		return gzReader, func() {
+			_ = gzReader.Close()
+			_ = file.Close()
+		}, nil
+	}
+	return file, func() { _ = file.Close() }, nil
 }
 
 func (e *TaskExecutor) ExecuteRestore(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {

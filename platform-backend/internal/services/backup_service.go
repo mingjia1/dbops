@@ -287,6 +287,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		}
 		config["base_backup_path"] = base.FilePath
 		config["base_backup_label"] = base.ID
+		if isLogicalDumpBackupPath(base.FilePath) {
+			config["backup_method"] = "mysqlbinlog"
+		}
 	}
 	out := &BackupTaskResult{
 		InstanceID: req.InstanceID,
@@ -458,6 +461,11 @@ func normalizeBackupAgentStatus(status string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(status))
 	}
+}
+
+func isLogicalDumpBackupPath(path string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(path))
+	return strings.HasSuffix(normalized, ".sql") || strings.HasSuffix(normalized, ".sql.gz")
 }
 
 func (s *BackupService) createRecord(record *models.BackupRecord) error {

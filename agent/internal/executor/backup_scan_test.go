@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"compress/gzip"
 	"context"
 	"os"
 	"path/filepath"
@@ -52,6 +53,46 @@ func TestExecuteBackupScanRecognizesCompleteBackupFilesAndDirs(t *testing.T) {
 	assert.True(t, byName["logical-001.sql.gz"].Complete)
 	_, partialIncluded := byName["full-003.xbstream.partial"]
 	assert.False(t, partialIncluded)
+}
+
+func TestSelectBackupMethodUsesMysqlbinlogForLogicalIncrementalBase(t *testing.T) {
+	executor := NewTaskExecutor()
+
+	method, err := executor.selectBackupMethod(context.Background(), BackupConfig{
+		BackupType:     "incremental",
+		BaseBackupPath: "/backup/mysql/full-001.sql",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "mysqlbinlog", method)
+}
+
+func TestParseGTIDFromDump(t *testing.T) {
+	root := t.TempDir()
+	plain := filepath.Join(root, "full.sql")
+	require.NoError(t, os.WriteFile(plain, []byte("SET @@GLOBAL.GTID_PURGED=/*!80000 '+'*/ 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-42';\n"), 0o644))
+
+	gtid, err := parseGTIDFromDump(plain)
+
+	require.NoError(t, err)
+	assert.Equal(t, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-42", gtid)
+}
+
+func TestParseGTIDFromGzipDump(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "full.sql.gz")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	gz := gzip.NewWriter(file)
+	_, err = gz.Write([]byte("SET @@GLOBAL.GTID_PURGED='uuid:1-100';\n"))
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	require.NoError(t, file.Close())
+
+	gtid, err := parseGTIDFromDump(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, "uuid:1-100", gtid)
 }
 
 func TestExecuteColdDatadirBackupCreatesArchive(t *testing.T) {

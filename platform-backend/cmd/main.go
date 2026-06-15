@@ -391,6 +391,7 @@ func main() {
 				ha.GET("/health/failure-state", healthCheckController.GetFailureState)
 				ha.GET("/health/detect", healthCheckController.DetectFailure)
 				ha.POST("/health/batch", healthCheckController.BatchHealthCheck)
+				ha.POST("/preflight", failoverController.PreflightFailover)
 				// B2: 自动/手动 failover 是最危险操作, 强制 admin.
 				ha.POST("/failover", middleware.RequirePermission("admin"), failoverController.ExecuteAutoFailover)
 				ha.POST("/manual-switch", middleware.RequirePermission("admin"), failoverController.ExecuteManualFailover)

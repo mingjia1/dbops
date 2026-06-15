@@ -535,6 +535,61 @@ func TestExecuteIncrementalBackupUsesFullBackupReturnedAsSuccess(t *testing.T) {
 	assert.Equal(t, "completed", records[1].Status)
 }
 
+func TestExecuteIncrementalBackupUsesMysqlbinlogForLogicalFullBase(t *testing.T) {
+	var calls []backupAgentRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/backup", r.URL.Path)
+		var payload backupAgentRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		calls = append(calls, payload)
+		w.Header().Set("Content-Type", "application/json")
+		if len(calls) == 1 {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-full-logical","status":"completed","progress":100,"message":"full backup ok","data":{"backup_path":"/backup/mysql/full-logical.sql","backup_method":"mysqldump","file_size":1024}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"agent-inc-logical","status":"completed","progress":100,"message":"incremental backup ok","data":{"backup_path":"/backup/mysql/inc-logical.sql","backup_method":"mysqlbinlog","file_size":512}}}`))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	hostAddr, portText, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	agentPort, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	db := newTestDB()
+	defer db.Close()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	hostID := "host-logical-base"
+	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: hostID, Name: "backup-agent", Address: hostAddr, AgentPort: agentPort}))
+	require.NoError(t, instRepo.Create(context.Background(), &models.Instance{ID: "instance-logical-base", Name: "instance-logical-base", HostID: &hostID}))
+	password, _ := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, instRepo.CreateConnection(context.Background(), &models.InstanceConnection{
+		InstanceID:        "instance-logical-base",
+		Host:              "127.0.0.1",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: password,
+	}))
+	service := NewBackupService(hostRepo, instRepo, backupRepo, NewAgentClient(""), "test-encryption-key")
+
+	full, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{InstanceID: "instance-logical-base", BackupType: "full"})
+	require.NoError(t, err)
+	require.NotNil(t, full)
+	assert.Equal(t, "completed", full.Status)
+
+	incremental, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{InstanceID: "instance-logical-base", BackupType: "incremental"})
+	require.NoError(t, err)
+	require.NotNil(t, incremental)
+	assert.Equal(t, "completed", incremental.Status)
+	require.Len(t, calls, 2)
+	assert.Equal(t, "/backup/mysql/full-logical.sql", calls[1].Config["base_backup_path"])
+	assert.Equal(t, "mysqlbinlog", calls[1].Config["backup_method"])
+}
+
 func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) {
 	scanPayload := `{"code":200,"message":"success","data":{"task_id":"scan-001","status":"completed","progress":100,"message":"scan done","data":{"backups":[{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","is_dir":true,"complete":true,"detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"},{"file_name":"full-001","file_path":"/backup/mysql/full-001","size_bytes":2048,"backup_type":"full","is_dir":true,"complete":true,"detected_at":"2026-06-09T10:00:00Z","mtime":"2026-06-09T10:00:00Z"}]}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

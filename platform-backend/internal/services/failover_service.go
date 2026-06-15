@@ -67,6 +67,30 @@ type FailoverResult struct {
 	RebuildReplTime time.Duration `json:"rebuild_repl_time"`
 }
 
+type FailoverPreflightRequest struct {
+	ClusterID      string `json:"cluster_id" binding:"required"`
+	TargetMasterID string `json:"target_master_id"`
+	Force          bool   `json:"force"`
+}
+
+type FailoverPreflightResult struct {
+	ClusterID            string    `json:"cluster_id"`
+	TargetMasterID       string    `json:"target_master_id,omitempty"`
+	CurrentMasterID      string    `json:"current_master_id"`
+	CurrentMasterHealthy bool      `json:"current_master_healthy"`
+	HealthySlaveCount    int       `json:"healthy_slave_count"`
+	SlaveCount           int       `json:"slave_count"`
+	MaxReplicationLag    int       `json:"max_replication_lag"`
+	GTIDConsistent       bool      `json:"gtid_consistent"`
+	TopologyConsistent   bool      `json:"topology_consistent"`
+	RealPrimaryID        string    `json:"real_primary_id,omitempty"`
+	PlatformPrimaryID    string    `json:"platform_primary_id,omitempty"`
+	Pass                 bool      `json:"pass"`
+	BlockingReasons      []string  `json:"blocking_reasons"`
+	Warnings             []string  `json:"warnings"`
+	CheckedAt            time.Time `json:"checked_at"`
+}
+
 type VIPSwitchRequest struct {
 	VIP       string `json:"vip" binding:"required"`
 	Interface string `json:"interface" binding:"required"`
@@ -234,6 +258,116 @@ func (s *FailoverService) ExecuteManualFailover(ctx context.Context, req Failove
 	return s.ExecuteAutoFailover(ctx, req)
 }
 
+func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPreflightRequest) (*FailoverPreflightResult, error) {
+	master, err := s.GetCurrentMaster(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current master: %w", err)
+	}
+	slaves, err := s.GetSlaves(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get slaves: %w", err)
+	}
+
+	result := &FailoverPreflightResult{
+		ClusterID:          req.ClusterID,
+		TargetMasterID:     strings.TrimSpace(req.TargetMasterID),
+		CurrentMasterID:    master.InstanceID,
+		PlatformPrimaryID:  master.InstanceID,
+		SlaveCount:         len(slaves),
+		GTIDConsistent:     true,
+		TopologyConsistent: true,
+		CheckedAt:          time.Now(),
+		BlockingReasons:    []string{},
+		Warnings:           []string{},
+	}
+
+	masterCheck, err := s.healthService.ExecuteHealthCheck(ctx, HealthCheckRequest{
+		InstanceID: master.InstanceID,
+		Config: HealthCheckConfig{
+			CheckTypes: []string{"tcp", "mysql"},
+		},
+	})
+	if err != nil || masterCheck == nil || !masterCheck.IsHealthy {
+		result.CurrentMasterHealthy = false
+		msg := "current master is unhealthy"
+		if err != nil {
+			msg = fmt.Sprintf("%s: %v", msg, err)
+		} else if masterCheck != nil && masterCheck.ErrorMessage != "" {
+			msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
+		}
+		result.BlockingReasons = append(result.BlockingReasons, msg)
+	} else {
+		result.CurrentMasterHealthy = true
+	}
+
+	targetSeen := result.TargetMasterID == ""
+	for _, slave := range slaves {
+		if slave.InstanceID == result.TargetMasterID {
+			targetSeen = true
+		}
+		check, checkErr := s.healthService.ExecuteHealthCheck(ctx, HealthCheckRequest{
+			InstanceID: slave.InstanceID,
+			Config: HealthCheckConfig{
+				CheckTypes: []string{"tcp", "mysql"},
+			},
+		})
+		if checkErr == nil && check != nil && check.IsHealthy {
+			result.HealthySlaveCount++
+		} else {
+			msg := fmt.Sprintf("slave %s is unhealthy", slave.InstanceID)
+			if checkErr != nil {
+				msg = fmt.Sprintf("%s: %v", msg, checkErr)
+			} else if check != nil && check.ErrorMessage != "" {
+				msg = fmt.Sprintf("%s: %s", msg, check.ErrorMessage)
+			}
+			result.Warnings = append(result.Warnings, msg)
+		}
+	}
+	if len(slaves) == 0 {
+		result.BlockingReasons = append(result.BlockingReasons, "no non-primary instance is available")
+	} else if result.HealthySlaveCount == 0 {
+		result.BlockingReasons = append(result.BlockingReasons, "no healthy non-primary instance is available")
+	}
+	if !targetSeen {
+		result.BlockingReasons = append(result.BlockingReasons, "target master must be a non-primary instance in the cluster")
+	}
+
+	instances, err := s.instanceRepo.ListByClusterID(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cluster instances: %w", err)
+	}
+	clusterType := inferFailoverClusterType(instances)
+	if clusterType == "mgr" {
+		realPrimaryID, lag, consistent, warnings := s.inspectMGRPrimary(ctx, instances)
+		result.RealPrimaryID = realPrimaryID
+		result.MaxReplicationLag = lag
+		result.GTIDConsistent = consistent
+		result.Warnings = append(result.Warnings, warnings...)
+		if realPrimaryID == "" {
+			result.TopologyConsistent = false
+			result.BlockingReasons = append(result.BlockingReasons, "failed to determine real MGR primary")
+		} else if realPrimaryID != result.PlatformPrimaryID {
+			result.TopologyConsistent = false
+			result.BlockingReasons = append(result.BlockingReasons, fmt.Sprintf("platform primary %s does not match real MGR primary %s", result.PlatformPrimaryID, realPrimaryID))
+		}
+		if !consistent {
+			result.BlockingReasons = append(result.BlockingReasons, "GTID/applier state is not consistent")
+		}
+	} else {
+		result.MaxReplicationLag = maxStoredReplicationLag(instances)
+	}
+
+	if result.MaxReplicationLag > 30 {
+		result.BlockingReasons = append(result.BlockingReasons, fmt.Sprintf("max replication lag %ds exceeds threshold 30s", result.MaxReplicationLag))
+	}
+
+	result.Pass = len(result.BlockingReasons) == 0
+	if req.Force {
+		result.Pass = true
+	}
+	return result, nil
+}
+
 func prioritizeManualCandidate(newMasterID string, candidates []string) []string {
 	newMasterID = strings.TrimSpace(newMasterID)
 	if newMasterID == "" {
@@ -248,6 +382,99 @@ func prioritizeManualCandidate(newMasterID string, candidates []string) []string
 		out = append(out, id)
 	}
 	return out
+}
+
+func inferFailoverClusterType(instances []*models.Instance) string {
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if v := strings.ToLower(strings.TrimSpace(inst.Topology.ReplicationMode)); v != "" {
+			return v
+		}
+		if v := strings.ToLower(strings.TrimSpace(inst.Status.ReplicationStatus)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func maxStoredReplicationLag(instances []*models.Instance) int {
+	maxLag := 0
+	for _, inst := range instances {
+		if inst != nil && inst.Status.SecondsBehindMaster > maxLag {
+			maxLag = inst.Status.SecondsBehindMaster
+		}
+	}
+	return maxLag
+}
+
+func (s *FailoverService) inspectMGRPrimary(ctx context.Context, instances []*models.Instance) (string, int, bool, []string) {
+	uuidToInstance := make(map[string]string)
+	primaryUUID := ""
+	maxQueue := 0
+	consistent := true
+	warnings := []string{}
+
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		conn, err := s.getInstanceConnection(ctx, inst.ID)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("instance %s connection unavailable: %v", inst.ID, err))
+			consistent = false
+			continue
+		}
+		dsn, err := s.dsnForConnection(conn)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("instance %s DSN unavailable: %v", inst.ID, err))
+			consistent = false
+			continue
+		}
+		db, err := sql.Open("mysql", dsn)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("instance %s open failed: %v", inst.ID, err))
+			consistent = false
+			continue
+		}
+		var serverUUID, nodePrimaryUUID string
+		queryErr := db.QueryRowContext(ctx, "SELECT @@server_uuid, COALESCE((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='group_replication_primary_member'), '')").Scan(&serverUUID, &nodePrimaryUUID)
+		if queryErr != nil {
+			warnings = append(warnings, fmt.Sprintf("instance %s MGR primary query failed: %v", inst.ID, queryErr))
+			consistent = false
+			_ = db.Close()
+			continue
+		}
+		uuidToInstance[strings.TrimSpace(serverUUID)] = inst.ID
+		nodePrimaryUUID = strings.TrimSpace(nodePrimaryUUID)
+		if primaryUUID == "" {
+			primaryUUID = nodePrimaryUUID
+		} else if nodePrimaryUUID != "" && nodePrimaryUUID != primaryUUID {
+			consistent = false
+			warnings = append(warnings, fmt.Sprintf("instance %s reports different primary UUID %s", inst.ID, nodePrimaryUUID))
+		}
+		if queue, err := queryMGRApplyQueue(ctx, db); err == nil && queue > maxQueue {
+			maxQueue = queue
+		}
+		_ = db.Close()
+	}
+
+	realPrimaryID := uuidToInstance[primaryUUID]
+	if primaryUUID != "" && realPrimaryID == "" {
+		consistent = false
+		warnings = append(warnings, fmt.Sprintf("real primary UUID %s is not mapped to a managed instance", primaryUUID))
+	}
+	return realPrimaryID, maxQueue, consistent, warnings
+}
+
+func queryMGRApplyQueue(ctx context.Context, db *sql.DB) (int, error) {
+	var queue sql.NullInt64
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(COUNT_TRANSACTIONS_REMOTE_IN_APPLIER_QUEUE), 0) FROM performance_schema.replication_group_member_stats").Scan(&queue)
+	if err != nil || !queue.Valid {
+		return 0, err
+	}
+	return int(queue.Int64), nil
 }
 
 func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string) (*MasterInfo, error) {

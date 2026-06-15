@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Alert,
   Button,
   Card,
   Col,
+  Collapse,
   Empty,
   Form,
   Input,
@@ -34,6 +34,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { envCheckApi, hostApi, type Host } from '../services/api'
 
 interface CheckItem {
+  host?: string
   category: string
   name: string
   status: string
@@ -230,6 +231,35 @@ const EnvironmentCheck: React.FC = () => {
   const passed = result?.results.filter((item) => item.passed).length || 0
   const failed = total - passed
   const score = total > 0 ? Math.round((passed / total) * 100) : 0
+  const groupedResults = result?.results.reduce<Record<string, CheckItem[]>>((acc, item) => {
+    const host = item.host || 'unknown'
+    if (!acc[host]) acc[host] = []
+    acc[host].push(item)
+    return acc
+  }, {}) || {}
+  const failedHosts = Object.entries(groupedResults)
+    .filter(([, items]) => items.some((item) => !item.passed))
+    .map(([host]) => host)
+  const hostPanels = Object.entries(groupedResults).map(([host, items]) => {
+    const abnormalCount = items.filter((item) => !item.passed).length
+    return {
+      key: host,
+      label: (
+        <Space>
+          <span>{host}</span>
+          <Tag color={abnormalCount > 0 ? 'error' : 'success'}>异常 {abnormalCount}</Tag>
+        </Space>
+      ),
+      children: (
+        <Table
+          columns={columns}
+          dataSource={items.map((item, index) => ({ ...item, key: `${host}-${item.category}-${item.name}-${index}` }))}
+          pagination={false}
+          size="small"
+        />
+      ),
+    }
+  })
 
   return (
     <div style={{ padding: 24 }}>
@@ -338,12 +368,7 @@ const EnvironmentCheck: React.FC = () => {
           </Card>
 
           <Card style={{ marginTop: 16 }} title="检查结果明细">
-            <Table
-              columns={columns}
-              dataSource={result.results.map((item, index) => ({ ...item, key: `${item.category}-${item.name}-${index}` }))}
-              pagination={false}
-              size="small"
-            />
+            <Collapse items={hostPanels} defaultActiveKey={failedHosts} />
           </Card>
         </>
       )}

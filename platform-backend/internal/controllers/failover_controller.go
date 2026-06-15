@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
@@ -51,6 +52,22 @@ func (c *FailoverController) ExecuteManualFailover(ctx *gin.Context) {
 	result, err := c.service.ExecuteManualFailover(ctx.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to execute manual failover", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
+func (c *FailoverController) PreflightFailover(ctx *gin.Context) {
+	var req services.FailoverPreflightRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.PreflightFailover(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to execute preflight check", err)
 		return
 	}
 

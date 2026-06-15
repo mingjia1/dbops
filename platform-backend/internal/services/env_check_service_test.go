@@ -102,11 +102,19 @@ func TestEnvironmentCheck_GetByID(t *testing.T) {
 
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
-	result, err := service.GetByID(ctx, "check-001")
+	created, err := service.Execute(ctx, EnvironmentCheckRequest{
+		Hosts: []HostConfig{
+			{Host: "127.0.0.1", Port: 1, Username: "root", Password: "password"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	result, err := service.GetByID(ctx, created.CheckID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "check-001", result.CheckID)
+	assert.Equal(t, created.CheckID, result.CheckID)
 	assert.Equal(t, "completed", result.Status)
 }
 

@@ -52,6 +52,7 @@ type EnvironmentCheckResult struct {
 }
 
 type CheckResult struct {
+	Host       string `json:"host,omitempty"`
 	Category   string `json:"category"`
 	Name       string `json:"name"`
 	Status     string `json:"status"`
@@ -74,15 +75,18 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	}
 
 	for _, host := range hosts {
+		hostLabel := host.Host
 		agentPort := host.AgentPort
 		if agentPort == 0 {
 			agentPort = 9090
 		}
 		agentResult := s.checkHost(host)
+		annotateCheckHost(agentResult, hostLabel)
 		result.Results = append(result.Results, agentResult...)
 
 		if s.agentClient == nil {
 			result.Results = append(result.Results, CheckResult{
+				Host:       hostLabel,
 				Category:   "agent",
 				Name:       "agent_connectivity",
 				Status:     "failed",
@@ -96,6 +100,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 		healthResult, err := s.agentClient.ExecuteHealthCheck(ctx, host.Host, agentPort, "")
 		if err != nil {
 			result.Results = append(result.Results, CheckResult{
+				Host:       hostLabel,
 				Category:   "agent",
 				Name:       "agent_connectivity",
 				Status:     "failed",
@@ -107,6 +112,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 		}
 
 		result.Results = append(result.Results, CheckResult{
+			Host:       hostLabel,
 			Category:   "agent",
 			Name:       "agent_connectivity",
 			Status:     "passed",
@@ -115,7 +121,9 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 			Suggestion: "",
 		})
 		result.Results = removeAgentCollectedPlaceholders(result.Results)
-		result.Results = append(result.Results, agentSystemResults(healthResult.Data)...)
+		systemResults := agentSystemResults(healthResult.Data)
+		annotateCheckHost(systemResults, hostLabel)
+		result.Results = append(result.Results, systemResults...)
 	}
 
 	result.Status = "completed"
@@ -123,6 +131,14 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	s.results[result.CheckID] = result
 	s.resultsMu.Unlock()
 	return result, nil
+}
+
+func annotateCheckHost(results []CheckResult, host string) {
+	for i := range results {
+		if results[i].Host == "" {
+			results[i].Host = host
+		}
+	}
 }
 
 func (s *EnvironmentCheckService) resolveHosts(ctx context.Context, req EnvironmentCheckRequest) ([]HostConfig, error) {

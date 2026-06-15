@@ -566,20 +566,21 @@ const BackupManage: React.FC = () => {
           <Button key="close" onClick={() => setScanOpen(false)}>关闭</Button>,
           <Button key="scan" icon={<ScanOutlined />} onClick={scanBackups} loading={scanLoading}>重新扫描</Button>,
         ]}
-        width={860}
+        width="min(1040px, 96vw)"
       >
         {scannedAt && <div style={{ marginBottom: 8, color: '#8c8c8c' }}>扫描时间: {new Date(scannedAt).toLocaleString()}</div>}
         <Table
           rowKey="file_path"
           size="small"
           pagination={{ pageSize: 10 }}
+          scroll={{ x: 920 }}
           dataSource={discovered}
           columns={[
-            { title: '文件', dataIndex: 'file_name', key: 'file_name', render: (name) => <Tag color="blue">{name}</Tag> },
-            { title: '类型', dataIndex: 'backup_type', key: 'backup_type', render: (type) => <BackupTypeTag type={type} /> },
-            { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', render: formatSize },
-            { title: '路径', dataIndex: 'file_path', key: 'file_path', render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace' }}>{path}</span></Tooltip> },
-            { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
+            { title: '文件', dataIndex: 'file_name', key: 'file_name', width: 180, ellipsis: true, render: (name) => <Tag color="blue">{name}</Tag> },
+            { title: '类型', dataIndex: 'backup_type', key: 'backup_type', width: 100, render: (type) => <BackupTypeTag type={type} /> },
+            { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', width: 110, render: formatSize },
+            { title: '路径', dataIndex: 'file_path', key: 'file_path', width: 420, ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', display: 'inline-block', maxWidth: 390, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'bottom' }}>{path}</span></Tooltip> },
+            { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', width: 120, render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
           ]}
         />
       </Modal>

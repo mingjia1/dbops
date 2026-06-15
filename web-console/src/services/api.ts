@@ -798,6 +798,7 @@ export const haApi = {
   healthCheck: (data: any) => api.post('/ha/health/batch', data),
   detectFailure: (instanceId: string) => api.get(`/ha/health/detect?instance_id=${instanceId}`),
   getFailureState: (instanceId: string) => api.get(`/ha/health/failure-state?instance_id=${instanceId}`),
+  preflight: (data: any) => api.post('/ha/preflight', data).then(rejectBusinessError),
   autoFailover: (data: any) => api.post('/ha/failover', data).then(rejectBusinessError).then(rejectFailedTaskData),
   manualSwitch: (data: any) => api.post('/ha/manual-switch', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (clusterId: string, limit = 10) =>
