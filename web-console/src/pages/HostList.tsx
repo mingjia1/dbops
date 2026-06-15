@@ -1,19 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Button, Card, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
-import { DatabaseOutlined, DesktopOutlined, PlusOutlined, ReloadOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Link, useNavigate } from 'react-router-dom'
+import { Button, Card, Dropdown, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
+import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import type { MenuProps } from 'antd'
 import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
 
 const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
 const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
-}
-
-const isSuccessfulAgentStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
 }
 
 const summarizeAgentRows = (rows: any[]) =>
@@ -138,17 +134,6 @@ const HostList: React.FC = () => {
     }
   }
 
-  const handleBatchScan = async () => {
-    const selected = hosts.filter((h) => selectedRowKeys.includes(h.id))
-    if (selected.length === 0) {
-      message.warning('请先选择主机')
-      return
-    }
-    for (const host of selected) {
-      await handleScan(host)
-    }
-  }
-
   const handleBatchTest = async () => {
     const selected = hosts.filter((h) => selectedRowKeys.includes(h.id))
     if (selected.length === 0) {
@@ -192,36 +177,6 @@ const HostList: React.FC = () => {
     }
     fetchHosts()
   }
-  const handleAgentAction = async (host: Host, action: string) => {
-    if (longRunningAgentActions.has(action)) {
-      const res: any = await hostApi.batchAgentAction([host.id], action, true)
-      const rows = res?.data?.rows || []
-      const failedRows = rows.filter((row: any) => isFailedAgentStatus(row?.status))
-      if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
-        Modal.error({
-          title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
-          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : rows)}</div>,
-        })
-      } else {
-        Modal.info({
-          title: `Agent ${action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
-          content: rows?.[0]?.message || '\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u8be5 Agent \u64cd\u4f5c\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0\u72b6\u6001\u3002',
-        })
-      }
-      fetchHosts()
-      return
-    }
-    const res: any = await hostApi.agentAction(host.id, action)
-    const data = res?.data
-    if (isSuccessfulAgentStatus(data?.status)) {
-      message.success(data.message || `Agent ${action} \u64cd\u4f5c\u5b8c\u6210`)
-    } else {
-      Modal.error({
-        title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
-        content: data?.message || `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
-      })
-    }
-  }
   const submitBatchCreate = async () => {
     const values = await batchForm.validateFields()
     const parsed = parseBatchHosts(values.hosts)
@@ -254,6 +209,37 @@ const HostList: React.FC = () => {
     }
   }
 
+  const handleBatchDeployFromHosts = async () => {
+    const selected = hosts.filter((h) => selectedRowKeys.includes(h.id))
+    if (selected.length === 0) {
+      message.warning('请先选择主机')
+      return
+    }
+    let deployed = 0
+    for (const host of selected) {
+      try {
+        const res: any = await instanceApi.listByHost(host.id, 1000, 0)
+        const instances = res.data || []
+        for (const inst of instances) {
+          try {
+            await instanceApi.deploy(inst.id)
+            deployed += 1
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+    if (deployed > 0) message.success(`已提交 ${deployed} 个 MySQL 实例部署任务`)
+    else message.warning('所选主机无实例可部署')
+  }
+
+  const agentMenuItems: MenuProps['items'] = [
+    { key: 'install', label: '批量安装Agent' },
+    { key: 'update', label: '批量更新Agent' },
+    { key: 'stop', label: '批量停止Agent' },
+    { key: 'start', label: '批量启动Agent' },
+    { key: 'status', label: '批量检查状态' },
+  ]
+
   const handleDelete = async (id: string) => {
     try {
       await hostApi.delete(id)
@@ -265,7 +251,7 @@ const HostList: React.FC = () => {
   }
 
   const columns: ColumnsType<Host> = [
-    { title: '主机名称', dataIndex: 'name', key: 'name' },
+    { title: '主机名称', key: 'name', render: (_, r) => <Link to={`/dashboard/hosts/${r.id}`}>{r.name}</Link> },
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: '操作系统', dataIndex: 'os_type', key: 'os_type', render: (os) => os?.toUpperCase() || '-' },
@@ -302,9 +288,7 @@ const HostList: React.FC = () => {
       width: 300,
       render: (_, r) => (
         <Space>
-          <Button type="link" size="small" onClick={() => navigate(`/dashboard/hosts/${r.id}`)}>详情</Button>
           <Button type="link" size="small" icon={<ScanOutlined />} loading={!!scanningHosts[r.id]} onClick={() => handleScan(r)}>扫描实例</Button>
-          <Button type="link" size="small" onClick={() => handleAgentAction(r, 'install')}>安装Agent</Button>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances?host_id=${r.id}`)}>管理实例</Button>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/hosts/${r.id}/edit`)}>编辑</Button>
           <Popconfirm title="确定删除该主机？" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
@@ -322,10 +306,10 @@ const HostList: React.FC = () => {
         extra={
           <Space>
             <Button icon={<ThunderboltOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchTest}>批量检测</Button>
-            <Button icon={<ScanOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchScan}>一键扫描实例</Button>
-            <Button disabled={selectedRowKeys.length === 0} onClick={() => handleBatchAgent('install')}>批量安装Agent</Button>
-            <Button disabled={selectedRowKeys.length === 0} onClick={() => handleBatchAgent('update')}>批量更新Agent</Button>
-            <Button disabled={selectedRowKeys.length === 0} onClick={() => handleBatchAgent('stop')}>批量停止Agent</Button>
+            <Button icon={<RocketOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchDeployFromHosts}>部署MySQL</Button>
+            <Dropdown menu={{ items: agentMenuItems, onClick: ({ key }) => handleBatchAgent(key) }} disabled={selectedRowKeys.length === 0}>
+              <Button disabled={selectedRowKeys.length === 0}>Agent 操作 <DownOutlined /></Button>
+            </Dropdown>
             <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
             <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/dashboard/hosts/new')}>添加主机</Button>

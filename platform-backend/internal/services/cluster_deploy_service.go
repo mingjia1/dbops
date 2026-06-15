@@ -488,6 +488,20 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			CreatedAt:    deployment.CreatedAt,
 		}, nil
 	}
+	// Update stored passwords for all managed instances with the deployed MySQL password
+	if req.MySQLPassword != "" {
+		for _, node := range allHosts {
+			inst, findErr := s.findInstanceByEndpoint(ctx, node.Host, node.Port)
+			if findErr == nil {
+				enc, encErr := utils.Encrypt(req.MySQLPassword, s.encKey)
+				if encErr == nil {
+					if updateErr := s.instRepo.UpdateConnectionPassword(ctx, inst.ID, enc); updateErr != nil {
+						log.Printf("WARN: failed to update stored password for instance %s: %v", inst.ID, updateErr)
+					}
+				}
+			}
+		}
+	}
 	s.repo.UpdateStatus(ctx, deployment.ID, "completed")
 	s.updateStepStatus(deployment.ID, "MGR 集群状态验证", "completed", "MGR 集群验证通过")
 	s.updateProgress(deployment.ID, "集群验证", "MGR 集群部署完成", 100)

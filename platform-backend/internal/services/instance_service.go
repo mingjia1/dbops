@@ -789,10 +789,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err := validateInstanceAdminMetadata(conn, req); err != nil {
 		return failedInstanceAdminResult(err.Error()), nil
 	}
-	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
-	}
+
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
 	if err != nil {
 		return nil, err
@@ -801,6 +798,44 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 
 	if s.agentClient == nil {
 		return failedInstanceAdminResult("agent client not configured"), nil
+	}
+
+	// For change_password, try multiple password candidates to handle stored/actual mismatch
+	if req.Action == "change_password" {
+		candidates := s.passwordCandidates(conn, "")
+		var lastResult *InstanceAdminResult
+		var lastErr error
+		for _, candidate := range candidates {
+			original := conn.PasswordEncrypted
+			conn.PasswordEncrypted, _ = utils.Encrypt(candidate, s.encKey)
+			result, adminErr := s.adminActionWithConnection(ctx, instance, conn, req)
+			conn.PasswordEncrypted = original
+			if adminErr == nil && result.Status == "completed" {
+				lastResult = result
+				lastErr = nil
+				break
+			}
+			lastResult = result
+			lastErr = adminErr
+		}
+		if lastErr != nil {
+			return failedInstanceAdminResult("instance admin call failed: " + lastErr.Error()), nil
+		}
+		if lastResult == nil || lastResult.Status != "completed" {
+			return failedInstanceAdminResult("failed to connect to MySQL with any known password"), nil
+		}
+		if req.UpdateStoredPassword && req.Username == conn.Username && req.Password != "" {
+			enc, encErr := utils.Encrypt(req.Password, s.encKey)
+			if encErr == nil {
+				_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
+			}
+		}
+		return lastResult, nil
+	}
+
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
 	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id":     "instance-admin-" + uuid.New().String(),

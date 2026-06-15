@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Alert, Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd'
-import { CheckCircleOutlined, DatabaseOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined } from '@ant-design/icons'
+import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd'
+import { CheckCircleOutlined, DatabaseOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
@@ -166,25 +166,6 @@ const InstanceList: React.FC = () => {
     }
   }
 
-  const handleBatchDeploy = async () => {
-    const selected = instances.filter((item) => selectedRowKeys.includes(item.id))
-    if (selected.length === 0) {
-      message.warning('请先选择实例')
-      return
-    }
-    let submitted = 0
-    for (const instance of selected) {
-      try {
-        await instanceApi.deploy(instance.id)
-        submitted += 1
-      } catch {
-        // interceptor already showed error
-      }
-    }
-    if (submitted === selected.length) message.success(`已提交 ${submitted} 个 MySQL 实例部署任务`)
-    else message.warning(`部署任务提交完成，成功 ${submitted} 个，失败 ${selected.length - submitted} 个`)
-  }
-
   const handleBatchHealthCheck = async () => {
     const selected = instances.filter((item) => selectedRowKeys.includes(item.id))
     if (selected.length === 0) {
@@ -279,8 +260,6 @@ const InstanceList: React.FC = () => {
     },
   ]
 
-  const presetHostObj = hosts.find((h) => h.id === presetHost)
-
   return (
     <div style={{ padding: 24 }}>
       <Card
@@ -297,7 +276,6 @@ const InstanceList: React.FC = () => {
             />
             <Button icon={<ScanOutlined />} onClick={handleScanHost} disabled={!hostFilter}>扫描该主机</Button>
             <Button icon={<CheckCircleOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchHealthCheck}>一键检测选中</Button>
-            <Button icon={<RocketOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchDeploy}>部署 MySQL 实例</Button>
             <Button icon={<ReloadOutlined />} onClick={fetchInstances}>刷新</Button>
             <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加实例</Button>
