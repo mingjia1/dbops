@@ -114,13 +114,21 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	}
 
 	user, err := s.userRepo.GetByUsername(ctx, req.Username)
-	if err != nil || user == nil {
+	if err != nil {
+		fmt.Printf("[DEBUG] GetByUsername error: %v\n", err)
+		return nil, errors.New("invalid credentials")
+	}
+	if user == nil {
+		fmt.Printf("[DEBUG] User not found: %s\n", req.Username)
 		return nil, errors.New("invalid credentials")
 	}
 
+	fmt.Printf("[DEBUG] User found: %s, hash: %s\n", user.Username, user.Password[:20])
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		fmt.Printf("[DEBUG] Password compare failed: %v\n", err)
 		return nil, errors.New("invalid credentials")
 	}
+	fmt.Printf("[DEBUG] Password verified successfully\n")
 
 	if user.Status != "active" {
 		return nil, errors.New("user account is not active")

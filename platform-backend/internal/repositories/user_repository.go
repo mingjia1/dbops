@@ -45,14 +45,18 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 		FROM users WHERE username = ?
 	`
 	user := &models.User{}
+	var email sql.NullString
 	var updatedAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, username).Scan(
-		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
+		&user.ID, &user.Username, &user.Password, &email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if email.Valid {
+		user.Email = email.String
 	}
 	if updatedAt.Valid {
 		user.UpdatedAt = updatedAt.Time
@@ -69,14 +73,18 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 		FROM users WHERE id = ?
 	`
 	user := &models.User{}
+	var email sql.NullString
 	var updatedAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
-		&user.ID, &user.Username, &user.Password, &user.Email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
+		&user.ID, &user.Username, &user.Password, &email, &user.Role, &user.Status, &user.CreatedAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if email.Valid {
+		user.Email = email.String
 	}
 	if updatedAt.Valid {
 		user.UpdatedAt = updatedAt.Time
@@ -101,9 +109,13 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]models.
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
+		var email sql.NullString
 		var updatedAt sql.NullTime
-		if err := rows.Scan(&u.ID, &u.Username, &u.Password, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &updatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Password, &email, &u.Role, &u.Status, &u.CreatedAt, &updatedAt); err != nil {
 			return nil, err
+		}
+		if email.Valid {
+			u.Email = email.String
 		}
 		if updatedAt.Valid {
 			u.UpdatedAt = updatedAt.Time
