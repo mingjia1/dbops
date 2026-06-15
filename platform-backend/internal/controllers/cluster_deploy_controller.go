@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -119,6 +120,11 @@ func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			utils.NotFoundResponse(ctx, "Deployment not found")
+			return
+		}
+		var destroyErr *services.ClusterDestroyOperationError
+		if errors.As(err, &destroyErr) {
+			utils.ErrorResponse(ctx, 409, err.Error(), err)
 			return
 		}
 		utils.InternalServerErrorResponse(ctx, "Failed to destroy cluster deployment", err)

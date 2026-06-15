@@ -193,6 +193,33 @@ func TestDestroyClusterWithNoManagedInstancesDestroysMetadata(t *testing.T) {
 	require.Equal(t, "success", logs[0].Result)
 }
 
+func TestDestroyClusterResolvesDeploymentByName(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "user_id", "deploy-auditor-003")
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	backupSvc := &BackupService{}
+	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+	service.SetBackupService(backupSvc)
+
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          "destroy-by-name-id",
+		ClusterType: "ha",
+		Name:        "ha57-for-mha-20260610-v1",
+		Status:      "completed",
+	}))
+
+	resp, err := service.DestroyCluster(ctx, "ha57-for-mha-20260610-v1")
+
+	require.NoError(t, err)
+	require.Equal(t, "destroy-by-name-id", resp.DeploymentID)
+	require.Equal(t, "destroyed", resp.Status)
+	updated, err := clusterRepo.GetByID(ctx, "destroy-by-name-id")
+	require.NoError(t, err)
+	require.Equal(t, "destroyed", updated.Status)
+}
+
 func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "destroy-user")
 	db := newTestDB()
@@ -224,6 +251,10 @@ func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
 	_, err := service.DestroyCluster(ctx, "ha-cluster-001")
 
 	require.Error(t, err)
+	var destroyErr *ClusterDestroyOperationError
+	require.ErrorAs(t, err, &destroyErr)
+	require.Equal(t, "ha-cluster-001", destroyErr.ClusterID)
+	require.Equal(t, "inst-001", destroyErr.InstanceID)
 	require.Contains(t, err.Error(), "backup service is required")
 }
 

@@ -71,6 +71,13 @@ func (r *ClusterDeployRepository) GetByID(ctx context.Context, id string) (*mode
 	return r.getByIDInDB(ctx, id)
 }
 
+func (r *ClusterDeployRepository) GetByName(ctx context.Context, name string) (*models.ClusterDeployment, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	return r.getByNameInDB(ctx, name)
+}
+
 func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) ([]models.ClusterDeployment, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not available")
@@ -119,6 +126,19 @@ func (r *ClusterDeployRepository) getByIDInDB(ctx context.Context, id string) (*
 			return nil, fmt.Errorf("deployment not found")
 		}
 		return nil, fmt.Errorf("failed to get deployment: %w", err)
+	}
+	return dep, nil
+}
+
+func (r *ClusterDeployRepository) getByNameInDB(ctx context.Context, name string) (*models.ClusterDeployment, error) {
+	query := `SELECT id, cluster_type, name, status, created_at, updated_at FROM cluster_deployments WHERE name = ? ORDER BY created_at DESC LIMIT 1`
+	dep := &models.ClusterDeployment{}
+	err := r.db.Pool.QueryRowContext(ctx, query, name).Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status, &dep.CreatedAt, &dep.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("deployment not found")
+		}
+		return nil, fmt.Errorf("failed to get deployment by name: %w", err)
 	}
 	return dep, nil
 }

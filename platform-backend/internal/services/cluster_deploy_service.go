@@ -29,6 +29,40 @@ type ClusterDeployService struct {
 	progress    map[string]*DeploymentProgress
 }
 
+type ClusterDestroyOperationError struct {
+	ClusterID  string
+	InstanceID string
+	Stage      string
+	Err        error
+}
+
+func (e *ClusterDestroyOperationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := []string{"destroy cluster failed"}
+	if e.ClusterID != "" {
+		parts = append(parts, "cluster="+e.ClusterID)
+	}
+	if e.InstanceID != "" {
+		parts = append(parts, "instance="+e.InstanceID)
+	}
+	if e.Stage != "" {
+		parts = append(parts, "stage="+e.Stage)
+	}
+	if e.Err != nil {
+		parts = append(parts, "error="+e.Err.Error())
+	}
+	return strings.Join(parts, " ")
+}
+
+func (e *ClusterDestroyOperationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 type DeploymentProgress struct {
 	Stage    string
 	Progress int
@@ -985,24 +1019,24 @@ func deploymentFallbackProgress(clusterType, status string) (string, int, string
 
 func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID string) (resp *DeployResponse, err error) {
 	defer func() { s.auditDeployment(ctx, "destroy_cluster", "", clusterID, "", resp, err) }()
-	dep, err := s.repo.GetByID(ctx, clusterID)
+	dep, err := s.resolveDeploymentForDestroy(ctx, clusterID)
 	if err != nil {
 		return nil, err
 	}
-	nodes := s.deploymentNodes(ctx, clusterID)
-	decommissioned, err := s.decommissionClusterInstances(ctx, clusterID)
+	nodes := s.deploymentNodes(ctx, dep.ID)
+	decommissioned, err := s.decommissionClusterInstances(ctx, dep.ID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.clearDestroyedClusterManagement(ctx, clusterID); err != nil {
+	if err := s.clearDestroyedClusterManagement(ctx, dep.ID); err != nil {
 		return nil, err
 	}
-	if err := s.repo.UpdateStatus(ctx, clusterID, "destroyed"); err != nil {
+	if err := s.repo.UpdateStatus(ctx, dep.ID, "destroyed"); err != nil {
 		return nil, err
 	}
-	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", clusterID)
+	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", dep.ID)
 	if decommissioned == 0 {
-		message = fmt.Sprintf("Cluster %s deployment metadata destroyed; no managed instances were found to back up or decommission", clusterID)
+		message = fmt.Sprintf("Cluster %s deployment metadata destroyed; no managed instances were found to back up or decommission", dep.ID)
 	}
 	return &DeployResponse{
 		DeploymentID: dep.ID,
@@ -1013,6 +1047,24 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}, nil
+}
+
+func (s *ClusterDeployService) resolveDeploymentForDestroy(ctx context.Context, requestedIDOrName string) (*models.ClusterDeployment, error) {
+	dep, err := s.repo.GetByID(ctx, requestedIDOrName)
+	if err == nil {
+		return dep, nil
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+		return nil, err
+	}
+	byName, nameErr := s.repo.GetByName(ctx, requestedIDOrName)
+	if nameErr == nil {
+		return byName, nil
+	}
+	if strings.Contains(strings.ToLower(nameErr.Error()), "not found") {
+		return nil, err
+	}
+	return nil, nameErr
 }
 
 func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string) (int, error) {
@@ -1028,7 +1080,12 @@ func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context,
 			continue
 		}
 		if err := s.backupAndDecommissionClusterInstance(ctx, inst.ID); err != nil {
-			return 0, fmt.Errorf("decommission cluster instance %s failed: %w", inst.ID, err)
+			return 0, &ClusterDestroyOperationError{
+				ClusterID:  clusterID,
+				InstanceID: inst.ID,
+				Stage:      "backup_and_decommission",
+				Err:        err,
+			}
 		}
 	}
 	return len(instances), nil
@@ -1932,7 +1989,7 @@ type ConflictCheckResult struct {
 }
 
 type ConflictDetail struct {
-	Type      string `json:"type"`      // "port" or "datadir"
+	Type      string `json:"type"` // "port" or "datadir"
 	Host      string `json:"host"`
 	Resource  string `json:"resource"`  // 端口号或路径
 	Conflict  string `json:"conflict"`  // 冲突的实例信息
