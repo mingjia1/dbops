@@ -98,6 +98,30 @@ func TestProcessMatchesDatadirAllowsProcessCWD(t *testing.T) {
 	require.True(t, processMatchesDatadir(os.Getpid(), datadir))
 }
 
+func TestInstancePIDReadsMysqldPIDFile(t *testing.T) {
+	datadir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(datadir, "mysqld.pid"), []byte("12345"), 0o644))
+
+	pid, ok := instancePID(datadir)
+	require.True(t, ok)
+	assert.Equal(t, 12345, pid)
+}
+
+func TestFindProcessByDatadirUsesProcCmdlineOrCWD(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("process matching uses /proc")
+	}
+	datadir := t.TempDir()
+	oldwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(datadir))
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	pid, ok := findProcessByDatadir(datadir)
+	require.True(t, ok)
+	assert.Equal(t, os.Getpid(), pid)
+}
+
 func TestExecuteInstanceAdminDecommissionRemovesSafeDatadir(t *testing.T) {
 	executor := NewTaskExecutor()
 	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")

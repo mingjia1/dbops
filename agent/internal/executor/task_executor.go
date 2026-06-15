@@ -3188,6 +3188,9 @@ func decommissionInstance(ctx context.Context, config map[string]interface{}) (s
 		}
 		return stopOutput, fmt.Errorf("verify datadir removal failed: %w", err)
 	}
+	if pid, ok := findProcessByDatadir(datadir); ok {
+		return stopOutput, fmt.Errorf("mysqld process still references removed datadir %s: pid=%d", datadir, pid)
+	}
 	return strings.TrimSpace(stopOutput + "\nremoved datadir=" + datadir), nil
 }
 
@@ -3219,15 +3222,17 @@ func validateDecommissionDatadir(datadir string) error {
 }
 
 func instancePID(datadir string) (int, bool) {
-	raw, err := os.ReadFile(filepath.Join(datadir, "mysql.pid"))
-	if err != nil {
-		return 0, false
+	for _, name := range []string{"mysql.pid", "mysqld.pid"} {
+		raw, err := os.ReadFile(filepath.Join(datadir, name))
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err == nil && pid > 0 {
+			return pid, true
+		}
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	return pid, true
+	return findProcessByDatadir(datadir)
 }
 
 func processMatchesDatadir(pid int, datadir string) bool {
@@ -3271,6 +3276,29 @@ func stopInstanceProcess(ctx context.Context, datadir string) (string, error) {
 		return string(out), err
 	}
 	return fmt.Sprintf("killed pid=%d datadir=%s", pid, datadir), nil
+}
+
+func findProcessByDatadir(datadir string) (int, bool) {
+	if datadir == "" {
+		return 0, false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if processMatchesDatadir(pid, datadir) {
+			return pid, true
+		}
+	}
+	return 0, false
 }
 
 func processExists(pid int) bool {
