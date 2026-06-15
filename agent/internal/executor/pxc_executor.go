@@ -364,8 +364,20 @@ wait_dpkg_lock() {
     fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>&1 || true
     return 1
   fi
-  dpkg --configure -a || true
+  mkdir -p /etc/mysql/conf.d /etc/mysql/mysql.conf.d
+  dpkg --force-confdef --force-confold --configure -a || true
   return 0
+}
+remove_broken_system_mysql_packages() {
+  for pkg in mysql-server-8.0 mysql-server mysql-community-server; do
+    status=$(dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null || true)
+    case "$status" in
+      iF*|iH*|iU*|*R*)
+        echo "removing broken system MySQL package $pkg (status=$status)"
+        timeout 120s dpkg --remove --force-depends --force-remove-reinstreq "$pkg" >/dev/null 2>&1 || true
+        ;;
+    esac
+  done
 }
 apt_install_base_tools() {
   timeout 180s apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y wget gnupg2 lsb-release curl debconf-utils || true
@@ -380,7 +392,11 @@ apt_install_base_tools() {
   echo "base apt tools are ready"
 }
 apt_install_pxc_tools() {
-  timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" install -y percona-xtrabackup-80 qpress socat || {
+  timeout 180s apt-get \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    -o Dpkg::Options::="--force-overwrite" \
+    install -y percona-xtrabackup-80 qpress socat || {
     command -v xtrabackup >/dev/null 2>&1 &&
     command -v qpress >/dev/null 2>&1 &&
     command -v socat >/dev/null 2>&1
@@ -434,8 +450,14 @@ disable_expired_mysql_repo_lists
 timeout 180s apt-get update
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
-dpkg --configure -a || true
-timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+remove_broken_system_mysql_packages
+mkdir -p /etc/mysql/conf.d /etc/mysql/mysql.conf.d
+timeout 180s dpkg --force-confdef --force-confold --configure -a || true
+timeout 180s apt-get \
+  -o Dpkg::Options::="--force-confdef" \
+  -o Dpkg::Options::="--force-confold" \
+  -o Dpkg::Options::="--force-overwrite" \
+  -f install -y
 wait_dpkg_lock
 apt_install_base_tools
 if command -v percona-release >/dev/null 2>&1; then
@@ -448,8 +470,14 @@ timeout 180s apt-get update
 show_pxc_apt_packages
 wait_dpkg_lock
 dpkg --remove --force-depends --force-remove-reinstreq percona-xtradb-cluster percona-xtradb-cluster-server >/dev/null 2>&1 || true
-dpkg --configure -a || true
-timeout 180s apt-get -o Dpkg::Options::="--force-overwrite" -f install -y
+remove_broken_system_mysql_packages
+mkdir -p /etc/mysql/conf.d /etc/mysql/mysql.conf.d
+timeout 180s dpkg --force-confdef --force-confold --configure -a || true
+timeout 180s apt-get \
+  -o Dpkg::Options::="--force-confdef" \
+  -o Dpkg::Options::="--force-confold" \
+  -o Dpkg::Options::="--force-overwrite" \
+  -f install -y
 wait_dpkg_lock
 apt_install_pxc_tools
 download_pxc_payload
