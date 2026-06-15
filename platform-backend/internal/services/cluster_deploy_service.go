@@ -690,14 +690,20 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"instance_id": "",
 			"config":      joinConfig,
 		})
-		if err != nil || isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
-			s.updateStepStatus(deployment.ID, nodeName, "failed", "节点加入失败")
-			s.repo.UpdateStatus(ctx, deployment.ID, "partial")
-			msg := "PXC cluster partially deployed (bootstrap OK, some nodes failed)"
-			if err != nil {
-				msg = fmt.Sprintf("%s: %v", msg, err)
-			}
-			return &DeployResponse{
+			if err != nil || isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+				nodeMessage := "节点加入失败"
+				if err != nil {
+					nodeMessage = fmt.Sprintf("%s: %v", nodeMessage, err)
+				} else if result.Message != "" {
+					nodeMessage = fmt.Sprintf("%s: %s", nodeMessage, result.Message)
+				}
+				s.updateStepStatus(deployment.ID, nodeName, "failed", nodeMessage)
+				s.repo.UpdateStatus(ctx, deployment.ID, "partial")
+				msg := "PXC cluster partially deployed (bootstrap OK, some nodes failed)"
+				if nodeMessage != "" {
+					msg = fmt.Sprintf("%s: %s", msg, nodeMessage)
+				}
+				return &DeployResponse{
 				DeploymentID: deployment.ID,
 				ClusterType:  "pxc",
 				Name:         req.Name,

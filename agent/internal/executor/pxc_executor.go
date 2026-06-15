@@ -667,7 +667,7 @@ func startStandalonePXC(ctx context.Context, config PXCConfig) error {
 
 func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 	socket := filepathJoin(config.DataDir, "mysql.sock")
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
 		for _, pass := range []string{config.MySQLPassword, ""} {
 			pingCmd := exec.CommandContext(ctx, pxcMysqladminPath(), "--socket", socket, "-u", "root", "ping")
@@ -695,7 +695,25 @@ func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 		case <-time.After(3 * time.Second):
 		}
 	}
-	return fmt.Errorf("timeout waiting for mysqld on port %d", config.MySQLPort)
+	return fmt.Errorf("timeout waiting for mysqld on port %d: %s", config.MySQLPort, pxcRecentLogs(ctx, config))
+}
+
+func pxcRecentLogs(ctx context.Context, config PXCConfig) string {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`for f in %s %s; do
+  if [ -s "$f" ]; then
+    echo "== $f =="
+    tail -80 "$f"
+  fi
+done`, shellQuote(pxcStartupLogPath(config)), shellQuote(pxcErrorLogPath(config))))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("failed to read PXC logs: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	logs := strings.TrimSpace(string(out))
+	if logs == "" {
+		return "PXC startup and error logs are empty"
+	}
+	return logs
 }
 
 func setPXCRootPassword(ctx context.Context, config PXCConfig) error {
