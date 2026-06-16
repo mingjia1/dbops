@@ -42,6 +42,14 @@ func (r *ClusterDeployRepository) createInMemory(dep *models.ClusterDeployment) 
 		dep.Status = "pending"
 	}
 	now := time.Now()
+	if dep.StartedAt != nil {
+		startCopy := *dep.StartedAt
+		dep.StartedAt = &startCopy
+	}
+	if dep.FinishedAt != nil {
+		finishCopy := *dep.FinishedAt
+		dep.FinishedAt = &finishCopy
+	}
 	dep.CreatedAt = now
 	dep.UpdatedAt = now
 	r.memDB[dep.ID] = dep
@@ -56,8 +64,8 @@ func (r *ClusterDeployRepository) createInDB(ctx context.Context, dep *models.Cl
 	dep.CreatedAt = now
 	dep.UpdatedAt = now
 
-	query := `INSERT INTO cluster_deployments (id, cluster_type, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := r.db.Pool.ExecContext(ctx, query, dep.ID, dep.ClusterType, dep.Name, dep.Status, dep.CreatedAt, dep.UpdatedAt)
+	query := `INSERT INTO cluster_deployments (id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := r.db.Pool.ExecContext(ctx, query, dep.ID, dep.ClusterType, dep.Name, dep.Status, dep.RequestJSON, dep.PlanJSON, dep.CustomJSON, dep.StartedAt, dep.FinishedAt, dep.ErrorMessage, dep.CreatedAt, dep.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create deployment: %w", err)
 	}
@@ -85,7 +93,7 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 	if limit <= 0 {
 		limit = 20
 	}
-	query := `SELECT id, cluster_type, name, status, created_at, updated_at FROM cluster_deployments ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments ORDER BY created_at DESC LIMIT ? OFFSET ?`
 	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
@@ -95,8 +103,18 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 	deployments := make([]models.ClusterDeployment, 0)
 	for rows.Next() {
 		var dep models.ClusterDeployment
-		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status, &dep.CreatedAt, &dep.UpdatedAt); err != nil {
+		var startedAt, finishedAt sql.NullTime
+		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
+			&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
+			&startedAt, &finishedAt, &dep.ErrorMessage,
+			&dep.CreatedAt, &dep.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if startedAt.Valid {
+			dep.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			dep.FinishedAt = &finishedAt.Time
 		}
 		deployments = append(deployments, dep)
 	}
@@ -117,37 +135,77 @@ func (r *ClusterDeployRepository) getByIDInMemory(id string) (*models.ClusterDep
 	return &copy, nil
 }
 
-func (r *ClusterDeployRepository) getByIDInDB(ctx context.Context, id string) (*models.ClusterDeployment, error) {
-	query := `SELECT id, cluster_type, name, status, created_at, updated_at FROM cluster_deployments WHERE id = ?`
-	dep := &models.ClusterDeployment{}
-	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status, &dep.CreatedAt, &dep.UpdatedAt)
+func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*models.ClusterDeployment, error) {
+	var dep models.ClusterDeployment
+	var startedAt, finishedAt sql.NullTime
+	err := scanner.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
+		&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
+		&startedAt, &finishedAt, &dep.ErrorMessage,
+		&dep.CreatedAt, &dep.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("deployment not found")
 		}
-		return nil, fmt.Errorf("failed to get deployment: %w", err)
+		return nil, fmt.Errorf("failed to scan deployment: %w", err)
 	}
-	return dep, nil
+	if startedAt.Valid {
+		dep.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		dep.FinishedAt = &finishedAt.Time
+	}
+	return &dep, nil
+}
+
+func (r *ClusterDeployRepository) getByIDInDB(ctx context.Context, id string) (*models.ClusterDeployment, error) {
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments WHERE id = ?`
+	return r.scanClusterDeployment(r.db.Pool.QueryRowContext(ctx, query, id))
 }
 
 func (r *ClusterDeployRepository) getByNameInDB(ctx context.Context, name string) (*models.ClusterDeployment, error) {
-	query := `SELECT id, cluster_type, name, status, created_at, updated_at FROM cluster_deployments WHERE name = ? ORDER BY created_at DESC LIMIT 1`
-	dep := &models.ClusterDeployment{}
-	err := r.db.Pool.QueryRowContext(ctx, query, name).Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status, &dep.CreatedAt, &dep.UpdatedAt)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("deployment not found")
-		}
-		return nil, fmt.Errorf("failed to get deployment by name: %w", err)
-	}
-	return dep, nil
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments WHERE name = ? ORDER BY created_at DESC LIMIT 1`
+	return r.scanClusterDeployment(r.db.Pool.QueryRowContext(ctx, query, name))
 }
 
 func (r *ClusterDeployRepository) UpdateStatus(ctx context.Context, id, status string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `UPDATE cluster_deployments SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now(), id)
+	now := time.Now()
+	query := `UPDATE cluster_deployments SET status = ?, updated_at = ?`
+	args := []interface{}{status, now}
+	if status == "running" || status == "in_progress" {
+		query += `, started_at = COALESCE(started_at, ?)`
+		args = append(args, now)
+	}
+	if isFinalStatus(status) {
+		query += `, finished_at = ?`
+		args = append(args, now)
+	}
+	query += ` WHERE id = ?`
+	args = append(args, id)
+	_, err := r.db.Pool.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *ClusterDeployRepository) UpdateStatusWithError(ctx context.Context, id, status, errorMessage string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	now := time.Now()
+	_, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE cluster_deployments SET status = ?, error_message = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
+		status, errorMessage, now, now, id)
+	return err
+}
+
+func (r *ClusterDeployRepository) UpdatePlan(ctx context.Context, id, planJSON string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `UPDATE cluster_deployments SET plan_json = ?, updated_at = ? WHERE id = ?`, planJSON, time.Now(), id)
 	return err
 }
 
@@ -157,4 +215,13 @@ func (r *ClusterDeployRepository) Delete(ctx context.Context, id string) error {
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM cluster_deployments WHERE id = ?`, id)
 	return err
+}
+
+func isFinalStatus(status string) bool {
+	switch status {
+	case "completed", "success", "failed", "destroyed", "cancelled":
+		return true
+	default:
+		return false
+	}
 }

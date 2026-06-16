@@ -57,7 +57,8 @@ func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 		return
 	}
 
-	response, err := c.service.DeployMHA(ctx.Request.Context(), req)
+	universalReq := services.TypedMHARequestToUniversal(req)
+	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy MHA cluster", err)
 		return
@@ -73,7 +74,8 @@ func (c *ClusterDeployController) DeployMGR(ctx *gin.Context) {
 		return
 	}
 
-	response, err := c.service.DeployMGR(ctx.Request.Context(), req)
+	universalReq := services.TypedMGRRequestToUniversal(req)
+	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy MGR cluster", err)
 		return
@@ -89,7 +91,8 @@ func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
 		return
 	}
 
-	response, err := c.service.DeployPXC(ctx.Request.Context(), req)
+	universalReq := services.TypedPXCRequestToUniversal(req)
+	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy PXC cluster", err)
 		return
@@ -105,7 +108,8 @@ func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
 		return
 	}
 
-	response, err := c.service.DeployHA(ctx.Request.Context(), req)
+	universalReq := services.TypedHARequestToUniversal(req)
+	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy HA master-replica cluster", err)
 		return

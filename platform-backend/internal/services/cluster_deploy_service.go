@@ -19,6 +19,7 @@ import (
 
 type ClusterDeployService struct {
 	repo        *repositories.ClusterDeployRepository
+	nodeRepo    *repositories.ClusterDeployNodeRepository
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	agentClient *AgentClient
@@ -98,6 +99,7 @@ type pseudoNode struct {
 
 func NewClusterDeployService(
 	repo *repositories.ClusterDeployRepository,
+	nodeRepo *repositories.ClusterDeployNodeRepository,
 	hostRepo *repositories.HostRepository,
 	instRepo *repositories.InstanceRepository,
 	agentClient *AgentClient,
@@ -110,6 +112,7 @@ func NewClusterDeployService(
 	}
 	return &ClusterDeployService{
 		repo:        repo,
+		nodeRepo:    nodeRepo,
 		hostRepo:    hostRepo,
 		instRepo:    instRepo,
 		agentClient: agentClient,
@@ -189,6 +192,209 @@ func (s *ClusterDeployService) clearProgress(deploymentID string) {
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	delete(s.progress, deploymentID)
+}
+
+func (s *ClusterDeployService) syncNodesFromPlan(ctx context.Context, deploymentID string, plan *ClusterDeployPlan) {
+	if s.nodeRepo == nil || plan == nil {
+		return
+	}
+	nodes := make([]models.ClusterDeployNode, 0, len(plan.Nodes))
+	for _, pn := range plan.Nodes {
+		role := pn.Role
+		if role == "" {
+			role = "unknown"
+		}
+		nodes = append(nodes, models.ClusterDeployNode{
+			DeploymentID: deploymentID,
+			InstanceID:   pn.ID,
+			Host:         pn.Host,
+			MySQLPort:    pn.MySQLPort,
+			Role:         role,
+			Status:       "pending",
+		})
+	}
+	if err := s.nodeRepo.BatchCreate(ctx, nodes); err != nil {
+		log.Printf("WARN: failed to persist deploy nodes for %s: %v", deploymentID, err)
+	}
+}
+
+func (s *ClusterDeployService) loadNodesFromDB(ctx context.Context, deploymentID string) []models.ClusterDeployNode {
+	if s.nodeRepo == nil {
+		return nil
+	}
+	nodes, err := s.nodeRepo.ListByDeploymentID(ctx, deploymentID)
+	if err != nil {
+		log.Printf("WARN: failed to load deploy nodes from DB for %s: %v", deploymentID, err)
+		return nil
+	}
+	return nodes
+}
+
+func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, plan *ClusterDeployPlan, req UniversalClusterDeployRequest) (finalResp *DeployResponse, finalErr error) {
+	// This execution engine currently supports pseudo mode (metadata-only).
+	// For real mode, the plan steps should be executed by calling the agent
+	// on each node, which will be implemented in a future phase.
+	if plan.Mode != DeployModePseudo && plan.Mode != DeployModeValidateOnly {
+		return nil, fmt.Errorf("ExecuteClusterDeployPlan currently only supports pseudo/validate_only mode, got %q", plan.Mode)
+	}
+
+	clusterID := plan.DeploymentID
+	clusterType := plan.ClusterType
+	name := req.Name
+	if name == "" {
+		name = clusterID
+	}
+	now := time.Now()
+
+	// Ensure audit is always recorded
+	defer func() {
+		if finalResp != nil || finalErr != nil {
+			s.auditDeployment(ctx, "deploy_"+clusterType+"_cluster", clusterType, clusterID, name, finalResp, finalErr)
+		}
+	}()
+
+	// Clean up any previous failed deployment
+	s.clearClusterManagement(ctx, clusterID)
+	_ = s.repo.Delete(ctx, clusterID) // ignore error if not found
+
+	// Create deployment record with plan/request persistence
+	dep := &models.ClusterDeployment{
+		ID:          clusterID,
+		ClusterType: clusterType,
+		Name:        name,
+		Status:      "running",
+		StartedAt:   &now,
+		RequestJSON: marshalString(req),
+		PlanJSON:    marshalString(plan),
+		CustomJSON:  marshalString(req.Custom),
+		CreatedAt:   now,
+	}
+	if err := s.repo.Create(ctx, dep); err != nil {
+		return nil, fmt.Errorf("failed to create deployment: %w", err)
+	}
+
+	// Sync nodes from plan into cluster_deploy_nodes table
+	s.syncNodesFromPlan(ctx, clusterID, plan)
+
+	// In-memory progress tracking
+	s.updateProgress(clusterID, "初始化", "部署计划已创建", 5)
+
+	// Execute each step in order
+	totalSteps := len(plan.Steps)
+
+	for i, step := range plan.Steps {
+		progressPct := 5 + (i * 85 / totalSteps)
+		s.updateProgress(clusterID, step.Name, fmt.Sprintf("Step %d/%d: %s", i+1, totalSteps, step.Name), progressPct)
+		s.addStep(clusterID, step.Name, "running")
+
+		switch step.Type {
+		case "validate", "configure", "sync":
+			// Backend-side steps: mark completed directly
+			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
+
+		case "bootstrap", "join", "deploy":
+			// For plan-based execution (currently pseudo mode):
+			// Mark agent deploy steps as completed without calling agent,
+			// since pseudo mode only manages metadata, not actual deployment.
+			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
+			nodeMsg := "deployment step completed"
+			if targetNode != nil {
+				nodeMsg = fmt.Sprintf("Node %s (%s) step completed", targetNode.Host, targetNode.Role)
+			}
+			s.updateStepStatus(clusterID, step.Name, "completed", nodeMsg)
+
+		case "verify":
+			s.updateStepStatus(clusterID, step.Name, "completed", "Verification completed")
+
+		default:
+			s.updateStepStatus(clusterID, step.Name, "completed", "Step completed")
+		}
+	}
+
+	// Sync cluster management metadata (register instances, topology, etc.)
+	if err := s.syncPseudoClusterManagement(ctx, clusterType, clusterID, plan.Nodes); err != nil {
+		errMsg := fmt.Sprintf("management sync failed: %v", err)
+		s.repo.UpdateStatus(ctx, clusterID, "partial")
+		finish := time.Now()
+		partialResp := &DeployResponse{
+			DeploymentID: clusterID,
+			ClusterType:  clusterType,
+			Name:         name,
+			Status:       "partial",
+			Message:      errMsg,
+			StartedAt:    dep.StartedAt,
+			FinishedAt:   &finish,
+			CreatedAt:    dep.CreatedAt,
+			Steps:        s.getProgress(clusterID).Steps,
+		}
+		finalResp = partialResp
+		finalErr = err
+		return partialResp, nil
+	}
+
+	// Success
+	s.repo.UpdateStatus(ctx, clusterID, "completed")
+	s.updateProgress(clusterID, "集群验证", "集群部署完成", 100)
+	finish := time.Now()
+
+	nodes := make([]DeployNode, 0, len(plan.Nodes))
+	for _, pn := range plan.Nodes {
+		nodes = append(nodes, DeployNode{
+			InstanceID: pn.ID,
+			Host:       pn.Host,
+			Port:       pn.MySQLPort,
+			Role:       pn.Role,
+			Status:     "completed",
+		})
+	}
+
+	resp := &DeployResponse{
+		DeploymentID: clusterID,
+		ClusterType:  clusterType,
+		Name:         name,
+		Status:       "success",
+		Message:      "Cluster deployed successfully via plan execution",
+		StartedAt:    dep.StartedAt,
+		FinishedAt:   &finish,
+		CreatedAt:    dep.CreatedAt,
+		Nodes:        nodes,
+	}
+	if prog := s.getProgress(clusterID); prog != nil {
+		resp.Steps = prog.Steps
+	}
+	finalResp = resp
+	return resp, nil
+}
+
+// syncPseudoClusterManagement syncs cluster metadata for plan-based pseudo deployments.
+func (s *ClusterDeployService) syncPseudoClusterManagement(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode) error {
+	nodes := make([]pseudoNode, 0, len(planNodes))
+	for _, pn := range planNodes {
+		nodes = append(nodes, pseudoNode{Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role})
+	}
+	if len(nodes) == 0 {
+		return fmt.Errorf("no nodes to sync")
+	}
+	return s.syncClusterManagement(ctx, clusterType, clusterID, nodes)
+}
+
+// Helper: find a PlanNode in a slice by ID
+func findPlanNode(nodes []PlanNode, id string) *PlanNode {
+	for i := range nodes {
+		if nodes[i].ID == id {
+			return &nodes[i]
+		}
+	}
+	return nil
+}
+
+// Helper: marshal a value to JSON string; returns "{}" on error
+func marshalString(v interface{}) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
 
 func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (resp *DeployResponse, err error) {
@@ -1015,6 +1221,8 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 		Stage:        stage,
 		Progress:     progress,
 		Message:      message,
+		StartedAt:    dep.StartedAt,
+		FinishedAt:   dep.FinishedAt,
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
 	}
@@ -1034,6 +1242,25 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 					break
 				}
 			}
+		}
+	}
+	// Merge DB-persisted node status for nodes not covered by in-memory progress
+	dbNodes := s.loadNodesFromDB(ctx, deploymentID)
+	if len(dbNodes) > 0 && prog == nil {
+		dbDeployNodes := make([]DeployNode, 0, len(dbNodes))
+		for _, dn := range dbNodes {
+			dbDeployNodes = append(dbDeployNodes, DeployNode{
+				InstanceID:  dn.InstanceID,
+				Host:        dn.Host,
+				Port:        dn.MySQLPort,
+				Role:        dn.Role,
+				Status:      dn.Status,
+				CurrentStep: dn.CurrentStep,
+				Message:     dn.Message,
+			})
+		}
+		if len(dbDeployNodes) > 0 {
+			resp.Nodes = dbDeployNodes
 		}
 	}
 	return resp, nil
@@ -1060,6 +1287,8 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 			Stage:        stage,
 			Progress:     progress,
 			Message:      message,
+			StartedAt:    dep.StartedAt,
+			FinishedAt:   dep.FinishedAt,
 			CreatedAt:    dep.CreatedAt,
 			Nodes:        s.deploymentNodes(ctx, dep.ID),
 		})

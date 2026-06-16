@@ -108,6 +108,7 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 		if err != nil {
 			return nil, err
 		}
+		s.syncNodesFromPlan(ctx, plan.DeploymentID, plan)
 		return &DeployResponse{
 			DeploymentID: plan.DeploymentID,
 			ClusterType:  plan.ClusterType,
@@ -119,6 +120,21 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 			Steps:        planStepsToDeploySteps(plan.Steps),
 		}, nil
 	}
+
+	plan, err := s.BuildClusterDeployPlan(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	// For pseudo mode, use plan-based execution directly.
+	if normalized.Mode == DeployModePseudo {
+		return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
+	}
+
+	// For real mode: sync nodes from plan, then dispatch to the
+	// existing typed deploy methods for backward compatibility.
+	// (Plan/request JSON persistence happens inside each typed method.)
+	s.syncNodesFromPlan(ctx, plan.DeploymentID, plan)
 
 	switch normalized.ClusterType {
 	case ClusterTypeHA:
@@ -171,17 +187,29 @@ func (s *ClusterDeployService) BuildClusterDeployPlan(ctx context.Context, req U
 		})
 	}
 
+	// Build plan parameters with all relevant configuration
+	params := map[string]interface{}{
+		"mysql_version":     normalized.MySQL.Version,
+		"mysql_user":       normalized.MySQL.User,
+		"replication_mode":  normalized.Replication.Mode,
+		"replication_user":  normalized.Replication.User,
+		"custom_options":    normalized.Custom,
+	}
+	if normalized.MySQL.PackageURL != "" {
+		params["package_url"] = normalized.MySQL.PackageURL
+	}
+	if len(normalized.MySQL.Config) > 0 {
+		params["mysql_config"] = normalized.MySQL.Config
+	}
+
 	plan := &ClusterDeployPlan{
 		DeploymentID: normalized.ClusterID,
 		ClusterType:  normalized.ClusterType,
 		Mode:         normalized.Mode,
 		Nodes:        nodes,
-		Parameters: map[string]interface{}{
-			"mysql_version":    normalized.MySQL.Version,
-			"replication_mode": normalized.Replication.Mode,
-		},
+		Parameters:   params,
 	}
-	plan.Steps = buildUniversalPlanSteps(normalized.ClusterType, nodes)
+	plan.Steps = buildUniversalPlanSteps(normalized.ClusterType, nodes, normalized)
 	return plan, nil
 }
 
@@ -337,7 +365,24 @@ func allowedRole(clusterType, role string) bool {
 	}
 }
 
-func buildUniversalPlanSteps(clusterType string, nodes []PlanNode) []PlanStep {
+// buildUniversalPlanSteps dispatches to architecture-specific plan builders.
+func buildUniversalPlanSteps(clusterType string, nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
+	switch clusterType {
+	case ClusterTypeHA:
+		return buildHAPlanSteps(nodes, req)
+	case ClusterTypeMHA:
+		return buildMHAPlanSteps(nodes, req)
+	case ClusterTypeMGR:
+		return buildMGRPlanSteps(nodes, req)
+	case ClusterTypePXC:
+		return buildPXCPlanSteps(nodes, req)
+	default:
+		return buildGenericPlanSteps(nodes, clusterType)
+	}
+}
+
+// buildGenericPlanSteps is a fallback for unknown cluster types.
+func buildGenericPlanSteps(nodes []PlanNode, clusterType string) []PlanStep {
 	steps := []PlanStep{
 		{ID: "validate_input", Name: "Validate deployment input", Type: "validate"},
 		{ID: "resolve_hosts", Name: "Resolve hosts", Type: "validate", DependsOn: []string{"validate_input"}},
@@ -368,6 +413,366 @@ func buildUniversalPlanSteps(clusterType string, nodes []PlanNode) []PlanStep {
 		PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{"sync_metadata"}},
 	)
 	return steps
+}
+
+// buildHAPlanSteps generates HA master-replica specific deployment steps.
+func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
+	steps := preamblePlanSteps()
+	var masterNode *PlanNode
+	var replicaNodes []PlanNode
+	for i := range nodes {
+		if nodes[i].Role == "master" {
+			masterNode = &nodes[i]
+		} else {
+			replicaNodes = append(replicaNodes, nodes[i])
+		}
+	}
+	last := "prepare_credentials"
+
+	// Master bootstrap step
+	// Note: master_host is "127.0.0.1" because the agent runs locally on the target host.
+	if masterNode != nil {
+		masterConfig := map[string]interface{}{
+			"deploy_mode":    "ha-master",
+			"master_host":    "127.0.0.1",
+			"master_port":    masterNode.MySQLPort,
+			"replicate_user": req.Replication.User,
+			"replicate_pass": req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		if masterNode.ServerID != 0 {
+			masterConfig["server_id"] = masterNode.ServerID
+		}
+		if masterNode.DataDir != "" {
+			masterConfig["data_dir"] = masterNode.DataDir
+			masterConfig["datadir"] = masterNode.DataDir
+		}
+		if masterNode.Basedir != "" {
+			masterConfig["basedir"] = masterNode.Basedir
+		}
+		mergeCommonDeployConfig(masterConfig, req)
+		id := fmt.Sprintf("bootstrap_%s", masterNode.ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Deploy master %s", masterNode.Host),
+			Type: "bootstrap", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: masterConfig,
+		})
+		last = id
+	}
+
+	// Replica join steps
+	// Note: master_host uses master's real IP (for replica to connect to),
+	// while slave_host is "127.0.0.1" because the agent runs locally.
+	for i := range replicaNodes {
+		replicaConfig := map[string]interface{}{
+			"deploy_mode":    "ha-replica",
+			"master_host":    masterNode.Host,
+			"master_port":    masterNode.MySQLPort,
+			"slave_host":     "127.0.0.1",
+			"slave_port":     replicaNodes[i].MySQLPort,
+			"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
+			"replicate_user": req.Replication.User,
+			"replicate_pass": req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		if replicaNodes[i].DataDir != "" {
+			replicaConfig["data_dir"] = replicaNodes[i].DataDir
+			replicaConfig["datadir"] = replicaNodes[i].DataDir
+		}
+		if replicaNodes[i].Basedir != "" {
+			replicaConfig["basedir"] = replicaNodes[i].Basedir
+		}
+		mergeCommonDeployConfig(replicaConfig, req)
+		id := fmt.Sprintf("join_%s", replicaNodes[i].ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Deploy replica %s", replicaNodes[i].Host),
+			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: replicaConfig,
+		})
+		last = id
+	}
+
+	return appendPostambleSteps(steps, last)
+}
+
+// buildMHAPlanSteps generates MHA-specific deployment steps.
+func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
+	steps := preamblePlanSteps()
+	var managerNode, masterNode *PlanNode
+	var replicaNodes []PlanNode
+	for i := range nodes {
+		switch nodes[i].Role {
+		case "manager":
+			managerNode = &nodes[i]
+		case "master":
+			masterNode = &nodes[i]
+		default:
+			replicaNodes = append(replicaNodes, nodes[i])
+		}
+	}
+	last := "prepare_credentials"
+
+	// Prepare SSH credentials step
+	sshStepID := "prepare_ssh"
+	steps = append(steps, PlanStep{
+		ID: sshStepID, Name: "Prepare SSH credentials for MHA",
+		Type: "configure", DependsOn: []string{last},
+		Config: map[string]interface{}{"ssh_user": req.Replication.User},
+	})
+	last = sshStepID
+
+	// Deploy MHA manager
+	if managerNode != nil {
+		managerConfig := map[string]interface{}{
+			"deploy_mode":    "mha",
+			"manager_host":   managerNode.Host,
+			"master_host":    masterNode.Host,
+			"master_port":    masterNode.MySQLPort,
+			"repl_user":      req.Replication.User,
+			"repl_pass":      req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		if vip, ok := stringCustom(req.Custom, "vip"); ok {
+			managerConfig["vip"] = vip
+		}
+		if pi, ok := stringCustom(req.Custom, "ping_interval"); ok {
+			managerConfig["ping_interval"] = pi
+		}
+		if pr, ok := stringCustom(req.Custom, "ping_retry"); ok {
+			managerConfig["ping_retry"] = pr
+		}
+		mergeCommonDeployConfig(managerConfig, req)
+
+		var slaveHosts []string
+		var slavePorts []int
+		for _, rn := range replicaNodes {
+			slaveHosts = append(slaveHosts, rn.Host)
+			slavePorts = append(slavePorts, rn.MySQLPort)
+		}
+		if len(slaveHosts) > 0 {
+			managerConfig["slave_hosts"] = slaveHosts
+			managerConfig["slave_ports"] = slavePorts
+		}
+
+		id := fmt.Sprintf("deploy_mha_%s", managerNode.ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Deploy MHA manager %s", managerNode.Host),
+			Type: "deploy", TargetNode: managerNode.ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: managerConfig,
+		})
+		last = id
+	}
+
+	return appendPostambleSteps(steps, last)
+}
+
+// buildMGRPlanSteps generates MGR-specific deployment steps.
+func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
+	steps := preamblePlanSteps()
+	last := "prepare_credentials"
+
+	groupName := ""
+	if gn, ok := stringCustom(req.Custom, "group_name"); ok {
+		groupName = gn
+	} else {
+		groupName = stableUniversalGroupName(req.ClusterID, req.Name)
+	}
+
+	localPorts := make([]int, len(nodes))
+	for i := range nodes {
+		if lp, ok := nodeIntCustomRaw(nodes[i].Custom, "local_port"); ok {
+			localPorts[i] = lp
+		} else {
+			localPorts[i] = 33061 + i
+		}
+	}
+
+	// Build group seeds
+	var groupSeeds []string
+	for i := range nodes {
+		groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", nodes[i].Host, localPorts[i]))
+	}
+
+	for i := range nodes {
+		isPrimary := nodes[i].Role == "primary" || nodes[i].Role == "bootstrap"
+		nodeConfig := map[string]interface{}{
+			"deploy_mode":    "mgr",
+			"group_name":     groupName,
+			"group_seeds":    groupSeeds,
+			"local_address":  nodes[i].Host,
+			"local_port":     localPorts[i],
+			"mysql_port":     nodes[i].MySQLPort,
+			"server_id":      defaultInt(nodes[i].ServerID, i+1),
+			"bootstrap":      isPrimary,
+			"replicate_user": req.Replication.User,
+			"replicate_pass": req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		mergeCommonDeployConfig(nodeConfig, req)
+
+		stepType := "join"
+		if isPrimary {
+			stepType = "bootstrap"
+		}
+		id := fmt.Sprintf("%s_%s", stepType, nodes[i].ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Deploy MGR node %s (%s)", nodes[i].Host, nodes[i].Role),
+			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: nodeConfig,
+		})
+		last = id
+	}
+
+	return appendPostambleSteps(steps, last)
+}
+
+// buildPXCPlanSteps generates PXC-specific deployment steps.
+func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
+	steps := preamblePlanSteps()
+	last := "prepare_credentials"
+
+	clusterName := ""
+	if cn, ok := stringCustom(req.Custom, "cluster_name"); ok {
+		clusterName = cn
+	} else {
+		clusterName = req.Name
+	}
+	sstMethod := "xtrabackup-v2"
+	if sm, ok := stringCustom(req.Custom, "sst_method"); ok {
+		sstMethod = sm
+	}
+
+	// Collect all node hosts for the nodes list
+	nodeHosts := make([]string, len(nodes))
+	for i := range nodes {
+		nodeHosts[i] = nodes[i].Host
+	}
+
+	// Use a fixed default wsrep_port (4567) for PXC cluster communication.
+	// Note: wsrep_sst_port is a separate parameter for SST transfers and
+	// can be passed via req.Custom["wsrep_sst_port"].
+	wsrepPort := 4567
+
+	for i := range nodes {
+		isBootstrap := nodes[i].Role == "bootstrap"
+		nodeConfig := map[string]interface{}{
+			"deploy_mode":    "pxc",
+			"cluster_name":   clusterName,
+			"bootstrap":      isBootstrap,
+			"nodes":          nodeHosts,
+			"node_host":      nodes[i].Host,
+			"mysql_port":     nodes[i].MySQLPort,
+			"wsrep_port":     wsrepPort,
+			"sst_method":     sstMethod,
+			"replicate_user": req.Replication.User,
+			"replicate_pass": req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		if nodes[i].DataDir != "" {
+			nodeConfig["data_dir"] = nodes[i].DataDir
+		}
+		mergeCommonDeployConfig(nodeConfig, req)
+
+		stepType := "join"
+		if isBootstrap {
+			stepType = "bootstrap"
+		}
+		id := fmt.Sprintf("%s_%s", stepType, nodes[i].ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Deploy PXC node %s (%s)", nodes[i].Host, nodes[i].Role),
+			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: nodeConfig,
+		})
+		last = id
+	}
+
+	return appendPostambleSteps(steps, last)
+}
+
+// preamblePlanSteps returns the common validation & preparation steps.
+func preamblePlanSteps() []PlanStep {
+	return []PlanStep{
+		{ID: "validate_input", Name: "Validate deployment input", Type: "validate"},
+		{ID: "resolve_hosts", Name: "Resolve hosts", Type: "validate", DependsOn: []string{"validate_input"}},
+		{ID: "check_conflicts", Name: "Check port and path conflicts", Type: "validate", DependsOn: []string{"resolve_hosts"}},
+		{ID: "prepare_credentials", Name: "Prepare credentials", Type: "configure", DependsOn: []string{"check_conflicts"}},
+	}
+}
+
+// appendPostambleSteps appends the common verification, sync, and audit steps.
+func appendPostambleSteps(steps []PlanStep, lastDep string) []PlanStep {
+	return append(steps,
+		PlanStep{ID: "verify_cluster", Name: "Verify cluster", Type: "verify", DependsOn: []string{lastDep}},
+		PlanStep{ID: "sync_metadata", Name: "Sync metadata", Type: "sync", DependsOn: []string{"verify_cluster"}},
+		PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{"sync_metadata"}},
+	)
+}
+
+// mergeCommonDeployConfig merges MySQL version, package URL, checksum, and MySQL config
+// from the universal request into the node config map.
+func mergeCommonDeployConfig(config map[string]interface{}, req UniversalClusterDeployRequest) {
+	if req.MySQL.Version != "" {
+		config["mysql_version"] = req.MySQL.Version
+	}
+	if req.MySQL.PackageURL != "" {
+		config["package_url"] = req.MySQL.PackageURL
+	}
+	if req.MySQL.PackageChecksum != "" {
+		config["checksum"] = req.MySQL.PackageChecksum
+	}
+	if len(req.MySQL.Config) > 0 {
+		mysqlConfig := make(map[string]string)
+		for k, v := range req.MySQL.Config {
+			if allowedMySQLDeployOption(k) && v != "" {
+				mysqlConfig[k] = v
+			}
+		}
+		if len(mysqlConfig) > 0 {
+			config["mysql_config"] = mysqlConfig
+		}
+	}
+	// Semi-sync for HA
+	if ss, ok := stringCustom(req.Custom, "semi_sync_enabled"); ok && req.ClusterType == ClusterTypeHA {
+		config["semi_sync_enabled"] = ss
+	}
+}
+
+// nodeIntCustomRaw extracts an int value from a node's custom map without the
+// ClusterDeployNode type requirement.
+func nodeIntCustomRaw(custom map[string]interface{}, key string) (int, bool) {
+	if custom == nil {
+		return 0, false
+	}
+	v, ok := custom[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch val := v.(type) {
+	case int:
+		if val == 0 {
+			return 0, false
+		}
+		return val, true
+	case float64:
+		iv := int(val)
+		if iv == 0 {
+			return 0, false
+		}
+		return iv, true
+	case string:
+		iv, err := strconv.Atoi(val)
+		if err != nil || iv == 0 {
+			return 0, false
+		}
+		return iv, true
+	default:
+		return 0, false
+	}
 }
 
 func validateDeployCustomOptions(clusterType string, custom map[string]interface{}, mysqlConfig map[string]string, nodes []ClusterDeployNode) error {
@@ -709,6 +1114,139 @@ func planStepsToDeploySteps(steps []PlanStep) []DeployStep {
 	out := make([]DeployStep, 0, len(steps))
 	for _, step := range steps {
 		out = append(out, DeployStep{Name: step.Name, Status: "planned"})
+	}
+	return out
+}
+
+func TypedMHARequestToUniversal(req DeployMHARequest) UniversalClusterDeployRequest {
+	out := UniversalClusterDeployRequest{
+		ClusterID:   req.ClusterID,
+		Name:        req.Name,
+		ClusterType: ClusterTypeMHA,
+		Replication: ReplicationOptions{
+			User:     req.ReplUser,
+			Password: req.ReplPassword,
+		},
+		MySQL: MySQLDeployOptions{
+			User:     req.MySQLUser,
+			Password: req.MySQLPassword,
+		},
+		Custom: map[string]interface{}{},
+	}
+	if req.PseudoMode {
+		out.Mode = DeployModePseudo
+	}
+	if req.VIP != "" {
+		out.Custom["vip"] = req.VIP
+	}
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.ManagerHostID, Host: req.ManagerHost, MySQLPort: req.MasterPort, Role: "manager", AgentPort: req.ManagerAgentPort})
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.MasterHostID, Host: req.MasterHost, MySQLPort: req.MasterPort, Role: "master"})
+	for _, s := range req.SlaveHosts {
+		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: s.Host, MySQLPort: s.Port, Role: "replica"})
+	}
+	return out
+}
+
+func TypedMGRRequestToUniversal(req DeployMGRRequest) UniversalClusterDeployRequest {
+	out := UniversalClusterDeployRequest{
+		ClusterID:   req.ClusterID,
+		Name:        req.Name,
+		ClusterType: ClusterTypeMGR,
+		Replication: ReplicationOptions{Mode: req.GroupMode},
+		MySQL: MySQLDeployOptions{
+			User:     req.MySQLUser,
+			Password: req.MySQLPassword,
+		},
+	}
+	if req.PseudoMode {
+		out.Mode = DeployModePseudo
+	}
+	role := "primary"
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.PrimaryHostID, Host: req.PrimaryHost, MySQLPort: req.PrimaryPort, Role: role, AgentPort: req.PrimaryAgentPort})
+	for _, s := range req.SecondaryHosts {
+		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: s.Host, MySQLPort: s.Port, Role: "secondary", AgentPort: s.AgentPort, ServerID: s.ServerID})
+	}
+	// Carry config_params as MySQL.Config where allowed
+	if len(req.ConfigParams) > 0 {
+		out.MySQL.Config = make(map[string]string, len(req.ConfigParams))
+		for k, v := range req.ConfigParams {
+			if allowedMySQLDeployOption(k) {
+				out.MySQL.Config[k] = v
+			}
+		}
+	}
+	return out
+}
+
+func typedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequest {
+	out := UniversalClusterDeployRequest{
+		ClusterID:   req.ClusterID,
+		Name:        req.Name,
+		ClusterType: ClusterTypePXC,
+		MySQL: MySQLDeployOptions{
+			User:     req.MySQLUser,
+			Password: req.MySQLPassword,
+		},
+	}
+	if req.PseudoMode {
+		out.Mode = DeployModePseudo
+	}
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.BootstrapHostID, Host: req.BootstrapNode.Host, MySQLPort: req.BootstrapNode.Port, Role: "bootstrap", AgentPort: req.BootstrapNode.AgentPort, DataDir: req.BootstrapNode.DataDir})
+	for _, n := range req.OtherNodes {
+		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: n.Host, MySQLPort: n.Port, Role: "secondary", AgentPort: n.AgentPort, DataDir: n.DataDir})
+	}
+	if len(req.ConfigParams) > 0 {
+		out.MySQL.Config = make(map[string]string, len(req.ConfigParams))
+		for k, v := range req.ConfigParams {
+			if allowedMySQLDeployOption(k) {
+				out.MySQL.Config[k] = v
+			}
+		}
+	}
+	return out
+}
+
+func typedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployRequest {
+	out := UniversalClusterDeployRequest{
+		ClusterID:   req.ClusterID,
+		Name:        req.Name,
+		ClusterType: ClusterTypeHA,
+		Replication: ReplicationOptions{
+			User:     req.ReplUser,
+			Password: req.ReplPassword,
+		},
+		MySQL: MySQLDeployOptions{
+			User:     req.MySQLUser,
+			Password: req.MySQLPassword,
+		},
+	}
+	if req.PseudoMode {
+		out.Mode = DeployModePseudo
+	}
+	masterNode := ClusterDeployNode{
+		HostID:    req.MasterHostID,
+		Host:      req.MasterHost,
+		MySQLPort: req.MasterPort,
+		Role:      "master",
+		AgentPort: req.MasterAgentPort,
+		DataDir:   req.MasterDataDir,
+		Basedir:   req.MasterBasedir,
+		ServerID:  req.MasterServerID,
+	}
+	if masterNode.AgentPort == 0 {
+		masterNode.AgentPort = 9090
+	}
+	out.Nodes = append(out.Nodes, masterNode)
+	for _, r := range req.ReplicaHosts {
+		out.Nodes = append(out.Nodes, ClusterDeployNode{
+			Host:      r.Host,
+			MySQLPort: r.Port,
+			Role:      "replica",
+			AgentPort: r.AgentPort,
+			DataDir:   r.DataDir,
+			Basedir:   r.Basedir,
+			ServerID:  r.ServerID,
+		})
 	}
 	return out
 }

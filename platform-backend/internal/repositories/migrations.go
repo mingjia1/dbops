@@ -580,6 +580,32 @@ var InitialSchema = []string{
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_licenses_active (active)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// Phase 4: Extend cluster_deployments with full request/plan/status payload.
+	`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN plan_json TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN custom_json TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN started_at TIMESTAMP NULL`,
+	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP NULL`,
+	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
+
+	// Phase 4: Persist per-node deployment progress (was in-memory only).
+	`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (
+		id VARCHAR(64) PRIMARY KEY,
+		deployment_id VARCHAR(64) NOT NULL,
+		instance_id VARCHAR(64) DEFAULT '',
+		host VARCHAR(255) NOT NULL,
+		mysql_port INT DEFAULT 3306,
+		role VARCHAR(32) NOT NULL DEFAULT '',
+		status VARCHAR(32) DEFAULT 'pending',
+		current_step VARCHAR(128) DEFAULT '',
+		message TEXT DEFAULT '',
+		started_at TIMESTAMP NULL,
+		finished_at TIMESTAMP NULL,
+		error_message TEXT DEFAULT '',
+		INDEX idx_deploy_nodes_deployment (deployment_id),
+		FOREIGN KEY (deployment_id) REFERENCES cluster_deployments(id) ON DELETE CASCADE
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -1152,6 +1178,31 @@ var schemaSQLite = []string{
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_licenses_active ON licenses(active)`,
+
+		// Phase 4: Extend cluster_deployments with full request/plan/status payload.
+		`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ''`,
+		`ALTER TABLE cluster_deployments ADD COLUMN plan_json TEXT DEFAULT ''`,
+		`ALTER TABLE cluster_deployments ADD COLUMN custom_json TEXT DEFAULT ''`,
+		`ALTER TABLE cluster_deployments ADD COLUMN started_at TIMESTAMP`,
+		`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP`,
+		`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
+
+		// Phase 4: Persist per-node deployment progress (was in-memory only).
+		`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (
+			id TEXT PRIMARY KEY,
+			deployment_id TEXT NOT NULL REFERENCES cluster_deployments(id) ON DELETE CASCADE,
+			instance_id TEXT DEFAULT '',
+			host TEXT NOT NULL,
+			mysql_port INTEGER DEFAULT 3306,
+			role TEXT NOT NULL DEFAULT '',
+			status TEXT DEFAULT 'pending',
+			current_step TEXT DEFAULT '',
+			message TEXT DEFAULT '',
+			started_at TIMESTAMP,
+			finished_at TIMESTAMP,
+			error_message TEXT DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_deploy_nodes_deployment ON cluster_deploy_nodes(deployment_id)`,
 	}
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

@@ -26,7 +26,7 @@ func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testin
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	ctx = context.WithValue(ctx, "user_id", "deploy-auditor-001")
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
 
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-a", Name: "host-a", Address: "10.0.0.11", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-b", Name: "host-b", Address: "10.0.0.12", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
@@ -102,7 +102,7 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-master", Name: "host-master", Address: agentHost, SSHPort: 22, SSHUser: "root", AgentPort: agentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-replica", Name: "host-replica", Address: agentHost, SSHPort: 22, SSHUser: "root", AgentPort: agentPort}))
@@ -187,7 +187,7 @@ func TestDestroyClusterWithNoManagedInstancesDestroysMetadata(t *testing.T) {
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	backupSvc := &BackupService{}
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
 	service.SetBackupService(backupSvc)
 
 	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
@@ -217,7 +217,7 @@ func TestDestroyClusterResolvesDeploymentByName(t *testing.T) {
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	backupSvc := &BackupService{}
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
 	service.SetBackupService(backupSvc)
 
 	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
@@ -243,7 +243,7 @@ func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
 
 	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
 		ID:          "ha-cluster-001",
@@ -281,7 +281,7 @@ func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
 
 	require.NoError(t, instRepo.Create(ctx, &models.Instance{
 		ID:        "destroyed-node",
@@ -318,7 +318,7 @@ func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{})
 
 	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
 		ID:          "cluster-with-nodes",
@@ -388,7 +388,7 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 
 	resp, err := service.DeployMHA(ctx, DeployMHARequest{
 		ClusterID:        "mha-error-cluster",
@@ -488,7 +488,7 @@ func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 			hostRepo := repositories.NewHostRepository(db)
 			instRepo := repositories.NewInstanceRepository(db)
 			clusterRepo := repositories.NewClusterDeployRepository(db)
-			service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, nil, config.ClusterDefaults{})
+			service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, nil, config.ClusterDefaults{})
 
 			resp, err := tt.deploy(service)
 
@@ -518,7 +518,7 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-primary-host", Name: "mgr-primary-host", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-secondary-host", Name: "mgr-secondary-host", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
 	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-primary-inst", "mgr-primary-host", primaryHost, 3306)
@@ -556,7 +556,7 @@ func TestDeployPXCUsesResolvedAgentPorts(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-bootstrap-host", Name: "pxc-bootstrap-host", Address: bootstrapHost, SSHPort: 22, SSHUser: "root", AgentPort: bootstrapAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-join-host", Name: "pxc-join-host", Address: joinHost, SSHPort: 22, SSHUser: "root", AgentPort: joinAgentPort}))
 	createClusterDeployManagedInstance(t, ctx, instRepo, "pxc-bootstrap-inst", "pxc-bootstrap-host", bootstrapHost, 3306)
@@ -594,7 +594,7 @@ func TestDeployMGRMarksValidationStepFailedWhenManagementSyncFails(t *testing.T)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-primary", Name: "mgr-unsynced-primary", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-secondary", Name: "mgr-unsynced-secondary", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
 
@@ -633,7 +633,7 @@ func TestDeployPXCMarksValidationStepFailedWhenManagementSyncFails(t *testing.T)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-unsynced-bootstrap", Name: "pxc-unsynced-bootstrap", Address: bootstrapHost, SSHPort: 22, SSHUser: "root", AgentPort: bootstrapAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "pxc-unsynced-join", Name: "pxc-unsynced-join", Address: joinHost, SSHPort: 22, SSHUser: "root", AgentPort: joinAgentPort}))
 

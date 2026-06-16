@@ -15,7 +15,7 @@ func TestUniversalClusterDeployBuildsMGRPlan(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB()
 	hostRepo := repositories.NewHostRepository(db)
-	service := NewClusterDeployService(repositories.NewClusterDeployRepository(db), hostRepo, repositories.NewInstanceRepository(db), nil, config.ClusterDefaults{})
+	service := NewClusterDeployService(repositories.NewClusterDeployRepository(db), nil, hostRepo, repositories.NewInstanceRepository(db), nil, config.ClusterDefaults{})
 
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-a", Name: "host-a", Address: "10.0.0.11", AgentPort: 19091}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-b", Name: "host-b", Address: "10.0.0.12", AgentPort: 19092}))
@@ -45,7 +45,7 @@ func TestUniversalClusterDeployBuildsMGRPlan(t *testing.T) {
 }
 
 func TestUniversalClusterDeployRejectsForbiddenMySQLConfig(t *testing.T) {
-	service := NewClusterDeployService(nil, nil, nil, nil, config.ClusterDefaults{})
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
 
 	_, err := service.ValidateClusterDeploy(context.Background(), UniversalClusterDeployRequest{
 		ClusterID:   "ha-invalid-config",
@@ -62,7 +62,7 @@ func TestUniversalClusterDeployRejectsForbiddenMySQLConfig(t *testing.T) {
 }
 
 func TestUniversalClusterDeployValidateOnlyReturnsPlan(t *testing.T) {
-	service := NewClusterDeployService(nil, nil, nil, nil, config.ClusterDefaults{})
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
 
 	resp, err := service.DeployCluster(context.Background(), UniversalClusterDeployRequest{
 		ClusterID:   "ha-validate",
@@ -86,7 +86,7 @@ func TestUniversalClusterDeployPseudoHAReusesMetadataSync(t *testing.T) {
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, hostRepo, instRepo, nil, config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, nil, config.ClusterDefaults{})
 
 	password, err := utils.Encrypt("rootpass", "test-encryption-key")
 	require.NoError(t, err)
@@ -221,6 +221,94 @@ func TestUniversalClusterDeployMapsCustomParametersToPXCRequest(t *testing.T) {
 	require.Equal(t, "true", out.ConfigParams["wsrep_ssl_enabled"])
 	require.Equal(t, "/data/pxc/3306", out.BootstrapNode.DataDir)
 	require.Equal(t, "/data/pxc/3307", out.OtherNodes[0].DataDir)
+}
+
+func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, nil, config.ClusterDefaults{})
+
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	createInstance := func(id, host string, port int) {
+		require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, Name: id}))
+		require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+			InstanceID:        id,
+			Host:              host,
+			Port:              port,
+			Username:          "root",
+			PasswordEncrypted: password,
+		}))
+	}
+	createInstance("ha-master", "10.0.0.11", 3306)
+	createInstance("ha-replica", "10.0.0.12", 3307)
+
+	plan := &ClusterDeployPlan{
+		DeploymentID: "execute-plan-ha",
+		ClusterType:  "ha",
+		Mode:         "pseudo",
+		Nodes: []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090},
+			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica", AgentPort: 9090},
+		},
+		Steps: buildUniversalPlanSteps("ha", []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master"},
+			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica"},
+		}, UniversalClusterDeployRequest{
+			ClusterID: "execute-plan-ha", ClusterType: "ha",
+			Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+			MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		}),
+	}
+
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "execute-plan-ha",
+		ClusterType: "ha",
+		Mode:        "pseudo",
+		Name:        "execute-plan-ha",
+		Nodes:       []ClusterDeployNode{{Host: "10.0.0.11", Role: "master", MySQLPort: 3306}, {Host: "10.0.0.12", Role: "replica", MySQLPort: 3307}},
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+	require.NoError(t, err)
+	require.Equal(t, "success", resp.Status)
+	require.Equal(t, "execute-plan-ha", resp.DeploymentID)
+
+	// Verify deployment record was persisted
+	dep, err := clusterRepo.GetByID(ctx, "execute-plan-ha")
+	require.NoError(t, err)
+	require.Equal(t, "completed", dep.Status)
+	require.NotEmpty(t, dep.PlanJSON)
+	require.NotEmpty(t, dep.RequestJSON)
+
+	// Verify instances were synced
+	master, err := instRepo.GetByID(ctx, "ha-master")
+	require.NoError(t, err)
+	require.Equal(t, "execute-plan-ha", master.ClusterID)
+	require.Equal(t, "master", master.Status.Role)
+
+	replica, err := instRepo.GetByID(ctx, "ha-replica")
+	require.NoError(t, err)
+	require.Equal(t, "execute-plan-ha", replica.ClusterID)
+	require.Equal(t, "slave", replica.Status.Role)
+	require.Equal(t, "ha-master", replica.Topology.MasterID)
+}
+
+func TestExecuteClusterDeployPlan_RejectsRealMode(t *testing.T) {
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	plan := &ClusterDeployPlan{
+		DeploymentID: "reject-real",
+		ClusterType:  "ha",
+		Mode:         "real",
+	}
+
+	_, err := service.ExecuteClusterDeployPlan(context.Background(), plan, UniversalClusterDeployRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only supports pseudo")
 }
 
 func stepIDs(steps []PlanStep) []string {

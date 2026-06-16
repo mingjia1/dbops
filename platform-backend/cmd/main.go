@@ -152,7 +152,8 @@ func main() {
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
-	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
+	clusterDeployNodeRepo := repositories.NewClusterDeployNodeRepository(db)
+	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, clusterDeployNodeRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
 	clusterDeployService.SetEncryptionKey(cfg.EncryptionKey)
 	clusterDeployService.SetBackupService(backupService)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
