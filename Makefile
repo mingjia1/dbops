@@ -66,6 +66,30 @@ lint:
 db-migrate:
 	cd platform-backend && go run ./cmd/main.go migrate
 
+dist: build-backend build-agent build-web
+	rm -rf dist && mkdir -p dist/bin dist/config dist/scripts
+	cp platform-backend/build/dbops-backend dist/bin/
+	cp agent/build/dbops-agent dist/bin/
+	cp -r platform-backend/config/*.yaml dist/config/ 2>/dev/null || true
+	cp scripts/upgrade-platform.sh scripts/start.sh scripts/stop.sh dist/scripts/
+	cp docker-compose.dev.yml dist/
+	cp web-console/build dist/web -r 2>/dev/null || cp -r web-console/dist dist/web 2>/dev/null || true
+	tar -czf dbops-offline-$(shell date +%Y%m%d).tar.gz dist/
+	@echo "Offline package: dbops-offline-$(shell date +%Y%m%d).tar.gz"
+
+upgrade: build-backend build-agent
+	@echo "=== DBOps Platform Upgrade ==="
+	@echo "Stopping services..."
+	scripts/stop.sh || true
+	@echo "Installing new binaries..."
+	cp platform-backend/build/dbops-backend /usr/local/bin/dbops-backend 2>/dev/null || true
+	cp agent/build/dbops-agent /usr/local/bin/dbops-agent 2>/dev/null || true
+	@echo "Running DB migrations..."
+	cd platform-backend && go run ./cmd/main.go migrate 2>/dev/null || true
+	@echo "Starting services..."
+	scripts/start.sh || true
+	@echo "=== Upgrade complete ==="
+
 help:
 	@echo "MySQL Ops Platform Makefile"
 	@echo ""
@@ -74,6 +98,8 @@ help:
 	@echo "  make install-agent      Install agent dependencies"
 	@echo "  make install-web        Install web console dependencies"
 	@echo "  make build              Build all components"
+	@echo "  make dist               Build offline install package"
+	@echo "  make upgrade            One-click platform upgrade"
 	@echo "  make run                Run all components"
 	@echo "  make test               Run tests"
 	@echo "  make docker-up          Start Docker services"
