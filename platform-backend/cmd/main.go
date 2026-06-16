@@ -199,6 +199,10 @@ func main() {
 	maskingService := services.NewMaskingService(maskingRepo)
 	maskingController := controllers.NewMaskingController(maskingService)
 
+	keyVersionRepo := repositories.NewKeyVersionRepository(db)
+	keyRotationService := services.NewKeyRotationService(keyVersionRepo, auditService)
+	keyRotationController := controllers.NewKeyRotationController(keyRotationService, cfg.EncryptionKey)
+
 	r := gin.Default()
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
 	r.MaxMultipartMemory = 10 << 20
@@ -494,6 +498,13 @@ func main() {
 				masking.GET("/:id", maskingController.GetByID)
 				masking.PUT("/:id", middleware.RequirePermission("admin"), maskingController.Update)
 				masking.DELETE("/:id", middleware.RequirePermission("admin"), maskingController.Delete)
+			}
+
+			keys := protected.Group("/keys")
+			keys.Use(middleware.RequirePermission("admin"))
+			{
+				keys.POST("/rotate", keyRotationController.RotateKey)
+				keys.GET("/versions", keyRotationController.ListKeyVersions)
 			}
 		}
 	}

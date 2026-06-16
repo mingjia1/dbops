@@ -417,6 +417,14 @@ var InitialSchema = []string{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_failover_history_cluster (cluster_id, failover_time)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS key_versions (
+		id VARCHAR(64) PRIMARY KEY,
+		key_digest VARCHAR(64) NOT NULL,
+		version INT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		note TEXT,
+		INDEX idx_key_ver (version)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -828,6 +836,14 @@ var schemaSQLite = []string{
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS key_versions (
+			id TEXT PRIMARY KEY,
+			key_digest TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			note TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_key_ver ON key_versions(version)`,
 	}
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.
