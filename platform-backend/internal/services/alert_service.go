@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/alertexpr"
 	"github.com/monkeycode/mysql-ops-platform/pkg/notifier"
 )
 
@@ -19,6 +20,11 @@ type AlertService struct {
 	ruleRepo         *repositories.AlertRuleRepository
 	notificationRepo *repositories.AlertNotificationRepository
 	monitorService   *MonitorService
+	templateRepo     *repositories.AlertTemplateRepository
+	escRepo          *repositories.EscalationRepository
+	silenceRepo      *repositories.SilenceRepository
+	inspectionTplRepo *repositories.InspectionTemplateRepository
+	inspectionRptRepo *repositories.InspectionReportRepository
 }
 
 func NewAlertService(ruleRepo *repositories.AlertRuleRepository, notificationRepo *repositories.AlertNotificationRepository, monitorService *MonitorService) *AlertService {
@@ -27,6 +33,46 @@ func NewAlertService(ruleRepo *repositories.AlertRuleRepository, notificationRep
 		notificationRepo: notificationRepo,
 		monitorService:   monitorService,
 	}
+}
+
+func (s *AlertService) WithTemplateRepo(repo *repositories.AlertTemplateRepository) *AlertService {
+	s.templateRepo = repo
+	return s
+}
+
+func (s *AlertService) WithEscalationRepo(repo *repositories.EscalationRepository) *AlertService {
+	s.escRepo = repo
+	return s
+}
+
+func (s *AlertService) WithSilenceRepo(repo *repositories.SilenceRepository) *AlertService {
+	s.silenceRepo = repo
+	return s
+}
+
+func (s *AlertService) WithInspectionRepos(tplRepo *repositories.InspectionTemplateRepository, rptRepo *repositories.InspectionReportRepository) *AlertService {
+	s.inspectionTplRepo = tplRepo
+	s.inspectionRptRepo = rptRepo
+	return s
+}
+
+// --- AlertTemplate methods ---
+
+func (s *AlertService) CreateAlertTemplate(ctx context.Context, tpl *models.AlertTemplate) error {
+	tpl.CreatedAt = time.Now()
+	return s.templateRepo.Create(ctx, tpl)
+}
+
+func (s *AlertService) ListAlertTemplates(ctx context.Context, category string) ([]models.AlertTemplate, error) {
+	return s.templateRepo.List(ctx, category)
+}
+
+func (s *AlertService) GetAlertTemplate(ctx context.Context, id string) (*models.AlertTemplate, error) {
+	return s.templateRepo.GetByID(ctx, id)
+}
+
+func (s *AlertService) DeleteAlertTemplate(ctx context.Context, id string) error {
+	return s.templateRepo.Delete(ctx, id)
 }
 
 type EvaluateAlertRuleRequest struct {
@@ -66,11 +112,28 @@ func (s *AlertService) EvaluateAlertRule(ctx context.Context, req EvaluateAlertR
 		}
 	}
 
-	triggered := s.evaluateCondition(rule.Condition, currentValue, rule.Threshold)
+	var triggered bool
+	if rule.Expression != "" {
+		metricMap := make(map[string]float64)
+		for _, m := range metrics {
+			metricMap[m.Name] = m.Value
+		}
+		e := alertexpr.NewEvaluator(metricMap)
+		triggered, err = e.Eval(rule.Expression)
+		if err != nil {
+			return nil, fmt.Errorf("expression evaluation failed: %w", err)
+		}
+	} else {
+		triggered = s.evaluateCondition(rule.Condition, currentValue, rule.Threshold)
+	}
 
 	message := ""
 	if triggered {
-		message = fmt.Sprintf("Alert %s triggered: %s %.2f %s %.2f", rule.Name, rule.Metric, currentValue, rule.Condition, rule.Threshold)
+		if rule.Expression != "" {
+			message = fmt.Sprintf("Alert %s triggered: expression(%s)", rule.Name, rule.Expression)
+		} else {
+			message = fmt.Sprintf("Alert %s triggered: %s %.2f %s %.2f", rule.Name, rule.Metric, currentValue, rule.Condition, rule.Threshold)
+		}
 	}
 
 	return &AlertEvaluationResult{
@@ -379,4 +442,191 @@ func (s *AlertService) GetNotificationChannelByID(ctx context.Context, id string
 
 func (s *AlertService) ListNotificationChannels(ctx context.Context, limit, offset int) ([]models.NotificationChannel, error) {
 	return s.notificationRepo.ListAlertNotifications(ctx, limit, offset)
+}
+
+// --- Escalation ---
+
+func (s *AlertService) CreateEscalation(ctx context.Context, e *models.AlertEscalation) error {
+	e.CreatedAt = time.Now()
+	e.UpdatedAt = time.Now()
+	return s.escRepo.Create(ctx, e)
+}
+
+func (s *AlertService) ListEscalations(ctx context.Context, ruleID string) ([]models.AlertEscalation, error) {
+	return s.escRepo.ListByRuleID(ctx, ruleID)
+}
+
+func (s *AlertService) GetEscalation(ctx context.Context, id string) (*models.AlertEscalation, error) {
+	return s.escRepo.GetByID(ctx, id)
+}
+
+func (s *AlertService) DeleteEscalation(ctx context.Context, id string) error {
+	return s.escRepo.Delete(ctx, id)
+}
+
+// --- Silence ---
+
+func (s *AlertService) CreateSilence(ctx context.Context, sl *models.AlertSilence) error {
+	sl.CreatedAt = time.Now()
+	sl.UpdatedAt = time.Now()
+	return s.silenceRepo.Create(ctx, sl)
+}
+
+func (s *AlertService) ListSilences(ctx context.Context) ([]models.AlertSilence, error) {
+	return s.silenceRepo.List(ctx)
+}
+
+func (s *AlertService) GetSilence(ctx context.Context, id string) (*models.AlertSilence, error) {
+	return s.silenceRepo.GetByID(ctx, id)
+}
+
+func (s *AlertService) UpdateSilence(ctx context.Context, sl *models.AlertSilence) error {
+	sl.UpdatedAt = time.Now()
+	return s.silenceRepo.Update(ctx, sl)
+}
+
+func (s *AlertService) DeleteSilence(ctx context.Context, id string) error {
+	return s.silenceRepo.Delete(ctx, id)
+}
+
+// --- Inspection Templates ---
+
+func (s *AlertService) CreateInspectionTemplate(ctx context.Context, t *models.InspectionTemplate) error {
+	t.CreatedAt = time.Now()
+	t.UpdatedAt = time.Now()
+	return s.inspectionTplRepo.Create(ctx, t)
+}
+
+func (s *AlertService) ListInspectionTemplates(ctx context.Context, category string) ([]models.InspectionTemplate, error) {
+	return s.inspectionTplRepo.List(ctx, category)
+}
+
+func (s *AlertService) GetInspectionTemplate(ctx context.Context, id string) (*models.InspectionTemplate, error) {
+	return s.inspectionTplRepo.GetByID(ctx, id)
+}
+
+func (s *AlertService) UpdateInspectionTemplate(ctx context.Context, t *models.InspectionTemplate) error {
+	t.UpdatedAt = time.Now()
+	return s.inspectionTplRepo.Update(ctx, t)
+}
+
+func (s *AlertService) DeleteInspectionTemplate(ctx context.Context, id string) error {
+	return s.inspectionTplRepo.Delete(ctx, id)
+}
+
+// --- Inspection Reports ---
+
+func (s *AlertService) GenerateInspectionReport(ctx context.Context, templateID, instanceID string) (*models.InspectionReport, error) {
+	tpl, err := s.inspectionTplRepo.GetByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("template not found: %w", err)
+	}
+
+	now := time.Now()
+	report := &models.InspectionReport{
+		TemplateID:  templateID,
+		InstanceID:  instanceID,
+		Status:      "generating",
+		GeneratedAt: now,
+		CreatedAt:   now,
+	}
+
+	if err := s.inspectionRptRepo.Create(ctx, report); err != nil {
+		return nil, fmt.Errorf("failed to create report record: %w", err)
+	}
+
+	// Run checks based on template config
+	summary, details, score := s.runInspectionChecks(ctx, tpl, instanceID)
+	report.Status = "completed"
+	report.Summary = summary
+	report.Details = details
+	report.Score = score
+
+	if err := s.inspectionRptRepo.Update(ctx, report); err != nil {
+		return nil, fmt.Errorf("failed to update report results: %w", err)
+	}
+
+	return report, nil
+}
+
+func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.InspectionTemplate, instanceID string) (summary, details string, score int) {
+	baseScore := 100
+	var issues []string
+
+	// 1. Check instance health
+	healthMetrics := []string{"cpu", "mem", "disk", "connections", "qps"}
+	metrics, err := s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
+		InstanceID: instanceID,
+		Metrics:    healthMetrics,
+	})
+	if err == nil {
+		metricMap := make(map[string]float64)
+		for _, m := range metrics {
+			metricMap[m.Name] = m.Value
+		}
+		if v, ok := metricMap["cpu"]; ok && v > 90 {
+			issues = append(issues, "CPU usage high (> 90%)")
+			baseScore -= 10
+		}
+		if v, ok := metricMap["mem"]; ok && v > 90 {
+			issues = append(issues, "Memory usage high (> 90%)")
+			baseScore -= 10
+		}
+		if v, ok := metricMap["disk"]; ok && v > 85 {
+			issues = append(issues, "Disk usage high (> 85%)")
+			baseScore -= 15
+		}
+		if v, ok := metricMap["connections"]; ok && v > 500 {
+			issues = append(issues, fmt.Sprintf("High connection count (%.0f)", v))
+			baseScore -= 5
+		}
+		if v, ok := metricMap["qps"]; ok && v > 10000 {
+			issues = append(issues, fmt.Sprintf("High QPS (%.0f)", v))
+			baseScore -= 5
+		}
+	}
+
+	// 2. Check active alert rules for this instance
+	alerts, _ := s.ruleRepo.ListAlertHistory(ctx, repositories.AlertHistoryFilter{
+		InstanceID: instanceID,
+		Status:     "firing",
+		Limit:      10,
+	})
+	if len(alerts) > 0 {
+		issues = append(issues, fmt.Sprintf("%d active alerts firing", len(alerts)))
+		baseScore -= len(alerts) * 5
+	}
+
+	if baseScore < 0 {
+		baseScore = 0
+	}
+
+	summary = fmt.Sprintf("巡检得分: %d/100", baseScore)
+	if len(issues) > 0 {
+		summary += " — 发现 " + fmt.Sprintf("%d", len(issues)) + " 项问题"
+	} else {
+		summary += " — 运行状态良好"
+	}
+
+	detailBytes, _ := json.Marshal(map[string]interface{}{
+		"score":    baseScore,
+		"issues":   issues,
+		"template": tpl.Name,
+		"at":       time.Now().Format(time.RFC3339),
+	})
+	details = string(detailBytes)
+
+	return summary, details, baseScore
+}
+
+func (s *AlertService) ListInspectionReports(ctx context.Context, templateID string, limit, offset int) ([]models.InspectionReport, error) {
+	return s.inspectionRptRepo.List(ctx, templateID, limit, offset)
+}
+
+func (s *AlertService) GetInspectionReport(ctx context.Context, id string) (*models.InspectionReport, error) {
+	return s.inspectionRptRepo.GetByID(ctx, id)
+}
+
+func (s *AlertService) DeleteInspectionReport(ctx context.Context, id string) error {
+	return s.inspectionRptRepo.Delete(ctx, id)
 }

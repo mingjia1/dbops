@@ -27,14 +27,14 @@ func (r *AlertRuleRepository) CreateAlertRule(ctx context.Context, rule *models.
 	rule.ID = uuid.New().String()
 
 	query := `
-		INSERT INTO alert_rules (id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO alert_rules (id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, expression, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		rule.ID, rule.Name, rule.Metric, rule.Condition, rule.Threshold,
 		rule.DurationSeconds, rule.Severity, rule.NotificationChannels,
-		rule.CreatedAt, rule.UpdatedAt)
+		rule.Expression, rule.CreatedAt, rule.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create alert rule: %w", err)
@@ -51,14 +51,15 @@ func (r *AlertRuleRepository) UpdateAlertRule(ctx context.Context, rule *models.
 	query := `
 		UPDATE alert_rules SET
 			name = ?, metric = ?, ` + "`condition`" + ` = ?, threshold = ?,
-			duration_seconds = ?, severity = ?, notification_channels = ?, updated_at = ?
+			duration_seconds = ?, severity = ?, notification_channels = ?,
+			expression = ?, updated_at = ?
 		WHERE id = ?
 	`
 
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		rule.Name, rule.Metric, rule.Condition, rule.Threshold,
-		rule.DurationSeconds, rule.Severity, rule.NotificationChannels, rule.UpdatedAt,
-		rule.ID)
+		rule.DurationSeconds, rule.Severity, rule.NotificationChannels,
+		rule.Expression, rule.UpdatedAt, rule.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update alert rule: %w", err)
@@ -86,7 +87,7 @@ func (r *AlertRuleRepository) GetAlertRuleByID(ctx context.Context, id string) (
 	}
 
 	query := `
-		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
+		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, expression, created_at, updated_at
 		FROM alert_rules WHERE id = ?
 	`
 
@@ -94,7 +95,7 @@ func (r *AlertRuleRepository) GetAlertRuleByID(ctx context.Context, id string) (
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
 		&rule.ID, &rule.Name, &rule.Metric, &rule.Condition, &rule.Threshold,
 		&rule.DurationSeconds, &rule.Severity, &rule.NotificationChannels,
-		&rule.CreatedAt, &rule.UpdatedAt)
+		&rule.Expression, &rule.CreatedAt, &rule.UpdatedAt)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -112,7 +113,7 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 	}
 
 	query := `
-		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
+		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, expression, created_at, updated_at
 		FROM alert_rules ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 
@@ -128,7 +129,7 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 		if err := rows.Scan(
 			&rule.ID, &rule.Name, &rule.Metric, &rule.Condition, &rule.Threshold,
 			&rule.DurationSeconds, &rule.Severity, &rule.NotificationChannels,
-			&rule.CreatedAt, &rule.UpdatedAt); err != nil {
+			&rule.Expression, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		rules = append(rules, rule)
@@ -143,7 +144,7 @@ func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models
 	}
 
 	query := `
-		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, created_at, updated_at
+		SELECT id, name, metric, ` + "`condition`" + `, threshold, duration_seconds, severity, notification_channels, expression, created_at, updated_at
 		FROM alert_rules ORDER BY created_at DESC
 	`
 
@@ -159,7 +160,7 @@ func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models
 		if err := rows.Scan(
 			&rule.ID, &rule.Name, &rule.Metric, &rule.Condition, &rule.Threshold,
 			&rule.DurationSeconds, &rule.Severity, &rule.NotificationChannels,
-			&rule.CreatedAt, &rule.UpdatedAt); err != nil {
+			&rule.Expression, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		rules = append(rules, rule)
@@ -246,6 +247,87 @@ func (r *AlertRuleRepository) ListAlertHistory(ctx context.Context, filter Alert
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// --- AlertTemplateRepository ---
+
+type AlertTemplateRepository struct {
+	db *Database
+}
+
+func NewAlertTemplateRepository(db *Database) *AlertTemplateRepository {
+	return &AlertTemplateRepository{db: db}
+}
+
+func (r *AlertTemplateRepository) Create(ctx context.Context, tpl *models.AlertTemplate) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	tpl.ID = uuid.New().String()
+	_, err := r.db.Pool.ExecContext(ctx, `
+		INSERT INTO alert_templates (id, name, category, metric, `+"`condition`"+`, threshold, expression, duration_seconds, severity, message, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, tpl.ID, tpl.Name, tpl.Category, tpl.Metric, tpl.Condition, tpl.Threshold,
+		tpl.Expression, tpl.DurationSeconds, tpl.Severity, tpl.Message, tpl.CreatedAt)
+	return err
+}
+
+func (r *AlertTemplateRepository) List(ctx context.Context, category string) ([]models.AlertTemplate, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return []models.AlertTemplate{}, nil
+	}
+	var rows *sql.Rows
+	var err error
+	if category != "" {
+		rows, err = r.db.Pool.QueryContext(ctx,
+			`SELECT id, name, category, metric, `+"`condition`"+`, threshold, expression, duration_seconds, severity, message, created_at
+			 FROM alert_templates WHERE category = ? ORDER BY name`, category)
+	} else {
+		rows, err = r.db.Pool.QueryContext(ctx,
+			`SELECT id, name, category, metric, `+"`condition`"+`, threshold, expression, duration_seconds, severity, message, created_at
+			 FROM alert_templates ORDER BY category, name`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]models.AlertTemplate, 0)
+	for rows.Next() {
+		var t models.AlertTemplate
+		if err := rows.Scan(&t.ID, &t.Name, &t.Category, &t.Metric, &t.Condition,
+			&t.Threshold, &t.Expression, &t.DurationSeconds, &t.Severity, &t.Message, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func (r *AlertTemplateRepository) GetByID(ctx context.Context, id string) (*models.AlertTemplate, error) {
+	if r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	var t models.AlertTemplate
+	err := r.db.Pool.QueryRowContext(ctx,
+		`SELECT id, name, category, metric, `+"`condition`"+`, threshold, expression, duration_seconds, severity, message, created_at
+		 FROM alert_templates WHERE id = ?`, id).Scan(
+		&t.ID, &t.Name, &t.Category, &t.Metric, &t.Condition,
+		&t.Threshold, &t.Expression, &t.DurationSeconds, &t.Severity, &t.Message, &t.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("alert template not found")
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *AlertTemplateRepository) Delete(ctx context.Context, id string) error {
+	if r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := r.db.Pool.ExecContext(ctx, "DELETE FROM alert_templates WHERE id = ?", id)
+	return err
 }
 
 // AlertHistoryFilter 解耦 services.AlertHistoryFilter, 避免 import 循环.

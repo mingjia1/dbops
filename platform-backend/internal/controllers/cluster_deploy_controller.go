@@ -18,6 +18,38 @@ func NewClusterDeployController(service *services.ClusterDeployService) *Cluster
 	return &ClusterDeployController{service: service}
 }
 
+func (c *ClusterDeployController) DeployCluster(ctx *gin.Context) {
+	var req services.UniversalClusterDeployRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	response, err := c.service.DeployCluster(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to deploy cluster", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}
+
+func (c *ClusterDeployController) ValidateClusterDeploy(ctx *gin.Context) {
+	var req services.UniversalClusterDeployRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	response, err := c.service.ValidateClusterDeploy(ctx.Request.Context(), req)
+	if err != nil {
+		utils.BadRequestResponse(ctx, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}
+
 func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 	var req services.DeployMHARequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

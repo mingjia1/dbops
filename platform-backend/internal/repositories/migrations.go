@@ -184,20 +184,35 @@ var InitialSchema = []string{
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-	`CREATE TABLE IF NOT EXISTS alert_rules (
-		id VARCHAR(64) PRIMARY KEY,
-		name VARCHAR(128) NOT NULL,
-		metric VARCHAR(128) NOT NULL,
-		` + "`condition`" + ` VARCHAR(32) NOT NULL,
-		threshold DECIMAL(10,2) NOT NULL,
-		duration_seconds INT DEFAULT 60,
-		severity VARCHAR(16) NOT NULL,
-		notification_channels TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			metric VARCHAR(128) NOT NULL,
+			` + "`condition`" + ` VARCHAR(32) NOT NULL,
+			threshold DECIMAL(10,2) NOT NULL,
+			duration_seconds INT DEFAULT 60,
+			severity VARCHAR(16) NOT NULL,
+			notification_channels TEXT,
+			expression TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-	`CREATE TABLE IF NOT EXISTS alert_records (
+		`CREATE TABLE IF NOT EXISTS alert_templates (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			category VARCHAR(32) NOT NULL,
+			metric VARCHAR(128) NOT NULL,
+			` + "`condition`" + ` VARCHAR(32) NOT NULL DEFAULT '',
+			threshold DECIMAL(10,2) DEFAULT 0,
+			expression TEXT DEFAULT '',
+			duration_seconds INT DEFAULT 60,
+			severity VARCHAR(16) NOT NULL,
+			message TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+		`CREATE TABLE IF NOT EXISTS alert_records (
 		id VARCHAR(64) PRIMARY KEY,
 		rule_id VARCHAR(64),
 		instance_id VARCHAR(64),
@@ -387,7 +402,59 @@ var InitialSchema = []string{
 	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
 	`ALTER TABLE backup_records ADD COLUMN message TEXT`,
 	`ALTER TABLE backup_records ADD COLUMN task_id VARCHAR(128) DEFAULT ''`,
-	`CREATE TABLE IF NOT EXISTS role_switch_history (
+		`ALTER TABLE alert_rules ADD COLUMN expression TEXT DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS escalation_rules (
+			id VARCHAR(64) PRIMARY KEY,
+			rule_id VARCHAR(64) NOT NULL,
+			level INT NOT NULL DEFAULT 0,
+			severity VARCHAR(16) NOT NULL,
+			interval_sec INT NOT NULL DEFAULT 300,
+			notify_channels TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_escalation_rule (rule_id),
+			FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS alert_silences (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			rule_ids TEXT DEFAULT '',
+			match_expr TEXT DEFAULT '',
+			start_at TIMESTAMP NOT NULL,
+			end_at TIMESTAMP NOT NULL,
+			enabled TINYINT(1) DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_alert_silences_enabled (enabled)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS inspection_templates (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			category VARCHAR(32) NOT NULL,
+			config TEXT,
+			schedule VARCHAR(128) DEFAULT '',
+			recipients TEXT DEFAULT '',
+			enabled TINYINT(1) DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_inspection_category (category)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS inspection_reports (
+			id VARCHAR(64) PRIMARY KEY,
+			template_id VARCHAR(64) NOT NULL,
+			instance_id VARCHAR(64) NOT NULL,
+			status VARCHAR(32) DEFAULT 'generating',
+			summary TEXT DEFAULT '',
+			details TEXT,
+			score INT DEFAULT 0,
+			generated_at TIMESTAMP NOT NULL,
+			sent_at TIMESTAMP NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_inspection_template (template_id),
+			INDEX idx_inspection_instance (instance_id),
+			INDEX idx_inspection_status (status)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS role_switch_history (
 		id VARCHAR(64) PRIMARY KEY,
 		cluster_id VARCHAR(64) NOT NULL,
 		cluster_type VARCHAR(32) NOT NULL DEFAULT 'mha',
@@ -610,20 +677,86 @@ var schemaSQLite = []string{
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 
-	`CREATE TABLE IF NOT EXISTS alert_rules (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		metric TEXT NOT NULL,
-		` + "`condition`" + ` TEXT NOT NULL,
-		threshold REAL NOT NULL,
-		duration_seconds INTEGER DEFAULT 60,
-		severity TEXT NOT NULL,
-		notification_channels TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	)`,
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			metric TEXT NOT NULL,
+			` + "`condition`" + ` TEXT NOT NULL,
+			threshold REAL NOT NULL,
+			duration_seconds INTEGER DEFAULT 60,
+			severity TEXT NOT NULL,
+			notification_channels TEXT,
+			expression TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 
-	`CREATE TABLE IF NOT EXISTS alert_records (
+		`CREATE TABLE IF NOT EXISTS alert_templates (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			category TEXT NOT NULL,
+			metric TEXT NOT NULL,
+			` + "`condition`" + ` TEXT NOT NULL DEFAULT '',
+			threshold REAL DEFAULT 0,
+			expression TEXT DEFAULT '',
+			duration_seconds INTEGER DEFAULT 60,
+			severity TEXT NOT NULL,
+			message TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS escalation_rules (
+			id TEXT PRIMARY KEY,
+			rule_id TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+			level INTEGER NOT NULL DEFAULT 0,
+			severity TEXT NOT NULL,
+			interval_sec INTEGER NOT NULL DEFAULT 300,
+			notify_channels TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_escalation_rule ON escalation_rules(rule_id)`,
+		`CREATE TABLE IF NOT EXISTS alert_silences (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			rule_ids TEXT DEFAULT '',
+			match_expr TEXT DEFAULT '',
+			start_at TIMESTAMP NOT NULL,
+			end_at TIMESTAMP NOT NULL,
+			enabled INTEGER DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_silences_enabled ON alert_silences(enabled)`,
+		`CREATE TABLE IF NOT EXISTS inspection_templates (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			category TEXT NOT NULL,
+			config TEXT,
+			schedule TEXT DEFAULT '',
+			recipients TEXT DEFAULT '',
+			enabled INTEGER DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_category ON inspection_templates(category)`,
+		`CREATE TABLE IF NOT EXISTS inspection_reports (
+			id TEXT PRIMARY KEY,
+			template_id TEXT NOT NULL,
+			instance_id TEXT NOT NULL,
+			status TEXT DEFAULT 'generating',
+			summary TEXT DEFAULT '',
+			details TEXT,
+			score INTEGER DEFAULT 0,
+			generated_at TIMESTAMP NOT NULL,
+			sent_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_template ON inspection_reports(template_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_instance ON inspection_reports(instance_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_status ON inspection_reports(status)`,
+
+		`CREATE TABLE IF NOT EXISTS alert_records (
 		id TEXT PRIMARY KEY,
 		rule_id TEXT,
 		instance_id TEXT,
