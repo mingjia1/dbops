@@ -367,10 +367,13 @@ var InitialSchema = []string{
 		error_msg TEXT,
 		ip_address VARCHAR(64),
 		user_agent VARCHAR(255),
+		prev_hash VARCHAR(64) DEFAULT '',
+		hash VARCHAR(64) NOT NULL DEFAULT '',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_audit_user (user_id),
 		INDEX idx_audit_action (action),
-		INDEX idx_audit_created (created_at)
+		INDEX idx_audit_created (created_at),
+		INDEX idx_audit_hash (hash)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
 	// Version-agnostic install/upgrade and operational history fields.
@@ -762,11 +765,14 @@ var schemaSQLite = []string{
 		error_msg TEXT,
 		ip_address TEXT,
 		user_agent TEXT,
+		prev_hash TEXT DEFAULT '',
+		hash TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_hash ON audit_logs(hash)`,
 
 	// 版本无关安装/升级字段 (P-generic). idempotent: 已存在则忽略.
 	`ALTER TABLE instance_connections ADD COLUMN basedir VARCHAR(255) DEFAULT ''`,

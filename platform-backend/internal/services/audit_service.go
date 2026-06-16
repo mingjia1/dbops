@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -12,6 +16,7 @@ import (
 type AuditService struct {
 	auditRepo    *repositories.AuditLogRepository
 	approvalRepo *repositories.ApprovalRequestRepository
+	hmacSecret   string
 }
 
 func NewAuditService(auditRepo *repositories.AuditLogRepository, approvalRepo *repositories.ApprovalRequestRepository) *AuditService {
@@ -21,7 +26,27 @@ func NewAuditService(auditRepo *repositories.AuditLogRepository, approvalRepo *r
 	}
 }
 
+func (s *AuditService) SetHMACSecret(secret string) {
+	s.hmacSecret = secret
+}
+
+func (s *AuditService) computeAuditHash(prevHash string, log *models.AuditLog) string {
+	mac := hmac.New(sha256.New, []byte(s.hmacSecret))
+	payload := strings.Join([]string{
+		log.ID, log.UserID, log.Operation, log.ResourceType, log.ResourceID,
+		log.Action, log.Details, log.Result, log.ErrorMsg, log.IPAddress, log.UserAgent,
+		prevHash, log.CreatedAt.Format(time.RFC3339Nano),
+	}, "|")
+	mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func (s *AuditService) CreateAuditLog(ctx context.Context, req CreateAuditLogRequest) (*models.AuditLog, error) {
+	prevHash, err := s.auditRepo.GetLatestHash(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest hash: %w", err)
+	}
+
 	auditLog := &models.AuditLog{
 		UserID:       req.UserID,
 		Operation:    req.Operation,
@@ -33,8 +58,10 @@ func (s *AuditService) CreateAuditLog(ctx context.Context, req CreateAuditLogReq
 		ErrorMsg:     req.ErrorMsg,
 		IPAddress:    req.IPAddress,
 		UserAgent:    req.UserAgent,
+		PrevHash:     prevHash,
 		CreatedAt:    time.Now(),
 	}
+	auditLog.Hash = s.computeAuditHash(prevHash, auditLog)
 
 	if err := s.auditRepo.Create(ctx, auditLog); err != nil {
 		return nil, fmt.Errorf("failed to create audit log: %w", err)
@@ -59,8 +86,47 @@ func (s *AuditService) ListAuditLogsByResource(ctx context.Context, resourceType
 	return s.auditRepo.ListByResource(ctx, resourceType, resourceID, limit, offset)
 }
 
-func (s *AuditService) ListAuditLogsFiltered(ctx context.Context, filter repositories.AuditLogFilter, limit, offset int) ([]models.AuditLog, error) {
-	return s.auditRepo.ListFiltered(ctx, filter, limit, offset)
+type FilteredResult struct {
+	Logs  []models.AuditLog `json:"logs"`
+	Total int               `json:"total"`
+}
+
+func (s *AuditService) ListAuditLogsFiltered(ctx context.Context, filter repositories.AuditLogFilter, limit, offset int) (*FilteredResult, error) {
+	logs, total, err := s.auditRepo.ListFiltered(ctx, filter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &FilteredResult{Logs: logs, Total: total}, nil
+}
+
+func (s *AuditService) VerifyChain(ctx context.Context, fromID string) (bool, string, error) {
+	log, err := s.auditRepo.GetByID(ctx, fromID)
+	if err != nil {
+		return false, "", err
+	}
+
+	currentHash := log.Hash
+	for {
+		if log.PrevHash == "" {
+			return true, "chain intact", nil
+		}
+		prev, err := s.auditRepo.GetByID(ctx, log.ID)
+		if err != nil {
+			return false, "", fmt.Errorf("broken chain at %s: %w", log.ID, err)
+		}
+		expectedHash := s.computeAuditHash(prev.PrevHash, prev)
+		if prev.Hash != expectedHash {
+			return false, fmt.Sprintf("hash mismatch at %s", prev.ID), nil
+		}
+		if prev.Hash != currentHash {
+			return false, fmt.Sprintf("prev_hash mismatch: %s claims %s but actual is %s", log.ID, log.PrevHash, prev.Hash), nil
+		}
+		if prev.PrevHash == "" {
+			return true, "chain intact", nil
+		}
+		log = prev
+		currentHash = prev.Hash
+	}
 }
 
 type CreateAuditLogRequest struct {

@@ -51,21 +51,24 @@ func TestAuditLogRepositoryListFiltered(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, row))
 	}
 
-	got, err := repo.ListFiltered(ctx, AuditLogFilter{UserID: "alice", Action: "request", ResourceType: "approval_request"}, 10, 0)
+	got, total, err := repo.ListFiltered(ctx, AuditLogFilter{UserID: "alice", Action: "request", ResourceType: "approval_request"}, 10, 0)
 	require.NoError(t, err)
+	require.Equal(t, 2, total)
 	require.Len(t, got, 2)
 	require.Equal(t, "audit-3", got[0].ID)
 	require.Equal(t, "audit-1", got[1].ID)
 
 	start := base.Add(30 * time.Minute)
 	end := base.Add(90 * time.Minute)
-	got, err = repo.ListFiltered(ctx, AuditLogFilter{StartTime: &start, EndTime: &end}, 10, 0)
+	got, total, err = repo.ListFiltered(ctx, AuditLogFilter{StartTime: &start, EndTime: &end}, 10, 0)
 	require.NoError(t, err)
+	require.Equal(t, 1, total)
 	require.Len(t, got, 1)
 	require.Equal(t, "audit-2", got[0].ID)
 
-	got, err = repo.ListFiltered(ctx, AuditLogFilter{ResourceType: "backup", ResourceID: "backup-1"}, 10, 0)
+	got, total, err = repo.ListFiltered(ctx, AuditLogFilter{ResourceType: "backup", ResourceID: "backup-1"}, 10, 0)
 	require.NoError(t, err)
+	require.Equal(t, 1, total)
 	require.Len(t, got, 1)
 	require.Equal(t, "audit-2", got[0].ID)
 }

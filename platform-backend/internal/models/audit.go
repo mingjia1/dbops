@@ -16,6 +16,8 @@ type AuditLog struct {
 	ErrorMsg    string    `json:"error_msg"`
 	IPAddress   string    `json:"ip_address"`
 	UserAgent   string    `json:"user_agent"`
+	PrevHash    string    `json:"prev_hash"`
+	Hash        string    `json:"hash"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

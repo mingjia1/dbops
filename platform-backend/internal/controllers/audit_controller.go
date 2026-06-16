@@ -66,14 +66,13 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 		filter.EndTime = &t
 	}
 
-	auditLogs, err := c.service.ListAuditLogsFiltered(ctx.Request.Context(), filter, limit, offset)
-
+	result, err := c.service.ListAuditLogsFiltered(ctx.Request.Context(), filter, limit, offset)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to list audit logs", err)
 		return
 	}
 
-	utils.SuccessResponse(ctx, auditLogs)
+	utils.SuccessResponse(ctx, gin.H{"logs": result.Logs, "total": result.Total, "limit": limit, "offset": offset})
 }
 
 func (c *AuditController) GetAuditLogByID(ctx *gin.Context) {
@@ -102,6 +101,24 @@ func (c *AuditController) CreateAuditLog(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, auditLog)
+}
+
+func (c *AuditController) VerifyChain(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if id == "" {
+		id = ctx.Query("id")
+	}
+	if id == "" {
+		utils.BadRequestResponse(ctx, "id is required")
+		return
+	}
+
+	ok, msg, err := c.service.VerifyChain(ctx.Request.Context(), id)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Chain verification failed", err)
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{"valid": ok, "message": msg})
 }
 
 func parseAuditTime(value string, endOfDay bool) (time.Time, error) {

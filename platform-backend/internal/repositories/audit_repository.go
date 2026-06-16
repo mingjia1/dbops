@@ -30,14 +30,14 @@ func (r *AuditLogRepository) Create(ctx context.Context, auditLog *models.AuditL
 	}
 
 	query := `
-		INSERT INTO audit_logs (id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO audit_logs (id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		auditLog.ID, auditLog.UserID, auditLog.Operation, auditLog.ResourceType, auditLog.ResourceID,
 		auditLog.Action, auditLog.Details, auditLog.Result, auditLog.ErrorMsg, auditLog.IPAddress,
-		auditLog.UserAgent, auditLog.CreatedAt)
+		auditLog.UserAgent, auditLog.PrevHash, auditLog.Hash, auditLog.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create audit log: %w", err)
@@ -52,7 +52,7 @@ func (r *AuditLogRepository) GetByID(ctx context.Context, id string) (*models.Au
 	}
 
 	query := `
-		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at
 		FROM audit_logs WHERE id = ?
 	`
 
@@ -60,7 +60,7 @@ func (r *AuditLogRepository) GetByID(ctx context.Context, id string) (*models.Au
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
 		&auditLog.ID, &auditLog.UserID, &auditLog.Operation, &auditLog.ResourceType, &auditLog.ResourceID,
 		&auditLog.Action, &auditLog.Details, &auditLog.Result, &auditLog.ErrorMsg, &auditLog.IPAddress,
-		&auditLog.UserAgent, &auditLog.CreatedAt)
+		&auditLog.UserAgent, &auditLog.PrevHash, &auditLog.Hash, &auditLog.CreatedAt)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -78,7 +78,7 @@ func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]mod
 	}
 
 	query := `
-		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at
 		FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 
@@ -93,7 +93,7 @@ func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]mod
 		var log models.AuditLog
 		if err := rows.Scan(&log.ID, &log.UserID, &log.Operation, &log.ResourceType, &log.ResourceID,
 			&log.Action, &log.Details, &log.Result, &log.ErrorMsg, &log.IPAddress,
-			&log.UserAgent, &log.CreatedAt); err != nil {
+			&log.UserAgent, &log.PrevHash, &log.Hash, &log.CreatedAt); err != nil {
 			return nil, err
 		}
 		auditLogs = append(auditLogs, log)
@@ -108,7 +108,7 @@ func (r *AuditLogRepository) ListByUserID(ctx context.Context, userID string, li
 	}
 
 	query := `
-		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at
 		FROM audit_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 
@@ -123,7 +123,7 @@ func (r *AuditLogRepository) ListByUserID(ctx context.Context, userID string, li
 		var log models.AuditLog
 		if err := rows.Scan(&log.ID, &log.UserID, &log.Operation, &log.ResourceType, &log.ResourceID,
 			&log.Action, &log.Details, &log.Result, &log.ErrorMsg, &log.IPAddress,
-			&log.UserAgent, &log.CreatedAt); err != nil {
+			&log.UserAgent, &log.PrevHash, &log.Hash, &log.CreatedAt); err != nil {
 			return nil, err
 		}
 		auditLogs = append(auditLogs, log)
@@ -138,7 +138,7 @@ func (r *AuditLogRepository) ListByResource(ctx context.Context, resourceType, r
 	}
 
 	query := `
-		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at
 		FROM audit_logs WHERE resource_type = ? AND resource_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 
@@ -153,7 +153,7 @@ func (r *AuditLogRepository) ListByResource(ctx context.Context, resourceType, r
 		var log models.AuditLog
 		if err := rows.Scan(&log.ID, &log.UserID, &log.Operation, &log.ResourceType, &log.ResourceID,
 			&log.Action, &log.Details, &log.Result, &log.ErrorMsg, &log.IPAddress,
-			&log.UserAgent, &log.CreatedAt); err != nil {
+			&log.UserAgent, &log.PrevHash, &log.Hash, &log.CreatedAt); err != nil {
 			return nil, err
 		}
 		auditLogs = append(auditLogs, log)
@@ -171,52 +171,79 @@ type AuditLogFilter struct {
 	EndTime      *time.Time
 }
 
-func (r *AuditLogRepository) ListFiltered(ctx context.Context, filter AuditLogFilter, limit, offset int) ([]models.AuditLog, error) {
-	if r.db == nil || r.db.Pool == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-
+func buildAuditWhereClause(filter AuditLogFilter) []string {
 	where := make([]string, 0, 6)
-	args := make([]interface{}, 0, 8)
 	if filter.UserID != "" {
 		where = append(where, "LOWER(user_id) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filter.UserID)+"%")
 	}
 	if filter.Action != "" {
 		where = append(where, "(LOWER(action) LIKE ? OR LOWER(operation) LIKE ?)")
+	}
+	if filter.ResourceType != "" {
+		where = append(where, "resource_type = ?")
+	}
+	if filter.ResourceID != "" {
+		where = append(where, "resource_id = ?")
+	}
+	if filter.StartTime != nil {
+		where = append(where, "created_at >= ?")
+	}
+	if filter.EndTime != nil {
+		where = append(where, "created_at <= ?")
+	}
+	return where
+}
+
+func buildAuditFilterArgs(filter AuditLogFilter) []interface{} {
+	args := make([]interface{}, 0, 8)
+	if filter.UserID != "" {
+		args = append(args, "%"+strings.ToLower(filter.UserID)+"%")
+	}
+	if filter.Action != "" {
 		action := "%" + strings.ToLower(filter.Action) + "%"
 		args = append(args, action, action)
 	}
 	if filter.ResourceType != "" {
-		where = append(where, "resource_type = ?")
 		args = append(args, filter.ResourceType)
 	}
 	if filter.ResourceID != "" {
-		where = append(where, "resource_id = ?")
 		args = append(args, filter.ResourceID)
 	}
 	if filter.StartTime != nil {
-		where = append(where, "created_at >= ?")
 		args = append(args, filter.StartTime.UTC())
 	}
 	if filter.EndTime != nil {
-		where = append(where, "created_at <= ?")
 		args = append(args, filter.EndTime.UTC())
+	}
+	return args
+}
+
+func (r *AuditLogRepository) ListFiltered(ctx context.Context, filter AuditLogFilter, limit, offset int) ([]models.AuditLog, int, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, 0, fmt.Errorf("database not available")
+	}
+
+	where := buildAuditWhereClause(filter)
+	args := buildAuditFilterArgs(filter)
+
+	total, err := r.CountFiltered(ctx, filter)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	query := `
-		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, created_at
+		SELECT id, user_id, operation, resource_type, resource_id, action, details, result, error_msg, ip_address, user_agent, prev_hash, hash, created_at
 		FROM audit_logs
 	`
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
+	allArgs := append(args, limit, offset)
 
-	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	rows, err := r.db.Pool.QueryContext(ctx, query, allArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list filtered audit logs: %w", err)
+		return nil, 0, fmt.Errorf("failed to list filtered audit logs: %w", err)
 	}
 	defer rows.Close()
 
@@ -225,12 +252,46 @@ func (r *AuditLogRepository) ListFiltered(ctx context.Context, filter AuditLogFi
 		var log models.AuditLog
 		if err := rows.Scan(&log.ID, &log.UserID, &log.Operation, &log.ResourceType, &log.ResourceID,
 			&log.Action, &log.Details, &log.Result, &log.ErrorMsg, &log.IPAddress,
-			&log.UserAgent, &log.CreatedAt); err != nil {
-			return nil, err
+			&log.UserAgent, &log.PrevHash, &log.Hash, &log.CreatedAt); err != nil {
+			return nil, 0, err
 		}
 		auditLogs = append(auditLogs, log)
 	}
-	return auditLogs, rows.Err()
+	return auditLogs, total, rows.Err()
+}
+
+func (r *AuditLogRepository) GetLatestHash(ctx context.Context) (string, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return "", nil
+	}
+	var hash string
+	err := r.db.Pool.QueryRowContext(ctx, `SELECT hash FROM audit_logs ORDER BY created_at DESC LIMIT 1`).Scan(&hash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get latest hash: %w", err)
+	}
+	return hash, nil
+}
+
+func (r *AuditLogRepository) CountFiltered(ctx context.Context, filter AuditLogFilter) (int, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return 0, nil
+	}
+
+	where := buildAuditWhereClause(filter)
+	query := "SELECT COUNT(*) FROM audit_logs"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var total int
+	args := buildAuditFilterArgs(filter)
+	if err := r.db.Pool.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("failed to count audit logs: %w", err)
+	}
+	return total, nil
 }
 
 type ApprovalRequestRepository struct {

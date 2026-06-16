@@ -84,6 +84,7 @@ func main() {
 	userRepo = repositories.NewUserRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
+	auditService.SetHMACSecret(cfg.EncryptionKey)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, auditService)
 	authController := controllers.NewAuthController(authService)
 	userService := services.NewUserService(userRepo)
@@ -475,6 +476,7 @@ func main() {
 			auditLogs := protected.Group("/audit-logs")
 			{
 				auditLogs.GET("", auditController.ListAuditLogs)
+				auditLogs.GET("/verify-chain", auditController.VerifyChain)
 				auditLogs.GET("/:id", auditController.GetAuditLogByID)
 			}
 
