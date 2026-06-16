@@ -195,6 +195,14 @@ func main() {
 	escalationController := controllers.NewEscalationController(alertService)
 	silenceController := controllers.NewSilenceController(alertService)
 	inspectionController := controllers.NewInspectionController(alertService)
+	faultTplRepo := repositories.NewFaultTemplateRepository(db)
+	faultExecRepo := repositories.NewFaultExecutionRepository(db)
+	faultService := services.NewFaultService(faultTplRepo, faultExecRepo)
+	faultController := controllers.NewFaultController(faultService)
+	drillRepo := repositories.NewDrillRepository(db)
+	drillReportRepo := repositories.NewDrillReportRepository(db)
+	drillService := services.NewDrillService(drillRepo, drillReportRepo, faultExecRepo)
+	drillController := controllers.NewDrillController(drillService)
 
 	approvalRepo := repositories.NewApprovalRequestRepository(db)
 	approvalService := services.NewApprovalService(approvalRepo, auditRepo)
@@ -498,6 +506,30 @@ func main() {
 				alerts.GET("/inspection/reports", inspectionController.ListReports)
 				alerts.GET("/inspection/reports/:id", inspectionController.GetReport)
 				alerts.DELETE("/inspection/reports/:id", middleware.RequirePermission("admin"), inspectionController.DeleteReport)
+			}
+
+			faults := protected.Group("/faults")
+			{
+				faults.GET("/templates", faultController.ListTemplates)
+				faults.POST("/templates", middleware.RequirePermission("admin"), faultController.CreateTemplate)
+				faults.GET("/templates/:id", faultController.GetTemplate)
+				faults.DELETE("/templates/:id", middleware.RequirePermission("admin"), faultController.DeleteTemplate)
+				faults.POST("/execute", middleware.RequirePermission("admin"), faultController.Execute)
+				faults.POST("/:id/rollback", middleware.RequirePermission("admin"), faultController.Rollback)
+				faults.GET("/executions", faultController.ListExecutions)
+				faults.GET("/executions/:id", faultController.GetExecution)
+			}
+
+			drills := protected.Group("/drills")
+			{
+				drills.GET("", drillController.List)
+				drills.POST("", middleware.RequirePermission("admin"), drillController.Create)
+				drills.GET("/:id", drillController.Get)
+				drills.PUT("/:id", middleware.RequirePermission("admin"), drillController.Update)
+				drills.DELETE("/:id", middleware.RequirePermission("admin"), drillController.Delete)
+				drills.POST("/:id/start", middleware.RequirePermission("admin"), drillController.Start)
+				drills.POST("/:id/complete", middleware.RequirePermission("admin"), drillController.Complete)
+				drills.GET("/:id/report", drillController.GetReport)
 			}
 
 			approvals := protected.Group("/approvals")

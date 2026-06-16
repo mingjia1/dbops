@@ -82,6 +82,60 @@ type InspectionReport struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
+type FaultTemplate struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"`
+	Description string    `json:"description"`
+	FaultType   string    `json:"fault_type"`
+	Params      string    `json:"params"`
+	DurationSec int       `json:"duration_sec"`
+	Severity    string    `json:"severity"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type FaultExecution struct {
+	ID            string     `json:"id"`
+	TemplateID    string     `json:"template_id"`
+	DrillID       string     `json:"drill_id"`
+	TargetType    string     `json:"target_type"`
+	TargetID      string     `json:"target_id"`
+	FaultType     string     `json:"fault_type"`
+	Params        string     `json:"params"`
+	Status        string     `json:"status"`
+	Result        string     `json:"result"`
+	StartedAt     time.Time  `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	RollbackAt    *time.Time `json:"rollback_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type HADrill struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Plan        string     `json:"plan"`
+	Status      string     `json:"status"`
+	Result      string     `json:"result"`
+	Score       int        `json:"score"`
+	StartedAt   *time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type HADrillReport struct {
+	ID          string     `json:"id"`
+	DrillID     string     `json:"drill_id"`
+	Summary     string     `json:"summary"`
+	Timeline    string     `json:"timeline"`
+	Findings    string     `json:"findings"`
+	Score       int        `json:"score"`
+	GeneratedAt time.Time  `json:"generated_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 type AlertRecord struct {
 	ID          string     `json:"id"`
 	RuleID      string     `json:"rule_id"`

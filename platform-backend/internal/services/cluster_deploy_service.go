@@ -1410,22 +1410,26 @@ type DeployPXCRequest struct {
 }
 
 type DeployHARequest struct {
-	Name            string          `json:"name"`
-	ClusterID       string          `json:"cluster_id"`
-	MasterHostID    string          `json:"master_host_id"`
-	ReplicaHostID   string          `json:"replica_host_id"`
-	ReplicaHostIDs  []string        `json:"replica_host_ids"`
-	MasterHost      string          `json:"master_host"`
-	ReplicaHost     string          `json:"replica_host"`
-	ReplicaHosts    []SecondaryNode `json:"replica_hosts"`
-	MasterPort      int             `json:"master_port"`
-	ReplicaPort     int             `json:"replica_port"`
-	MasterAgentPort int             `json:"master_agent_port"`
-	ReplUser        string          `json:"repl_user"`
-	ReplPassword    string          `json:"repl_password"`
-	MySQLUser       string          `json:"mysql_user"`
-	MySQLPassword   string          `json:"mysql_password"`
-	PseudoMode      bool            `json:"pseudo_mode"`
+	Name            string            `json:"name"`
+	ClusterID       string            `json:"cluster_id"`
+	MasterHostID    string            `json:"master_host_id"`
+	ReplicaHostID   string            `json:"replica_host_id"`
+	ReplicaHostIDs  []string          `json:"replica_host_ids"`
+	MasterHost      string            `json:"master_host"`
+	ReplicaHost     string            `json:"replica_host"`
+	ReplicaHosts    []SecondaryNode   `json:"replica_hosts"`
+	MasterPort      int               `json:"master_port"`
+	ReplicaPort     int               `json:"replica_port"`
+	MasterAgentPort int               `json:"master_agent_port"`
+	MasterServerID  int               `json:"master_server_id,omitempty"`
+	MasterDataDir   string            `json:"master_data_dir,omitempty"`
+	MasterBasedir   string            `json:"master_basedir,omitempty"`
+	ReplUser        string            `json:"repl_user"`
+	ReplPassword    string            `json:"repl_password"`
+	MySQLUser       string            `json:"mysql_user"`
+	MySQLPassword   string            `json:"mysql_password"`
+	PseudoMode      bool              `json:"pseudo_mode"`
+	ConfigParams    map[string]string `json:"config_params"`
 }
 
 type SlaveNode struct {
@@ -1437,18 +1441,24 @@ type SecondaryNode struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	AgentPort int    `json:"agent_port"`
+	ServerID  int    `json:"server_id,omitempty"`
+	LocalPort int    `json:"local_port,omitempty"`
+	DataDir   string `json:"data_dir,omitempty"`
+	Basedir   string `json:"basedir,omitempty"`
 }
 
 type BootstrapNode struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	AgentPort int    `json:"agent_port"`
+	DataDir   string `json:"data_dir,omitempty"`
 }
 
 type PXCNode struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	AgentPort int    `json:"agent_port"`
+	DataDir   string `json:"data_dir,omitempty"`
 }
 
 type DeployResponse struct {
