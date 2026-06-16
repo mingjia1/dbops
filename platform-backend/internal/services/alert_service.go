@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/notifier"
 )
 
 type AlertService struct {
@@ -221,6 +222,28 @@ func (s *AlertService) SendNotification(ctx context.Context, req SendNotificatio
 			auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
 			if smtpErr := smtp.SendMail(smtpHost+":25", auth, from, addrs, msg); smtpErr != nil {
 				failedChannels = append(failedChannels, channelID+" (smtp send failed)")
+				continue
+			}
+			successCount++
+		case "dingtalk":
+			webhookURL, _ := cfg["webhook_url"].(string)
+			if webhookURL == "" {
+				failedChannels = append(failedChannels, channelID+" (webhook_url not configured)")
+				continue
+			}
+			if err := notifier.Send("dingtalk", webhookURL, req.AlertID, req.Message); err != nil {
+				failedChannels = append(failedChannels, channelID+" ("+err.Error()+")")
+				continue
+			}
+			successCount++
+		case "wecom":
+			webhookURL, _ := cfg["webhook_url"].(string)
+			if webhookURL == "" {
+				failedChannels = append(failedChannels, channelID+" (webhook_url not configured)")
+				continue
+			}
+			if err := notifier.Send("wecom", webhookURL, req.AlertID, req.Message); err != nil {
+				failedChannels = append(failedChannels, channelID+" ("+err.Error()+")")
 				continue
 			}
 			successCount++
