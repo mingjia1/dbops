@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -249,6 +250,11 @@ func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHAReque
 		"ping_interval":  3,
 		"ping_retry":     3,
 	}
+	mergeStringConfigParams(config, req.ConfigParams, []string{
+		"package_url", "package_checksum", "checksum", "mysql_version", "vip_interface", "ssh_user", "ssh_private_key",
+	})
+	mergeIntConfigParams(config, req.ConfigParams, []string{"ping_interval", "ping_retry"})
+	mergeMySQLConfigParams(config, req.ConfigParams)
 	sshPasswords, err := s.sshPasswordsForMHA(ctx, req)
 	if err != nil {
 		s.updateStepStatus(deployment.ID, "准备 MHA 配置", "failed", err.Error())
@@ -373,9 +379,13 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 	s.addStep(deployment.ID, "检查主机连通性", "running")
 
 	allHosts := append([]SecondaryNode{{Host: req.PrimaryHost, Port: req.PrimaryPort, AgentPort: req.PrimaryAgentPort}}, req.SecondaryHosts...)
+	if len(allHosts) > 0 {
+		allHosts[0].LocalPort = configParamInt(req.ConfigParams, "primary_local_port")
+		allHosts[0].ServerID = configParamInt(req.ConfigParams, "primary_server_id")
+	}
 	localPorts := make([]int, len(allHosts))
 	for i := range allHosts {
-		localPorts[i] = 33061 + i
+		localPorts[i] = defaultInt(allHosts[i].LocalPort, 33061+i)
 	}
 
 	s.updateStepStatus(deployment.ID, "检查主机连通性", "completed", "主机连通性检查通过")
@@ -449,15 +459,19 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 			"local_address":  node.Host,
 			"local_port":     localPorts[i],
 			"mysql_port":     node.Port,
-			"server_id":      i + 1,
+			"server_id":      defaultInt(node.ServerID, i+1),
 			"primary_host":   req.PrimaryHost,
 			"primary_port":   req.PrimaryPort,
-			"replicate_user": s.defaults.ReplicationUser,
-			"replicate_pass": s.defaults.ReplicationPass,
+			"replicate_user": defaultString(req.ConfigParams["replicate_user"], s.defaults.ReplicationUser),
+			"replicate_pass": defaultString(req.ConfigParams["replicate_pass"], s.defaults.ReplicationPass),
 			"mysql_user":     req.MySQLUser,
 			"mysql_password": req.MySQLPassword,
 			"bootstrap":      isPrimary,
 		}
+		mergeStringConfigParams(config, req.ConfigParams, []string{
+			"package_url", "package_checksum", "checksum", "mysql_version",
+		})
+		mergeMySQLConfigParams(config, req.ConfigParams)
 
 		agentPort := defaultInt(node.AgentPort, 9090)
 		if s.agentClient == nil {
@@ -586,7 +600,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	s.updateProgress(deployment.ID, "环境检查", "检查主机连通性", 5)
 	s.addStep(deployment.ID, "检查主机连通性", "running")
 
-	pxcNodes := append([]PXCNode{{Host: req.BootstrapNode.Host, Port: req.BootstrapNode.Port, AgentPort: req.BootstrapNode.AgentPort}}, req.OtherNodes...)
+	pxcNodes := append([]PXCNode{{Host: req.BootstrapNode.Host, Port: req.BootstrapNode.Port, AgentPort: req.BootstrapNode.AgentPort, DataDir: req.BootstrapNode.DataDir}}, req.OtherNodes...)
 	pxcNodeHosts := make([]string, 0, len(pxcNodes))
 	for _, node := range pxcNodes {
 		pxcNodeHosts = append(pxcNodeHosts, node.Host)
@@ -600,10 +614,11 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 	s.updateProgress(deployment.ID, "安装二进制", "准备 Bootstrap 节点配置", 20)
 	s.addStep(deployment.ID, "准备 Bootstrap 节点配置", "running")
 
+	clusterName := defaultString(req.ConfigParams["cluster_name"], req.Name)
 	sstMethod := defaultString(req.ConfigParams["sst_method"], "xtrabackup-v2")
 	bootstrapConfig := map[string]interface{}{
 		"deploy_mode":    "pxc",
-		"cluster_name":   req.Name,
+		"cluster_name":   clusterName,
 		"bootstrap":      true,
 		"nodes":          pxcNodeHosts,
 		"node_host":      req.BootstrapNode.Host,
@@ -614,8 +629,14 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 		"replicate_pass": s.defaults.SSTPass,
 		"mysql_user":     req.MySQLUser,
 		"mysql_password": req.MySQLPassword,
-		"data_dir":       fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(req.BootstrapNode.Port, 3306)),
+		"data_dir":       defaultString(req.BootstrapNode.DataDir, fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(req.BootstrapNode.Port, 3306))),
 	}
+	mergeStringConfigParams(bootstrapConfig, req.ConfigParams, []string{
+		"package_url", "package_checksum", "checksum", "mysql_version",
+	})
+	mergeBoolConfigParams(bootstrapConfig, req.ConfigParams, []string{"wsrep_ssl_enabled", "pxc_encrypt_cluster_traffic"})
+	mergeIntConfigParams(bootstrapConfig, req.ConfigParams, []string{"wsrep_sst_port"})
+	mergeMySQLConfigParams(bootstrapConfig, req.ConfigParams)
 
 	agentPort := defaultInt(req.BootstrapNode.AgentPort, 9090)
 	if s.agentClient == nil {
@@ -667,7 +688,7 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 
 		joinConfig := map[string]interface{}{
 			"deploy_mode":    "pxc",
-			"cluster_name":   req.Name,
+			"cluster_name":   clusterName,
 			"bootstrap":      false,
 			"nodes":          pxcNodeHosts,
 			"node_host":      node.Host,
@@ -678,8 +699,14 @@ func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCReque
 			"replicate_pass": s.defaults.SSTPass,
 			"mysql_user":     req.MySQLUser,
 			"mysql_password": req.MySQLPassword,
-			"data_dir":       fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(node.Port, 3306)),
+			"data_dir":       defaultString(node.DataDir, fmt.Sprintf("/data/mysql/pxc-%d", defaultInt(node.Port, 3306))),
 		}
+		mergeStringConfigParams(joinConfig, req.ConfigParams, []string{
+			"package_url", "package_checksum", "checksum", "mysql_version",
+		})
+		mergeBoolConfigParams(joinConfig, req.ConfigParams, []string{"wsrep_ssl_enabled", "pxc_encrypt_cluster_traffic"})
+		mergeIntConfigParams(joinConfig, req.ConfigParams, []string{"wsrep_sst_port"})
+		mergeMySQLConfigParams(joinConfig, req.ConfigParams)
 		nodeAgentPort := defaultInt(node.AgentPort, 9090)
 		if s.agentClient == nil {
 			s.updateStepStatus(deployment.ID, nodeName, "failed", "agent client not configured")
@@ -793,6 +820,20 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 		"mysql_user":     defaultString(req.MySQLUser, "root"),
 		"mysql_password": req.MySQLPassword,
 	}
+	if req.MasterServerID != 0 {
+		masterConfig["server_id"] = req.MasterServerID
+	}
+	if req.MasterDataDir != "" {
+		masterConfig["data_dir"] = req.MasterDataDir
+		masterConfig["datadir"] = req.MasterDataDir
+	}
+	if req.MasterBasedir != "" {
+		masterConfig["basedir"] = req.MasterBasedir
+	}
+	mergeStringConfigParams(masterConfig, req.ConfigParams, []string{
+		"package_url", "package_checksum", "checksum", "mysql_version", "semi_sync_enabled",
+	})
+	mergeMySQLConfigParams(masterConfig, req.ConfigParams)
 	result, err := s.agentClient.DeployCluster(ctx, req.MasterHost, agentPort, map[string]interface{}{
 		"task_id":     deployment.ID,
 		"instance_id": "",
@@ -837,12 +878,23 @@ func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest
 			"master_port":    req.MasterPort,
 			"slave_host":     "127.0.0.1",
 			"slave_port":     replica.Port,
-			"server_id":      i + 2,
+			"server_id":      defaultInt(replica.ServerID, i+2),
 			"replicate_user": defaultString(req.ReplUser, s.defaults.ReplicationUser),
 			"replicate_pass": defaultString(req.ReplPassword, s.defaults.ReplicationPass),
 			"mysql_user":     defaultString(req.MySQLUser, "root"),
 			"mysql_password": req.MySQLPassword,
 		}
+		if replica.DataDir != "" {
+			replicaConfig["data_dir"] = replica.DataDir
+			replicaConfig["datadir"] = replica.DataDir
+		}
+		if replica.Basedir != "" {
+			replicaConfig["basedir"] = replica.Basedir
+		}
+		mergeStringConfigParams(replicaConfig, req.ConfigParams, []string{
+			"package_url", "package_checksum", "checksum", "mysql_version", "semi_sync_enabled",
+		})
+		mergeMySQLConfigParams(replicaConfig, req.ConfigParams)
 		result, err = s.agentClient.DeployCluster(ctx, replica.Host, defaultInt(replica.AgentPort, 9090), map[string]interface{}{
 			"task_id":     fmt.Sprintf("%s-replica-%d", deployment.ID, i+1),
 			"instance_id": "",
@@ -923,12 +975,23 @@ func (s *ClusterDeployService) deployHAReplicaViaMasterAgent(ctx context.Context
 		"master_port":    req.MasterPort,
 		"slave_host":     replica.Host,
 		"slave_port":     replica.Port,
-		"server_id":      index + 2,
+		"server_id":      defaultInt(replica.ServerID, index+2),
 		"replicate_user": defaultString(req.ReplUser, s.defaults.ReplicationUser),
 		"replicate_pass": defaultString(req.ReplPassword, s.defaults.ReplicationPass),
 		"mysql_user":     defaultString(req.MySQLUser, "root"),
 		"mysql_password": req.MySQLPassword,
 	}
+	if replica.DataDir != "" {
+		config["data_dir"] = replica.DataDir
+		config["datadir"] = replica.DataDir
+	}
+	if replica.Basedir != "" {
+		config["basedir"] = replica.Basedir
+	}
+	mergeStringConfigParams(config, req.ConfigParams, []string{
+		"package_url", "package_checksum", "checksum", "mysql_version", "semi_sync_enabled",
+	})
+	mergeMySQLConfigParams(config, req.ConfigParams)
 	return s.agentClient.DeployCluster(ctx, req.MasterHost, masterAgentPort, map[string]interface{}{
 		"task_id":     fmt.Sprintf("%s-legacy-replica-%d", deploymentID, index+1),
 		"instance_id": "",
@@ -1944,6 +2007,81 @@ func defaultInt(v, fallback int) int {
 		return v
 	}
 	return fallback
+}
+
+func mergeStringConfigParams(config map[string]interface{}, params map[string]string, keys []string) {
+	for _, key := range keys {
+		value := strings.TrimSpace(params[key])
+		if value == "" {
+			continue
+		}
+		targetKey := key
+		if key == "package_checksum" {
+			targetKey = "checksum"
+		}
+		config[targetKey] = value
+	}
+}
+
+func mergeIntConfigParams(config map[string]interface{}, params map[string]string, keys []string) {
+	for _, key := range keys {
+		raw := strings.TrimSpace(params[key])
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		config[key] = value
+	}
+}
+
+func mergeBoolConfigParams(config map[string]interface{}, params map[string]string, keys []string) {
+	for _, key := range keys {
+		raw := strings.TrimSpace(params[key])
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			continue
+		}
+		targetKey := key
+		if key == "pxc_encrypt_cluster_traffic" {
+			targetKey = "wsrep_ssl_enabled"
+		}
+		config[targetKey] = value
+	}
+}
+
+func mergeMySQLConfigParams(config map[string]interface{}, params map[string]string) {
+	mysqlConfig := map[string]string{}
+	for key, value := range params {
+		if !allowedMySQLDeployOption(key) {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		mysqlConfig[key] = value
+	}
+	if len(mysqlConfig) > 0 {
+		config["mysql_config"] = mysqlConfig
+	}
+}
+
+func configParamInt(params map[string]string, key string) int {
+	raw := strings.TrimSpace(params[key])
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func slavePorts(nodes []SlaveNode) []int {

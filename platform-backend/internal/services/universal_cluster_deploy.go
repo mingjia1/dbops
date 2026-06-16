@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -455,6 +456,8 @@ func allowedClusterCustomOptions(clusterType string) map[string]bool {
 	case ClusterTypePXC:
 		common["cluster_name"] = true
 		common["sst_method"] = true
+		common["wsrep_sst_port"] = true
+		common["wsrep_ssl_enabled"] = true
 		common["wsrep_provider_options"] = true
 		common["pxc_encrypt_cluster_traffic"] = true
 	}
@@ -478,19 +481,30 @@ func universalToHARequest(req UniversalClusterDeployRequest) DeployHARequest {
 		ClusterID:     req.ClusterID,
 		ReplUser:      req.Replication.User,
 		ReplPassword:  req.Replication.Password,
-		MySQLUser:     req.MySQL.User,
-		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
-	}
+			MySQLUser:     req.MySQL.User,
+			MySQLPassword: req.MySQL.Password,
+			PseudoMode:    req.Mode == DeployModePseudo,
+			ConfigParams:  universalCommonConfigParams(req),
+		}
 	for _, node := range req.Nodes {
 		if node.Role == "master" {
 			out.MasterHostID = node.HostID
 			out.MasterHost = node.Host
 			out.MasterPort = node.MySQLPort
 			out.MasterAgentPort = node.AgentPort
+			out.MasterServerID = node.ServerID
+			out.MasterDataDir = node.DataDir
+			out.MasterBasedir = node.Basedir
 			continue
 		}
-		out.ReplicaHosts = append(out.ReplicaHosts, SecondaryNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort})
+		out.ReplicaHosts = append(out.ReplicaHosts, SecondaryNode{
+			Host:      node.Host,
+			Port:      node.MySQLPort,
+			AgentPort: node.AgentPort,
+			ServerID:  node.ServerID,
+			DataDir:   node.DataDir,
+			Basedir:   node.Basedir,
+		})
 	}
 	return out
 }
@@ -502,14 +516,14 @@ func universalToMHARequest(req UniversalClusterDeployRequest) DeployMHARequest {
 		ReplUser:      req.Replication.User,
 		ReplPassword:  req.Replication.Password,
 		MySQLUser:     req.MySQL.User,
-		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
-		ConfigParams:  map[string]string{},
-	}
+			MySQLPassword: req.MySQL.Password,
+			PseudoMode:    req.Mode == DeployModePseudo,
+			ConfigParams:  universalCommonConfigParams(req),
+		}
 	if vip, ok := stringCustom(req.Custom, "vip"); ok {
 		out.VIP = vip
 	}
-	for _, key := range []string{"ping_interval", "ping_retry", "vip_interface", "ssh_user"} {
+	for _, key := range []string{"ping_interval", "ping_retry", "vip_interface", "ssh_user", "ssh_private_key"} {
 		if v, ok := stringCustom(req.Custom, key); ok {
 			out.ConfigParams[key] = v
 		}
@@ -537,10 +551,12 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 		ClusterID:     req.ClusterID,
 		GroupMode:     req.Replication.Mode,
 		MySQLUser:     req.MySQL.User,
-		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
-		ConfigParams:  map[string]string{},
-	}
+			MySQLPassword: req.MySQL.Password,
+			PseudoMode:    req.Mode == DeployModePseudo,
+			ConfigParams:  universalCommonConfigParams(req),
+		}
+	out.ConfigParams["replicate_user"] = req.Replication.User
+	out.ConfigParams["replicate_pass"] = req.Replication.Password
 	if groupName, ok := stringCustom(req.Custom, "group_name"); ok {
 		out.ConfigParams["group_name"] = groupName
 	} else {
@@ -549,13 +565,23 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 	for _, node := range req.Nodes {
 		if node.Role == "primary" || node.Role == "bootstrap" {
 			out.PrimaryHostID = node.HostID
-			out.PrimaryHost = node.Host
-			out.PrimaryPort = node.MySQLPort
-			out.PrimaryAgentPort = node.AgentPort
-			continue
+				out.PrimaryHost = node.Host
+				out.PrimaryPort = node.MySQLPort
+				out.PrimaryAgentPort = node.AgentPort
+				if node.ServerID != 0 {
+					out.ConfigParams["primary_server_id"] = fmt.Sprintf("%d", node.ServerID)
+				}
+				if localPort, ok := nodeIntCustom(node, "local_port"); ok {
+					out.ConfigParams["primary_local_port"] = fmt.Sprintf("%d", localPort)
+				}
+				continue
+			}
+			secondary := SecondaryNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort, ServerID: node.ServerID}
+			if localPort, ok := nodeIntCustom(node, "local_port"); ok {
+				secondary.LocalPort = localPort
+			}
+			out.SecondaryHosts = append(out.SecondaryHosts, secondary)
 		}
-		out.SecondaryHosts = append(out.SecondaryHosts, SecondaryNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort})
-	}
 	return out
 }
 
@@ -563,12 +589,12 @@ func universalToPXCRequest(req UniversalClusterDeployRequest) DeployPXCRequest {
 	out := DeployPXCRequest{
 		Name:          req.Name,
 		ClusterID:     req.ClusterID,
-		MySQLUser:     req.MySQL.User,
-		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
-		ConfigParams:  map[string]string{},
-	}
-	for _, key := range []string{"cluster_name", "sst_method", "wsrep_provider_options", "pxc_encrypt_cluster_traffic"} {
+			MySQLUser:     req.MySQL.User,
+			MySQLPassword: req.MySQL.Password,
+			PseudoMode:    req.Mode == DeployModePseudo,
+			ConfigParams:  universalCommonConfigParams(req),
+		}
+	for _, key := range []string{"cluster_name", "sst_method", "wsrep_sst_port", "wsrep_ssl_enabled", "wsrep_provider_options", "pxc_encrypt_cluster_traffic"} {
 		if v, ok := stringCustom(req.Custom, key); ok {
 			out.ConfigParams[key] = v
 		}
@@ -576,12 +602,48 @@ func universalToPXCRequest(req UniversalClusterDeployRequest) DeployPXCRequest {
 	for _, node := range req.Nodes {
 		if node.Role == "bootstrap" {
 			out.BootstrapHostID = node.HostID
-			out.BootstrapNode = BootstrapNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort}
+			out.BootstrapNode = BootstrapNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort, DataDir: node.DataDir}
 			continue
 		}
-		out.OtherNodes = append(out.OtherNodes, PXCNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort})
+		out.OtherNodes = append(out.OtherNodes, PXCNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort, DataDir: node.DataDir})
 	}
 	return out
+}
+
+func universalCommonConfigParams(req UniversalClusterDeployRequest) map[string]string {
+	out := map[string]string{}
+	if req.MySQL.Version != "" {
+		out["mysql_version"] = req.MySQL.Version
+	}
+	if req.MySQL.PackageURL != "" {
+		out["package_url"] = req.MySQL.PackageURL
+	}
+	if req.MySQL.PackageChecksum != "" {
+		out["package_checksum"] = req.MySQL.PackageChecksum
+	}
+	for key, value := range req.MySQL.Config {
+		if value != "" {
+			out[key] = value
+		}
+	}
+	for _, key := range []string{"package_url", "package_checksum"} {
+		if v, ok := stringCustom(req.Custom, key); ok {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+func nodeIntCustom(node ClusterDeployNode, key string) (int, bool) {
+	value, ok := stringCustom(node.Custom, key)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed == 0 {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func stringCustom(custom map[string]interface{}, key string) (string, bool) {
