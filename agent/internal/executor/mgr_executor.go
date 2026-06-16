@@ -115,6 +115,15 @@ func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTask
 	if configResult.Status == "failed" {
 		return configResult, nil
 	}
+	if err := applyDeployMySQLConfig(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, deployMySQLConfig(req.Config)); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  55,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
+	}
 
 	groupResult := e.startGroupReplication(ctx, config)
 	if groupResult.Status == "failed" {
@@ -179,6 +188,15 @@ func (e *MGRExecutor) ConfigureGroupMember(ctx context.Context, req DeployTaskRe
 	configResult := e.configureMGRParameters(ctx, config)
 	if configResult.Status == "failed" {
 		return configResult, nil
+	}
+	if err := applyDeployMySQLConfig(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, deployMySQLConfig(req.Config)); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  55,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
 	}
 
 	joinResult := e.joinGroup(ctx, config)

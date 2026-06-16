@@ -25,6 +25,7 @@ type PXCConfig struct {
 	MySQLUser       string   `json:"mysql_user"`
 	MySQLPassword   string   `json:"mysql_password"`
 	NodeHost        string   `json:"node_host"`
+	MySQLConfig     map[string]string
 }
 
 type GaleraConfig struct {
@@ -119,6 +120,7 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	if v, ok := config["node_host"].(string); ok {
 		pc.NodeHost = v
 	}
+	pc.MySQLConfig = deployMySQLConfig(config)
 
 	return pc
 }
@@ -529,6 +531,10 @@ func buildPXCConfigContent(config PXCConfig) string {
 		pluginDirLine = fmt.Sprintf("plugin-dir=%s\n", pluginDir)
 	}
 	providerPath := pxcProviderPath()
+	customLines := ""
+	if lines := deployMySQLConfigLines(config.MySQLConfig); len(lines) > 0 {
+		customLines = strings.Join(lines, "\n") + "\n"
+	}
 	return fmt.Sprintf(`[mysqld]
 server_id=%d
 port=%d
@@ -546,6 +552,7 @@ default_storage_engine=InnoDB
 innodb_autoinc_lock_mode=2
 log_slave_updates
 pxc_strict_mode=PERMISSIVE
+%s
 wsrep_provider=%s
 wsrep_cluster_name=%s
 wsrep_cluster_address=%s
@@ -554,7 +561,7 @@ wsrep_node_name=%s-%s
 wsrep_sst_method=%s
 pxc_encrypt_cluster_traffic=%s
 wsrep_provider_options=%s
-%s`, serverID, config.MySQLPort, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine, providerPath, config.ClusterName, clusterAddress, config.NodeHost, config.ClusterName, safeNodeName(config.NodeHost), defaultString(config.SSTMethod, "xtrabackup-v2"), pxcEncryptClusterTraffic, providerOptions, sstSection)
+%s`, serverID, config.MySQLPort, config.DataDir, config.DataDir, config.DataDir, pxcErrorLogPath(config), pluginDirLine, customLines, providerPath, config.ClusterName, clusterAddress, config.NodeHost, config.ClusterName, safeNodeName(config.NodeHost), defaultString(config.SSTMethod, "xtrabackup-v2"), pxcEncryptClusterTraffic, providerOptions, sstSection)
 }
 
 func safeNodeName(host string) string {

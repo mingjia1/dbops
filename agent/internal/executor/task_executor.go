@@ -104,6 +104,15 @@ type BackupScanFile struct {
 }
 
 func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	if err := validateDeployMySQLConfig(req.Config); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
+	}
 	deployMode, _ := req.Config["deploy_mode"].(string)
 
 	switch deployMode {
@@ -907,6 +916,15 @@ func (e *TaskExecutor) deployHAMaster(ctx context.Context, req DeployTaskRequest
 		result.TaskID = req.TaskID
 	}
 	if result.Status == "completed" {
+		if err := applyDeployMySQLConfig(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, deployMySQLConfig(req.Config)); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  90,
+				Message:   err.Error(),
+				Timestamp: time.Now(),
+			}, nil
+		}
 		result.Progress = 100
 		result.Message = fmt.Sprintf("HA master configured successfully on %s:%d", config.MasterHost, config.MasterPort)
 	}
@@ -921,6 +939,15 @@ func (e *TaskExecutor) deployHAReplica(ctx context.Context, req DeployTaskReques
 			result.TaskID = req.TaskID
 		}
 		return result, nil
+	}
+	if err := applyDeployMySQLConfig(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, deployMySQLConfig(req.Config)); err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  85,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
 	}
 	verifyResult := e.verifyReplication(ctx, config)
 	if verifyResult.TaskID == "" {
