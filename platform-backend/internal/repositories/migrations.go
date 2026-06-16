@@ -511,6 +511,24 @@ var InitialSchema = []string{
 			INDEX idx_ha_drill_report (drill_id),
 			FOREIGN KEY (drill_id) REFERENCES ha_drills(id) ON DELETE CASCADE
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS diagnosis_records (
+			id VARCHAR(64) PRIMARY KEY,
+			instance_id VARCHAR(64) NOT NULL,
+			status VARCHAR(32) DEFAULT 'completed',
+			summary TEXT DEFAULT '',
+			details TEXT,
+			score INT DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_diagnosis_instance (instance_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS sql_advices (
+			id VARCHAR(64) PRIMARY KEY,
+			sql_text TEXT NOT NULL,
+			` + "`explain`" + ` TEXT DEFAULT '',
+			advice TEXT,
+			score INT DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS role_switch_history (
 		id VARCHAR(64) PRIMARY KEY,
 		cluster_id VARCHAR(64) NOT NULL,
@@ -868,6 +886,24 @@ var schemaSQLite = []string{
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ha_drill_report ON ha_drill_reports(drill_id)`,
+		`CREATE TABLE IF NOT EXISTS diagnosis_records (
+			id TEXT PRIMARY KEY,
+			instance_id TEXT NOT NULL,
+			status TEXT DEFAULT 'completed',
+			summary TEXT DEFAULT '',
+			details TEXT,
+			score INTEGER DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_diagnosis_instance ON diagnosis_records(instance_id)`,
+		`CREATE TABLE IF NOT EXISTS sql_advices (
+			id TEXT PRIMARY KEY,
+			sql_text TEXT NOT NULL,
+			` + "`explain`" + ` TEXT DEFAULT '',
+			advice TEXT,
+			score INTEGER DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 
 		`CREATE TABLE IF NOT EXISTS alert_records (
 		id TEXT PRIMARY KEY,

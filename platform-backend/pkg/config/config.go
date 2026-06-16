@@ -20,6 +20,10 @@ type Config struct {
 	ClickHouseURL  string
 	DataDir        string
 	AllowedOrigins []string
+	AIBaseURL     string
+	AIAPIKey      string
+	AIModel       string
+	AIMaxTokens   int
 	ClusterDefaults ClusterDefaults
 }
 
@@ -62,12 +66,18 @@ func Load() (*Config, error) {
 	// P1-6: 集群部署默认 SSH 账号. 留空让 service 层 fallback 到 "root"
 	// (因为旧部署可能确实就是 root, 不强推非 root).
 	viper.SetDefault("cluster_defaults.ssh_user", "root")
+	viper.SetDefault("ai_base_url", "https://api.openai.com")
+	viper.SetDefault("ai_api_key", "")
+	viper.SetDefault("ai_model", "gpt-4")
+	viper.SetDefault("ai_max_tokens", 2048)
 	// B7: 强制从环境变量注入敏感配置. 即使 config.yaml 误提交, 环境变量也会覆盖.
 	viper.SetDefault("agent_token", "")
 	viper.BindEnv("database_url", "DBOPS_DB_URL")
 	viper.BindEnv("jwt_secret", "DBOPS_JWT_SECRET")
 	viper.BindEnv("encryption_key", "DBOPS_ENCRYPTION_KEY")
 	viper.BindEnv("agent_token", "DBOPS_AGENT_TOKEN")
+	viper.BindEnv("ai_api_key", "DBOPS_AI_API_KEY")
+	viper.BindEnv("ai_base_url", "DBOPS_AI_BASE_URL")
 	// JWT / 加密密钥故意不设默认值, 必须从 config.yaml 显式注入, 启动时校验.
 
 	if err := viper.ReadInConfig(); err != nil {
@@ -90,6 +100,10 @@ func Load() (*Config, error) {
 		AgentToken:    viper.GetString("agent_token"),
 		ClickHouseURL: viper.GetString("clickhouse_url"),
 		DataDir:       viper.GetString("data_dir"),
+		AIBaseURL:     viper.GetString("ai_base_url"),
+		AIAPIKey:      viper.GetString("ai_api_key"),
+		AIModel:       viper.GetString("ai_model"),
+		AIMaxTokens:   viper.GetInt("ai_max_tokens"),
 		AllowedOrigins: splitCSV(viper.GetString("allowed_origins")),
 		ClusterDefaults: ClusterDefaults{
 			ReplicationUser: viper.GetString("cluster_defaults.replication_user"),

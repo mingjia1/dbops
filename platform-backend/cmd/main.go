@@ -12,6 +12,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/controllers"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
+	"github.com/monkeycode/mysql-ops-platform/pkg/aiprovider"
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
 	"github.com/monkeycode/mysql-ops-platform/pkg/logger"
 	"github.com/monkeycode/mysql-ops-platform/pkg/middleware"
@@ -195,6 +196,18 @@ func main() {
 	escalationController := controllers.NewEscalationController(alertService)
 	silenceController := controllers.NewSilenceController(alertService)
 	inspectionController := controllers.NewInspectionController(alertService)
+	diagnosisRepo := repositories.NewDiagnosisRepository(db)
+	adviceRepo := repositories.NewSQLAdviceRepository(db)
+	aiConfig := aiprovider.Config{
+		BaseURL:     cfg.AIBaseURL,
+		APIKey:      cfg.AIAPIKey,
+		Model:       cfg.AIModel,
+		MaxTokens:   defaultInt(cfg.AIMaxTokens, 2048),
+		Temperature: 0.3,
+	}
+	aiProvider := aiprovider.NewOpenAIProvider(aiConfig)
+	aiService := services.NewAIService(aiProvider, diagnosisRepo, adviceRepo, monitorService)
+	aiController := controllers.NewAIController(aiService)
 	faultTplRepo := repositories.NewFaultTemplateRepository(db)
 	faultExecRepo := repositories.NewFaultExecutionRepository(db)
 	faultService := services.NewFaultService(faultTplRepo, faultExecRepo)
@@ -532,6 +545,16 @@ func main() {
 				drills.GET("/:id/report", drillController.GetReport)
 			}
 
+			ai := protected.Group("/ai")
+			{
+				ai.POST("/diagnosis", aiController.Diagnosis)
+				ai.GET("/diagnoses", aiController.ListDiagnoses)
+				ai.GET("/diagnoses/:id", aiController.GetDiagnosis)
+				ai.POST("/sql-advisor", aiController.SQLAdvice)
+				ai.GET("/sql-advices", aiController.ListSQLAdvice)
+				ai.GET("/sql-advices/:id", aiController.GetSQLAdvice)
+			}
+
 			approvals := protected.Group("/approvals")
 			{
 				approvals.GET("", approvalController.ListApprovalRequests)
@@ -621,4 +644,11 @@ func validateSecrets(cfg *config.Config) error {
 		return fmt.Errorf("agent_token is a placeholder (%q); set DBOPS_AGENT_TOKEN to a strong random value", cfg.AgentToken)
 	}
 	return nil
+}
+
+func defaultInt(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
 }

@@ -136,6 +136,25 @@ type HADrillReport struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+type DiagnosisRecord struct {
+	ID         string    `json:"id"`
+	InstanceID string    `json:"instance_id"`
+	Status     string    `json:"status"`
+	Summary    string    `json:"summary"`
+	Details    string    `json:"details"`
+	Score      int       `json:"score"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type SQLAdvice struct {
+	ID         string    `json:"id"`
+	SQLText    string    `json:"sql_text"`
+	Explain    string    `json:"explain"`
+	Advice     string    `json:"advice"`
+	Score      int       `json:"score"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type AlertRecord struct {
 	ID          string     `json:"id"`
 	RuleID      string     `json:"rule_id"`
