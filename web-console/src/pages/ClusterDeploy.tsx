@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Col, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag,
+  Alert, Button, Card, Checkbox, Col, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -118,6 +118,15 @@ const ClusterDeploy: React.FC = () => {
   const [showDefaultCredential, setShowDefaultCredential] = useState(false)
   const [oneTimeCredential, setOneTimeCredential] = useState<typeof DEFAULT_MYSQL_CREDENTIAL | null>(null)
   const pollRef = useRef<number | null>(null)
+
+  // Plan preview state
+  const [planPreviewOpen, setPlanPreviewOpen] = useState(false)
+  const [planPreviewData, setPlanPreviewData] = useState<any>(null)
+  const [planPreviewArch, setPlanPreviewArch] = useState<ArchType>('ha')
+  const [planPreviewLoading, setPlanPreviewLoading] = useState(false)
+  const [pendingDeployPayload, setPendingDeployPayload] = useState<any>(null)
+  const [pendingDeployArch, setPendingDeployArch] = useState<ArchType>('ha')
+  const [pendingDeployValues, setPendingDeployValues] = useState<any>(null)
 
   const [haForm] = Form.useForm()
   const [mhaForm] = Form.useForm()
@@ -271,16 +280,46 @@ const ClusterDeploy: React.FC = () => {
     }, 2000)
   }
 
-  const runDeploy = (arch: ArchType, values: any) => {
-    Modal.confirm({
-      title: `确认启动 ${arch.toUpperCase()} 集群部署?`,
-      content: values.pseudo_mode
-        ? '伪集群演练只写入平台纳管关系和拓扑，不会停止或删除目标主机上的数据库服务。'
-        : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。',
-      okText: '确认部署',
-      cancelText: '取消',
-      onOk: () => doDeploy(arch, values),
+  const doPreview = (arch: ArchType, values: any) => {
+    const payload = buildDeployPayload(arch, values)
+    setPlanPreviewLoading(true)
+    setPlanPreviewArch(arch)
+    clusterDeployApi.validateCluster(payload).then((res: any) => {
+      const plan = res?.data?.plan || res?.data
+      setPlanPreviewData(plan)
+      setPendingDeployPayload(payload)
+      setPendingDeployArch(arch)
+      setPendingDeployValues(values)
+      setPlanPreviewOpen(true)
+    }).catch((err: any) => {
+      message.error(`计划验证失败: ${err?.response?.data?.message || err?.message}`)
+    }).finally(() => {
+      setPlanPreviewLoading(false)
     })
+  }
+
+  const doConfirmDeploy = () => {
+    if (!pendingDeployPayload || !pendingDeployArch) return
+    setPlanPreviewOpen(false)
+    doDeploy(pendingDeployArch, pendingDeployValues)
+  }
+
+  const runDeploy = (arch: ArchType, values: any) => {
+    // Show plan preview before deployment
+    doPreview(arch, values)
+  }
+
+  const viewDeployPlan = async (record: DeployResult) => {
+    try {
+      const res: any = await clusterDeployApi.getDeployPlan(record.deployment_id)
+      const plan = res?.data || res
+      setPlanPreviewArch(record.cluster_type)
+      setPlanPreviewData(plan)
+      setPendingDeployPayload(null)
+      setPlanPreviewOpen(true)
+    } catch (err: any) {
+      message.error(`获取部署计划失败: ${err?.response?.data?.message || err?.message}`)
+    }
   }
 
   const doDeploy = async (arch: ArchType, values: any) => {
@@ -504,11 +543,16 @@ const ClusterDeploy: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 80,
+      width: 140,
       render: (_, record) => (
-        <Button size="small" danger icon={<DeleteOutlined />} disabled={isDestroyedDeployStatus(record.status)} onClick={() => destroyDeployment(record)}>
-          销毁
-        </Button>
+        <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => viewDeployPlan(record)}>
+            查看计划
+          </Button>
+          <Button size="small" danger icon={<DeleteOutlined />} disabled={isDestroyedDeployStatus(record.status)} onClick={() => destroyDeployment(record)}>
+            销毁
+          </Button>
+        </Space>
       ),
     },
   ]
@@ -684,9 +728,14 @@ const ClusterDeploy: React.FC = () => {
         <Input.TextArea rows={3} placeholder={'max_connections=512\ninnodb_buffer_pool_size=2G'} />
       </Form.Item>
       <Form.Item wrapperCol={{ offset: 4 }}>
-        <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
-          启动部署
-        </Button>
+        <Space>
+          <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
+            启动部署
+          </Button>
+          <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then(values => doPreview(arch, values)).catch(() => {})}>
+            预览计划
+          </Button>
+        </Space>
       </Form.Item>
     </Form>
   )
@@ -893,6 +942,129 @@ const ClusterDeploy: React.FC = () => {
             <Input.Password autoComplete="new-password" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Plan Preview Modal */}
+      <Modal
+        title={
+          <Space>
+            <EyeOutlined />
+            <span>部署计划预览 - {planPreviewArch?.toUpperCase()}</span>
+          </Space>
+        }
+        open={planPreviewOpen}
+        onCancel={() => {
+          setPlanPreviewOpen(false)
+          setPlanPreviewData(null)
+        }}
+        width={800}
+        footer={
+          pendingDeployPayload ? (
+            <Space>
+              <Button onClick={() => {
+                setPlanPreviewOpen(false)
+                setPlanPreviewData(null)
+              }}>取消</Button>
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={doConfirmDeploy}>
+                确认部署
+              </Button>
+            </Space>
+          ) : (
+            <Button onClick={() => {
+              setPlanPreviewOpen(false)
+              setPlanPreviewData(null)
+            }}>关闭</Button>
+          )
+        }
+        destroyOnClose
+      >
+        {planPreviewData ? (
+          <div>
+            {/* Mode warning for new deployments */}
+            {pendingDeployPayload && (
+              <Alert
+                type={pendingDeployValues?.pseudo_mode ? 'info' : 'warning'}
+                message={pendingDeployValues?.pseudo_mode
+                  ? '伪集群演练只写入平台纳管关系和拓扑，不会修改目标主机上的数据库服务。'
+                  : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。'}
+                style={{ marginBottom: 16 }}
+                showIcon
+              />
+            )}
+            {/* Plan Summary */}
+            <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="部署ID">{planPreviewData.deployment_id || planPreviewData.id || '-'}</Descriptions.Item>
+              <Descriptions.Item label="架构类型">
+                <Tag color={planPreviewData.cluster_type === 'ha' ? 'cyan' : planPreviewData.cluster_type === 'mha' ? 'blue' : planPreviewData.cluster_type === 'mgr' ? 'green' : 'orange'}>
+                  {(planPreviewData.cluster_type || '').toUpperCase()}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="部署模式">
+                <Tag>{planPreviewData.mode || 'real'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="节点数量">{planPreviewData.nodes?.length || 0}</Descriptions.Item>
+              <Descriptions.Item label="步骤数量">{planPreviewData.steps?.length || 0}</Descriptions.Item>
+              {planPreviewData.parameters?.mysql_version && (
+                <Descriptions.Item label="MySQL 版本">{planPreviewData.parameters.mysql_version}</Descriptions.Item>
+              )}
+            </Descriptions>
+
+            {/* Nodes Table */}
+            <strong style={{ display: 'block', marginBottom: 8 }}>节点列表</strong>
+            <Table
+              size="small"
+              columns={[
+                { title: 'Host', dataIndex: 'host', key: 'host', width: 140 },
+                { title: '角色', dataIndex: 'role', key: 'role', width: 100, render: (role: string) => <Tag>{role}</Tag> },
+                { title: 'MySQL 端口', dataIndex: 'mysql_port', key: 'mysql_port', width: 100 },
+                { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', width: 100 },
+                { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', width: 140, render: (v: string) => v || '-' },
+                { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 80, render: (v: number) => v || '-' },
+              ]}
+              dataSource={planPreviewData.nodes || []}
+              rowKey={(row: any) => row.id || row.host || Math.random()}
+              pagination={false}
+              style={{ marginBottom: 16 }}
+            />
+
+            {/* Steps Timeline */}
+            <strong style={{ display: 'block', marginBottom: 8 }}>执行步骤</strong>
+            <Steps
+              direction="vertical"
+              size="small"
+              current={-1}
+              items={(planPreviewData.steps || []).map((step: any, idx: number) => ({
+                title: (
+                  <Space size={4}>
+                    <span>{step.name || step.id || `Step ${idx + 1}`}</span>
+                    {step.type && <Tag color="default" style={{ fontSize: 10 }}>{step.type}</Tag>}
+                    {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>@{step.target_node}</span>}
+                  </Space>
+                ),
+                description: step.depends_on?.length > 0 ? (
+                  <span style={{ fontSize: 12, color: '#888' }}>依赖: {step.depends_on.join(', ')}</span>
+                ) : undefined,
+                status: 'wait' as const,
+              }))}
+            />
+
+            {/* Architecture-specific parameters */}
+            {planPreviewData.parameters && Object.keys(planPreviewData.parameters).length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <strong style={{ display: 'block', marginBottom: 8 }}>部署参数</strong>
+                <Descriptions size="small" column={2} bordered>
+                  {Object.entries(planPreviewData.parameters).map(([key, value]: [string, any]) => (
+                    <Descriptions.Item label={key} key={key}>
+                      {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                    </Descriptions.Item>
+                  ))}
+                </Descriptions>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Empty description="无法加载部署计划" />
+        )}
       </Modal>
 
       {activeDeployment && (

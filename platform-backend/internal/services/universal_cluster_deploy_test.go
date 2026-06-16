@@ -298,18 +298,79 @@ func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	require.Equal(t, "ha-master", replica.Topology.MasterID)
 }
 
-func TestExecuteClusterDeployPlan_RejectsRealMode(t *testing.T) {
-	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
 
 	plan := &ClusterDeployPlan{
-		DeploymentID: "reject-real",
+		DeploymentID: "real-no-agent",
 		ClusterType:  "ha",
 		Mode:         "real",
+		Nodes: []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090},
+		},
+		Steps: []PlanStep{
+			{ID: "validate_input", Name: "Validate", Type: "validate"},
+			{ID: "bootstrap_node-1", Name: "Deploy master", Type: "bootstrap",
+				TargetNode: "node-1", AgentPath: "/agent/tasks/deploy",
+				Config: map[string]interface{}{"deploy_mode": "ha-master"}},
+		},
 	}
 
-	_, err := service.ExecuteClusterDeployPlan(context.Background(), plan, UniversalClusterDeployRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "only supports pseudo")
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "real-no-agent",
+		ClusterType: "ha",
+		Mode:        "real",
+		Name:        "real-no-agent",
+		Nodes:       []ClusterDeployNode{{Host: "10.0.0.11", Role: "master", MySQLPort: 3306}},
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+	require.NoError(t, err) // Returns a partial response, not an error
+	require.Equal(t, "failed", resp.Status)
+	require.Contains(t, resp.Message, "agent client not configured")
+}
+
+func TestExecuteClusterDeployPlan_PseudoModeManagementSyncFails(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	// No instances created — management sync will fail
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, nil, config.ClusterDefaults{})
+
+	plan := &ClusterDeployPlan{
+		DeploymentID: "pseudo-sync-fail",
+		ClusterType:  "mgr",
+		Mode:         "pseudo",
+		Nodes: []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary", AgentPort: 9090},
+			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary", AgentPort: 9090},
+		},
+		Steps: buildUniversalPlanSteps("mgr", []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary"},
+			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary"},
+		}, UniversalClusterDeployRequest{
+			ClusterID: "pseudo-sync-fail", ClusterType: "mgr",
+			Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+			MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		}),
+	}
+
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "pseudo-sync-fail",
+		ClusterType: "mgr",
+		Mode:        "pseudo",
+		Name:        "pseudo-sync-fail",
+		Nodes:       []ClusterDeployNode{{Host: "10.0.0.11", Role: "primary", MySQLPort: 3306}, {Host: "10.0.0.12", Role: "secondary", MySQLPort: 3307}},
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+	require.NoError(t, err)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "management sync failed")
 }
 
 func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {

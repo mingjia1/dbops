@@ -131,6 +131,13 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 		return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
 	}
 
+	// For real mode: inject architecture-specific credentials before execution.
+	if normalized.Mode == DeployModeReal && normalized.ClusterType == ClusterTypeMHA {
+		if err := s.injectMHAStepPasswords(ctx, plan, normalized); err != nil {
+			return nil, err
+		}
+	}
+
 	// For real mode: execute the plan through the plan execution engine.
 	// This replaces the old dispatch to typed deploy methods.
 	return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
