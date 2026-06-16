@@ -425,6 +425,19 @@ var InitialSchema = []string{
 		note TEXT,
 		INDEX idx_key_ver (version)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS licenses (
+		id VARCHAR(64) PRIMARY KEY,
+		tier VARCHAR(16) NOT NULL,
+		license_key VARCHAR(128) NOT NULL,
+		issued_to VARCHAR(255) NOT NULL,
+		issued_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		max_nodes INT DEFAULT 5,
+		license_json TEXT NOT NULL,
+		active TINYINT(1) DEFAULT 1,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_licenses_active (active)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -844,6 +857,19 @@ var schemaSQLite = []string{
 			note TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_key_ver ON key_versions(version)`,
+		`CREATE TABLE IF NOT EXISTS licenses (
+			id TEXT PRIMARY KEY,
+			tier TEXT NOT NULL,
+			license_key TEXT NOT NULL,
+			issued_to TEXT NOT NULL,
+			issued_at TIMESTAMP NOT NULL,
+			expires_at TIMESTAMP NOT NULL,
+			max_nodes INTEGER DEFAULT 5,
+			license_json TEXT NOT NULL,
+			active INTEGER DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_licenses_active ON licenses(active)`,
 	}
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

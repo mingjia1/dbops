@@ -203,6 +203,10 @@ func main() {
 	keyRotationService := services.NewKeyRotationService(keyVersionRepo, auditService)
 	keyRotationController := controllers.NewKeyRotationController(keyRotationService, cfg.EncryptionKey)
 
+	licenseRepo := repositories.NewLicenseRepository(db)
+	licenseService := services.NewLicenseService(licenseRepo, auditService, cfg.EncryptionKey)
+	licenseController := controllers.NewLicenseController(licenseService)
+
 	r := gin.Default()
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
 	r.MaxMultipartMemory = 10 << 20
@@ -505,6 +509,13 @@ func main() {
 			{
 				keys.POST("/rotate", keyRotationController.RotateKey)
 				keys.GET("/versions", keyRotationController.ListKeyVersions)
+			}
+
+			licenseGroup := protected.Group("/license")
+			{
+				licenseGroup.GET("", licenseController.GetLicenseInfo)
+				licenseGroup.GET("/features", licenseController.GetFeatures)
+				licenseGroup.POST("/upload", middleware.RequirePermission("admin"), licenseController.UploadLicense)
 			}
 		}
 	}
