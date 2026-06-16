@@ -104,7 +104,7 @@ type BackupScanFile struct {
 }
 
 func (e *TaskExecutor) ExecuteDeploy(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
-	if err := validateDeployMySQLConfig(req.Config); err != nil {
+	if err := ValidateDeployConfig(req.Config); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",

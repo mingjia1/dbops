@@ -131,23 +131,9 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 		return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
 	}
 
-	// For real mode: sync nodes from plan, then dispatch to the
-	// existing typed deploy methods for backward compatibility.
-	// (Plan/request JSON persistence happens inside each typed method.)
-	s.syncNodesFromPlan(ctx, plan.DeploymentID, plan)
-
-	switch normalized.ClusterType {
-	case ClusterTypeHA:
-		return s.DeployHA(ctx, universalToHARequest(normalized))
-	case ClusterTypeMHA:
-		return s.DeployMHA(ctx, universalToMHARequest(normalized))
-	case ClusterTypeMGR:
-		return s.DeployMGR(ctx, universalToMGRRequest(normalized))
-	case ClusterTypePXC:
-		return s.DeployPXC(ctx, universalToPXCRequest(normalized))
-	default:
-		return nil, fmt.Errorf("unsupported cluster_type %q", normalized.ClusterType)
-	}
+	// For real mode: execute the plan through the plan execution engine.
+	// This replaces the old dispatch to typed deploy methods.
+	return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
 }
 
 func (s *ClusterDeployService) ValidateClusterDeploy(ctx context.Context, req UniversalClusterDeployRequest) (*UniversalDeployValidationResponse, error) {

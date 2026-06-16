@@ -231,12 +231,18 @@ func (s *ClusterDeployService) loadNodesFromDB(ctx context.Context, deploymentID
 }
 
 func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, plan *ClusterDeployPlan, req UniversalClusterDeployRequest) (finalResp *DeployResponse, finalErr error) {
-	// This execution engine currently supports pseudo mode (metadata-only).
-	// For real mode, the plan steps should be executed by calling the agent
-	// on each node, which will be implemented in a future phase.
-	if plan.Mode != DeployModePseudo && plan.Mode != DeployModeValidateOnly {
-		return nil, fmt.Errorf("ExecuteClusterDeployPlan currently only supports pseudo/validate_only mode, got %q", plan.Mode)
-	}
+	// This execution engine supports all modes:
+	// - pseudo: metadata-only (no agent calls)
+	// - validate_only: plan only, no execution
+	// - real: full deployment, calling agent for each deploy step
+	isReal := plan.Mode == DeployModeReal
+
+	// Ensure audit is always recorded
+	defer func() {
+		if finalResp != nil || finalErr != nil {
+			s.auditDeployment(ctx, "deploy_"+plan.ClusterType+"_cluster", plan.ClusterType, plan.DeploymentID, req.Name, finalResp, finalErr)
+		}
+	}()
 
 	clusterID := plan.DeploymentID
 	clusterType := plan.ClusterType
@@ -293,15 +299,66 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
 
 		case "bootstrap", "join", "deploy":
-			// For plan-based execution (currently pseudo mode):
-			// Mark agent deploy steps as completed without calling agent,
-			// since pseudo mode only manages metadata, not actual deployment.
+			// Find the target node for this step
 			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
-			nodeMsg := "deployment step completed"
-			if targetNode != nil {
-				nodeMsg = fmt.Sprintf("Node %s (%s) step completed", targetNode.Host, targetNode.Role)
+			if targetNode == nil {
+				errMsg := fmt.Sprintf("target node %q not found for step %s", step.TargetNode, step.ID)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
-			s.updateStepStatus(clusterID, step.Name, "completed", nodeMsg)
+
+			if isReal {
+				// Real mode: call the agent
+				if s.agentClient == nil {
+					errMsg := "agent client not configured"
+					s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+					finish := time.Now()
+					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+				}
+
+				// Build agent payload from step.Config
+				agentPayload := map[string]interface{}{
+					"task_id":     clusterID,
+					"instance_id": "",
+					"config":      step.Config,
+				}
+
+				nodeMsg := fmt.Sprintf("Deploying %s on %s:%d", targetNode.Role, targetNode.Host, targetNode.AgentPort)
+				s.updateProgress(clusterID, step.Name, nodeMsg, progressPct)
+
+				result, err := s.agentClient.DeployCluster(ctx, targetNode.Host, targetNode.AgentPort, agentPayload)
+				if err != nil {
+					errMsg := fmt.Sprintf("agent call failed on %s: %v", targetNode.Host, err)
+					s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+					finish := time.Now()
+					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+				}
+
+				if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+					errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
+					s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
+					// If bootstrap/primary fails, mark whole deployment as failed.
+					// If secondary/join fails, allow partial success.
+					if step.Type == "bootstrap" || step.Type == "deploy" {
+						s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+					} else {
+						s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+					}
+					finish := time.Now()
+					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+				}
+
+				nodeReadyMsg := fmt.Sprintf("Node %s (%s) deployed successfully", targetNode.Host, targetNode.Role)
+				s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
+			} else {
+				// Pseudo mode: mark as completed without calling agent
+				nodeMsg := fmt.Sprintf("Node %s (%s) step completed (pseudo)", targetNode.Host, targetNode.Role)
+				s.updateStepStatus(clusterID, step.Name, "completed", nodeMsg)
+			}
 
 		case "verify":
 			s.updateStepStatus(clusterID, step.Name, "completed", "Verification completed")
@@ -395,6 +452,26 @@ func marshalString(v interface{}) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+// buildPartialResponse creates a DeployResponse for a failed/partial deployment.
+func (s *ClusterDeployService) buildPartialResponse(ctx context.Context, clusterID, clusterType, name string, dep *models.ClusterDeployment, errMsg string, finishedAt *time.Time) *DeployResponse {
+	prog := s.getProgress(clusterID)
+	resp := &DeployResponse{
+		DeploymentID: clusterID,
+		ClusterType:  clusterType,
+		Name:         name,
+		Status:       "failed",
+		Message:      errMsg,
+		StartedAt:    dep.StartedAt,
+		FinishedAt:   finishedAt,
+		CreatedAt:    dep.CreatedAt,
+	}
+	if prog != nil {
+		resp.Steps = prog.Steps
+		resp.Logs = prog.Logs
+	}
+	return resp
 }
 
 func (s *ClusterDeployService) DeployMHA(ctx context.Context, req DeployMHARequest) (resp *DeployResponse, err error) {
