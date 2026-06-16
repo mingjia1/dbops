@@ -169,19 +169,37 @@ func (e *TaskExecutor) ExecuteClusterSwitch(ctx context.Context, req DeployTaskR
 			Timestamp: time.Now(),
 		}, nil
 	}
-	return &TaskResult{
-		TaskID:    req.TaskID,
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("%s cluster switch request accepted for %d nodes", clusterType, len(nodes)),
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"switch_type":  switchType,
-			"cluster_type": clusterType,
-			"cluster_id":   configString(req.Config, "cluster_id"),
-			"nodes":        nodes,
-		},
-	}, nil
+	adaptedReq, err := buildClusterSwitchDeployRequest(req, clusterType, nodes)
+	if err != nil {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	switch clusterType {
+	case "mgr":
+		mgrExecutor := NewMGRExecutor()
+		if bootstrap, ok := adaptedReq.Config["bootstrap"].(bool); ok && !bootstrap {
+			return mgrExecutor.ConfigureGroupMember(ctx, adaptedReq)
+		}
+		return mgrExecutor.DeployMGRSinglePrimary(ctx, adaptedReq)
+	case "pxc":
+		return e.DeployPXC(ctx, adaptedReq)
+	case "mha", "ha":
+		mhaExecutor := NewMHAExecutor()
+		return mhaExecutor.DeployMHA(ctx, adaptedReq)
+	default:
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  100,
+			Message:   fmt.Sprintf("unsupported cluster_type %q", clusterType),
+			Timestamp: time.Now(),
+		}, nil
+	}
 }
 
 func configNodeList(raw any) []map[string]any {
@@ -197,6 +215,177 @@ func configNodeList(raw any) []map[string]any {
 		}
 	}
 	return nodes
+}
+
+func buildClusterSwitchDeployRequest(req DeployTaskRequest, clusterType string, nodes []map[string]any) (DeployTaskRequest, error) {
+	current := findClusterSwitchCurrentNode(req, nodes)
+	if current == nil {
+		return DeployTaskRequest{}, fmt.Errorf("current instance %q not found in cluster switch nodes", req.InstanceID)
+	}
+	primary := findClusterSwitchPrimaryNode(clusterType, nodes)
+	if primary == nil {
+		return DeployTaskRequest{}, fmt.Errorf("%s cluster switch requires a primary/master node", clusterType)
+	}
+	cfg := copyConfig(req.Config)
+	cfg["deploy_mode"] = clusterType
+	cfg["cluster_type"] = clusterType
+	cfg["cluster_name"] = defaultString(configString(cfg, "cluster_name"), defaultString(configString(cfg, "cluster_id"), clusterType+"-cluster"))
+	cfg["mysql_user"] = defaultString(configString(cfg, "mysql_user"), defaultString(nodeString(current, "mysql_user"), "root"))
+	cfg["mysql_password"] = defaultString(configString(cfg, "mysql_password"), defaultString(nodeString(current, "mysql_password"), nodeString(current, "mysql_pass")))
+	cfg["replicate_user"] = defaultString(configString(cfg, "replicate_user"), defaultString(configString(cfg, "replication_user"), "repl"))
+	cfg["replicate_pass"] = defaultString(configString(cfg, "replicate_pass"), configString(cfg, "replication_pass"))
+
+	switch clusterType {
+	case "mgr":
+		seeds := make([]any, 0, len(nodes))
+		for _, node := range nodes {
+			host := nodeString(node, "host")
+			port := nodeInt(node, "local_port")
+			if port == 0 {
+				port = mgrLocalPort(nodeInt(node, "port"))
+			}
+			seeds = append(seeds, fmt.Sprintf("%s:%d", host, port))
+		}
+		cfg["group_name"] = defaultString(configString(cfg, "group_name"), stableMGRGroupName(configString(cfg, "cluster_id"), configString(cfg, "cluster_name")))
+		cfg["group_seeds"] = seeds
+		cfg["deploy_mode"] = "single-primary"
+		cfg["local_address"] = nodeString(current, "host")
+		cfg["local_port"] = defaultInt(nodeInt(current, "local_port"), mgrLocalPort(nodeInt(current, "port")))
+		cfg["mysql_port"] = nodeInt(current, "port")
+		cfg["server_id"] = defaultInt(nodeInt(current, "server_id"), nodeInt(current, "port"))
+		cfg["primary_host"] = nodeString(primary, "host")
+		cfg["primary_port"] = nodeInt(primary, "port")
+		cfg["bootstrap"] = sameClusterSwitchNode(current, primary)
+	case "pxc":
+		hosts := make([]any, 0, len(nodes))
+		for _, node := range nodes {
+			hosts = append(hosts, nodeString(node, "host"))
+		}
+		cfg["nodes"] = hosts
+		cfg["node_host"] = nodeString(current, "host")
+		cfg["mysql_port"] = nodeInt(current, "port")
+		cfg["data_dir"] = defaultString(nodeString(current, "data_dir"), defaultString(nodeString(current, "datadir"), fmt.Sprintf("/data/mysql/pxc-%d", nodeInt(current, "port"))))
+		cfg["bootstrap"] = sameClusterSwitchNode(current, primary)
+		cfg["sst_method"] = defaultString(configString(cfg, "sst_method"), "xtrabackup-v2")
+	case "mha", "ha":
+		slaveHosts := make([]any, 0, len(nodes)-1)
+		slavePorts := make([]any, 0, len(nodes)-1)
+		for _, node := range nodes {
+			if sameClusterSwitchNode(node, primary) {
+				continue
+			}
+			slaveHosts = append(slaveHosts, nodeString(node, "host"))
+			slavePorts = append(slavePorts, nodeInt(node, "port"))
+		}
+		cfg["manager_host"] = defaultString(configString(cfg, "manager_host"), nodeString(primary, "host"))
+		cfg["master_host"] = nodeString(primary, "host")
+		cfg["master_port"] = nodeInt(primary, "port")
+		cfg["slave_hosts"] = slaveHosts
+		cfg["slave_ports"] = slavePorts
+		cfg["repl_user"] = cfg["replicate_user"]
+		cfg["repl_pass"] = cfg["replicate_pass"]
+	default:
+		return DeployTaskRequest{}, fmt.Errorf("unsupported cluster_type %q", clusterType)
+	}
+	return DeployTaskRequest{TaskID: req.TaskID, InstanceID: req.InstanceID, Config: cfg}, nil
+}
+
+func copyConfig(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in)+8)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func findClusterSwitchCurrentNode(req DeployTaskRequest, nodes []map[string]any) map[string]any {
+	instanceID := strings.TrimSpace(req.InstanceID)
+	if instanceID == "" {
+		instanceID = configString(req.Config, "instance_id")
+	}
+	for _, node := range nodes {
+		if nodeString(node, "instance_id") == instanceID {
+			return node
+		}
+	}
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+	return nil
+}
+
+func sameClusterSwitchNode(a, b map[string]any) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aid, bid := nodeString(a, "instance_id"), nodeString(b, "instance_id")
+	if aid != "" || bid != "" {
+		return aid != "" && aid == bid
+	}
+	return nodeString(a, "host") == nodeString(b, "host") && nodeInt(a, "port") == nodeInt(b, "port")
+}
+
+func findClusterSwitchPrimaryNode(clusterType string, nodes []map[string]any) map[string]any {
+	for _, node := range nodes {
+		role := strings.ToLower(nodeString(node, "role"))
+		if role == primaryRoleName(clusterType) || role == "primary" || role == "master" {
+			return node
+		}
+	}
+	if len(nodes) > 0 {
+		return nodes[0]
+	}
+	return nil
+}
+
+func primaryRoleName(clusterType string) string {
+	switch clusterType {
+	case "mha", "ha":
+		return "master"
+	default:
+		return "primary"
+	}
+}
+
+func nodeString(node map[string]any, key string) string {
+	if v, ok := node[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func nodeInt(node map[string]any, key string) int {
+	if v, ok := node[key].(int); ok {
+		return v
+	}
+	if v, ok := node[key].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
+func defaultInt(value, fallback int) int {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func mgrLocalPort(mysqlPort int) int {
+	if mysqlPort == 0 {
+		return 33061
+	}
+	return 33061 + mysqlPort%100
+}
+
+func stableMGRGroupName(clusterID, clusterName string) string {
+	seed := defaultString(clusterID, clusterName)
+	if seed == "" {
+		return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	}
+	sum := sha256.Sum256([]byte(seed))
+	hexValue := hex.EncodeToString(sum[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hexValue[0:8], hexValue[8:12], hexValue[12:16], hexValue[16:20], hexValue[20:32])
 }
 
 // isDataDirInitialized checks if the MySQL data directory has been initialized

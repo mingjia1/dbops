@@ -240,14 +240,20 @@ func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req Swit
 		if i == 0 {
 			role = primaryRoleFor(targetType)
 		}
-		nodeConfigs = append(nodeConfigs, map[string]interface{}{
+		node := map[string]interface{}{
 			"instance_id": inst.ID,
 			"host":        conn.Host,
 			"port":        conn.Port,
 			"role":        role,
 			"agent_host":  hosts[i].Address,
 			"agent_port":  hosts[i].Port,
-		})
+		}
+		if target, err := s.instanceConnectionConfig(ctx, inst.ID); err == nil {
+			for k, v := range target {
+				node[k] = v
+			}
+		}
+		nodeConfigs = append(nodeConfigs, node)
 	}
 
 	completed := 0
