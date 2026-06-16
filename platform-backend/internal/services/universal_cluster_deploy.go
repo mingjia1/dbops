@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"context"
@@ -182,11 +182,11 @@ func (s *ClusterDeployService) BuildClusterDeployPlan(ctx context.Context, req U
 
 	// Build plan parameters with all relevant configuration
 	params := map[string]interface{}{
-		"mysql_version":     normalized.MySQL.Version,
+		"mysql_version":    normalized.MySQL.Version,
 		"mysql_user":       normalized.MySQL.User,
-		"replication_mode":  normalized.Replication.Mode,
-		"replication_user":  normalized.Replication.User,
-		"custom_options":    normalized.Custom,
+		"replication_mode": normalized.Replication.Mode,
+		"replication_user": normalized.Replication.User,
+		"custom_options":   normalized.Custom,
 	}
 	if normalized.MySQL.PackageURL != "" {
 		params["package_url"] = normalized.MySQL.PackageURL
@@ -649,6 +649,11 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	// Note: wsrep_sst_port is a separate parameter for SST transfers and
 	// can be passed via req.Custom["wsrep_sst_port"].
 	wsrepPort := 4567
+	if customPort, ok := nodeIntCustomRaw(req.Custom, "wsrep_port"); ok {
+		wsrepPort = customPort
+	}
+	wsrepSSTPort, hasWSREPSSTPort := nodeIntCustomRaw(req.Custom, "wsrep_sst_port")
+	wsrepSSLEnabled, hasWSREPSSLEnabled := stringCustom(req.Custom, "wsrep_ssl_enabled")
 
 	for i := range nodes {
 		isBootstrap := nodes[i].Role == "bootstrap"
@@ -668,6 +673,12 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		}
 		if nodes[i].DataDir != "" {
 			nodeConfig["data_dir"] = nodes[i].DataDir
+		}
+		if hasWSREPSSTPort {
+			nodeConfig["wsrep_sst_port"] = wsrepSSTPort
+		}
+		if hasWSREPSSLEnabled {
+			nodeConfig["wsrep_ssl_enabled"] = wsrepSSLEnabled
 		}
 		mergeCommonDeployConfig(nodeConfig, req)
 
@@ -1184,6 +1195,7 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 	if req.PseudoMode {
 		out.Mode = DeployModePseudo
 	}
+	out.Custom = pxcRequestCustom(req)
 	if v, ok := req.ConfigParams["package_url"]; ok {
 		out.MySQL.PackageURL = v
 	}
@@ -1212,6 +1224,33 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 		}
 	}
 	return out
+}
+
+func pxcRequestCustom(req DeployPXCRequest) map[string]interface{} {
+	custom := map[string]interface{}{}
+	if req.WSREPPort > 0 {
+		custom["wsrep_port"] = req.WSREPPort
+	}
+	if req.SSLEnabled {
+		custom["wsrep_ssl_enabled"] = true
+	}
+	for _, key := range []string{
+		"cluster_name",
+		"sst_method",
+		"wsrep_port",
+		"wsrep_sst_port",
+		"wsrep_ssl_enabled",
+		"wsrep_provider_options",
+		"pxc_encrypt_cluster_traffic",
+	} {
+		if value, ok := req.ConfigParams[key]; ok && strings.TrimSpace(value) != "" {
+			custom[key] = value
+		}
+	}
+	if len(custom) == 0 {
+		return nil
+	}
+	return custom
 }
 
 func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployRequest {
@@ -1280,9 +1319,9 @@ func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 			port = 3306
 		}
 		out.Nodes = append(out.Nodes, ClusterDeployNode{
-			Host:     req.ReplicaHost,
+			Host:      req.ReplicaHost,
 			MySQLPort: port,
-			Role:     "replica",
+			Role:      "replica",
 		})
 	}
 	return out

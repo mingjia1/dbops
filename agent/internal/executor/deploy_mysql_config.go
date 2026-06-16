@@ -103,11 +103,6 @@ var allowedDeployConfigKeys = map[string]bool{
 	"password":                       true,
 	"privileges":                     true,
 	"scope":                          true,
-	// Health check / version detect
-	"target_host":                    true,
-	"target_port":                    true,
-	"target_user":                    true,
-	"target_pass":                    true,
 	// Upgrade fields
 	"upgrade_type":                   true,
 	"current_version":                true,

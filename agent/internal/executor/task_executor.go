@@ -26,12 +26,19 @@ import (
 type TaskExecutor struct {
 	UpgradeExecutor   *UpgradeExecutor
 	MigrationExecutor *MigrationExecutor
+	relayCli          *relayClient
 }
 
 func NewTaskExecutor() *TaskExecutor {
 	return &TaskExecutor{
 		UpgradeExecutor:   NewUpgradeExecutor(),
 		MigrationExecutor: NewMigrationExecutor(),
+	}
+}
+
+func (e *TaskExecutor) SetRelayConfig(relayHost string, relayPort int, relayToken string) {
+	if relayHost != "" {
+		e.relayCli = newRelayClient(relayHost, relayPort, relayToken)
 	}
 }
 
@@ -3599,6 +3606,12 @@ func configString(config map[string]interface{}, key string) string {
 func configBool(config map[string]interface{}, key string) bool {
 	if v, ok := config[key].(bool); ok {
 		return v
+	}
+	if v, ok := config[key].(string); ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes", "on":
+			return true
+		}
 	}
 	return false
 }

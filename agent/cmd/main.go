@@ -23,6 +23,9 @@ func main() {
 	logInstance.Info("Starting MySQL Ops Agent")
 
 	taskExecutor := executor.NewTaskExecutor()
+	if cfg.Relay.Enabled && cfg.Relay.RelayHost != "" {
+		taskExecutor.SetRelayConfig(cfg.Relay.RelayHost, cfg.Relay.RelayPort, cfg.Relay.RelayToken)
+	}
 	metricsCollector := collector.NewMetricsCollector()
 	environmentChecker := executor.NewEnvironmentChecker()
 

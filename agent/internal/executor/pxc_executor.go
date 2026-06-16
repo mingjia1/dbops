@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -188,7 +189,7 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		}, nil
 	}
 
-	if err := installPXCSystemPackage(ctx); err != nil {
+	if err := installPXCSystemPackage(ctx, e.relayCli); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -208,7 +209,7 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		}, nil
 	}
 
-	if err := preparePXCDataDir(ctx, config); err != nil {
+	if err := preparePXCDataDir(ctx, config, req.Config); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -262,8 +263,8 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 	sstUserSQL := fmt.Sprintf(
 		"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; "+
 			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
-			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'localhost'; "+
-			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'localhost'; "+
+			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicateUser,
 	)
 
@@ -298,18 +299,53 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 	}, nil
 }
 
-func installPXCSystemPackage(ctx context.Context) error {
+func installPXCSystemPackage(ctx context.Context, relayClient *relayClient) error {
+	// Try relay-based pre-installation if relay is configured
+	if relayClient != nil {
+		xtraCheck := exec.CommandContext(ctx, "bash", "-c", "command -v xtrabackup >/dev/null 2>&1 && echo installed || echo missing")
+		if out, _ := xtraCheck.Output(); strings.TrimSpace(string(out)) != "installed" {
+			releaseReq := RelayPackageRequest{
+				URL:  "https://repo.percona.com/apt/percona-release_latest.jammy_all.deb",
+				Name: "percona-release_latest.jammy_all.deb",
+				Type: "percona_release",
+			}
+			if releaseRes, err := relayClient.fetchPackage(ctx, releaseReq); err == nil && releaseRes.Status == "success" {
+				debPath := filepath.Join(os.TempDir(), filepath.Base(releaseRes.FileName))
+				if err := relayClient.downloadPackage(ctx, releaseRes.FileName, debPath); err == nil {
+					installCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(`
+export DEBIAN_FRONTEND=noninteractive
+dpkg -i %s || {
+	apt-get update -qq 2>/dev/null || true
+	apt-get install -y -qq -f 2>/dev/null || true
+}
+`, shellQuote(debPath)))
+					if out, err := installCmd.CombinedOutput(); err != nil {
+						_ = os.Remove(debPath)
+						return fmt.Errorf("relay percona-release install failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+					}
+					_ = os.Remove(debPath)
+				}
+			}
+
+		}
+		for _, pkg := range []string{"qpress", "socat"} {
+			aptCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
+				"export DEBIAN_FRONTEND=noninteractive; apt-get install -y -qq %s 2>/dev/null || true", pkg))
+			aptCmd.Run()
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "bash", "-lc", `
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
-patch_pxc_sst_path() {
-  script=/opt/dbops-pxc/usr/bin/wsrep_sst_xtrabackup-v2
-  if [ -f "$script" ]; then
-    sed -i 's#export PATH="/usr/sbin:/sbin:$PATH"#export PATH="/opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin:/usr/sbin:/sbin:$PATH"#' "$script"
-  fi
+	patch_pxc_sst_path() {
+	  script=/opt/dbops-pxc/usr/bin/wsrep_sst_xtrabackup-v2
+	  if [ -f "$script" ]; then
+	    sed -i 's#export PATH="/usr/sbin:/sbin:$PATH"#export PATH="/opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin:/usr/sbin:/sbin:$PATH"#' "$script"
+	  fi
 }
 patch_pxc_sst_path
 if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v mysqladmin >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1; then
@@ -393,11 +429,11 @@ apt_install_base_tools() {
   fi
   echo "base apt tools are ready"
 }
-apt_install_pxc_tools() {
-  timeout 180s apt-get \
-    -o Dpkg::Options::="--force-confdef" \
-    -o Dpkg::Options::="--force-confold" \
-    -o Dpkg::Options::="--force-overwrite" \
+	apt_install_pxc_tools() {
+	  timeout 180s apt-get \
+	    -o Dpkg::Options::="--force-confdef" \
+	    -o Dpkg::Options::="--force-confold" \
+	    -o Dpkg::Options::="--force-overwrite" \
     install -y percona-xtrabackup-80 qpress socat || {
     command -v xtrabackup >/dev/null 2>&1 &&
     command -v qpress >/dev/null 2>&1 &&
@@ -439,13 +475,27 @@ download_pxc_payload() {
   done
   test -x /opt/dbops-pxc/usr/sbin/mysqld
   test -x /opt/dbops-pxc/usr/bin/mysql
-  test -x /opt/dbops-pxc/usr/bin/mysqladmin
-  test -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so
-}
-show_pxc_apt_packages() {
-  echo "PXC packages from configured apt sources:"
-  apt-cache policy percona-xtradb-cluster percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtradb-cluster-server percona-xtrabackup-80 qpress socat || true
-  apt-cache search '^percona-xtradb-cluster' || true
+	  test -x /opt/dbops-pxc/usr/bin/mysqladmin
+	  test -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so
+	}
+	verify_pxc_runtime() {
+	  missing=""
+	  [ -x /opt/dbops-pxc/usr/sbin/mysqld ] || missing="$missing /opt/dbops-pxc/usr/sbin/mysqld"
+	  [ -x /opt/dbops-pxc/usr/bin/mysql ] || missing="$missing /opt/dbops-pxc/usr/bin/mysql"
+	  [ -x /opt/dbops-pxc/usr/bin/mysqladmin ] || missing="$missing /opt/dbops-pxc/usr/bin/mysqladmin"
+	  [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] || missing="$missing /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so"
+	  command -v xtrabackup >/dev/null 2>&1 || missing="$missing xtrabackup"
+	  command -v qpress >/dev/null 2>&1 || missing="$missing qpress"
+	  command -v socat >/dev/null 2>&1 || missing="$missing socat"
+	  if [ -n "$missing" ]; then
+	    echo "PXC runtime dependency check failed; missing:$missing"
+	    return 1
+	  fi
+	}
+	show_pxc_apt_packages() {
+	  echo "PXC packages from configured apt sources:"
+	  apt-cache policy percona-xtradb-cluster percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtradb-cluster-server percona-xtrabackup-80 qpress socat || true
+	  apt-cache search '^percona-xtradb-cluster' || true
 }
 wait_dpkg_lock
 disable_expired_mysql_repo_lists
@@ -481,10 +531,11 @@ timeout 180s apt-get \
   -o Dpkg::Options::="--force-overwrite" \
   -f install -y
 wait_dpkg_lock
-apt_install_pxc_tools
-download_pxc_payload
-patch_pxc_sst_path
-`)
+	apt_install_pxc_tools
+	download_pxc_payload
+	patch_pxc_sst_path
+	verify_pxc_runtime
+	`)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
@@ -507,6 +558,10 @@ func buildPXCConfigContent(config PXCConfig) string {
 	if wsrepPort == 0 {
 		wsrepPort = 4567
 	}
+	wsrepSSTPort := config.WSREPSSTPort
+	if wsrepSSTPort == 0 {
+		wsrepSSTPort = 4444
+	}
 	clusterNodes := make([]string, 0, len(config.Nodes))
 	for _, node := range config.Nodes {
 		if strings.Contains(node, ":") {
@@ -517,12 +572,12 @@ func buildPXCConfigContent(config PXCConfig) string {
 	}
 	clusterAddress := "gcomm://" + strings.Join(clusterNodes, ",")
 	providerOptions := fmt.Sprintf("gmcast.listen_addr=tcp://0.0.0.0:%d", wsrepPort)
-	sstSection := ""
+	sstSection := fmt.Sprintf("\n[sst]\nport=%d\n", wsrepSSTPort)
 	pxcEncryptClusterTraffic := "ON"
 	if !config.WSREPSSLEnabled {
 		providerOptions += ";socket.ssl=NO"
 		pxcEncryptClusterTraffic = "OFF"
-		sstSection = "\n[sst]\nencrypt=0\n"
+		sstSection = fmt.Sprintf("\n[sst]\nencrypt=0\nport=%d\n", wsrepSSTPort)
 	}
 	serverID := 1000 + config.MySQLPort%50000 + len(config.NodeHost)
 	pluginDir := pxcPluginDir()
@@ -569,19 +624,28 @@ func safeNodeName(host string) string {
 	return replacer.Replace(host)
 }
 
-func preparePXCDataDir(ctx context.Context, config PXCConfig) error {
+func preparePXCDataDir(ctx context.Context, config PXCConfig, rawConfig map[string]interface{}) error {
+	forceClean := config.Bootstrap || configBool(rawConfig, "force")
 	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
-set -euo pipefail
-datadir=%s
-case "$datadir" in
-  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
-  *) echo "refuse to prepare unsafe PXC datadir: $datadir"; exit 1 ;;
-esac
-mkdir -p "$datadir" /var/log/dbops-pxc /etc/dbops-pxc
-chmod o+x "$(dirname "$datadir")" 2>/dev/null || true
-find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-chown -R mysql:mysql "$datadir" /var/log/dbops-pxc
-`, shellQuote(config.DataDir)))
+	set -euo pipefail
+	datadir=%s
+	force_clean=%s
+	case "$datadir" in
+	  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
+	  *) echo "refuse to prepare unsafe PXC datadir: $datadir"; exit 1 ;;
+	esac
+	mkdir -p "$datadir" /var/log/dbops-pxc /etc/dbops-pxc
+	chmod o+x "$(dirname "$datadir")" 2>/dev/null || true
+	if [ "$force_clean" = "true" ]; then
+	  find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+	elif [ -n "$(find "$datadir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+	  if [ ! -d "$datadir/mysql" ] || [ ! -f "$datadir/grastate.dat" ]; then
+	    echo "PXC datadir $datadir is not empty; set force=true to rebuild it"
+	    exit 1
+	  fi
+	fi
+	chown -R mysql:mysql "$datadir" /var/log/dbops-pxc
+	`, shellQuote(config.DataDir), shellQuote(strconv.FormatBool(forceClean))))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
@@ -702,7 +766,7 @@ func waitForPXCMySQL(ctx context.Context, config PXCConfig) error {
 		case <-time.After(3 * time.Second):
 		}
 	}
-	return fmt.Errorf("timeout waiting for mysqld on port %d: %s", config.MySQLPort, pxcRecentLogs(ctx, config))
+	return fmt.Errorf("timeout waiting for mysqld on port %d: %s", config.MySQLPort, diagnosePXCStartupFailure(ctx, config))
 }
 
 func pxcRecentLogs(ctx context.Context, config PXCConfig) string {
@@ -721,6 +785,35 @@ done`, shellQuote(pxcStartupLogPath(config)), shellQuote(pxcErrorLogPath(config)
 		return "PXC startup and error logs are empty"
 	}
 	return logs
+}
+
+func diagnosePXCStartupFailure(ctx context.Context, config PXCConfig) string {
+	logs := pxcRecentLogs(ctx, config)
+	diagnosis := classifyPXCStartupLogs(logs)
+	if diagnosis == "" {
+		return logs
+	}
+	return diagnosis + "\n" + logs
+}
+
+func classifyPXCStartupLogs(logs string) string {
+	lower := strings.ToLower(logs)
+	switch {
+	case strings.Contains(lower, "unknown variable") && strings.Contains(lower, "wsrep_sst_auth"):
+		return "detected unsupported PXC 8 wsrep_sst_auth option; DBOps no longer writes this option, remove stale custom config and retry"
+	case strings.Contains(lower, "state transfer request failed") || strings.Contains(lower, "sst request failed"):
+		return "detected SST failure; check donor reachability, wsrep/sst ports, xtrabackup/qpress/socat availability, and SST user grants"
+	case strings.Contains(lower, "permission denied"):
+		return "detected filesystem permission failure; DBOps will chown the managed datadir/logdir before start, verify parent directory execute permission"
+	case strings.Contains(lower, "address already in use"):
+		return "detected port conflict; check mysql_port/wsrep_port/wsrep_sst_port and stop the conflicting process"
+	case strings.Contains(lower, "non-primary") || strings.Contains(lower, "failed to open gcomm backend connection"):
+		return "detected Galera connectivity/quorum failure; verify all node_host values and firewall access for wsrep ports"
+	case strings.Contains(lower, "xtrabackup") && strings.Contains(lower, "not found"):
+		return "detected missing xtrabackup during SST; package installation now verifies xtrabackup before starting PXC"
+	default:
+		return ""
+	}
 }
 
 func setPXCRootPassword(ctx context.Context, config PXCConfig) error {

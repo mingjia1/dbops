@@ -224,6 +224,43 @@ func TestUniversalClusterDeployMapsCustomParametersToPXCRequest(t *testing.T) {
 	require.Equal(t, "/data/pxc/3307", out.OtherNodes[0].DataDir)
 }
 
+func TestTypedPXCRequestToUniversalCarriesPXCCustomParameters(t *testing.T) {
+	out := TypedPXCRequestToUniversal(DeployPXCRequest{
+		ClusterID: "pxc-legacy",
+		Name:      "pxc-legacy",
+		BootstrapNode: BootstrapNode{
+			Host: "10.0.0.11",
+			Port: 3306,
+		},
+		OtherNodes: []PXCNode{{Host: "10.0.0.12", Port: 3307}},
+		SSLEnabled: true,
+		WSREPPort:  4569,
+		ConfigParams: map[string]string{
+			"cluster_name":       "pxc-prod",
+			"sst_method":         "xtrabackup-v2",
+			"wsrep_sst_port":     "4445",
+			"wsrep_ssl_enabled":  "false",
+			"max_connections":    "300",
+			"wsrep_node_address": "malicious",
+		},
+	})
+
+	require.Equal(t, "pxc-prod", out.Custom["cluster_name"])
+	require.Equal(t, "xtrabackup-v2", out.Custom["sst_method"])
+	require.Equal(t, 4569, out.Custom["wsrep_port"])
+	require.Equal(t, "4445", out.Custom["wsrep_sst_port"])
+	require.Equal(t, "false", out.Custom["wsrep_ssl_enabled"])
+	require.Equal(t, "300", out.MySQL.Config["max_connections"])
+	require.NotContains(t, out.MySQL.Config, "wsrep_node_address")
+
+	steps := buildPXCPlanSteps([]PlanNode{
+		{ID: "bootstrap", Host: "10.0.0.11", Role: "bootstrap", MySQLPort: 3306},
+	}, out)
+	require.Equal(t, 4569, steps[4].Config["wsrep_port"])
+	require.Equal(t, 4445, steps[4].Config["wsrep_sst_port"])
+	require.Equal(t, "false", steps[4].Config["wsrep_ssl_enabled"])
+}
+
 func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB()
