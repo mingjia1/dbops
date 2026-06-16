@@ -481,11 +481,11 @@ func universalToHARequest(req UniversalClusterDeployRequest) DeployHARequest {
 		ClusterID:     req.ClusterID,
 		ReplUser:      req.Replication.User,
 		ReplPassword:  req.Replication.Password,
-			MySQLUser:     req.MySQL.User,
-			MySQLPassword: req.MySQL.Password,
-			PseudoMode:    req.Mode == DeployModePseudo,
-			ConfigParams:  universalCommonConfigParams(req),
-		}
+		MySQLUser:     req.MySQL.User,
+		MySQLPassword: req.MySQL.Password,
+		PseudoMode:    req.Mode == DeployModePseudo,
+		ConfigParams:  universalCommonConfigParams(req),
+	}
 	for _, node := range req.Nodes {
 		if node.Role == "master" {
 			out.MasterHostID = node.HostID
@@ -516,10 +516,10 @@ func universalToMHARequest(req UniversalClusterDeployRequest) DeployMHARequest {
 		ReplUser:      req.Replication.User,
 		ReplPassword:  req.Replication.Password,
 		MySQLUser:     req.MySQL.User,
-			MySQLPassword: req.MySQL.Password,
-			PseudoMode:    req.Mode == DeployModePseudo,
-			ConfigParams:  universalCommonConfigParams(req),
-		}
+		MySQLPassword: req.MySQL.Password,
+		PseudoMode:    req.Mode == DeployModePseudo,
+		ConfigParams:  universalCommonConfigParams(req),
+	}
 	if vip, ok := stringCustom(req.Custom, "vip"); ok {
 		out.VIP = vip
 	}
@@ -551,10 +551,10 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 		ClusterID:     req.ClusterID,
 		GroupMode:     req.Replication.Mode,
 		MySQLUser:     req.MySQL.User,
-			MySQLPassword: req.MySQL.Password,
-			PseudoMode:    req.Mode == DeployModePseudo,
-			ConfigParams:  universalCommonConfigParams(req),
-		}
+		MySQLPassword: req.MySQL.Password,
+		PseudoMode:    req.Mode == DeployModePseudo,
+		ConfigParams:  universalCommonConfigParams(req),
+	}
 	out.ConfigParams["replicate_user"] = req.Replication.User
 	out.ConfigParams["replicate_pass"] = req.Replication.Password
 	if groupName, ok := stringCustom(req.Custom, "group_name"); ok {
@@ -565,23 +565,23 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 	for _, node := range req.Nodes {
 		if node.Role == "primary" || node.Role == "bootstrap" {
 			out.PrimaryHostID = node.HostID
-				out.PrimaryHost = node.Host
-				out.PrimaryPort = node.MySQLPort
-				out.PrimaryAgentPort = node.AgentPort
-				if node.ServerID != 0 {
-					out.ConfigParams["primary_server_id"] = fmt.Sprintf("%d", node.ServerID)
-				}
-				if localPort, ok := nodeIntCustom(node, "local_port"); ok {
-					out.ConfigParams["primary_local_port"] = fmt.Sprintf("%d", localPort)
-				}
-				continue
+			out.PrimaryHost = node.Host
+			out.PrimaryPort = node.MySQLPort
+			out.PrimaryAgentPort = node.AgentPort
+			if node.ServerID != 0 {
+				out.ConfigParams["primary_server_id"] = fmt.Sprintf("%d", node.ServerID)
 			}
-			secondary := SecondaryNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort, ServerID: node.ServerID}
 			if localPort, ok := nodeIntCustom(node, "local_port"); ok {
-				secondary.LocalPort = localPort
+				out.ConfigParams["primary_local_port"] = fmt.Sprintf("%d", localPort)
 			}
-			out.SecondaryHosts = append(out.SecondaryHosts, secondary)
+			continue
 		}
+		secondary := SecondaryNode{Host: node.Host, Port: node.MySQLPort, AgentPort: node.AgentPort, ServerID: node.ServerID}
+		if localPort, ok := nodeIntCustom(node, "local_port"); ok {
+			secondary.LocalPort = localPort
+		}
+		out.SecondaryHosts = append(out.SecondaryHosts, secondary)
+	}
 	return out
 }
 
@@ -589,11 +589,11 @@ func universalToPXCRequest(req UniversalClusterDeployRequest) DeployPXCRequest {
 	out := DeployPXCRequest{
 		Name:          req.Name,
 		ClusterID:     req.ClusterID,
-			MySQLUser:     req.MySQL.User,
-			MySQLPassword: req.MySQL.Password,
-			PseudoMode:    req.Mode == DeployModePseudo,
-			ConfigParams:  universalCommonConfigParams(req),
-		}
+		MySQLUser:     req.MySQL.User,
+		MySQLPassword: req.MySQL.Password,
+		PseudoMode:    req.Mode == DeployModePseudo,
+		ConfigParams:  universalCommonConfigParams(req),
+	}
 	for _, key := range []string{"cluster_name", "sst_method", "wsrep_sst_port", "wsrep_ssl_enabled", "wsrep_provider_options", "pxc_encrypt_cluster_traffic"} {
 		if v, ok := stringCustom(req.Custom, key); ok {
 			out.ConfigParams[key] = v

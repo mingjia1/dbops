@@ -121,6 +121,108 @@ func TestUniversalClusterDeployPseudoHAReusesMetadataSync(t *testing.T) {
 	require.Equal(t, "master", master.Status.Role)
 }
 
+func TestUniversalClusterDeployMapsCustomParametersToHARequest(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "ha-custom",
+		Name:        "ha-custom",
+		ClusterType: "ha",
+		MySQL: MySQLDeployOptions{
+			Version:         "8.0.36",
+			PackageURL:      "https://repo.example/mysql.tar.gz",
+			PackageChecksum: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			Config:          map[string]string{"max_connections": "512"},
+		},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", Role: "master", MySQLPort: 3306, AgentPort: 19091, DataDir: "/data/mysql/3306", Basedir: "/opt/mysql", ServerID: 11},
+			{Host: "10.0.0.12", Role: "replica", MySQLPort: 3307, AgentPort: 19092, DataDir: "/data/mysql/3307", ServerID: 12},
+		},
+		Custom: map[string]interface{}{"semi_sync_enabled": true},
+	}
+
+	out := universalToHARequest(req)
+
+	require.Equal(t, "/data/mysql/3306", out.MasterDataDir)
+	require.Equal(t, "/opt/mysql", out.MasterBasedir)
+	require.Equal(t, 11, out.MasterServerID)
+	require.Len(t, out.ReplicaHosts, 1)
+	require.Equal(t, 12, out.ReplicaHosts[0].ServerID)
+	require.Equal(t, "/data/mysql/3307", out.ReplicaHosts[0].DataDir)
+	require.Equal(t, "https://repo.example/mysql.tar.gz", out.ConfigParams["package_url"])
+	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", out.ConfigParams["package_checksum"])
+	require.Equal(t, "512", out.ConfigParams["max_connections"])
+}
+
+func TestUniversalClusterDeployMapsCustomParametersToMHARequest(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "mha-custom",
+		Name:        "mha-custom",
+		ClusterType: "mha",
+		MySQL:       MySQLDeployOptions{Config: map[string]string{"innodb_buffer_pool_size": "2G"}},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.10", Role: "manager", AgentPort: 19090},
+			{Host: "10.0.0.11", Role: "master", MySQLPort: 3306},
+			{Host: "10.0.0.12", Role: "replica", MySQLPort: 3307},
+		},
+		Custom: map[string]interface{}{"vip": "10.0.0.100", "vip_interface": "ens33", "ping_interval": 5, "ssh_user": "dbops"},
+	}
+
+	out := universalToMHARequest(req)
+
+	require.Equal(t, "10.0.0.100", out.VIP)
+	require.Equal(t, "ens33", out.ConfigParams["vip_interface"])
+	require.Equal(t, "5", out.ConfigParams["ping_interval"])
+	require.Equal(t, "dbops", out.ConfigParams["ssh_user"])
+	require.Equal(t, "2G", out.ConfigParams["innodb_buffer_pool_size"])
+}
+
+func TestUniversalClusterDeployMapsCustomParametersToMGRRequest(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "mgr-custom",
+		Name:        "mgr-custom",
+		ClusterType: "mgr",
+		Replication: ReplicationOptions{User: "mgrrepl", Password: "mgrpass", Mode: "single-primary"},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", Role: "primary", MySQLPort: 3306, AgentPort: 19091, ServerID: 101, Custom: map[string]interface{}{"local_port": 33161}},
+			{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306, AgentPort: 19092, ServerID: 102, Custom: map[string]interface{}{"local_port": 33162}},
+		},
+		Custom: map[string]interface{}{"group_name": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+	}
+
+	out := universalToMGRRequest(req)
+
+	require.Equal(t, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", out.ConfigParams["group_name"])
+	require.Equal(t, "mgrrepl", out.ConfigParams["replicate_user"])
+	require.Equal(t, "mgrpass", out.ConfigParams["replicate_pass"])
+	require.Equal(t, "101", out.ConfigParams["primary_server_id"])
+	require.Equal(t, "33161", out.ConfigParams["primary_local_port"])
+	require.Len(t, out.SecondaryHosts, 1)
+	require.Equal(t, 102, out.SecondaryHosts[0].ServerID)
+	require.Equal(t, 33162, out.SecondaryHosts[0].LocalPort)
+}
+
+func TestUniversalClusterDeployMapsCustomParametersToPXCRequest(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "pxc-custom",
+		Name:        "pxc-custom",
+		ClusterType: "pxc",
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", Role: "bootstrap", MySQLPort: 3306, AgentPort: 19091, DataDir: "/data/pxc/3306"},
+			{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3307, AgentPort: 19092, DataDir: "/data/pxc/3307"},
+		},
+		Custom: map[string]interface{}{"cluster_name": "pxc-prod", "sst_method": "xtrabackup-v2", "wsrep_sst_port": 4445, "wsrep_ssl_enabled": true},
+	}
+
+	out := universalToPXCRequest(req)
+
+	require.Equal(t, "pxc-prod", out.ConfigParams["cluster_name"])
+	require.Equal(t, "xtrabackup-v2", out.ConfigParams["sst_method"])
+	require.Equal(t, "4445", out.ConfigParams["wsrep_sst_port"])
+	require.Equal(t, "true", out.ConfigParams["wsrep_ssl_enabled"])
+	require.Equal(t, "/data/pxc/3306", out.BootstrapNode.DataDir)
+	require.Equal(t, "/data/pxc/3307", out.OtherNodes[0].DataDir)
+}
+
 func stepIDs(steps []PlanStep) []string {
 	out := make([]string, 0, len(steps))
 	for _, step := range steps {

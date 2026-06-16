@@ -127,12 +127,21 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 		Name:         "ha-real-sync",
 		MasterHostID: "host-master",
 		ReplicaHosts: []SecondaryNode{
-			{Host: agentHost, Port: 3307, AgentPort: agentPort},
+			{Host: agentHost, Port: 3307, AgentPort: agentPort, ServerID: 22, DataDir: "/data/mysql/3307", Basedir: "/opt/mysql"},
 			{Host: agentHost, Port: 3308, AgentPort: agentPort},
 		},
-		MasterPort:    3306,
-		MySQLUser:     "root",
-		MySQLPassword: "rootpass",
+		MasterPort:     3306,
+		MasterServerID: 11,
+		MasterDataDir:  "/data/mysql/3306",
+		MasterBasedir:  "/opt/mysql",
+		MySQLUser:      "root",
+		MySQLPassword:  "rootpass",
+		ConfigParams: map[string]string{
+			"package_url":             "https://repo.example/mysql.tar.gz",
+			"package_checksum":        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"max_connections":         "512",
+			"innodb_buffer_pool_size": "2G",
+		},
 	})
 
 	require.NoError(t, err)
@@ -143,6 +152,14 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	require.Equal(t, "ha-replica", payloads[2].Config["deploy_mode"])
 	require.Equal(t, "127.0.0.1", payloads[0].Config["master_host"])
 	require.Equal(t, "127.0.0.1", payloads[1].Config["slave_host"])
+	require.Equal(t, float64(11), payloads[0].Config["server_id"])
+	require.Equal(t, "/data/mysql/3306", payloads[0].Config["data_dir"])
+	require.Equal(t, "/opt/mysql", payloads[0].Config["basedir"])
+	require.Equal(t, "https://repo.example/mysql.tar.gz", payloads[0].Config["package_url"])
+	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", payloads[0].Config["checksum"])
+	require.Equal(t, float64(22), payloads[1].Config["server_id"])
+	require.Equal(t, "/data/mysql/3307", payloads[1].Config["data_dir"])
+	require.Equal(t, map[string]interface{}{"innodb_buffer_pool_size": "2G", "max_connections": "512"}, payloads[0].Config["mysql_config"])
 	master, err := instRepo.GetByID(ctx, "ha-master")
 	require.NoError(t, err)
 	require.Equal(t, "ha-real-sync", master.ClusterID)
