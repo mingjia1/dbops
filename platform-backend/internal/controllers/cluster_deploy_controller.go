@@ -118,6 +118,18 @@ func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, response)
 }
 
+func (c *ClusterDeployController) GetDeployPlan(ctx *gin.Context) {
+	deploymentID := ctx.Param("id")
+
+	response, err := c.service.GetDeployPlan(ctx.Request.Context(), deploymentID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Plan not found")
+		return
+	}
+
+	utils.SuccessResponse(ctx, response)
+}
+
 func (c *ClusterDeployController) GetDeploymentStatus(ctx *gin.Context) {
 	deploymentID := ctx.Param("id")
 

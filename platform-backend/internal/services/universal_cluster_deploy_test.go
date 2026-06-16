@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
@@ -309,6 +310,81 @@ func TestExecuteClusterDeployPlan_RejectsRealMode(t *testing.T) {
 	_, err := service.ExecuteClusterDeployPlan(context.Background(), plan, UniversalClusterDeployRequest{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "only supports pseudo")
+}
+
+func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	// Create a deployment with plan_json populated
+	plan := &ClusterDeployPlan{
+		DeploymentID: "plan-test-001",
+		ClusterType:  "ha",
+		Mode:         "pseudo",
+		Nodes: []PlanNode{
+			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090, ServerID: 1},
+			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica", AgentPort: 9090, ServerID: 2},
+		},
+		Steps: []PlanStep{
+			{ID: "step-1", Name: "validate_input", Type: "validate", TargetNode: ""},
+			{ID: "step-2", Name: "deploy_master", Type: "bootstrap", TargetNode: "node-1"},
+			{ID: "step-3", Name: "deploy_replica", Type: "join", TargetNode: "node-2"},
+			{ID: "step-4", Name: "verify", Type: "verify", TargetNode: ""},
+		},
+	}
+	planJSON := mustMarshalJSON(plan)
+
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          "plan-test-001",
+		ClusterType: "ha",
+		Name:        "plan-test-001",
+		Status:      "completed",
+		PlanJSON:    planJSON,
+	}))
+
+	// Call GetDeployPlan
+	result, err := service.GetDeployPlan(ctx, "plan-test-001")
+	require.NoError(t, err)
+	require.Equal(t, "plan-test-001", result.DeploymentID)
+	require.Equal(t, "ha", result.ClusterType)
+	require.Len(t, result.Nodes, 2)
+	require.Equal(t, "10.0.0.11", result.Nodes[0].Host)
+	require.Equal(t, "master", result.Nodes[0].Role)
+	require.Equal(t, 1, result.Nodes[0].ServerID)
+	require.Equal(t, "10.0.0.12", result.Nodes[1].Host)
+	require.Equal(t, 2, result.Nodes[1].ServerID)
+	require.Len(t, result.Steps, 4)
+	require.Equal(t, "validate_input", result.Steps[0].Name)
+	require.Equal(t, "deploy_master", result.Steps[1].Name)
+}
+
+func TestGetDeployPlan_ReturnsErrorWhenEmpty(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+		ID:          "plan-test-empty",
+		ClusterType: "ha",
+		Name:        "plan-test-empty",
+		Status:      "pending",
+		PlanJSON:    "",
+	}))
+
+	_, err := service.GetDeployPlan(ctx, "plan-test-empty")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no plan found")
+}
+
+func mustMarshalJSON(v interface{}) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 func stepIDs(steps []PlanStep) []string {

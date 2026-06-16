@@ -1205,6 +1205,21 @@ func (s *ClusterDeployService) deployHAReplicaViaMasterAgent(ctx context.Context
 	})
 }
 
+func (s *ClusterDeployService) GetDeployPlan(ctx context.Context, deploymentID string) (*ClusterDeployPlan, error) {
+	dep, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	if dep.PlanJSON == "" {
+		return nil, fmt.Errorf("no plan found for deployment %s", deploymentID)
+	}
+	var plan ClusterDeployPlan
+	if err := json.Unmarshal([]byte(dep.PlanJSON), &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse plan for deployment %s: %w", deploymentID, err)
+	}
+	return &plan, nil
+}
+
 func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deploymentID string) (*DeployResponse, error) {
 	dep, err := s.repo.GetByID(ctx, deploymentID)
 	if err != nil {

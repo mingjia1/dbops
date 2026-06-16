@@ -414,6 +414,7 @@ func main() {
 				deployments.POST("/ha", middleware.RequirePermission("admin"), clusterDeployController.DeployHA)
 				deployments.GET("", clusterDeployController.List)
 				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
+				deployments.GET("/:id/plan", clusterDeployController.GetDeployPlan)
 				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
 			}
 
