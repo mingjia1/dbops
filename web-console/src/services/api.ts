@@ -786,6 +786,8 @@ export const migrationApi = {
 
 export const clusterDeployApi = {
   list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
+  deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMGR: (data: any) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),

@@ -271,7 +271,7 @@ const ClusterDeploy: React.FC = () => {
     }, 2000)
   }
 
-  const runDeploy = (arch: ArchType, values: any, apiCall: (data: any) => Promise<any>) => {
+  const runDeploy = (arch: ArchType, values: any) => {
     Modal.confirm({
       title: `确认启动 ${arch.toUpperCase()} 集群部署?`,
       content: values.pseudo_mode
@@ -279,16 +279,18 @@ const ClusterDeploy: React.FC = () => {
         : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。',
       okText: '确认部署',
       cancelText: '取消',
-      onOk: () => doDeploy(arch, values, apiCall),
+      onOk: () => doDeploy(arch, values),
     })
   }
 
-  const doDeploy = async (arch: ArchType, values: any, apiCall: (data: any) => Promise<any>) => {
+  const doDeploy = async (arch: ArchType, values: any) => {
     setSubmitting(true)
     setCurrentStep(0)
     setActiveDeployment(null)
     try {
-      const res: any = await apiCall(buildDeployPayload(arch, values))
+      const payload = buildDeployPayload(arch, values)
+      await clusterDeployApi.validateCluster(payload)
+      const res: any = await clusterDeployApi.deployCluster(payload)
       if (!res?.data?.deployment_id && !res?.data?.id) {
         throw new Error('backend did not return deployment_id')
       }
@@ -358,55 +360,95 @@ const ClusterDeploy: React.FC = () => {
     })
   }
 
+  const parseMySQLConfig = (text?: string) => {
+    const config: Record<string, string> = {}
+    ;(text || '').split('\n').forEach((line) => {
+      const item = line.trim()
+      if (!item || item.startsWith('#')) return
+      const idx = item.indexOf('=')
+      if (idx <= 0) return
+      config[item.slice(0, idx).trim()] = item.slice(idx + 1).trim()
+    })
+    return config
+  }
+
   const buildDeployPayload = (arch: ArchType, values: any) => {
-    const base = {
-      cluster_id: values.cluster_id,
-      name: values.cluster_id,
-      repl_user: values.repl_user,
-      repl_password: values.repl_password,
-      mysql_user: credential.username,
-      mysql_password: credential.password,
-      pseudo_mode: !!values.pseudo_mode,
+    const replicaHostIDs = values.replica_host_ids || (values.replica_host_id ? [values.replica_host_id] : [])
+    const nodes: any[] = []
+    const addNode = (hostID: string, role: string, port?: number, extra?: Record<string, any>) => {
+      if (!hostID) return
+      nodes.push({
+        host_id: hostID,
+        role,
+        mysql_port: port || values.mysql_port || 3306,
+        data_dir: extra?.data_dir,
+        basedir: extra?.basedir,
+        server_id: extra?.server_id,
+        custom: extra?.custom,
+      })
     }
+
     if (arch === 'ha') {
-      return {
-        ...base,
-        master_host_id: values.master_host_id,
-        replica_host_id: values.replica_host_id,
-        replica_host_ids: values.replica_host_ids || (values.replica_host_id ? [values.replica_host_id] : []),
-        master_port: values.mysql_port || 3306,
-        replica_port: values.replica_port || 3307,
-      }
+      addNode(values.master_host_id, 'master', values.mysql_port, { data_dir: values.master_data_dir, server_id: values.master_server_id })
+      replicaHostIDs.forEach((hostID: string, index: number) => addNode(hostID, 'replica', values.replica_port || values.mysql_port || 3306, {
+        data_dir: values.replica_data_dir,
+        server_id: values.replica_server_id || (values.master_server_id ? Number(values.master_server_id) + index + 1 : undefined),
+      }))
+    } else if (arch === 'mha') {
+      addNode(values.manager_host_id, 'manager', values.mysql_port)
+      addNode(values.master_host_id, 'master', values.mysql_port)
+      replicaHostIDs.forEach((hostID: string) => addNode(hostID, 'replica', values.replica_port || values.mysql_port || 3306))
+    } else if (arch === 'mgr') {
+      addNode(values.master_host_id, 'primary', values.mysql_port, { server_id: values.master_server_id, custom: { local_port: values.local_port } })
+      replicaHostIDs.forEach((hostID: string, index: number) => addNode(hostID, 'secondary', values.replica_port || values.mysql_port || 3306, {
+        server_id: values.replica_server_id || (values.master_server_id ? Number(values.master_server_id) + index + 1 : undefined),
+        custom: values.local_port ? { local_port: Number(values.local_port) + index + 1 } : undefined,
+      }))
+    } else {
+      addNode(values.master_host_id, 'bootstrap', values.mysql_port, { data_dir: values.master_data_dir })
+      replicaHostIDs.forEach((hostID: string) => addNode(hostID, 'secondary', values.replica_port || values.mysql_port || 3306, { data_dir: values.replica_data_dir }))
     }
+
+    const custom: Record<string, any> = {}
+    if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled
     if (arch === 'mha') {
-      return {
-        ...base,
-        master_host_id: values.master_host_id,
-        manager_host_id: values.manager_host_id,
-        replica_host_ids: values.replica_host_ids || [],
-        master_port: values.mysql_port || 3306,
-        replica_port: values.replica_port || values.mysql_port || 3306,
-        vip: values.vip || '',
-      }
+      if (values.vip) custom.vip = values.vip
+      if (values.vip_interface) custom.vip_interface = values.vip_interface
+      if (values.ping_interval) custom.ping_interval = values.ping_interval
+      if (values.ping_retry) custom.ping_retry = values.ping_retry
+      if (values.ssh_user) custom.ssh_user = values.ssh_user
     }
     if (arch === 'mgr') {
-      return {
-        ...base,
-        name: values.group_name || values.cluster_id,
-        master_host_id: values.master_host_id,
-        replica_host_ids: values.replica_host_ids || [],
-        primary_port: values.mysql_port || 3306,
-        replica_port: values.replica_port || values.mysql_port || 3306,
-        group_mode: 'single-primary',
-      }
+      if (values.group_name) custom.group_name = values.group_name
+      if (values.local_port) custom.local_port = values.local_port
     }
+    if (arch === 'pxc') {
+      if (values.cluster_name) custom.cluster_name = values.cluster_name
+      if (values.sst_method) custom.sst_method = values.sst_method
+      if (values.wsrep_sst_port) custom.wsrep_sst_port = values.wsrep_sst_port
+      if (values.wsrep_ssl_enabled !== undefined) custom.wsrep_ssl_enabled = !!values.wsrep_ssl_enabled
+    }
+
     return {
-      ...base,
-      master_host_id: values.master_host_id,
-      replica_host_ids: values.replica_host_ids || [],
-      bootstrap_node: { host: '', port: values.mysql_port || 3306 },
-      other_nodes: values.replica_host_ids?.length ? [{ host: '', port: values.replica_port || values.mysql_port || 3306 }] : [],
-      wsrep_port: values.wsrep_port || 4567,
+      cluster_id: values.cluster_id,
+      name: values.cluster_id,
+      cluster_type: arch,
+      mode: values.pseudo_mode ? 'pseudo' : 'real',
+      mysql: {
+        version: values.mysql_version || '8.0',
+        user: credential.username,
+        password: credential.password,
+        package_url: values.package_url,
+        package_checksum: values.package_checksum,
+        config: parseMySQLConfig(values.mysql_config_text),
+      },
+      replication: {
+        user: values.repl_user,
+        password: values.repl_password,
+        mode: arch === 'mgr' ? 'single-primary' : 'async',
+      },
+      nodes,
+      custom,
     }
   }
 
@@ -537,6 +579,110 @@ const ClusterDeploy: React.FC = () => {
           </Form.Item>
         </Col>
       </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="mysql_version" label="MySQL version" initialValue="8.0">
+            <Input placeholder="8.0" />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="package_url" label="Package URL">
+            <Input placeholder="https://repo.example/mysql.tar.gz" />
+          </Form.Item>
+        </Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="package_checksum" label="SHA256">
+            <Input placeholder="64-char sha256" />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="master_data_dir" label="Master data dir">
+            <Input placeholder="/data/mysql/3306" />
+          </Form.Item>
+        </Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="replica_data_dir" label="Replica data dir">
+            <Input placeholder="/data/mysql/3307" />
+          </Form.Item>
+        </Col>
+        {(arch === 'ha' || arch === 'mgr') && (
+          <Col span={12}>
+            <Form.Item name="master_server_id" label="Master server_id">
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        )}
+      </Row>
+      {(arch === 'ha' || arch === 'mgr') && (
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item name="replica_server_id" label="Replica server_id">
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          {arch === 'mgr' && (
+            <Col span={12}>
+              <Form.Item name="local_port" label="MGR local port">
+                <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          )}
+        </Row>
+      )}
+      {arch === 'ha' && (
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item name="semi_sync_enabled" label="Semi sync" valuePropName="checked" initialValue={false}>
+              <Checkbox>Enable</Checkbox>
+            </Form.Item>
+          </Col>
+        </Row>
+      )}
+      {arch === 'mha' && (
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item name="vip_interface" label="VIP iface">
+              <Input placeholder="eth0" />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="ping_interval" label="Ping interval">
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="ssh_user" label="SSH user">
+              <Input placeholder="root" />
+            </Form.Item>
+          </Col>
+        </Row>
+      )}
+      {arch === 'pxc' && (
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item name="cluster_name" label="PXC name">
+              <Input placeholder="pxc-prod" />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="sst_method" label="SST method" initialValue="xtrabackup-v2">
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false}>
+              <Checkbox>Enable</Checkbox>
+            </Form.Item>
+          </Col>
+        </Row>
+      )}
+      <Form.Item name="mysql_config_text" label="MySQL config">
+        <Input.TextArea rows={3} placeholder={'max_connections=512\ninnodb_buffer_pool_size=2G'} />
+      </Form.Item>
       <Form.Item wrapperCol={{ offset: 4 }}>
         <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
           启动部署
@@ -674,7 +820,7 @@ const ClusterDeploy: React.FC = () => {
                       <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                     </Form.Item>
                   </>,
-                  (values) => runDeploy('ha', values, clusterDeployApi.deployHA),
+                  (values) => runDeploy('ha', values),
                   { simpleReplica: true },
                 ),
               },
@@ -685,7 +831,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="manager_host_id" label="Manager" rules={[{ required: true }]}>
                     <Select options={hostOptions} placeholder="选择 Manager 主机" />
                   </Form.Item>,
-                  (values) => runDeploy('mha', values, clusterDeployApi.deployMHA),
+                  (values) => runDeploy('mha', values),
                 ),
               },
               {
@@ -695,7 +841,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
                     <Input />
                   </Form.Item>,
-                  (values) => runDeploy('mgr', values, clusterDeployApi.deployMGR),
+                  (values) => runDeploy('mgr', values),
                 ),
               },
               {
@@ -705,7 +851,7 @@ const ClusterDeploy: React.FC = () => {
                   <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>,
-                  (values) => runDeploy('pxc', values, clusterDeployApi.deployPXC),
+                  (values) => runDeploy('pxc', values),
                 ),
               },
             ]}
