@@ -1,4 +1,4 @@
-package services
+﻿package services
 
 import (
 	"context"
@@ -1171,7 +1171,7 @@ func TypedMGRRequestToUniversal(req DeployMGRRequest) UniversalClusterDeployRequ
 	return out
 }
 
-func typedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequest {
+func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequest {
 	out := UniversalClusterDeployRequest{
 		ClusterID:   req.ClusterID,
 		Name:        req.Name,
@@ -1183,6 +1183,21 @@ func typedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 	}
 	if req.PseudoMode {
 		out.Mode = DeployModePseudo
+	}
+	if v, ok := req.ConfigParams["package_url"]; ok {
+		out.MySQL.PackageURL = v
+	}
+	if v, ok := req.ConfigParams["package_checksum"]; ok {
+		out.MySQL.PackageChecksum = v
+	}
+	mysqlConfig := make(map[string]string)
+	for k, v := range req.ConfigParams {
+		if allowedMySQLDeployOption(k) {
+			mysqlConfig[k] = v
+		}
+	}
+	if len(mysqlConfig) > 0 {
+		out.MySQL.Config = mysqlConfig
 	}
 	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.BootstrapHostID, Host: req.BootstrapNode.Host, MySQLPort: req.BootstrapNode.Port, Role: "bootstrap", AgentPort: req.BootstrapNode.AgentPort, DataDir: req.BootstrapNode.DataDir})
 	for _, n := range req.OtherNodes {
@@ -1199,7 +1214,7 @@ func typedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 	return out
 }
 
-func typedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployRequest {
+func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployRequest {
 	out := UniversalClusterDeployRequest{
 		ClusterID:   req.ClusterID,
 		Name:        req.Name,
@@ -1216,6 +1231,22 @@ func typedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 	if req.PseudoMode {
 		out.Mode = DeployModePseudo
 	}
+	if v, ok := req.ConfigParams["package_url"]; ok {
+		out.MySQL.PackageURL = v
+	}
+	if v, ok := req.ConfigParams["package_checksum"]; ok {
+		out.MySQL.PackageChecksum = v
+	}
+	// Carry allowed MySQL config options
+	mysqlConfig := make(map[string]string)
+	for k, v := range req.ConfigParams {
+		if allowedMySQLDeployOption(k) {
+			mysqlConfig[k] = v
+		}
+	}
+	if len(mysqlConfig) > 0 {
+		out.MySQL.Config = mysqlConfig
+	}
 	masterNode := ClusterDeployNode{
 		HostID:    req.MasterHostID,
 		Host:      req.MasterHost,
@@ -1230,6 +1261,7 @@ func typedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 		masterNode.AgentPort = 9090
 	}
 	out.Nodes = append(out.Nodes, masterNode)
+	// Handle plural ReplicaHosts (new format)
 	for _, r := range req.ReplicaHosts {
 		out.Nodes = append(out.Nodes, ClusterDeployNode{
 			Host:      r.Host,
@@ -1239,6 +1271,18 @@ func typedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 			DataDir:   r.DataDir,
 			Basedir:   r.Basedir,
 			ServerID:  r.ServerID,
+		})
+	}
+	// Handle singular ReplicaHost (legacy format)
+	if len(req.ReplicaHosts) == 0 && req.ReplicaHost != "" {
+		port := req.ReplicaPort
+		if port == 0 {
+			port = 3306
+		}
+		out.Nodes = append(out.Nodes, ClusterDeployNode{
+			Host:     req.ReplicaHost,
+			MySQLPort: port,
+			Role:     "replica",
 		})
 	}
 	return out

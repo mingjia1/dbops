@@ -1,11 +1,10 @@
-package services
+﻿package services
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -237,13 +236,6 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	// - real: full deployment, calling agent for each deploy step
 	isReal := plan.Mode == DeployModeReal
 
-	// Ensure audit is always recorded
-	defer func() {
-		if finalResp != nil || finalErr != nil {
-			s.auditDeployment(ctx, "deploy_"+plan.ClusterType+"_cluster", plan.ClusterType, plan.DeploymentID, req.Name, finalResp, finalErr)
-		}
-	}()
-
 	clusterID := plan.DeploymentID
 	clusterType := plan.ClusterType
 	name := req.Name
@@ -252,10 +244,10 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	}
 	now := time.Now()
 
-	// Ensure audit is always recorded
+	// Ensure audit is always recorded on exit
 	defer func() {
 		if finalResp != nil || finalErr != nil {
-			s.auditDeployment(ctx, "deploy_"+clusterType+"_cluster", clusterType, clusterID, name, finalResp, finalErr)
+			s.auditDeployment(ctx, "deploy_"+plan.ClusterType+"_cluster", plan.ClusterType, plan.DeploymentID, req.Name, finalResp, finalErr)
 		}
 	}()
 
@@ -488,13 +480,13 @@ func (s *ClusterDeployService) DeployMGR(ctx context.Context, req DeployMGRReque
 
 // Deprecated: Use DeployCluster with typedPXCRequestToUniversal instead.
 func (s *ClusterDeployService) DeployPXC(ctx context.Context, req DeployPXCRequest) (resp *DeployResponse, err error) {
-	universalReq := typedPXCRequestToUniversal(req)
+	universalReq := TypedPXCRequestToUniversal(req)
 	return s.DeployCluster(ctx, universalReq)
 }
 
 // Deprecated: Use DeployCluster with typedHARequestToUniversal instead.
 func (s *ClusterDeployService) DeployHA(ctx context.Context, req DeployHARequest) (resp *DeployResponse, err error) {
-	universalReq := typedHARequestToUniversal(req)
+	universalReq := TypedHARequestToUniversal(req)
 	return s.DeployCluster(ctx, universalReq)
 }
 
@@ -863,6 +855,9 @@ func deployAuditResult(status string, err error) string {
 }
 
 func (s *ClusterDeployService) clearClusterManagement(ctx context.Context, clusterID string) error {
+	if s.instRepo == nil {
+		return nil
+	}
 	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
 	if err != nil {
 		return err
@@ -1192,6 +1187,9 @@ func (s *ClusterDeployService) injectMHAStepPasswords(ctx context.Context, plan 
 }
 
 func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, clusterType, clusterID string, nodes []pseudoNode) error {
+	if s.instRepo == nil {
+		return fmt.Errorf("instance repository not configured")
+	}
 	matched := make([]*models.Instance, 0, len(nodes))
 	for _, node := range nodes {
 		inst, err := s.findInstanceByEndpoint(ctx, node.Host, node.Port)

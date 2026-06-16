@@ -294,7 +294,7 @@ func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	replica, err := instRepo.GetByID(ctx, "ha-replica")
 	require.NoError(t, err)
 	require.Equal(t, "execute-plan-ha", replica.ClusterID)
-	require.Equal(t, "slave", replica.Status.Role)
+	require.Equal(t, "replica", replica.Status.Role)
 	require.Equal(t, "ha-master", replica.Topology.MasterID)
 }
 

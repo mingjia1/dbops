@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+﻿import React, { useEffect, useRef, useState } from 'react'
 import {
   Alert, Button, Card, Checkbox, Col, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Popover, Progress, Row, Select, Space, Steps, Table, Tabs, Tag,
 } from 'antd'
@@ -732,7 +732,7 @@ const ClusterDeploy: React.FC = () => {
           <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
             启动部署
           </Button>
-          <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then(values => doPreview(arch, values)).catch(() => {})}>
+          <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then((values: any) => doPreview(arch, values)).catch(() => {})}>
             预览计划
           </Button>
         </Space>
