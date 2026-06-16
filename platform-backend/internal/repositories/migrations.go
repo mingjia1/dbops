@@ -808,8 +808,21 @@ var schemaSQLite = []string{
 		error_message TEXT,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
-	`CREATE INDEX IF NOT EXISTS idx_failover_history_cluster ON failover_history(cluster_id, failover_time)`,
-}
+		`CREATE INDEX IF NOT EXISTS idx_failover_history_cluster ON failover_history(cluster_id, failover_time)`,
+		`CREATE TABLE IF NOT EXISTS masking_rules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT DEFAULT '',
+			field_path TEXT NOT NULL,
+			pattern TEXT DEFAULT '',
+			algorithm TEXT NOT NULL DEFAULT 'mask',
+			replacement TEXT DEFAULT '',
+			roles TEXT NOT NULL DEFAULT '*',
+			enabled INTEGER DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.
 func SchemaFor(d Dialect) []string {
