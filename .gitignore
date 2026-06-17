@@ -30,6 +30,8 @@ agent/bin/
 platform-backend/platform-backend
 platform-backend/agent
 agent/agent
+agent/agent_linux
+agent/mysql-ops-agent
 # 测试覆盖率
 *.out
 coverage.out
@@ -101,15 +103,19 @@ Thumbs.db
 *.db
 
 # ---------- 项目特定 ----------
-# 平台后端配置
+# 平台后端配置（含密钥的本地配置）
+platform-backend/config/config.yaml
 platform-backend/config/config.local.yaml
-# Agent 配置
+# Agent 配置（含密钥的本地配置）
+agent/config/config.yaml
 agent/config/config.local.yaml
 # 备份目录
 backups/
 data/
-.omo/
+omo/
 .cache/
+.codeartsdoer/
+.sisyphus/
 
 # ---------- 敏感信息 ----------
 login.json
@@ -129,3 +135,18 @@ secrets.yml
 docs/
 # 临时文件
 *.tmp
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ---------- 临时工具/脚本 ----------
+bfg-1.15.0.jar
+.gitcleanup-paths*
+
+# ---------- 备份目录 ----------
+.git.backup/

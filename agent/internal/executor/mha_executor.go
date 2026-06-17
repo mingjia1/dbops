@@ -579,13 +579,16 @@ func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfi
 		}
 	}
 
-	replCmd := mhaShellCommand(ctx, config.ManagerHost, config.SSHUser, config.SSHPrivateKey, "perl -X $(command -v masterha_check_repl) --conf=/etc/mha/app1.cnf")
-	if out, err := replCmd.CombinedOutput(); err != nil {
-		if !mhaOutputContains(string(out), "MySQL Replication Health is OK") {
+	for i, host := range config.SlaveHosts {
+		port := config.MasterPort
+		if i < len(config.SlavePorts) && config.SlavePorts[i] != 0 {
+			port = config.SlavePorts[i]
+		}
+		if err := validateMHAReplica(ctx, host, port, config); err != nil {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  85,
-				Message:   fmt.Sprintf("MHA replication check failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+				Message:   fmt.Sprintf("MHA replication check failed on %s:%d: %v", host, port, err),
 				Timestamp: time.Now(),
 			}
 		}
@@ -598,6 +601,36 @@ func (e *MHAExecutor) validateMHADeployment(ctx context.Context, config MHAConfi
 			config.ManagerHost, config.MasterHost, config.MasterPort),
 		Timestamp: time.Now(),
 	}
+}
+
+func validateMHAReplica(ctx context.Context, host string, port int, config MHAConfig) error {
+	output, err := mysqlExecCommand(ctx, host, port, config.ManagerUser, config.ManagerPass, "SHOW REPLICA STATUS\\G").CombinedOutput()
+	if err != nil {
+		legacyOutput, legacyErr := mysqlExecCommand(ctx, host, port, config.ManagerUser, config.ManagerPass, "SHOW SLAVE STATUS\\G").CombinedOutput()
+		if legacyErr != nil {
+			return fmt.Errorf("%v, output: %s; fallback: %v, output: %s", err, strings.TrimSpace(string(output)), legacyErr, strings.TrimSpace(string(legacyOutput)))
+		}
+		output = legacyOutput
+	}
+
+	status := string(output)
+	if strings.TrimSpace(status) == "" {
+		return fmt.Errorf("replica status is empty")
+	}
+	if !mhaReplicaStatusContainsRunning(status, "Replica_IO_Running", "Slave_IO_Running") {
+		return fmt.Errorf("replica IO thread is not running: %s", strings.TrimSpace(status))
+	}
+	if !mhaReplicaStatusContainsRunning(status, "Replica_SQL_Running", "Slave_SQL_Running") {
+		return fmt.Errorf("replica SQL thread is not running: %s", strings.TrimSpace(status))
+	}
+	if !strings.Contains(status, "Source_Host: "+config.MasterHost) && !strings.Contains(status, "Master_Host: "+config.MasterHost) {
+		return fmt.Errorf("replica source does not match master %s: %s", config.MasterHost, strings.TrimSpace(status))
+	}
+	return nil
+}
+
+func mhaReplicaStatusContainsRunning(status string, modernKey string, legacyKey string) bool {
+	return strings.Contains(status, modernKey+": Yes") || strings.Contains(status, legacyKey+": Yes")
 }
 
 func mhaOutputContains(output, marker string) bool {
