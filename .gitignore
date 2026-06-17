@@ -66,6 +66,8 @@ config.local.yml
 config.local.json
 
 # ---------- IDE / 编辑器 ----------
+.cursor/
+.codearts/
 .vscode/
 .idea/
 *.swp
@@ -103,6 +105,9 @@ Thumbs.db
 *.db
 
 # ---------- 项目特定 ----------
+# CI/CD 和编辑器配置
+.github/
+.opencode/
 # 平台后端配置（含密钥的本地配置）
 platform-backend/config/config.yaml
 platform-backend/config/config.local.yaml
@@ -116,6 +121,8 @@ omo/
 .cache/
 .codeartsdoer/
 .sisyphus/
+web-console/node_modules/
+web-console/e2e/
 
 # ---------- 敏感信息 ----------
 login.json
