@@ -65,6 +65,11 @@ func TestClassifyPXCStartupLogs(t *testing.T) {
 			logs: "wsrep_sst_xtrabackup-v2: xtrabackup: not found",
 			want: "missing xtrabackup",
 		},
+		{
+			name: "missing socat",
+			logs: "socat not found in path: /opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin:/usr/sbin:/sbin",
+			want: "missing socat",
+		},
 	}
 
 	for _, tt := range tests {

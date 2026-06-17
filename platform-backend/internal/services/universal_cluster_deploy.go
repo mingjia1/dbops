@@ -680,6 +680,9 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		if hasWSREPSSLEnabled {
 			nodeConfig["wsrep_ssl_enabled"] = wsrepSSLEnabled
 		}
+		if force, ok := stringCustom(req.Custom, "force"); ok {
+			nodeConfig["force"] = force
+		}
 		mergeCommonDeployConfig(nodeConfig, req)
 
 		stepType := "join"
@@ -865,10 +868,12 @@ func allowedClusterCustomOptions(clusterType string) map[string]bool {
 	case ClusterTypePXC:
 		common["cluster_name"] = true
 		common["sst_method"] = true
+		common["wsrep_port"] = true
 		common["wsrep_sst_port"] = true
 		common["wsrep_ssl_enabled"] = true
 		common["wsrep_provider_options"] = true
 		common["pxc_encrypt_cluster_traffic"] = true
+		common["force"] = true
 	}
 	return common
 }
@@ -1183,6 +1188,13 @@ func TypedMGRRequestToUniversal(req DeployMGRRequest) UniversalClusterDeployRequ
 }
 
 func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequest {
+	defaultPort := 0
+	if v, ok := req.ConfigParams["mysql_port"]; ok {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && parsed > 0 {
+			defaultPort = parsed
+		}
+	}
+	defaultDataDir := strings.TrimSpace(req.ConfigParams["data_dir"])
 	out := UniversalClusterDeployRequest{
 		ClusterID:   req.ClusterID,
 		Name:        req.Name,
@@ -1211,9 +1223,22 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 	if len(mysqlConfig) > 0 {
 		out.MySQL.Config = mysqlConfig
 	}
-	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.BootstrapHostID, Host: req.BootstrapNode.Host, MySQLPort: req.BootstrapNode.Port, Role: "bootstrap", AgentPort: req.BootstrapNode.AgentPort, DataDir: req.BootstrapNode.DataDir})
+	bootstrapPort := req.BootstrapNode.Port
+	if bootstrapPort == 0 {
+		bootstrapPort = defaultPort
+	}
+	bootstrapDataDir := defaultString(req.BootstrapNode.DataDir, defaultDataDir)
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.BootstrapHostID, Host: req.BootstrapNode.Host, MySQLPort: bootstrapPort, Role: "bootstrap", AgentPort: req.BootstrapNode.AgentPort, DataDir: bootstrapDataDir})
+	for _, hostID := range req.OtherHostIDs {
+		out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: hostID, MySQLPort: defaultPort, Role: "secondary", DataDir: defaultDataDir})
+	}
 	for _, n := range req.OtherNodes {
-		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: n.Host, MySQLPort: n.Port, Role: "secondary", AgentPort: n.AgentPort, DataDir: n.DataDir})
+		port := n.Port
+		if port == 0 {
+			port = defaultPort
+		}
+		dataDir := defaultString(n.DataDir, defaultDataDir)
+		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: n.Host, MySQLPort: port, Role: "secondary", AgentPort: n.AgentPort, DataDir: dataDir})
 	}
 	if len(req.ConfigParams) > 0 {
 		out.MySQL.Config = make(map[string]string, len(req.ConfigParams))
@@ -1242,6 +1267,7 @@ func pxcRequestCustom(req DeployPXCRequest) map[string]interface{} {
 		"wsrep_ssl_enabled",
 		"wsrep_provider_options",
 		"pxc_encrypt_cluster_traffic",
+		"force",
 	} {
 		if value, ok := req.ConfigParams[key]; ok && strings.TrimSpace(value) != "" {
 			custom[key] = value

@@ -252,6 +252,7 @@ func TestTypedPXCRequestToUniversalCarriesPXCCustomParameters(t *testing.T) {
 	require.Equal(t, "false", out.Custom["wsrep_ssl_enabled"])
 	require.Equal(t, "300", out.MySQL.Config["max_connections"])
 	require.NotContains(t, out.MySQL.Config, "wsrep_node_address")
+	require.NoError(t, validateDeployCustomOptions(ClusterTypePXC, out.Custom, out.MySQL.Config, out.Nodes))
 
 	steps := buildPXCPlanSteps([]PlanNode{
 		{ID: "bootstrap", Host: "10.0.0.11", Role: "bootstrap", MySQLPort: 3306},
@@ -259,6 +260,44 @@ func TestTypedPXCRequestToUniversalCarriesPXCCustomParameters(t *testing.T) {
 	require.Equal(t, 4569, steps[4].Config["wsrep_port"])
 	require.Equal(t, 4445, steps[4].Config["wsrep_sst_port"])
 	require.Equal(t, "false", steps[4].Config["wsrep_ssl_enabled"])
+}
+
+func TestTypedPXCRequestToUniversalMapsHostIDsAndRuntimeParams(t *testing.T) {
+	out := TypedPXCRequestToUniversal(DeployPXCRequest{
+		ClusterID:       "pxc-hostids",
+		Name:            "pxc-hostids",
+		BootstrapHostID: "host-16",
+		OtherHostIDs:    []string{"host-17", "host-18"},
+		MySQLUser:       "root",
+		MySQLPassword:   "Root#2026",
+		WSREPPort:       4569,
+		ConfigParams: map[string]string{
+			"cluster_name":         "pxc-16-17-18",
+			"mysql_port":           "24410",
+			"data_dir":             "/data/mysql/pxc-24410",
+			"wsrep_sst_port":       "4449",
+			"wsrep_ssl_enabled":    "false",
+			"force":                "true",
+			"innodb_log_file_size": "512M",
+		},
+	})
+
+	require.Len(t, out.Nodes, 3)
+	require.Equal(t, "host-16", out.Nodes[0].HostID)
+	require.Equal(t, "bootstrap", out.Nodes[0].Role)
+	for _, node := range out.Nodes {
+		require.Equal(t, 24410, node.MySQLPort)
+		require.Equal(t, "/data/mysql/pxc-24410", node.DataDir)
+	}
+	require.Equal(t, "true", out.Custom["force"])
+	require.NoError(t, validateDeployCustomOptions(ClusterTypePXC, out.Custom, out.MySQL.Config, out.Nodes))
+
+	steps := buildPXCPlanSteps([]PlanNode{
+		{ID: "node-16", Host: "10.1.81.16", Role: "bootstrap", MySQLPort: out.Nodes[0].MySQLPort, DataDir: out.Nodes[0].DataDir},
+	}, out)
+	require.Equal(t, 24410, steps[4].Config["mysql_port"])
+	require.Equal(t, "/data/mysql/pxc-24410", steps[4].Config["data_dir"])
+	require.Equal(t, "true", steps[4].Config["force"])
 }
 
 func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
@@ -370,7 +409,7 @@ func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
 	require.Contains(t, resp.Message, "agent client not configured")
 }
 
-func TestExecuteClusterDeployPlan_PseudoModeManagementSyncFails(t *testing.T) {
+func TestExecuteClusterDeployPlan_PseudoModeCreatesMissingManagedInstances(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB()
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -406,8 +445,10 @@ func TestExecuteClusterDeployPlan_PseudoModeManagementSyncFails(t *testing.T) {
 
 	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
 	require.NoError(t, err)
-	require.Equal(t, "partial", resp.Status)
-	require.Contains(t, resp.Message, "management sync failed")
+	require.Equal(t, "success", resp.Status)
+	instances, err := instRepo.ListByClusterID(ctx, "pseudo-sync-fail")
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
 }
 
 func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {

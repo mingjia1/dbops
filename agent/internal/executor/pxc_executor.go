@@ -346,12 +346,22 @@ export NEEDRESTART_SUSPEND=1
 	  if [ -f "$script" ]; then
 	    sed -i 's#export PATH="/usr/sbin:/sbin:$PATH"#export PATH="/opt/dbops-pxc/usr/sbin:/opt/dbops-pxc/usr/bin:/usr/sbin:/sbin:$PATH"#' "$script"
 	  fi
-}
-patch_pxc_sst_path
-if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v mysqladmin >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1; then
-  echo "PXC payload and client tools are already installed; skipping package installation"
-  exit 0
-fi
+	}
+	link_pxc_sst_tools() {
+	  mkdir -p /opt/dbops-pxc/usr/bin
+	  for tool in xtrabackup qpress socat; do
+	    tool_path=$(command -v "$tool" 2>/dev/null || true)
+	    if [ -n "$tool_path" ] && [ ! -x "/opt/dbops-pxc/usr/bin/$tool" ]; then
+	      ln -sf "$tool_path" "/opt/dbops-pxc/usr/bin/$tool"
+	    fi
+	  done
+	}
+	patch_pxc_sst_path
+	link_pxc_sst_tools
+	if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v mysqladmin >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1 && command -v qpress >/dev/null 2>&1 && command -v socat >/dev/null 2>&1; then
+	  echo "PXC payload and client tools are already installed; skipping package installation"
+	  exit 0
+	fi
 cleanup_policy_rcd() { rm -f /usr/sbin/policy-rc.d; }
 restore_mysql_repo_lists() {
   if [ -d /tmp/dbops-disabled-mysql-apt-lists ]; then
@@ -478,19 +488,23 @@ download_pxc_payload() {
 	  test -x /opt/dbops-pxc/usr/bin/mysqladmin
 	  test -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so
 	}
-	verify_pxc_runtime() {
-	  missing=""
-	  [ -x /opt/dbops-pxc/usr/sbin/mysqld ] || missing="$missing /opt/dbops-pxc/usr/sbin/mysqld"
-	  [ -x /opt/dbops-pxc/usr/bin/mysql ] || missing="$missing /opt/dbops-pxc/usr/bin/mysql"
-	  [ -x /opt/dbops-pxc/usr/bin/mysqladmin ] || missing="$missing /opt/dbops-pxc/usr/bin/mysqladmin"
-	  [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] || missing="$missing /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so"
-	  command -v xtrabackup >/dev/null 2>&1 || missing="$missing xtrabackup"
-	  command -v qpress >/dev/null 2>&1 || missing="$missing qpress"
-	  command -v socat >/dev/null 2>&1 || missing="$missing socat"
-	  if [ -n "$missing" ]; then
-	    echo "PXC runtime dependency check failed; missing:$missing"
-	    return 1
-	  fi
+		verify_pxc_runtime() {
+		  link_pxc_sst_tools
+		  missing=""
+		  [ -x /opt/dbops-pxc/usr/sbin/mysqld ] || missing="$missing /opt/dbops-pxc/usr/sbin/mysqld"
+		  [ -x /opt/dbops-pxc/usr/bin/mysql ] || missing="$missing /opt/dbops-pxc/usr/bin/mysql"
+		  [ -x /opt/dbops-pxc/usr/bin/mysqladmin ] || missing="$missing /opt/dbops-pxc/usr/bin/mysqladmin"
+		  [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] || missing="$missing /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so"
+		  command -v xtrabackup >/dev/null 2>&1 || missing="$missing xtrabackup"
+		  command -v qpress >/dev/null 2>&1 || missing="$missing qpress"
+		  command -v socat >/dev/null 2>&1 || missing="$missing socat"
+		  [ -x /opt/dbops-pxc/usr/bin/xtrabackup ] || missing="$missing /opt/dbops-pxc/usr/bin/xtrabackup"
+		  [ -x /opt/dbops-pxc/usr/bin/qpress ] || missing="$missing /opt/dbops-pxc/usr/bin/qpress"
+		  [ -x /opt/dbops-pxc/usr/bin/socat ] || missing="$missing /opt/dbops-pxc/usr/bin/socat"
+		  if [ -n "$missing" ]; then
+		    echo "PXC runtime dependency check failed; missing:$missing"
+		    return 1
+		  fi
 	}
 	show_pxc_apt_packages() {
 	  echo "PXC packages from configured apt sources:"
@@ -811,6 +825,8 @@ func classifyPXCStartupLogs(logs string) string {
 		return "detected Galera connectivity/quorum failure; verify all node_host values and firewall access for wsrep ports"
 	case strings.Contains(lower, "xtrabackup") && strings.Contains(lower, "not found"):
 		return "detected missing xtrabackup during SST; package installation now verifies xtrabackup before starting PXC"
+	case strings.Contains(lower, "socat") && strings.Contains(lower, "not found"):
+		return "detected missing socat during SST; package installation now verifies and links socat before starting PXC"
 	default:
 		return ""
 	}

@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"context"
@@ -91,9 +91,12 @@ type deploymentHost struct {
 }
 
 type pseudoNode struct {
-	Host string
-	Port int
-	Role string
+	Host    string
+	Port    int
+	Role    string
+	HostID  string
+	DataDir string
+	Basedir string
 }
 
 func NewClusterDeployService(
@@ -419,7 +422,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 func (s *ClusterDeployService) syncPseudoClusterManagement(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode) error {
 	nodes := make([]pseudoNode, 0, len(planNodes))
 	for _, pn := range planNodes {
-		nodes = append(nodes, pseudoNode{Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role})
+		nodes = append(nodes, pseudoNode{Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role, HostID: pn.HostID, DataDir: pn.DataDir, Basedir: pn.Basedir})
 	}
 	if len(nodes) == 0 {
 		return fmt.Errorf("no nodes to sync")
@@ -754,7 +757,6 @@ func (s *ClusterDeployService) decommissionClusterInstance(ctx context.Context, 
 	}
 	return nil
 }
-
 
 func (s *ClusterDeployService) deploymentNodes(ctx context.Context, clusterID string) []DeployNode {
 	if s.instRepo == nil || clusterID == "" {
@@ -1194,7 +1196,10 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 	for _, node := range nodes {
 		inst, err := s.findInstanceByEndpoint(ctx, node.Host, node.Port)
 		if err != nil {
-			return err
+			inst, err = s.createManagedInstanceForDeployNode(ctx, clusterID, node)
+			if err != nil {
+				return err
+			}
 		}
 		inst.ClusterID = clusterID
 		if err := s.instRepo.Update(ctx, inst); err != nil {
@@ -1241,6 +1246,37 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 	return nil
 }
 
+func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Context, clusterID string, node pseudoNode) (*models.Instance, error) {
+	if s.instRepo == nil {
+		return nil, fmt.Errorf("instance repository not configured")
+	}
+	instanceID := uuid.New().String()
+	hostID := strings.TrimSpace(node.HostID)
+	name := fmt.Sprintf("%s-%s-%d", clusterID, strings.ReplaceAll(node.Host, ".", "-"), node.Port)
+	inst := &models.Instance{
+		ID:        instanceID,
+		Name:      name,
+		ClusterID: clusterID,
+	}
+	if hostID != "" {
+		inst.HostID = &hostID
+	}
+	if err := s.instRepo.Create(ctx, inst); err != nil {
+		return nil, fmt.Errorf("create managed instance for %s:%d: %w", node.Host, node.Port, err)
+	}
+	if err := s.instRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID: instanceID,
+		Host:       node.Host,
+		Port:       node.Port,
+		Username:   "root",
+		Basedir:    node.Basedir,
+		Datadir:    node.DataDir,
+	}); err != nil {
+		return nil, fmt.Errorf("create managed instance connection for %s:%d: %w", node.Host, node.Port, err)
+	}
+	return inst, nil
+}
+
 func (s *ClusterDeployService) findInstanceByEndpoint(ctx context.Context, host string, port int) (*models.Instance, error) {
 	instances, err := s.instRepo.List(ctx, 1000, 0)
 	if err != nil {
@@ -1268,7 +1304,6 @@ func sameHost(a, b string) bool {
 	}
 	return false
 }
-
 
 func normalizeDeployStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
@@ -1309,5 +1344,3 @@ func defaultInt(v, fallback int) int {
 	}
 	return fallback
 }
-
-

@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"context"
@@ -442,12 +442,12 @@ func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 			clusterType: "ha",
 			deploy: func(service *ClusterDeployService) (*DeployResponse, error) {
 				return service.DeployHA(ctx, DeployHARequest{
-					ClusterID:     "ha-no-agent",
-					Name:          "ha-no-agent",
-					MasterHost:    "10.0.0.11",
-					ReplicaHosts:  []SecondaryNode{{Host: "10.0.0.12", Port: 3307, AgentPort: 9090}},
-					MasterPort:    3306,
-					
+					ClusterID:    "ha-no-agent",
+					Name:         "ha-no-agent",
+					MasterHost:   "10.0.0.11",
+					ReplicaHosts: []SecondaryNode{{Host: "10.0.0.12", Port: 3307, AgentPort: 9090}},
+					MasterPort:   3306,
+
 					MySQLUser:     "root",
 					MySQLPassword: "rootpass",
 				})
@@ -561,14 +561,14 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-secondary-inst", "mgr-secondary-host", secondaryHost, 3307)
 
 	resp, err := service.DeployMGR(ctx, DeployMGRRequest{
-		ClusterID:      "mgr-agent-port",
-		Name:           "mgr-agent-port",
-		PrimaryHost:    primaryHost,
-		PrimaryPort:    3306,
+		ClusterID:        "mgr-agent-port",
+		Name:             "mgr-agent-port",
+		PrimaryHost:      primaryHost,
+		PrimaryPort:      3306,
 		PrimaryAgentPort: primaryAgentPort,
-		SecondaryHosts: []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
-		MySQLUser:      "root",
-		MySQLPassword:  "rootpass",
+		SecondaryHosts:   []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
+		MySQLUser:        "root",
+		MySQLPassword:    "rootpass",
 	})
 
 	require.NoError(t, err)
@@ -615,7 +615,7 @@ func TestDeployPXCUsesResolvedAgentPorts(t *testing.T) {
 	require.Equal(t, "completed", deployment.Status)
 }
 
-func TestDeployMGRMarksValidationStepFailedWhenManagementSyncFails(t *testing.T) {
+func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T) {
 	ctx := context.Background()
 	primaryServer := httptest.NewServer(clusterDeployOKHandler(t))
 	defer primaryServer.Close()
@@ -645,14 +645,16 @@ func TestDeployMGRMarksValidationStepFailedWhenManagementSyncFails(t *testing.T)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, "partial", resp.Status)
-	require.Contains(t, resp.Message, "management sync failed")
+	require.Equal(t, "success", resp.Status)
 	status, err := service.GetDeploymentStatus(ctx, "mgr-unsynced")
 	require.NoError(t, err)
-	require.Equal(t, "partial", status.Status)
+	require.Equal(t, "completed", status.Status)
+	instances, err := instRepo.ListByClusterID(ctx, "mgr-unsynced")
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
 }
 
-func TestDeployPXCMarksValidationStepFailedWhenManagementSyncFails(t *testing.T) {
+func TestDeployPXCCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T) {
 	ctx := context.Background()
 	bootstrapServer := httptest.NewServer(clusterDeployOKHandler(t))
 	defer bootstrapServer.Close()
@@ -680,11 +682,13 @@ func TestDeployPXCMarksValidationStepFailedWhenManagementSyncFails(t *testing.T)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, "partial", resp.Status)
-	require.Contains(t, resp.Message, "management sync failed")
+	require.Equal(t, "success", resp.Status)
 	status, err := service.GetDeploymentStatus(ctx, "pxc-unsynced")
 	require.NoError(t, err)
-	require.Equal(t, "partial", status.Status)
+	require.Equal(t, "completed", status.Status)
+	instances, err := instRepo.ListByClusterID(ctx, "pxc-unsynced")
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
 }
 
 func clusterDeployOKHandler(t *testing.T) http.HandlerFunc {
