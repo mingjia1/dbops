@@ -12,6 +12,35 @@
 
 ---
 
+## Screenshots / 界面展示
+
+<div align="center">
+
+### Login / 登录页面
+![Login](pic/1登录页面.png)
+
+### Dashboard / 主界面
+![Dashboard](pic/2主界面.png)
+
+### Cluster Deploy / 集群部署
+![Cluster Deploy](pic/3集群部署.png)
+
+### Backup Management / 备份管理
+![Backup](pic/4备份管理.png)
+
+### Cluster Switch / 集群切换角色
+![Cluster Switch](pic/5集群切换角色.png)
+
+### Data Migration / 数据迁移管理
+![Data Migration](pic/6数据迁移管理.png)
+
+### Topology View / 拓扑视图
+![Topology](pic/7拓扑视图.png)
+
+</div>
+
+---
+
 ## Tech Stack / 技术栈
 
 | Component | Technology |
@@ -41,19 +70,14 @@ make install-web
 
 ## Commercial Editions / 商业版本
 
-| Edition | Features |
-|---------|----------|
-| **CE** (Community / 社区版) | Core features, MIT license |
-| **EE** (Enterprise / 企业版) | CE + HA/Upgrade/Migration/Audit |
-| **UE** (Ultimate / 旗舰版) | EE + AI-powered intelligence |
+ - **CE** (社区版): 基础功能，MIT协议
+ - **EE** (企业版): CE + 高可用/升级/迁移/审计功能  
+ - **UE** (旗舰版): EE + AI智能化，商业授权
 
----
+**联系方式：**
 
-<div align="center">
-
-**[📖 中文 / Chinese](readme_ZH.md)** | **[📘 English / 英文](readme_US.md)**
-
-</div>
+- **邮箱咨询** - ice_out@sina.com
+- **在线咨询** - 通过GitHub提交企业工单
 
 [go-image]: https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go
 [go-url]: https://go.dev/
