@@ -204,3 +204,78 @@ func TestNonPrimaryInfosExcludesRealMGRPrimaryWhenPlatformPrimaryMissing(t *test
 		t.Fatalf("unexpected non-primary: %+v", slaves[0])
 	}
 }
+
+func TestGetClusterStatusSupportsPXCBootstrapRoles(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB()
+	defer db.Close()
+
+	key := "test-encryption-key"
+	password, err := utils.Encrypt("rootpass", key)
+	if err != nil {
+		t.Fatalf("encrypt failed: %v", err)
+	}
+
+	instRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	createPXCInstance := func(id, role, host string, port int) {
+		t.Helper()
+		hostID := "host-" + id
+		if err := hostRepo.Create(ctx, &models.Host{
+			ID:        hostID,
+			Name:      hostID,
+			Address:   host,
+			AgentPort: 9090,
+			SSHPort:   22,
+			SSHUser:   "root",
+		}); err != nil {
+			t.Fatalf("create host %s failed: %v", hostID, err)
+		}
+		inst := &models.Instance{
+			ID:        id,
+			Name:      id,
+			ClusterID: "pxc-cluster",
+			HostID:    &hostID,
+		}
+		if err := instRepo.Create(ctx, inst); err != nil {
+			t.Fatalf("create instance %s failed: %v", id, err)
+		}
+		if err := instRepo.CreateConnection(ctx, &models.InstanceConnection{
+			InstanceID:        id,
+			Host:              host,
+			Port:              port,
+			Username:          "root",
+			PasswordEncrypted: password,
+		}); err != nil {
+			t.Fatalf("create connection %s failed: %v", id, err)
+		}
+		if err := instRepo.UpsertStatus(ctx, id, &models.InstanceStatus{
+			RunStatus:         "running",
+			HealthStatus:      "healthy",
+			Role:              role,
+			ReplicationStatus: "pxc",
+		}); err != nil {
+			t.Fatalf("upsert status %s failed: %v", id, err)
+		}
+	}
+
+	createPXCInstance("pxc-1", "bootstrap", "10.1.81.16", 3306)
+	createPXCInstance("pxc-2", "secondary", "10.1.81.17", 3306)
+
+	svc := NewFailoverService(db, key)
+	master, err := svc.GetCurrentMaster(ctx, "pxc-cluster")
+	if err != nil {
+		t.Fatalf("GetCurrentMaster failed: %v", err)
+	}
+	if master.InstanceID != "pxc-1" || master.Role != "bootstrap" {
+		t.Fatalf("unexpected PXC master: %+v", master)
+	}
+
+	slaves, err := svc.GetSlaves(ctx, "pxc-cluster")
+	if err != nil {
+		t.Fatalf("GetSlaves failed: %v", err)
+	}
+	if len(slaves) != 1 || slaves[0].InstanceID != "pxc-2" {
+		t.Fatalf("unexpected PXC slaves: %+v", slaves)
+	}
+}

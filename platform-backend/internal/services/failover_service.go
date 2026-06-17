@@ -450,7 +450,7 @@ func instanceIDOf(master *MasterInfo) string {
 
 func isFailoverPrimaryRole(role string) bool {
 	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "master", "primary", "primary_master":
+	case "master", "primary", "primary_master", "bootstrap":
 		return true
 	default:
 		return false
@@ -459,7 +459,7 @@ func isFailoverPrimaryRole(role string) bool {
 
 func isFailoverReplicaRole(role string) bool {
 	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "slave", "replica", "secondary":
+	case "slave", "replica", "secondary", "donor", "joiner":
 		return true
 	default:
 		return false
@@ -614,10 +614,10 @@ func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string
 		if err != nil {
 			continue
 		}
-		role := inst.Status.Role
-		if role != "master" && role != "primary" && role != "primary_master" {
-			continue
-		}
+			role := inst.Status.Role
+			if !isFailoverPrimaryRole(role) {
+				continue
+			}
 		conn, err := s.getInstanceConnection(ctx, inst.ID)
 		if err != nil {
 			return nil, err
@@ -645,10 +645,10 @@ func (s *FailoverService) GetSlaves(ctx context.Context, clusterID string) ([]Ma
 		if err != nil {
 			continue
 		}
-		role := inst.Status.Role
-		if role != "slave" && role != "replica" && role != "secondary" {
-			continue
-		}
+			role := inst.Status.Role
+			if !isFailoverReplicaRole(role) {
+				continue
+			}
 		conn, err := s.getInstanceConnection(ctx, inst.ID)
 		if err != nil {
 			continue
