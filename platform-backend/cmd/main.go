@@ -343,6 +343,8 @@ func main() {
 				instances.POST("/:id/admin", middleware.RequirePermission("admin"), instanceController.AdminAction)
 				instances.POST("/:id/admin-action", middleware.RequirePermission("admin"), instanceController.AdminAction)
 				instances.POST("/:id/force-reset-password", middleware.RequirePermission("admin"), instanceController.ForceResetPassword)
+				instances.PUT("/:id/status", middleware.RequirePermission("admin"), instanceController.UpdateStatus)
+				instances.GET("/:id/credentials", middleware.RequirePermission("admin"), instanceController.GetCredentials)
 			}
 
 			hosts := protected.Group("/hosts")

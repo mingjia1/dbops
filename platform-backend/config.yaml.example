@@ -1,0 +1,74 @@
+# ============================================================
+# MySQL Ops Platform - Backend Configuration Example
+# ============================================================
+# Copy this file to config.yaml and adjust values.
+# Required env vars (override yaml values):
+#   DBOPS_DB_URL          - Database connection string
+#   DBOPS_JWT_SECRET      - JWT signing key (>= 32 chars)
+#   DBOPS_ENCRYPTION_KEY  - AES-GCM encryption key (>= 32 chars)
+#   DBOPS_AGENT_TOKEN     - Agent authentication token (>= 16 chars)
+#   DBOPS_AI_API_KEY      - AI provider API key (optional)
+# ============================================================
+
+# Server port
+server_port: "8080"
+
+# Log level: debug | info | warn | error
+log_level: "info"
+
+# Storage mode: auto | mysql | sqlite
+#   auto   = try MySQL first, fallback to SQLite
+#   mysql  = force MySQL (fail if unavailable)
+#   sqlite = force SQLite
+storage_mode: "auto"
+
+# SQLite path (used when storage_mode is sqlite or auto fallback)
+# Empty string defaults to <data_dir>/dbops.db
+sqlite_path: ""
+
+# Data directory for persistence files
+data_dir: "./data"
+
+# Database URL (DSN format)
+# Can also be set via DBOPS_DB_URL env var
+database_url: "root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local"
+
+# JWT Secret (>= 32 characters)
+# Can also be set via DBOPS_JWT_SECRET env var
+# Generate with: openssl rand -hex 32
+jwt_secret: "YOUR_32_CHAR_JWT_SECRET_HERE_CHANGE_ME_NOW"
+
+# Encryption Key for AES-GCM (>= 32 characters)
+# Can also be set via DBOPS_ENCRYPTION_KEY env var
+# Generate with: openssl rand -hex 32
+encryption_key: "YOUR_32_CHAR_ENCRYPTION_KEY_HERE_CHANGE_ME"
+
+# Agent authentication token (>= 16 characters)
+# Can also be set via DBOPS_AGENT_TOKEN env var
+# Generate with: openssl rand -hex 16
+agent_token: "YOUR_16_CHAR_AGENT_TOKEN_HERE"
+
+# Redis configuration (optional, cache layer)
+redis_url: "localhost:6379"
+redis_password: ""
+redis_db: 0
+
+# ClickHouse configuration (optional, monitoring)
+clickhouse_url: "clickhouse://default@localhost:9000/default"
+
+# CORS allowed origins (comma-separated)
+allowed_origins: "http://localhost:3000,http://127.0.0.1:3000"
+
+# AI provider configuration (optional)
+ai_base_url: "https://api.openai.com"
+ai_api_key: ""
+ai_model: "gpt-4"
+ai_max_tokens: 2048
+
+# Cluster deployment defaults
+cluster_defaults:
+  replication_user: "repl"
+  replication_pass: "Repl#2024!ChangeMe"
+  sst_user: "sstuser"
+  sst_pass: "Sst#2024!ChangeMe"
+  ssh_user: "root"

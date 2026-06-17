@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -295,8 +296,11 @@ func installSSHKeyCommand(privateKey, publicKey string) string {
 
 func runPasswordSSH(ctx context.Context, host, user, password, command string) error {
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		User: user,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+			ssh.KeyboardInteractive(passwordKeyboardInteractive(password)),
+		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
@@ -318,6 +322,16 @@ func runPasswordSSH(ctx context.Context, host, user, password, command string) e
 	case <-ctx.Done():
 		_ = session.Close()
 		return ctx.Err()
+	}
+}
+
+func passwordKeyboardInteractive(password string) ssh.KeyboardInteractiveChallenge {
+	return func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i := range questions {
+			answers[i] = password
+		}
+		return answers, nil
 	}
 }
 
@@ -469,13 +483,7 @@ func repairReplicaMHAUser(ctx context.Context, host string, port int, config MHA
 			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
 		config.ManagerUser, config.ManagerUser, config.ManagerPass, config.ManagerUser,
 	)
-	cmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, sql)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		restoreCmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, "SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;")
-		_, _ = restoreCmd.CombinedOutput()
-		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return runReplicaLocalSQL(ctx, host, port, config, sql, true)
 }
 
 func repairReplicaReplicationUser(ctx context.Context, host string, port int, config MHAConfig) error {
@@ -487,13 +495,48 @@ func repairReplicaReplicationUser(ctx context.Context, host string, port int, co
 			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
 		config.ReplUser, config.ReplPass, config.ReplUser,
 	)
+	return runReplicaLocalSQL(ctx, host, port, config, sql, true)
+}
+
+func runReplicaLocalSQL(ctx context.Context, host string, port int, config MHAConfig, sql string, restoreReadOnly bool) error {
 	cmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, sql)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		restoreCmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, "SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;")
-		_, _ = restoreCmd.CombinedOutput()
-		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+		remoteErr := fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
+		localCmd := buildReplicaLocalSQLCommand(port, config.MySQLUser, config.MySQLPassword, sql)
+		if localOut, localErr := mhaShellCommand(ctx, host, config.SSHUser, config.SSHPrivateKey, localCmd).CombinedOutput(); localErr != nil {
+			if restoreReadOnly {
+				restoreSQL := "SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;"
+				restoreCmd := mysqlExecCommand(ctx, host, port, config.MySQLUser, config.MySQLPassword, restoreSQL)
+				_, _ = restoreCmd.CombinedOutput()
+				restoreLocalCmd := buildReplicaLocalSQLCommand(port, config.MySQLUser, config.MySQLPassword, restoreSQL)
+				_, _ = mhaShellCommand(ctx, host, config.SSHUser, config.SSHPrivateKey, restoreLocalCmd).CombinedOutput()
+			}
+			return fmt.Errorf("%v; local fallback: %v, output: %s", remoteErr, localErr, strings.TrimSpace(string(localOut)))
+		}
 	}
 	return nil
+}
+
+func buildReplicaLocalSQLCommand(port int, user, password, sql string) string {
+	mysqlBin := shellQuote(resolveBinaryPath("mysql"))
+	mysqlUser := shellQuote(defaultString(user, "root"))
+	socketPath := shellQuote(filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock"))
+	passwordPrefix := ""
+	if strings.TrimSpace(password) != "" {
+		passwordPrefix = "MYSQL_PWD=" + shellQuote(password) + " "
+	}
+	sqlArg := shellQuote(sql)
+	socketWithPassword := fmt.Sprintf("%s%s -S %s -u%s -e %s", passwordPrefix, mysqlBin, socketPath, mysqlUser, sqlArg)
+	socketNoPassword := fmt.Sprintf("%s -S %s -u%s -e %s", mysqlBin, socketPath, mysqlUser, sqlArg)
+	tcpWithPassword := fmt.Sprintf("%s%s --protocol=TCP -h127.0.0.1 -P%d -u%s -e %s", passwordPrefix, mysqlBin, port, mysqlUser, sqlArg)
+	tcpNoPassword := fmt.Sprintf("%s --protocol=TCP -h127.0.0.1 -P%d -u%s -e %s", mysqlBin, port, mysqlUser, sqlArg)
+	return fmt.Sprintf(
+		"(%s) || (%s) || (%s) || (%s)",
+		socketWithPassword,
+		socketNoPassword,
+		tcpWithPassword,
+		tcpNoPassword,
+	)
 }
 
 func waitForMySQLUser(ctx context.Context, host string, port int, user, password string) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -61,6 +62,10 @@ type SwitchClusterRequest struct {
 	MySQLUser        string   `json:"mysql_user"`
 	MySQLPassword    string   `json:"mysql_password"`
 	ForceReconfigure bool     `json:"force_reconfigure"`
+	// SkipSSH skips the SSH-dependent MHA/MGR/PXC deployment steps and only
+	// registers the cluster topology metadata (roles, cluster_id).
+	// Use this when SSH is not available and replication is already configured manually.
+	SkipSSH bool `json:"skip_ssh"`
 }
 
 type SwitchClusterResult struct {
@@ -256,6 +261,36 @@ func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req Swit
 		nodeConfigs = append(nodeConfigs, node)
 	}
 
+	// If SkipSSH is set, skip the SSH-dependent agent cluster-switch calls
+	// and only register the cluster topology metadata.
+	if req.SkipSSH {
+		if err := s.applyClusterReconfigurationMetadata(ctx, clusterID, targetType, instances, req.MySQLUser, req.MySQLPassword); err != nil {
+			out := &SwitchClusterResult{
+				ClusterID:   clusterID,
+				InstanceIDs: req.InstanceIDs,
+				SourceType:  sourceType,
+				TargetType:  targetType,
+				Status:      "failed",
+				Message:     fmt.Sprintf("metadata registration failed: %v", err),
+				CompletedAt: time.Now(),
+			}
+			s.auditClusterSwitch(ctx, req, out)
+			return out, nil
+		}
+		_ = s.clusterRepo.UpdateStatus(ctx, clusterID, "completed")
+		out := &SwitchClusterResult{
+			ClusterID:   clusterID,
+			InstanceIDs: req.InstanceIDs,
+			SourceType:  sourceType,
+			TargetType:  targetType,
+			Status:      "completed",
+			Message:     fmt.Sprintf("%d instances registered as %s cluster (SSH skipped)", len(instances), targetType),
+			CompletedAt: time.Now(),
+		}
+		s.auditClusterSwitch(ctx, req, out)
+		return out, nil
+	}
+
 	completed := 0
 	var lastMessage string
 	for i, inst := range instances {
@@ -306,7 +341,7 @@ func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req Swit
 		status = "partial_success"
 	}
 	if completed == len(instances) {
-		if err := s.applyClusterReconfigurationMetadata(ctx, clusterID, targetType, instances); err != nil {
+		if err := s.applyClusterReconfigurationMetadata(ctx, clusterID, targetType, instances, req.MySQLUser, req.MySQLPassword); err != nil {
 			status = "partial_success"
 			lastMessage = fmt.Sprintf("cluster switched but metadata update failed: %v", err)
 		} else {
@@ -511,10 +546,19 @@ func (s *SwitchService) ensureClusterDeployment(ctx context.Context, clusterID, 
 	})
 }
 
-func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context, clusterID, clusterType string, instances []*models.Instance) error {
+func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context, clusterID, clusterType string, instances []*models.Instance, mysqlCreds ...string) error {
 	if len(instances) == 0 {
 		return nil
 	}
+
+	// Parse optional MySQL user/password from variadic args
+	mysqlUser := ""
+	mysqlPassword := ""
+	if len(mysqlCreds) >= 2 {
+		mysqlUser = mysqlCreds[0]
+		mysqlPassword = mysqlCreds[1]
+	}
+
 	primaryID := instances[0].ID
 	replicaIDs := make([]string, 0, len(instances)-1)
 	for _, inst := range instances[1:] {
@@ -527,6 +571,30 @@ func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context,
 		if err := s.instRepo.Update(ctx, &full); err != nil {
 			return fmt.Errorf("update instance %s cluster_id failed: %w", inst.ID, err)
 		}
+
+		// Store MySQL password in connection if provided
+		if strings.TrimSpace(mysqlPassword) != "" && s.encKey != "" {
+			enc, encErr := utils.Encrypt(mysqlPassword, s.encKey)
+			if encErr != nil {
+				log.Printf("WARN: failed to encrypt password for instance %s: %v", inst.ID, encErr)
+			} else {
+				if err := s.instRepo.UpdateConnectionPassword(ctx, inst.ID, enc); err != nil {
+					log.Printf("WARN: failed to update password for instance %s: %v", inst.ID, err)
+				}
+			}
+			// Also update username if provided
+			if mysqlUser != "" {
+				if conn, connErr := s.instRepo.GetConnection(ctx, inst.ID); connErr == nil {
+					if conn.Username != mysqlUser {
+						conn.Username = mysqlUser
+						if uErr := s.instRepo.UpdateConnection(ctx, conn); uErr != nil {
+							log.Printf("WARN: failed to update username for instance %s: %v", inst.ID, uErr)
+						}
+					}
+				}
+			}
+		}
+
 		role := replicaRoleFor(clusterType)
 		masterID := primaryID
 		slaveIDText := ""

@@ -1040,9 +1040,7 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser,
 	)
 
-	cmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, createUserSQL)
-
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := mysqlExecWithSocketFallback(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, createUserSQL); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  20,
@@ -1050,8 +1048,8 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 			Timestamp: time.Now(),
 		}
 	}
-	_ = mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass,
-		fmt.Sprintf("ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';", escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass))).Run()
+	_, _ = mysqlExecWithSocketFallback(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass,
+		fmt.Sprintf("ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';", escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass)))
 
 	if out, err := setServerID(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, config.ServerID); err != nil {
 		return &TaskResult{
@@ -1163,24 +1161,47 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 		masterLogFile, masterLogPos,
 	)
 
-	if out, err := runFirstMySQL(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, changeMasterSQLNoKey, changeMasterSQL, changeSourceSQLNoKey, changeSourceSQL); err != nil {
+	// Use mysqlExecWithSocketFallback on the slave host for CHANGE MASTER TO
+	// Try all 4 SQL variants in sequence (pre-8.4/8.4 syntax × with-key/no-key)
+	var changeMasterErr error
+	for _, changeSQL := range []string{changeMasterSQLNoKey, changeMasterSQL, changeSourceSQLNoKey, changeSourceSQL} {
+		if _, err := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, changeSQL); err == nil {
+			changeMasterErr = nil
+			break
+		} else {
+			changeMasterErr = err
+		}
+	}
+	if changeMasterErr != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  60,
-			Message:   fmt.Sprintf("Failed to execute CHANGE MASTER TO: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Message:   fmt.Sprintf("Failed to execute CHANGE MASTER TO: %v", changeMasterErr),
 			Timestamp: time.Now(),
 		}
 	}
 
-	if out, err := runFirstMySQL(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "START SLAVE;", "START REPLICA;"); err != nil {
+	// Use mysqlExecWithSocketFallback for START SLAVE
+	var startSlaveErr error
+	for _, startSQL := range []string{"START SLAVE;", "START REPLICA;"} {
+		if _, err := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, startSQL); err == nil {
+			startSlaveErr = nil
+			break
+		} else {
+			startSlaveErr = err
+		}
+	}
+	if startSlaveErr != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  70,
-			Message:   fmt.Sprintf("Failed to start slave: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Message:   fmt.Sprintf("Failed to start slave: %v", startSlaveErr),
 			Timestamp: time.Now(),
 		}
 	}
 
+	// Leave verifyReplication in deployHAReplica for the final check.
+	// Return partial progress so deployHAReplica proceeds to verify.
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  80,
@@ -1189,10 +1210,32 @@ func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveCon
 	}
 }
 
+// mysqlExecWithSocketFallback tries to execute a MySQL command via TCP first,
+// then falls back to the local Unix socket if TCP fails.
+// This addresses the case where root@% user doesn't exist (MySQL 8.0 only creates root@localhost),
+// making TCP authentication fail while socket authentication still works.
+func mysqlExecWithSocketFallback(ctx context.Context, host string, port int, user, pass, sql string) ([]byte, error) {
+	cmd := mysqlExecCommand(ctx, host, port, user, pass, sql)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return out, nil
+	}
+	// TCP failed — try local socket as fallback
+	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+	socketCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+	if pass != "" {
+		socketCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+	}
+	if socketOut, socketErr := socketCmd.CombinedOutput(); socketErr == nil {
+		return socketOut, nil
+	}
+	// Both failed, return original TCP error
+	return out, err
+}
+
 func setServerID(ctx context.Context, host string, port int, user, pass string, serverID int) ([]byte, error) {
-	return runFirstMySQL(ctx, host, port, user, pass,
+	return mysqlExecWithSocketFallback(ctx, host, port, user, pass,
 		fmt.Sprintf("SET PERSIST server_id=%d; SET GLOBAL server_id=%d;", serverID, serverID),
-		fmt.Sprintf("SET GLOBAL server_id=%d;", serverID),
 	)
 }
 
@@ -1263,7 +1306,15 @@ func parseMasterStatus(output string) (string, string) {
 func (e *TaskExecutor) verifyReplication(ctx context.Context, config MasterSlaveConfig) *TaskResult {
 	time.Sleep(3 * time.Second)
 
-	output, err := runFirstMySQL(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
+	// Try SHOW SLAVE STATUS via TCP first, then socket fallback
+	var output []byte
+	var err error
+	for _, query := range []string{"SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G"} {
+		output, err = mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, query)
+		if err == nil && len(output) > 0 {
+			break
+		}
+	}
 	if err != nil {
 		return &TaskResult{
 			Status:    "failed",
@@ -3886,7 +3937,7 @@ func resolveConfigPath(config map[string]interface{}) (string, []string) {
 }
 
 func configPathCandidates(config map[string]interface{}) []string {
-	candidates := make([]string, 0, 6)
+	candidates := make([]string, 0, 8)
 	add := func(path string) {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "" || path == "." {
@@ -3907,10 +3958,11 @@ func configPathCandidates(config map[string]interface{}) []string {
 		add(filepath.Join(datadir, "my.cnf"))
 		add(filepath.Join(datadir, "mysql.cnf"))
 	}
+	// MHA: standard config at /etc/mha/app1.cnf
+	add("/etc/mha/app1.cnf")
 	add("/etc/my.cnf")
 	return candidates
 }
-
 func parseAdminOutput(action, output string, config map[string]interface{}) any {
 	if action == "read_config" {
 		path, _ := config["resolved_path"].(string)

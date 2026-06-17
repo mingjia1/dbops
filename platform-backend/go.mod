@@ -13,6 +13,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
+	modernc.org/sqlite v1.51.0
 )
 
 require (
@@ -41,7 +42,6 @@ require (
 	github.com/leodido/go-urn v1.2.4 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.45 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -78,5 +78,4 @@ require (
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.51.0 // indirect
 )

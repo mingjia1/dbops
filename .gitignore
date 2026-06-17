@@ -156,3 +156,10 @@ build/
 
 # ---------- 备份目录 ----------
 .git.backup/
+agent/go.sum
+agent/go.mod
+.mailmap
+platform-backend/go.mod
+platform-backend/go.sum
+bin/
+*.json

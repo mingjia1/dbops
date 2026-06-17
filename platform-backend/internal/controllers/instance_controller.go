@@ -202,6 +202,40 @@ func (c *InstanceController) ForceResetPassword(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, gin.H{"message": "Password reset successfully"})
 }
 
+func (c *InstanceController) UpdateStatus(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	var req services.UpdateInstanceStatusRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	instance, err := c.service.UpdateInstanceStatus(ctx.Request.Context(), id, req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to update instance status", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, instance)
+}
+
+func (c *InstanceController) GetCredentials(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	creds, err := c.service.GetInstanceCredentials(ctx.Request.Context(), id)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			utils.NotFoundResponse(ctx, "Instance credentials not found")
+			return
+		}
+		utils.InternalServerErrorResponse(ctx, "Failed to retrieve instance credentials", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, creds)
+}
+
 func (c *InstanceController) BatchUpdatePassword(ctx *gin.Context) {
 	var req services.BatchPasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

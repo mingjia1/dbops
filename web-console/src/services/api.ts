@@ -251,6 +251,9 @@ export const instanceApi = {
 
   forceResetPassword: (id: string, data: { new_password?: string; username?: string; user_host?: string } = {}) =>
     api.post(`/instances/${id}/force-reset-password`, data),
+
+  getCredentials: (id: string) =>
+    api.get(`/instances/${id}/credentials`),
 }
 
 export interface Host {
@@ -799,6 +802,12 @@ export const migrationApi = {
   list: () => api.get('/migrations'),
   get: (taskId: string) => api.get(`/migrations/${taskId}`),
   getProgress: (taskId: string) => api.get(`/migrations/${taskId}/progress`, { suppressGlobalError: true } as any),
+}
+
+export interface DeployCredentials {
+  mysql_user: string
+  mysql_password: string
+  nodes?: Array<{ instance_id: string; host: string; port: number; username: string; password: string }>
 }
 
 export const clusterDeployApi = {

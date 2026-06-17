@@ -291,11 +291,15 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		s.addStep(clusterID, step.Name, "running")
 
 		switch step.Type {
-		case "validate", "configure", "sync":
+		case "validate", "sync":
 			// Backend-side steps: mark completed directly
 			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
 
-		case "bootstrap", "join", "deploy":
+		case "bootstrap", "join", "deploy", "configure":
+			if step.TargetNode == "" {
+				s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
+				continue
+			}
 			// Find the target node for this step
 			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
 			if targetNode == nil {
@@ -335,19 +339,20 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 				}
 
-				if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
-					errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
-					s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
-					// If bootstrap/primary fails, mark whole deployment as failed.
-					// If secondary/join fails, allow partial success.
-					if step.Type == "bootstrap" || step.Type == "deploy" {
-						s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-					} else {
-						s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
-					}
-					finish := time.Now()
-					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+			if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+				errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
+				s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
+				// Mark whole deployment as failed for critical steps
+				// Secondary/join failures are marked as partial (some nodes may still be OK)
+				isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
+				if isCritical {
+					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				} else {
+					s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
 				}
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+			}
 
 				nodeReadyMsg := fmt.Sprintf("Node %s (%s) deployed successfully", targetNode.Host, targetNode.Role)
 				s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
@@ -404,15 +409,17 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	}
 
 	resp := &DeployResponse{
-		DeploymentID: clusterID,
-		ClusterType:  clusterType,
-		Name:         name,
-		Status:       "success",
-		Message:      "Cluster deployed successfully via plan execution",
-		StartedAt:    dep.StartedAt,
-		FinishedAt:   &finish,
-		CreatedAt:    dep.CreatedAt,
-		Nodes:        nodes,
+		DeploymentID:  clusterID,
+		ClusterType:   clusterType,
+		Name:          name,
+		Status:        "success",
+		Message:       "Cluster deployed successfully via plan execution",
+		MySQLUser:     req.MySQL.User,
+		MySQLPassword: req.MySQL.Password,
+		StartedAt:     dep.StartedAt,
+		FinishedAt:    &finish,
+		CreatedAt:     dep.CreatedAt,
+		Nodes:         nodes,
 	}
 	if prog := s.getProgress(clusterID); prog != nil {
 		resp.Steps = prog.Steps
@@ -446,7 +453,8 @@ func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context
 func isMySQLDeployRole(clusterType, role string) bool {
 	switch clusterType {
 	case ClusterTypeMHA:
-		return role == "master" || role == "replica"
+		// MHA: include all three roles so manager/master/replica all appear in topology
+		return role == "manager" || role == "master" || role == "replica"
 	default:
 		return role != "manager"
 	}
@@ -1063,20 +1071,22 @@ type PXCNode struct {
 }
 
 type DeployResponse struct {
-	DeploymentID string       `json:"deployment_id"`
-	ClusterType  string       `json:"cluster_type"`
-	Name         string       `json:"name"`
-	Status       string       `json:"status"`
-	Stage        string       `json:"stage,omitempty"`
-	Progress     int          `json:"progress"`
-	Message      string       `json:"message"`
-	ErrorMessage string       `json:"error_message,omitempty"`
-	StartedAt    *time.Time   `json:"started_at,omitempty"`
-	FinishedAt   *time.Time   `json:"finished_at,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
-	Nodes        []DeployNode `json:"nodes,omitempty"`
-	Steps        []DeployStep `json:"steps,omitempty"`
-	Logs         []string     `json:"logs,omitempty"`
+	DeploymentID  string       `json:"deployment_id"`
+	ClusterType   string       `json:"cluster_type"`
+	Name          string       `json:"name"`
+	Status        string       `json:"status"`
+	Stage         string       `json:"stage,omitempty"`
+	Progress      int          `json:"progress"`
+	Message       string       `json:"message"`
+	ErrorMessage  string       `json:"error_message,omitempty"`
+	MySQLUser     string       `json:"mysql_user,omitempty"`
+	MySQLPassword string       `json:"mysql_password,omitempty"`
+	StartedAt     *time.Time   `json:"started_at,omitempty"`
+	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
+	CreatedAt     time.Time    `json:"created_at"`
+	Nodes         []DeployNode `json:"nodes,omitempty"`
+	Steps         []DeployStep `json:"steps,omitempty"`
+	Logs          []string     `json:"logs,omitempty"`
 }
 
 type DeployNode struct {
@@ -1224,6 +1234,26 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			if err != nil {
 				return err
 			}
+		} else {
+			// Instance already exists — update its connection password if provided
+			if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
+				conn, connErr := s.instRepo.GetConnection(ctx, inst.ID)
+				if connErr == nil {
+					enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey)
+					if encErr == nil {
+						conn.PasswordEncrypted = enc
+						if strings.TrimSpace(conn.Username) == "" {
+							conn.Username = strings.TrimSpace(node.MySQLUser)
+							if conn.Username == "" {
+								conn.Username = "root"
+							}
+						}
+						if uErr := s.instRepo.UpdateConnection(ctx, conn); uErr != nil {
+							log.Printf("WARN: failed to update password for existing instance %s: %v", inst.ID, uErr)
+						}
+					}
+				}
+			}
 		}
 		inst.ClusterID = clusterID
 		if err := s.instRepo.Update(ctx, inst); err != nil {
@@ -1244,27 +1274,69 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 		return fmt.Errorf("no managed instances found for cluster %s", clusterID)
 	}
 
-	primaryID := matched[0].ID
-	replicaIDs := make([]string, 0, len(matched)-1)
-	for i, inst := range matched {
-		if i > 0 {
-			replicaIDs = append(replicaIDs, inst.ID)
+	// For MHA, build topology properly: manager → manages cluster, master → replicas
+	if clusterType == ClusterTypeMHA {
+		var masterID string
+		var replicaIDs []string
+		for _, inst := range matched {
+			role := ""
+			if st, err := s.instRepo.GetStatus(ctx, inst.ID); err == nil {
+				role = st.Role
+			}
+			switch role {
+			case "master":
+				masterID = inst.ID
+			case "replica":
+				replicaIDs = append(replicaIDs, inst.ID)
+			}
 		}
-	}
-	replicaJSON, _ := json.Marshal(replicaIDs)
-	for i, inst := range matched {
-		topology := &models.InstanceTopology{
-			InstanceID:      inst.ID,
-			ClusterID:       clusterID,
-			ReplicationMode: clusterType,
+
+		slaveJSON, _ := json.Marshal(replicaIDs)
+		for _, inst := range matched {
+			role := ""
+			if st, err := s.instRepo.GetStatus(ctx, inst.ID); err == nil {
+				role = st.Role
+			}
+			topology := &models.InstanceTopology{
+				InstanceID:      inst.ID,
+				ClusterID:       clusterID,
+				ReplicationMode: clusterType,
+			}
+			switch role {
+			case "manager":
+				// Manager has no master/slave topology
+			case "master":
+				topology.SlaveIDs = string(slaveJSON)
+			case "replica":
+				topology.MasterID = masterID
+			}
+			if err := s.instRepo.UpsertTopology(ctx, inst.ID, topology); err != nil {
+				return err
+			}
 		}
-		if i == 0 {
-			topology.SlaveIDs = string(replicaJSON)
-		} else {
-			topology.MasterID = primaryID
+	} else {
+		primaryID := matched[0].ID
+		replicaIDs := make([]string, 0, len(matched)-1)
+		for i, inst := range matched {
+			if i > 0 {
+				replicaIDs = append(replicaIDs, inst.ID)
+			}
 		}
-		if err := s.instRepo.UpsertTopology(ctx, inst.ID, topology); err != nil {
-			return err
+		replicaJSON, _ := json.Marshal(replicaIDs)
+		for i, inst := range matched {
+			topology := &models.InstanceTopology{
+				InstanceID:      inst.ID,
+				ClusterID:       clusterID,
+				ReplicationMode: clusterType,
+			}
+			if i == 0 {
+				topology.SlaveIDs = string(replicaJSON)
+			} else {
+				topology.MasterID = primaryID
+			}
+			if err := s.instRepo.UpsertTopology(ctx, inst.ID, topology); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -40,6 +40,8 @@ type ClusterDefaults struct {
 func Load() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
+	// Search paths in order: current dir, ./config/, ../config/, ../../config/
+	viper.AddConfigPath(".")
 	viper.AddConfigPath("./config")
 	viper.AddConfigPath("../config")
 	viper.AddConfigPath("../../config")

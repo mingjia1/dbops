@@ -982,14 +982,27 @@ func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string
 		return path
 	}
 	if conn == nil {
-		if path == "" {
-			return "/etc/my.cnf"
-		}
-		return path
+		return defaultString(path, "/etc/my.cnf")
 	}
+
+	// PXC: managed config at /etc/dbops-pxc/dbops-pxc-{port}.cnf
 	if strings.Contains(conn.Datadir, "/pxc-") && conn.Port > 0 {
 		return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", conn.Port)
 	}
+
+	// MHA: standard config at /etc/mha/app1.cnf
+	// Detect via datadir pattern /mha- or /mha (e.g. /data/mysql/mha-3307)
+	if strings.Contains(filepath.ToSlash(conn.Datadir), "/mha") {
+		return "/etc/mha/app1.cnf"
+	}
+
+	// MGR: check datadir for mgr-related patterns, or fallback
+	if strings.Contains(filepath.ToSlash(conn.Datadir), "/mgr-") ||
+		strings.Contains(filepath.ToSlash(conn.Datadir), "/group_repl") {
+		return "/etc/my.cnf"
+	}
+
+	// HA / standard: return default path or datadir/my.cnf
 	if path == "" {
 		return "/etc/my.cnf"
 	}
@@ -1126,6 +1139,59 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+// UpdateInstanceStatusRequest 用于更新实例的角色、运行状态和复制状态。
+// 通过 PUT /api/v1/instances/:id/status 使用，无需经过 Agent。
+type UpdateInstanceStatusRequest struct {
+	Role                string `json:"role"`
+	RunStatus           string `json:"run_status"`
+	HealthStatus        string `json:"health_status"`
+	ReplicationStatus   string `json:"replication_status"`
+	SecondsBehindMaster int    `json:"seconds_behind_master"`
+	MasterID            string `json:"master_id"`
+	SlaveIDs            string `json:"slave_ids"`
+}
+
+func (s *InstanceService) UpdateInstanceStatus(ctx context.Context, id string, req UpdateInstanceStatusRequest) (*models.Instance, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	status := &models.InstanceStatus{
+		InstanceID:          id,
+		RunStatus:           defaultString(req.RunStatus, defaultString(instance.Status.RunStatus, "running")),
+		HealthStatus:        defaultString(req.HealthStatus, defaultString(instance.Status.HealthStatus, "healthy")),
+		Role:                req.Role,
+		ReplicationStatus:   req.ReplicationStatus,
+		SecondsBehindMaster: req.SecondsBehindMaster,
+	}
+	if err := s.repo.UpsertStatus(ctx, id, status); err != nil {
+		return nil, fmt.Errorf("failed to update instance status: %w", err)
+	}
+	if req.MasterID != "" || req.SlaveIDs != "" {
+		topo := &models.InstanceTopology{
+			InstanceID:      id,
+			ClusterID:       instance.ClusterID,
+			MasterID:        req.MasterID,
+			SlaveIDs:        req.SlaveIDs,
+			ReplicationMode: req.ReplicationStatus,
+		}
+		if err := s.repo.UpsertTopology(ctx, id, topo); err != nil {
+			return nil, fmt.Errorf("failed to update instance topology: %w", err)
+		}
+	}
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Action:       "update_status",
+			ResourceType: "instance",
+			ResourceID:   id,
+			Details:      fmt.Sprintf("role=%s replication=%s", req.Role, req.ReplicationStatus),
+			Result:       "success",
+		})
+	}
+	return s.repo.GetByID(ctx, id)
 }
 
 type ForceResetPasswordRequest struct {
@@ -1288,6 +1354,46 @@ func (s *InstanceService) passwordCandidates(conn *models.InstanceConnection, ex
 		add(&out, "Hcfc@DboOps#2024_80")
 	}
 	return out
+}
+
+// GetInstanceCredentials returns the decrypted MySQL password for an instance (admin only).
+func (s *InstanceService) GetInstanceCredentials(ctx context.Context, id string) (*InstanceCredentials, error) {
+	if _, err := s.repo.GetByID(ctx, id); err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt password: %w", err)
+	}
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Action:       "view_credentials",
+			ResourceType: "instance",
+			ResourceID:   id,
+			Details:      "viewed instance credentials (password)",
+			Result:       "success",
+		})
+	}
+	return &InstanceCredentials{
+		InstanceID: id,
+		Username:   conn.Username,
+		Password:   password,
+		Host:       conn.Host,
+		Port:       conn.Port,
+	}, nil
+}
+
+type InstanceCredentials struct {
+	InstanceID string `json:"instance_id"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
 }
 
 func (s *InstanceService) resolveAgentEndpoint(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection) (string, int, error) {
