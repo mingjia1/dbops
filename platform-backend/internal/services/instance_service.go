@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,58 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 	if err := s.repo.Update(ctx, instance); err != nil {
 		return nil, fmt.Errorf("failed to update instance: %w", err)
 	}
+	if req.HasConnectionUpdate() {
+		conn, err := s.repo.GetConnection(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("instance connection not found: %w", err)
+		}
+		if req.Host != "" {
+			conn.Host = req.Host
+		}
+		if req.Port != 0 {
+			conn.Port = req.Port
+		}
+		if req.Username != "" {
+			conn.Username = req.Username
+		}
+		if req.Password != "" {
+			enc, err := utils.Encrypt(req.Password, s.encKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt password: %w", err)
+			}
+			conn.PasswordEncrypted = enc
+		}
+		if req.SSLEnabled != nil {
+			conn.SSLEnabled = *req.SSLEnabled
+		}
+		if req.Basedir != "" {
+			conn.Basedir = req.Basedir
+		}
+		if req.Datadir != "" {
+			conn.Datadir = req.Datadir
+		}
+		if req.OSUser != "" {
+			conn.OSUser = req.OSUser
+		}
+		if req.PackageURL != "" {
+			conn.PackageURL = req.PackageURL
+		}
+		if req.VersionID != "" {
+			conn.VersionID = req.VersionID
+		}
+		if strings.TrimSpace(conn.Host) == "" {
+			return nil, fmt.Errorf("connection host is required")
+		}
+		if conn.Port <= 0 || conn.Port > 65535 {
+			return nil, fmt.Errorf("connection port must be between 1 and 65535")
+		}
+		if strings.TrimSpace(conn.Username) == "" {
+			return nil, fmt.Errorf("connection username is required")
+		}
+		if err := s.repo.UpdateConnection(ctx, conn); err != nil {
+			return nil, err
+		}
+	}
 	if s.auditSvc != nil {
 		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
 			UserID:       userIDFromCtx(ctx),
@@ -154,7 +207,11 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 		})
 	}
 
-	return instance, nil
+	updated, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 func (s *InstanceService) Delete(ctx context.Context, id string) error {
@@ -674,9 +731,32 @@ type BatchCreateInstanceRow struct {
 }
 
 type UpdateInstanceRequest struct {
-	Name      string `json:"name"`
-	ClusterID string `json:"cluster_id"`
-	HostID    string `json:"host_id"`
+	Name       string `json:"name"`
+	ClusterID  string `json:"cluster_id"`
+	HostID     string `json:"host_id"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	SSLEnabled *bool  `json:"ssl_enabled"`
+	VersionID  string `json:"version_id"`
+	PackageURL string `json:"package_url"`
+	Basedir    string `json:"basedir"`
+	Datadir    string `json:"datadir"`
+	OSUser     string `json:"os_user"`
+}
+
+func (r UpdateInstanceRequest) HasConnectionUpdate() bool {
+	return r.Host != "" ||
+		r.Port != 0 ||
+		r.Username != "" ||
+		r.Password != "" ||
+		r.SSLEnabled != nil ||
+		r.VersionID != "" ||
+		r.PackageURL != "" ||
+		r.Basedir != "" ||
+		r.Datadir != "" ||
+		r.OSUser != ""
 }
 
 type DeployResult struct {
@@ -846,6 +926,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
 	}
+	configPath := resolveInstanceConfigPath(conn, req.Path)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id":     "instance-admin-" + uuid.New().String(),
 		"instance_id": id,
@@ -863,7 +944,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			"pattern":     req.Pattern,
 			"name":        req.Name,
 			"value":       req.Value,
-			"path":        req.Path,
+			"path":        configPath,
 			"content":     req.Content,
 			"service":     req.Service,
 			"verb":        req.Verb,
@@ -893,6 +974,26 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string) string {
+	path := strings.TrimSpace(requested)
+	if path != "" && filepath.ToSlash(filepath.Clean(path)) != "/etc/my.cnf" {
+		return path
+	}
+	if conn == nil {
+		if path == "" {
+			return "/etc/my.cnf"
+		}
+		return path
+	}
+	if strings.Contains(conn.Datadir, "/pxc-") && conn.Port > 0 {
+		return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", conn.Port)
+	}
+	if path == "" {
+		return "/etc/my.cnf"
+	}
+	return path
 }
 
 func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPasswordRequest) (*InstanceAdminResult, error) {

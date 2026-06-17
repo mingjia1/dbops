@@ -6,6 +6,7 @@ import {
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Progress,
@@ -79,6 +80,7 @@ const InstanceDetail: React.FC = () => {
   const [adminLoading, setAdminLoading] = useState(false)
   const [users, setUsers] = useState<AdminRow[]>([])
   const [variables, setVariables] = useState<AdminRow[]>([])
+  const [serviceOutput, setServiceOutput] = useState('')
   const pollRef = useRef<number | null>(null)
   const [form] = Form.useForm()
   const [userForm] = Form.useForm()
@@ -161,8 +163,23 @@ const InstanceDetail: React.FC = () => {
   const readConfig = async () => {
     const values = configForm.getFieldsValue()
     const result = await runAdmin({ action: 'read_config', path: values.path || '/etc/my.cnf' })
-    if (result?.message) {
-      configForm.setFieldsValue({ content: result.message })
+    const content = result?.data?.content ?? result?.data?.output ?? result?.message
+    const path = result?.data?.path
+    if (content) {
+      configForm.setFieldsValue({ content, ...(path ? { path } : {}) })
+    }
+  }
+
+  const runServiceControl = async (values: any) => {
+    setServiceOutput('')
+    const result = await runAdmin({ action: 'service_control', ...values })
+    const output = result?.data?.output ?? result?.message ?? ''
+    if (output) {
+      setServiceOutput(output)
+      Modal.info({
+        title: '服务操作结果',
+        content: <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{output}</div>,
+      })
     }
   }
 
@@ -242,7 +259,20 @@ const InstanceDetail: React.FC = () => {
 
   const openEdit = () => {
     if (!instance) return
-    form.setFieldsValue({ name: instance.name, cluster_id: instance.cluster_id })
+    form.setFieldsValue({
+      name: instance.name,
+      cluster_id: instance.cluster_id,
+      host: instance.connection?.host,
+      port: instance.connection?.port,
+      username: instance.connection?.username,
+      password: '',
+      ssl_enabled: instance.connection?.ssl_enabled,
+      basedir: instance.connection?.basedir,
+      datadir: instance.connection?.datadir,
+      os_user: instance.connection?.os_user,
+      package_url: instance.connection?.package_url,
+      version_id: instance.connection?.version_id,
+    })
     setEditOpen(true)
   }
 
@@ -565,17 +595,22 @@ const InstanceDetail: React.FC = () => {
                       key: 'service',
                       label: '服务启停',
                       children: (
-                        <Form form={serviceForm} layout="inline" initialValues={{ verb: 'status' }} onFinish={(values) => runAdmin({ action: 'service_control', ...values })}>
-                          <Form.Item name="verb" rules={[{ required: true }]}>
-                            <Select style={{ width: 140 }} options={[
-                              { value: 'status', label: '状态' },
-                              { value: 'start', label: '启动' },
-                              { value: 'stop', label: '停止' },
-                              { value: 'restart', label: '重启' },
-                            ]} />
-                          </Form.Item>
-                          <Button htmlType="submit" icon={<PlayCircleOutlined />} loading={adminLoading}>执行</Button>
-                        </Form>
+                        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                          <Form form={serviceForm} layout="inline" initialValues={{ verb: 'status' }} onFinish={runServiceControl}>
+                            <Form.Item name="verb" rules={[{ required: true }]}>
+                              <Select style={{ width: 140 }} options={[
+                                { value: 'status', label: '状态' },
+                                { value: 'start', label: '启动' },
+                                { value: 'stop', label: '停止' },
+                                { value: 'restart', label: '重启' },
+                              ]} />
+                            </Form.Item>
+                            <Button htmlType="submit" icon={<PlayCircleOutlined />} loading={adminLoading}>执行</Button>
+                          </Form>
+                          {serviceOutput && (
+                            <Input.TextArea value={serviceOutput} rows={4} readOnly style={{ fontFamily: 'monospace' }} />
+                          )}
+                        </Space>
                       ),
                     },
                   ]}
@@ -586,13 +621,43 @@ const InstanceDetail: React.FC = () => {
         ]}
       />
 
-      <Modal title="编辑实例" open={editOpen} onCancel={() => setEditOpen(false)} onOk={submitEdit} confirmLoading={submitting} okText="保存" cancelText="取消">
+      <Modal title="编辑实例" open={editOpen} onCancel={() => setEditOpen(false)} onOk={submitEdit} confirmLoading={submitting} okText="保存" cancelText="取消" width={640}>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
             <Input />
           </Form.Item>
           <Form.Item name="cluster_id" label="集群 ID">
             <Input placeholder="例如 mgr-cluster-01" />
+          </Form.Item>
+          <Form.Item name="host" label="连接地址" rules={[{ required: true, message: '请输入连接地址' }]}>
+            <Input placeholder="例如 10.1.81.16" />
+          </Form.Item>
+          <Form.Item name="port" label="端口" rules={[{ required: true, message: '请输入端口' }]}>
+            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="username" label="连接账号" rules={[{ required: true, message: '请输入连接账号' }]}>
+            <Input placeholder="root" />
+          </Form.Item>
+          <Form.Item name="password" label="连接密码" extra="留空表示不修改平台保存的实例连接密码">
+            <Input.Password placeholder="输入后仅更新平台连接信息" autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item name="ssl_enabled" valuePropName="checked">
+            <Checkbox>启用 SSL</Checkbox>
+          </Form.Item>
+          <Form.Item name="basedir" label="basedir">
+            <Input placeholder="/opt/mysql 或 /opt/dbops-pxc/usr" />
+          </Form.Item>
+          <Form.Item name="datadir" label="datadir">
+            <Input placeholder="/data/mysql/3306" />
+          </Form.Item>
+          <Form.Item name="os_user" label="OS 用户">
+            <Input placeholder="mysql" />
+          </Form.Item>
+          <Form.Item name="version_id" label="版本 ID">
+            <Input placeholder="mysql-8.0.36" />
+          </Form.Item>
+          <Form.Item name="package_url" label="package_url">
+            <Input />
           </Form.Item>
         </Form>
       </Modal>

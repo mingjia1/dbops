@@ -3253,11 +3253,18 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
 			fmt.Sprintf("SET GLOBAL %s = %s", name, formatVariableValue(value)))
 	case "read_config":
-		path := configPath(req.Config)
+		path, tried := resolveConfigPath(req.Config)
+		if path == "" {
+			return adminFailed(req.TaskID, "config file not found; tried: "+strings.Join(tried, ", ")), nil
+		}
 		data, readErr := os.ReadFile(path)
 		output, err = string(data), readErr
+		req.Config["resolved_path"] = path
 	case "write_config":
-		path := configPath(req.Config)
+		path, _ := resolveConfigPath(req.Config)
+		if path == "" {
+			path = configPath(req.Config)
+		}
 		content, _ := req.Config["content"].(string)
 		if content == "" {
 			return adminFailed(req.TaskID, "config content is required"), nil
@@ -3305,7 +3312,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		Progress:  100,
 		Message:   strings.TrimSpace(output),
 		Timestamp: time.Now(),
-		Data:      parseAdminOutput(action, output),
+		Data:      parseAdminOutput(action, output, req.Config),
 	}, nil
 }
 
@@ -3822,7 +3829,55 @@ func configPath(config map[string]interface{}) string {
 	return path
 }
 
-func parseAdminOutput(action, output string) any {
+func resolveConfigPath(config map[string]interface{}) (string, []string) {
+	rawRequested := strings.TrimSpace(configPath(config))
+	requested := filepath.Clean(rawRequested)
+	if requested != "." && requested != "" && filepath.ToSlash(requested) != "/etc/my.cnf" && rawRequested != "/etc/my.cnf" {
+		if st, err := os.Stat(requested); err == nil && !st.IsDir() {
+			return requested, []string{requested}
+		}
+		return requested, []string{requested}
+	}
+	candidates := configPathCandidates(config)
+	for _, candidate := range candidates {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate, candidates
+		}
+	}
+	return "", candidates
+}
+
+func configPathCandidates(config map[string]interface{}) []string {
+	candidates := make([]string, 0, 6)
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+	if port := configInt(config, "target_port"); port > 0 {
+		add(fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", port))
+		add(fmt.Sprintf("/tmp/pxc-%d.cnf", port))
+	}
+	if datadir, _ := config["datadir"].(string); strings.TrimSpace(datadir) != "" {
+		add(filepath.Join(datadir, "my.cnf"))
+		add(filepath.Join(datadir, "mysql.cnf"))
+	}
+	add("/etc/my.cnf")
+	return candidates
+}
+
+func parseAdminOutput(action, output string, config map[string]interface{}) any {
+	if action == "read_config" {
+		path, _ := config["resolved_path"].(string)
+		return map[string]string{"path": path, "content": output, "output": output}
+	}
 	if action != "list_users" && action != "show_variables" {
 		return map[string]string{"output": output}
 	}

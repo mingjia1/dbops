@@ -85,6 +85,55 @@ func TestExecuteInstanceAdminServiceControlDefaultsTrimmedStatus(t *testing.T) {
 	assert.Contains(t, result.Message, datadir)
 }
 
+func TestExecuteInstanceAdminReadConfigResolvesDefaultPathFromDatadir(t *testing.T) {
+	executor := NewTaskExecutor()
+	datadir := t.TempDir()
+	configFile := filepath.Join(datadir, "my.cnf")
+	require.NoError(t, os.WriteFile(configFile, []byte("[mysqld]\nport=3307\n"), 0o600))
+
+	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
+		TaskID: "admin-test",
+		Config: map[string]interface{}{
+			"action":      "read_config",
+			"path":        "/etc/my.cnf",
+			"datadir":     datadir,
+			"target_port": 3307,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.Contains(t, result.Message, "port=3307")
+	data, ok := result.Data.(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, configFile, data["path"])
+	assert.Contains(t, data["content"], "port=3307")
+}
+
+func TestExecuteInstanceAdminReadConfigReportsDefaultPathCandidates(t *testing.T) {
+	executor := NewTaskExecutor()
+	datadir := t.TempDir()
+
+	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
+		TaskID: "admin-test",
+		Config: map[string]interface{}{
+			"action":      "read_config",
+			"path":        "/etc/my.cnf",
+			"datadir":     datadir,
+			"target_port": 3307,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "config file not found; tried:")
+	normalizedMessage := filepath.ToSlash(result.Message)
+	assert.Contains(t, normalizedMessage, "/etc/dbops-pxc/dbops-pxc-3307.cnf")
+	assert.Contains(t, normalizedMessage, filepath.ToSlash(filepath.Join(datadir, "my.cnf")))
+}
+
 func TestProcessMatchesDatadirAllowsProcessCWD(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("process cwd matching uses /proc")

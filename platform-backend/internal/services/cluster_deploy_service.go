@@ -91,12 +91,14 @@ type deploymentHost struct {
 }
 
 type pseudoNode struct {
-	Host    string
-	Port    int
-	Role    string
-	HostID  string
-	DataDir string
-	Basedir string
+	Host          string
+	Port          int
+	Role          string
+	HostID        string
+	DataDir       string
+	Basedir       string
+	MySQLUser     string
+	MySQLPassword string
 }
 
 func NewClusterDeployService(
@@ -364,7 +366,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	}
 
 	// Sync cluster management metadata (register instances, topology, etc.)
-	if err := s.syncPseudoClusterManagement(ctx, clusterType, clusterID, plan.Nodes); err != nil {
+	if err := s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, plan.Nodes, req); err != nil {
 		errMsg := fmt.Sprintf("management sync failed: %v", err)
 		s.repo.UpdateStatus(ctx, clusterID, "partial")
 		finish := time.Now()
@@ -420,14 +422,33 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 // syncPseudoClusterManagement syncs cluster metadata for plan-based pseudo deployments.
 func (s *ClusterDeployService) syncPseudoClusterManagement(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode) error {
+	return s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, planNodes, UniversalClusterDeployRequest{})
+}
+
+func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode, req UniversalClusterDeployRequest) error {
 	nodes := make([]pseudoNode, 0, len(planNodes))
 	for _, pn := range planNodes {
-		nodes = append(nodes, pseudoNode{Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role, HostID: pn.HostID, DataDir: pn.DataDir, Basedir: pn.Basedir})
+		if !isMySQLDeployRole(clusterType, pn.Role) {
+			continue
+		}
+		nodes = append(nodes, pseudoNode{
+			Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role, HostID: pn.HostID, DataDir: pn.DataDir, Basedir: pn.Basedir,
+			MySQLUser: req.MySQL.User, MySQLPassword: req.MySQL.Password,
+		})
 	}
 	if len(nodes) == 0 {
 		return fmt.Errorf("no nodes to sync")
 	}
 	return s.syncClusterManagement(ctx, clusterType, clusterID, nodes)
+}
+
+func isMySQLDeployRole(clusterType, role string) bool {
+	switch clusterType {
+	case ClusterTypeMHA:
+		return role == "master" || role == "replica"
+	default:
+		return role != "manager"
+	}
 }
 
 // Helper: find a PlanNode in a slice by ID
@@ -1252,6 +1273,18 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 	}
 	instanceID := uuid.New().String()
 	hostID := strings.TrimSpace(node.HostID)
+	username := strings.TrimSpace(node.MySQLUser)
+	if username == "" {
+		username = "root"
+	}
+	passwordEncrypted := ""
+	if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
+		enc, err := utils.Encrypt(node.MySQLPassword, s.encKey)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt managed instance password for %s:%d: %w", node.Host, node.Port, err)
+		}
+		passwordEncrypted = enc
+	}
 	name := fmt.Sprintf("%s-%s-%d", clusterID, strings.ReplaceAll(node.Host, ".", "-"), node.Port)
 	inst := &models.Instance{
 		ID:        instanceID,
@@ -1265,12 +1298,13 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 		return nil, fmt.Errorf("create managed instance for %s:%d: %w", node.Host, node.Port, err)
 	}
 	if err := s.instRepo.CreateConnection(ctx, &models.InstanceConnection{
-		InstanceID: instanceID,
-		Host:       node.Host,
-		Port:       node.Port,
-		Username:   "root",
-		Basedir:    node.Basedir,
-		Datadir:    node.DataDir,
+		InstanceID:        instanceID,
+		Host:              node.Host,
+		Port:              node.Port,
+		Username:          username,
+		PasswordEncrypted: passwordEncrypted,
+		Basedir:           node.Basedir,
+		Datadir:           node.DataDir,
 	}); err != nil {
 		return nil, fmt.Errorf("create managed instance connection for %s:%d: %w", node.Host, node.Port, err)
 	}

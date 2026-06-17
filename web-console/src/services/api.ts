@@ -194,7 +194,21 @@ export const instanceApi = {
   }>) =>
     api.post('/instances/batch', { instances }),
   
-  update: (id: string, data: { name?: string; cluster_id?: string; host_id?: string }) =>
+  update: (id: string, data: {
+    name?: string
+    cluster_id?: string
+    host_id?: string
+    host?: string
+    port?: number
+    username?: string
+    password?: string
+    ssl_enabled?: boolean
+    version_id?: string
+    package_url?: string
+    basedir?: string
+    datadir?: string
+    os_user?: string
+  }) =>
     api.put(`/instances/${id}`, data),
   
   delete: (id: string) =>

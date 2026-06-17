@@ -428,6 +428,75 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	require.Equal(t, "failed", deployment.Status)
 }
 
+func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
+
+	db := newTestDB()
+	hostRepo := repositories.NewHostRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+	service.SetEncryptionKey("test-encryption-key")
+
+	sshPassword, err := utils.Encrypt("sshpass", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-manager-host", Name: "mha-manager-host", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: agentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-master-host", Name: "mha-master-host", Address: "10.1.81.21", SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: 9090}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-replica-host", Name: "mha-replica-host", Address: "10.1.81.22", SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: 9090}))
+
+	resp, err := service.DeployMHA(ctx, DeployMHARequest{
+		ClusterID:        "mha-three-node",
+		Name:             "mha-three-node",
+		ManagerHostID:    "mha-manager-host",
+		ManagerHost:      agentHost,
+		ManagerAgentPort: agentPort,
+		MasterHostID:     "mha-master-host",
+		MasterHost:       "10.1.81.21",
+		MasterPort:       3306,
+		SlaveHosts:       []SlaveNode{{Host: "10.1.81.22", Port: 3306}},
+		MySQLUser:        "root",
+		MySQLPassword:    "Root#2026",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "success", resp.Status)
+	instances, err := instRepo.ListByClusterID(ctx, "mha-three-node")
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
+
+	var masterID, replicaID string
+	for _, inst := range instances {
+		managed, err := instRepo.GetByID(ctx, inst.ID)
+		require.NoError(t, err)
+		conn, err := instRepo.GetConnection(ctx, inst.ID)
+		require.NoError(t, err)
+		require.NotEqual(t, agentHost, conn.Host)
+		require.Equal(t, "root", conn.Username)
+		plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
+		require.NoError(t, err)
+		require.Equal(t, "Root#2026", plain)
+		switch conn.Host {
+		case "10.1.81.21":
+			masterID = inst.ID
+			require.Equal(t, "master", managed.Status.Role)
+		case "10.1.81.22":
+			replicaID = inst.ID
+			require.Equal(t, "replica", managed.Status.Role)
+		default:
+			t.Fatalf("unexpected managed host %s", conn.Host)
+		}
+	}
+	require.NotEmpty(t, masterID)
+	require.NotEmpty(t, replicaID)
+	replicaTopology, err := instRepo.GetTopology(ctx, replicaID)
+	require.NoError(t, err)
+	require.Equal(t, masterID, replicaTopology.MasterID)
+	require.Equal(t, "mha", replicaTopology.ReplicationMode)
+}
+
 func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {

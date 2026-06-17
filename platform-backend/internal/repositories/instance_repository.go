@@ -127,6 +127,31 @@ func (r *InstanceRepository) UpdateConnectionPassword(ctx context.Context, insta
 	return nil
 }
 
+func (r *InstanceRepository) UpdateConnection(ctx context.Context, conn *models.InstanceConnection) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	res, err := r.db.Pool.ExecContext(ctx, `
+		UPDATE instance_connections
+		SET host = ?, port = ?, username = ?, password_encrypted = ?, ssl_enabled = ?,
+			basedir = ?, datadir = ?, os_user = ?, package_url = ?, version_id = ?
+		WHERE instance_id = ?`,
+		conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, conn.SSLEnabled,
+		conn.Basedir, conn.Datadir, conn.OSUser, conn.PackageURL, conn.VersionID, conn.InstanceID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update connection: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("connection not found for instance %s", conn.InstanceID)
+	}
+	return nil
+}
+
 func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.InstanceVersion) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not initialized")

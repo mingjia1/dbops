@@ -39,6 +39,84 @@ func TestInstanceCreateFillsPackageURLFromVersionCatalog(t *testing.T) {
 	assert.Contains(t, conn.PackageURL, "mysql-5.7.44")
 }
 
+func TestInstanceUpdateConnectionInfoPreservesPasswordWhenBlank(t *testing.T) {
+	db := newTestDB()
+	instRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewInstanceService(instRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key")
+
+	instance, err := service.Create(context.Background(), CreateInstanceRequest{
+		Name:     "editable-instance",
+		Host:     "10.1.81.16",
+		Port:     24410,
+		Username: "root",
+		Password: "Root#2026",
+	})
+	require.NoError(t, err)
+	before, err := instRepo.GetConnection(context.Background(), instance.ID)
+	require.NoError(t, err)
+
+	updated, err := service.Update(context.Background(), instance.ID, UpdateInstanceRequest{
+		Name:       "editable-instance",
+		Host:       "10.1.81.17",
+		Port:       24411,
+		Username:   "admin",
+		Password:   "",
+		SSLEnabled: boolPtr(true),
+		Basedir:    "/opt/dbops-pxc/usr",
+		Datadir:    "/data/pxc/24411",
+		OSUser:     "mysql",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "10.1.81.17", updated.Connection.Host)
+	assert.Equal(t, 24411, updated.Connection.Port)
+	assert.Equal(t, "admin", updated.Connection.Username)
+	assert.True(t, updated.Connection.SSLEnabled)
+	assert.Equal(t, "/opt/dbops-pxc/usr", updated.Connection.Basedir)
+	assert.Equal(t, "/data/pxc/24411", updated.Connection.Datadir)
+	after, err := instRepo.GetConnection(context.Background(), instance.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.PasswordEncrypted, after.PasswordEncrypted)
+	password, err := utils.Decrypt(after.PasswordEncrypted, "test-encryption-key")
+	require.NoError(t, err)
+	assert.Equal(t, "Root#2026", password)
+}
+
+func TestInstanceUpdateConnectionInfoUpdatesPasswordWhenProvided(t *testing.T) {
+	db := newTestDB()
+	instRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewInstanceService(instRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key")
+
+	instance, err := service.Create(context.Background(), CreateInstanceRequest{
+		Name:     "password-edit-instance",
+		Host:     "10.1.81.16",
+		Port:     24410,
+		Username: "root",
+		Password: "Old#2026",
+	})
+	require.NoError(t, err)
+
+	_, err = service.Update(context.Background(), instance.ID, UpdateInstanceRequest{
+		Name:     "password-edit-instance",
+		Password: "Root#2026",
+	})
+
+	require.NoError(t, err)
+	conn, err := instRepo.GetConnection(context.Background(), instance.ID)
+	require.NoError(t, err)
+	password, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
+	require.NoError(t, err)
+	assert.Equal(t, "Root#2026", password)
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func TestAgentClientDeployInstanceAddsCatalogPackageWithoutUnverifiedChecksum(t *testing.T) {
 	var payload DeployTaskPayload
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -379,6 +457,17 @@ func TestInstanceAdminActionServiceControlMissingDatadirReturnsFailedResult(t *t
 	assert.Equal(t, "failed", result.Status)
 	assert.Equal(t, 100, result.Progress)
 	assert.Contains(t, result.Message, "service control requires instance datadir metadata")
+}
+
+func TestResolveInstanceConfigPathUsesPXCManagedConfig(t *testing.T) {
+	conn := &models.InstanceConnection{
+		Port:    24410,
+		Datadir: "/data/mysql/pxc-24410",
+	}
+
+	assert.Equal(t, "/etc/dbops-pxc/dbops-pxc-24410.cnf", resolveInstanceConfigPath(conn, ""))
+	assert.Equal(t, "/etc/dbops-pxc/dbops-pxc-24410.cnf", resolveInstanceConfigPath(conn, "/etc/my.cnf"))
+	assert.Equal(t, "/custom/my.cnf", resolveInstanceConfigPath(conn, "/custom/my.cnf"))
 }
 
 func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
