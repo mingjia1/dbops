@@ -1,15 +1,12 @@
 <div align="center">
 
-# MySQL Ops Platform / MySQL 操作平台
-
-**商业化数据库架构级生命周期管理平台**
-**A commercial-grade DevOps platform for database architecture-level lifecycle management**
+# 智能 MySQL 运维平台
 
 [![Go Version][go-image]][go-url] [![Node.js][node-image]][node-url] [![License][license-image]][license-url] [![Language][lang-image]][lang-url]
 
 ---
 
-**[📖 中文文档 / Chinese Documentation](README_ZH.md)** | **[📘 English Documentation / 英文文档](README_US.md)**
+**[📖 中文文档 / Chinese Documentation](readme_ZH.md)** | **[📘 English Documentation / 英文文档](readme_US.md)**
 
 </div>
 
@@ -54,7 +51,7 @@ make install-web
 
 <div align="center">
 
-**[📖 中文 / Chinese](README_ZH.md)** | **[📘 English / 英文](README_US.md)**
+**[📖 中文 / Chinese](readme_ZH.md)** | **[📘 English / 英文](readme_US.md)**
 
 </div>
 
