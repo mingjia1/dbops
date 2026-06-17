@@ -2,13 +2,13 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -426,13 +426,11 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 	// Note: master_host is "127.0.0.1" because the agent runs locally on the target host.
 	if masterNode != nil {
 		masterConfig := map[string]interface{}{
-			"deploy_mode":    "ha-master",
-			"master_host":    "127.0.0.1",
-			"master_port":    masterNode.MySQLPort,
-			"replicate_user": req.Replication.User,
-			"replicate_pass": req.Replication.Password,
-			"mysql_user":     req.MySQL.User,
-			"mysql_password": req.MySQL.Password,
+			"deploy_mode": "single",
+			"host":        masterNode.Host,
+			"port":        masterNode.MySQLPort,
+			"mysql_user":  req.MySQL.User,
+			"mysql_pass":  req.MySQL.Password,
 		}
 		if masterNode.ServerID != 0 {
 			masterConfig["server_id"] = masterNode.ServerID
@@ -507,12 +505,128 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	}
 	last := "prepare_credentials"
 
+	if masterNode != nil {
+		masterConfig := map[string]interface{}{
+			"deploy_mode": "single",
+			"host":        masterNode.Host,
+			"port":        masterNode.MySQLPort,
+			"mysql_user":  req.MySQL.User,
+			"mysql_pass":  req.MySQL.Password,
+		}
+		if masterNode.ServerID != 0 {
+			masterConfig["server_id"] = masterNode.ServerID
+		}
+		if masterNode.DataDir != "" {
+			masterConfig["data_dir"] = masterNode.DataDir
+			masterConfig["datadir"] = masterNode.DataDir
+		}
+		if masterNode.Basedir != "" {
+			masterConfig["basedir"] = masterNode.Basedir
+		}
+		mergeCommonDeployConfig(masterConfig, req)
+		id := fmt.Sprintf("bootstrap_%s", masterNode.ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Install MHA master MySQL %s", masterNode.Host),
+			Type: "bootstrap", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: masterConfig,
+		})
+		last = id
+
+		masterHAConfig := map[string]interface{}{
+			"deploy_mode":    "ha-master",
+			"master_host":    "127.0.0.1",
+			"master_port":    masterNode.MySQLPort,
+			"server_id":      defaultInt(masterNode.ServerID, 1),
+			"replicate_user": req.Replication.User,
+			"replicate_pass": req.Replication.Password,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+		}
+		if masterNode.DataDir != "" {
+			masterHAConfig["data_dir"] = masterNode.DataDir
+			masterHAConfig["datadir"] = masterNode.DataDir
+		}
+		if masterNode.Basedir != "" {
+			masterHAConfig["basedir"] = masterNode.Basedir
+		}
+		mergeCommonDeployConfig(masterHAConfig, req)
+		id = fmt.Sprintf("configure_master_%s", masterNode.ID)
+		steps = append(steps, PlanStep{
+			ID: id, Name: fmt.Sprintf("Configure MHA master replication %s", masterNode.Host),
+			Type: "configure", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: masterHAConfig,
+		})
+		last = id
+	}
+
+	for i := range replicaNodes {
+		replicaConfig := map[string]interface{}{
+			"deploy_mode": "single",
+			"host":        replicaNodes[i].Host,
+			"port":        replicaNodes[i].MySQLPort,
+			"mysql_user":  req.MySQL.User,
+			"mysql_pass":  req.MySQL.Password,
+		}
+		if replicaNodes[i].DataDir != "" {
+			replicaConfig["data_dir"] = replicaNodes[i].DataDir
+			replicaConfig["datadir"] = replicaNodes[i].DataDir
+		}
+		if replicaNodes[i].Basedir != "" {
+			replicaConfig["basedir"] = replicaNodes[i].Basedir
+		}
+		if replicaNodes[i].ServerID != 0 {
+			replicaConfig["server_id"] = replicaNodes[i].ServerID
+		}
+		mergeCommonDeployConfig(replicaConfig, req)
+		installID := fmt.Sprintf("join_%s", replicaNodes[i].ID)
+		steps = append(steps, PlanStep{
+			ID: installID, Name: fmt.Sprintf("Install MHA replica MySQL %s", replicaNodes[i].Host),
+			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: replicaConfig,
+		})
+		last = installID
+
+		if masterNode != nil {
+			replicaHAConfig := map[string]interface{}{
+				"deploy_mode":    "ha-replica",
+				"master_host":    masterNode.Host,
+				"master_port":    masterNode.MySQLPort,
+				"slave_host":     "127.0.0.1",
+				"slave_port":     replicaNodes[i].MySQLPort,
+				"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
+				"replicate_user": req.Replication.User,
+				"replicate_pass": req.Replication.Password,
+				"mysql_user":     req.MySQL.User,
+				"mysql_password": req.MySQL.Password,
+			}
+			if replicaNodes[i].DataDir != "" {
+				replicaHAConfig["data_dir"] = replicaNodes[i].DataDir
+				replicaHAConfig["datadir"] = replicaNodes[i].DataDir
+			}
+			if replicaNodes[i].Basedir != "" {
+				replicaHAConfig["basedir"] = replicaNodes[i].Basedir
+			}
+			mergeCommonDeployConfig(replicaHAConfig, req)
+			configureID := fmt.Sprintf("configure_replica_%s", replicaNodes[i].ID)
+			steps = append(steps, PlanStep{
+				ID: configureID, Name: fmt.Sprintf("Configure MHA replica replication %s", replicaNodes[i].Host),
+				Type: "configure", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
+				DependsOn: []string{last}, Config: replicaHAConfig,
+			})
+			last = configureID
+		}
+	}
+
 	// Prepare SSH credentials step
 	sshStepID := "prepare_ssh"
+	sshUser := req.Replication.User
+	if v, ok := stringCustom(req.Custom, "ssh_user"); ok {
+		sshUser = v
+	}
 	steps = append(steps, PlanStep{
 		ID: sshStepID, Name: "Prepare SSH credentials for MHA",
 		Type: "configure", DependsOn: []string{last},
-		Config: map[string]interface{}{"ssh_user": req.Replication.User},
+		Config: map[string]interface{}{"ssh_user": sshUser},
 	})
 	last = sshStepID
 
@@ -527,9 +641,16 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			"repl_pass":      req.Replication.Password,
 			"mysql_user":     req.MySQL.User,
 			"mysql_password": req.MySQL.Password,
+			"ssh_user":       sshUser,
 		}
 		if vip, ok := stringCustom(req.Custom, "vip"); ok {
 			managerConfig["vip"] = vip
+		}
+		if vipInterface, ok := stringCustom(req.Custom, "vip_interface"); ok {
+			managerConfig["vip_interface"] = vipInterface
+		}
+		if sshPrivateKey, ok := stringCustom(req.Custom, "ssh_private_key"); ok {
+			managerConfig["ssh_private_key"] = sshPrivateKey
 		}
 		if pi, ok := stringCustom(req.Custom, "ping_interval"); ok {
 			managerConfig["ping_interval"] = pi
@@ -571,7 +692,7 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	if gn, ok := stringCustom(req.Custom, "group_name"); ok {
 		groupName = gn
 	} else {
-		groupName = stableUniversalGroupName(req.ClusterID, req.Name)
+		groupName = randomUniversalGroupName()
 	}
 
 	localPorts := make([]int, len(nodes))
@@ -974,7 +1095,7 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 	if groupName, ok := stringCustom(req.Custom, "group_name"); ok {
 		out.ConfigParams["group_name"] = groupName
 	} else {
-		out.ConfigParams["group_name"] = stableUniversalGroupName(req.ClusterID, req.Name)
+		out.ConfigParams["group_name"] = randomUniversalGroupName()
 	}
 	for _, node := range req.Nodes {
 		if node.Role == "primary" || node.Role == "bootstrap" {
@@ -1084,14 +1205,8 @@ func stringCustom(custom map[string]interface{}, key string) (string, bool) {
 	}
 }
 
-func stableUniversalGroupName(clusterID, name string) string {
-	seed := defaultString(clusterID, name)
-	if seed == "" {
-		seed = "dbops-mgr"
-	}
-	sum := sha256.Sum256([]byte(seed))
-	hexValue := hex.EncodeToString(sum[:])
-	return fmt.Sprintf("%s-%s-%s-%s-%s", hexValue[0:8], hexValue[8:12], hexValue[12:16], hexValue[16:20], hexValue[20:32])
+func randomUniversalGroupName() string {
+	return uuid.NewString()
 }
 
 func copyMap(in map[string]interface{}) map[string]interface{} {

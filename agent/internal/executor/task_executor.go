@@ -525,6 +525,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	osUser, _ := req.Config["os_user"].(string)
 	mysqlUser, _ := req.Config["mysql_user"].(string)
 	mysqlPass, _ := req.Config["mysql_pass"].(string)
+	serverID := configInt(req.Config, "server_id")
 
 	// MGR配置参数
 	installType, _ := req.Config["install_type"].(string)
@@ -541,6 +542,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 	if port == 0 {
 		port = 3306
+	}
+	if serverID == 0 {
+		serverID = port
 	}
 	if dataDir == "" {
 		dataDir = fmt.Sprintf("/data/mysql/%d", port)
@@ -653,7 +657,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		"--daemonize",
 		"--datadir=" + dataDir,
 		"--port=" + fmt.Sprintf("%d", port),
-		"--server-id=" + fmt.Sprintf("%d", port),
+		"--server-id=" + fmt.Sprintf("%d", serverID),
 		"--log-bin=mysql-bin",
 		"--binlog-format=ROW",
 		"--gtid-mode=ON",
@@ -1030,7 +1034,7 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 	_ = mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass,
 		fmt.Sprintf("ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';", escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass))).Run()
 
-	if out, err := setServerID(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, 1); err != nil {
+	if out, err := setServerID(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, config.ServerID); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  30,
@@ -1048,7 +1052,7 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 }
 
 func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveConfig) *TaskResult {
-	if out, err := setServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, config.ServerID+2); err != nil {
+	if out, err := setServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, config.ServerID); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  50,
@@ -1565,13 +1569,18 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 		}, nil
 	}
 	baseGTID, err := parseGTIDFromDump(config.BaseBackupPath)
+	gtidWarning := ""
 	if err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  0,
-			Message:   fmt.Sprintf("parse GTID from base mysqldump failed: %v", err),
-			Timestamp: time.Now(),
-		}, nil
+		if strings.Contains(err.Error(), "GTID_PURGED not found") {
+			gtidWarning = "base mysqldump has no GTID_PURGED; mysqlbinlog will not exclude transactions already included in the base dump"
+		} else {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("parse GTID from base mysqldump failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
 	}
 	binlogs, err := fetchBinaryLogFiles(ctx, config)
 	if err != nil {
@@ -1608,8 +1617,10 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 			"--port=" + fmt.Sprintf("%d", config.MySQLPort),
 			"--user=" + defaultString(config.MySQLUser, "root"),
 			"--password=" + config.MySQLPass,
-			"--exclude-gtids=" + baseGTID,
 			"--result-file=" + backupFile,
+		}
+		if strings.TrimSpace(baseGTID) != "" {
+			args = append(args, "--exclude-gtids="+baseGTID)
 		}
 		args = append(args, binlogs...)
 		cmd := exec.CommandContext(ctx, "mysqlbinlog", args...)
@@ -1647,21 +1658,29 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 			Timestamp: time.Now(),
 		}, nil
 	}
+	message := fmt.Sprintf("Incremental backup completed successfully. Path: %s, Checksum: %s", backupFile, checksum)
+	if gtidWarning != "" {
+		message += ". " + gtidWarning
+	}
+	data := map[string]any{
+		"backup_path":       backupFile,
+		"backup_type":       config.BackupType,
+		"backup_method":     "mysqlbinlog",
+		"base_backup_path":  config.BaseBackupPath,
+		"base_backup_label": config.BaseBackupLabel,
+		"base_backup_gtid":  baseGTID,
+		"file_size":         sizeBytes,
+		"checksum":          checksum,
+	}
+	if gtidWarning != "" {
+		data["gtid_warning"] = gtidWarning
+	}
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("Incremental backup completed successfully. Path: %s, Checksum: %s", backupFile, checksum),
+		Message:   message,
 		Timestamp: time.Now(),
-		Data: map[string]any{
-			"backup_path":       backupFile,
-			"backup_type":       config.BackupType,
-			"backup_method":     "mysqlbinlog",
-			"base_backup_path":  config.BaseBackupPath,
-			"base_backup_label": config.BaseBackupLabel,
-			"base_backup_gtid":  baseGTID,
-			"file_size":         sizeBytes,
-			"checksum":          checksum,
-		},
+		Data:      data,
 	}, nil
 }
 

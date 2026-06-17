@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Modal } from 'antd'
+import { Card, Form, Select, Button, Space, Table, message, Tag, Descriptions, Input, InputNumber, Progress, Steps, Divider, Tabs, Modal, Row, Col } from 'antd'
 import { PlayCircleOutlined, CheckCircleOutlined, SwapOutlined, SyncOutlined, StopOutlined } from '@ant-design/icons'
 import { migrationApi, instanceApi } from '../services/api'
 
@@ -132,25 +132,37 @@ const PhysicalFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="compress" label="压缩方式" initialValue="gzip">
-        <Select>
-          <Select.Option value="gzip">gzip</Select.Option>
-          <Select.Option value="lz4">lz4</Select.Option>
-          <Select.Option value="none">不压缩</Select.Option>
-        </Select>
-      </Form.Item>
-      <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
-        <InputNumber min={1} max={16} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动物理迁移</Button>
-      </Form.Item>
+      <Row gutter={16}>
+        <Col xs={24} md={8}>
+          <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+            <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+            <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="compress" label="压缩方式" initialValue="gzip">
+            <Select>
+              <Select.Option value="gzip">gzip</Select.Option>
+              <Select.Option value="lz4">lz4</Select.Option>
+              <Select.Option value="none">不压缩</Select.Option>
+            </Select>
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="parallel_threads" label="并行线程数" initialValue={4}>
+            <InputNumber min={1} max={16} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item label=" ">
+            <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动物理迁移</Button>
+          </Form.Item>
+        </Col>
+      </Row>
     </Form>
   )
 }
@@ -163,24 +175,38 @@ const ReplicationFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="replication_user" label="复制用户" rules={[{ required: true }]}>
-        <Input placeholder="repl_user" />
-      </Form.Item>
-      <Form.Item name="replication_password" label="复制密码" rules={[{ required: true }]}>
-        <Input.Password placeholder="输入密码" />
-      </Form.Item>
-      <Form.Item name="sync_delay_threshold" label="同步延迟阈值(秒)" initialValue={10}>
-        <InputNumber min={0} max={3600} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<SyncOutlined />} htmlType="submit" loading={loading}>启动复制迁移</Button>
-      </Form.Item>
+      <Row gutter={16}>
+        <Col xs={24} md={8}>
+          <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+            <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+            <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="replication_user" label="复制用户" rules={[{ required: true }]}>
+            <Input placeholder="repl_user" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="replication_password" label="复制密码" rules={[{ required: true }]}>
+            <Input.Password placeholder="输入密码" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="sync_delay_threshold" label="延迟阈值" initialValue={10}>
+            <InputNumber min={0} max={3600} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item label=" ">
+            <Button type="primary" icon={<SyncOutlined />} htmlType="submit" loading={loading}>启动复制迁移</Button>
+          </Form.Item>
+        </Col>
+      </Row>
     </Form>
   )
 }
@@ -193,24 +219,38 @@ const GTIDFormSection: React.FC<{
   const [form] = Form.useForm()
   return (
     <Form form={form} layout="vertical" onFinish={onSubmit}>
-      <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
-        <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
-        <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
-      </Form.Item>
-      <Form.Item name="gtid_purged" label="已清除GTID">
-        <Input placeholder="GTID集合(可选)" />
-      </Form.Item>
-      <Form.Item name="gtid_executed" label="已执行GTID">
-        <Input placeholder="GTID集合(可选)" />
-      </Form.Item>
-      <Form.Item name="transaction_batch_size" label="事务批次大小" initialValue={100}>
-        <InputNumber min={10} max={10000} />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动GTID迁移</Button>
-      </Form.Item>
+      <Row gutter={16}>
+        <Col xs={24} md={8}>
+          <Form.Item name="source_instance" label="源实例" rules={[{ required: true, message: '请选择源实例' }]}>
+            <Select placeholder="选择源实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="target_instance" label="目标实例" rules={[{ required: true, message: '请选择目标实例' }]}>
+            <Select placeholder="选择目标实例" options={instances.map((i: any) => ({ label: i.name, value: i.id }))} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="gtid_purged" label="清除GTID">
+            <Input placeholder="GTID集合(可选)" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="gtid_executed" label="执行GTID">
+            <Input placeholder="GTID集合(可选)" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name="transaction_batch_size" label="事务批次" initialValue={100}>
+            <InputNumber min={10} max={10000} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item label=" ">
+            <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={loading}>启动GTID迁移</Button>
+          </Form.Item>
+        </Col>
+      </Row>
     </Form>
   )
 }

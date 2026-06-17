@@ -243,8 +243,18 @@ const UpgradeManage: React.FC = () => {
   }, [instances])
 
   const findInstance = (id?: string) => instances.find((i) => i.id === id)
-  const detectedVersion = (inst?: Instance) =>
-    inst?.version?.full_version || inst?.version?.version || inst?.connection?.version_id || '未识别'
+  const detectedVersion = (inst?: Instance) => {
+    const raw = inst as any
+    const versionId = inst?.connection?.version_id || raw?.version_id || raw?.target_version_id
+    const versionEntry = versions.find((v) => v.id === versionId)
+    return inst?.version?.full_version ||
+      inst?.version?.version ||
+      raw?.full_version ||
+      raw?.mysql_version ||
+      raw?.version ||
+      (versionEntry ? `${versionEntry.flavor} ${versionEntry.version}` : versionId) ||
+      '未识别'
+  }
 
   const versionInfo = (id?: string) => (
     <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>

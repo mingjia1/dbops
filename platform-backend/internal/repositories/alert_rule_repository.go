@@ -37,6 +37,16 @@ func (r *AlertRuleRepository) CreateAlertRule(ctx context.Context, rule *models.
 		rule.Expression, rule.CreatedAt, rule.UpdatedAt)
 
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "expression") {
+			if addErr := r.ensureAlertRuleExpressionColumn(ctx); addErr == nil {
+				_, err = r.db.Pool.ExecContext(ctx, query,
+					rule.ID, rule.Name, rule.Metric, rule.Condition, rule.Threshold,
+					rule.DurationSeconds, rule.Severity, rule.NotificationChannels,
+					rule.Expression, rule.CreatedAt, rule.UpdatedAt)
+			}
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("failed to create alert rule: %w", err)
 	}
 
@@ -61,6 +71,16 @@ func (r *AlertRuleRepository) UpdateAlertRule(ctx context.Context, rule *models.
 		rule.DurationSeconds, rule.Severity, rule.NotificationChannels,
 		rule.Expression, rule.UpdatedAt, rule.ID)
 
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "expression") {
+			if addErr := r.ensureAlertRuleExpressionColumn(ctx); addErr == nil {
+				_, err = r.db.Pool.ExecContext(ctx, query,
+					rule.Name, rule.Metric, rule.Condition, rule.Threshold,
+					rule.DurationSeconds, rule.Severity, rule.NotificationChannels,
+					rule.Expression, rule.UpdatedAt, rule.ID)
+			}
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update alert rule: %w", err)
 	}
@@ -119,6 +139,13 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 
 	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "expression") {
+			if addErr := r.ensureAlertRuleExpressionColumn(ctx); addErr == nil {
+				rows, err = r.db.Pool.QueryContext(ctx, query, limit, offset)
+			}
+		}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("failed to list alert rules: %w", err)
 	}
 	defer rows.Close()
@@ -138,6 +165,17 @@ func (r *AlertRuleRepository) ListAlertRules(ctx context.Context, limit, offset 
 	return rules, nil
 }
 
+func (r *AlertRuleRepository) ensureAlertRuleExpressionColumn(ctx context.Context) error {
+	if r.db == nil || r.db.Pool == nil {
+		return nil
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `ALTER TABLE alert_rules ADD COLUMN expression TEXT DEFAULT ''`)
+	if err != nil && !isAlreadyExistsError(err) {
+		return err
+	}
+	return nil
+}
+
 func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models.AlertRule, error) {
 	if r.db.Pool == nil {
 		return []models.AlertRule{}, nil
@@ -149,6 +187,13 @@ func (r *AlertRuleRepository) GetActiveAlertRules(ctx context.Context) ([]models
 	`
 
 	rows, err := r.db.Pool.QueryContext(ctx, query)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "expression") {
+			if addErr := r.ensureAlertRuleExpressionColumn(ctx); addErr == nil {
+				rows, err = r.db.Pool.QueryContext(ctx, query)
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active alert rules: %w", err)
 	}

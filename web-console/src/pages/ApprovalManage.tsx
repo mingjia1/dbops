@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Button, Card, Descriptions, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd'
 import { CheckOutlined, CloseOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { approvalApi, type ApprovalRequest } from '../services/api'
+import { approvalApi, instanceApi, type ApprovalRequest, type Instance } from '../services/api'
 
 const statusColor = (status?: string) => {
   if (status === 'approved') return 'success'
@@ -20,6 +20,25 @@ const currentUserId = () => {
   }
 }
 
+const operationOptions = [
+  { value: 'parameter_apply', label: '参数应用' },
+  { value: 'role_switch', label: '角色切换' },
+  { value: 'backup_restore', label: '备份恢复' },
+  { value: 'upgrade', label: '版本升级' },
+  { value: 'migration', label: '数据迁移' },
+]
+
+const operationLabel = (value?: string) => operationOptions.find((item) => item.value === value)?.label || value || '-'
+
+const resourceOptions = [
+  { value: 'instance', label: '实例' },
+  { value: 'cluster', label: '集群' },
+  { value: 'backup', label: '备份' },
+  { value: 'parameter_template', label: '参数模板' },
+  { value: 'migration_task', label: '迁移任务' },
+  { value: 'upgrade_task', label: '升级任务' },
+]
+
 const ApprovalManage: React.FC = () => {
   const [data, setData] = useState<ApprovalRequest[]>([])
   const [loading, setLoading] = useState(false)
@@ -27,7 +46,9 @@ const ApprovalManage: React.FC = () => {
   const [status, setStatus] = useState<string | undefined>()
   const [viewing, setViewing] = useState<ApprovalRequest | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [instances, setInstances] = useState<Instance[]>([])
   const [form] = Form.useForm()
+  const resourceType = Form.useWatch('resource_type', form)
 
   const fetchData = async (nextStatus = status) => {
     setLoading(true)
@@ -41,7 +62,22 @@ const ApprovalManage: React.FC = () => {
 
   useEffect(() => {
     fetchData()
+    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => setInstances([]))
   }, [])
+
+  const clusterOptions = Array.from(new Set(instances.map((item) => item.cluster_id).filter(Boolean))).map((id) => ({
+    value: id,
+    label: id,
+  }))
+
+  const resourceIdOptions = resourceType === 'cluster'
+    ? clusterOptions
+    : resourceType === 'instance'
+      ? instances.map((item) => ({
+        value: item.id,
+        label: `${item.name} (${item.connection?.host || item.host || '-'}:${item.connection?.port || item.port || '-'})`,
+      }))
+      : []
 
   const submitCreate = async () => {
     const values = await form.validateFields()
@@ -82,7 +118,7 @@ const ApprovalManage: React.FC = () => {
   }
 
   const columns: ColumnsType<ApprovalRequest> = [
-    { title: '操作类型', dataIndex: 'operation_type', key: 'operation_type', render: (v) => <Tag color="blue">{v}</Tag> },
+    { title: '操作类型', dataIndex: 'operation_type', key: 'operation_type', render: (v) => <Tag color="blue">{operationLabel(v)}</Tag> },
     { title: '申请人', dataIndex: 'requester', key: 'requester' },
     { title: '资源', dataIndex: 'target_resource', key: 'target_resource' },
     { title: '原因', dataIndex: 'description', key: 'description', ellipsis: true },
@@ -127,11 +163,24 @@ const ApprovalManage: React.FC = () => {
 
       <Modal title="创建审批申请" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={submitCreate} confirmLoading={submitting} width={640}>
         <Form form={form} layout="vertical" initialValues={{ priority: 1, expiry_hours: 24, operation_type: 'parameter_apply' }}>
-          <Form.Item name="operation_type" label="操作类型" rules={[{ required: true }]}>
-            <Select options={['parameter_apply', 'role_switch', 'backup_restore', 'upgrade', 'migration'].map((v) => ({ value: v, label: v }))} />
+          <Form.Item name="operation_type" label="审批类型" rules={[{ required: true }]}>
+            <Select options={operationOptions} />
           </Form.Item>
-          <Form.Item name="resource_type" label="资源类型" rules={[{ required: true }]}><Input placeholder="instance / cluster / backup" /></Form.Item>
-          <Form.Item name="resource_id" label="资源 ID" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="resource_type" label="资源类型" rules={[{ required: true }]}>
+            <Select
+              options={resourceOptions}
+              onChange={() => form.setFieldValue('resource_id', undefined)}
+              placeholder="请选择资源类型"
+            />
+          </Form.Item>
+          <Form.Item name="resource_id" label="资源 ID" rules={[{ required: true }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={resourceIdOptions}
+              placeholder={resourceIdOptions.length > 0 ? '请选择资源 ID' : '请先选择资源类型'}
+            />
+          </Form.Item>
           <Form.Item name="request_reason" label="申请原因"><Input.TextArea rows={3} /></Form.Item>
           <Space>
             <Form.Item name="priority" label="优先级"><Input type="number" /></Form.Item>
@@ -144,7 +193,7 @@ const ApprovalManage: React.FC = () => {
         {viewing && (
           <Descriptions bordered column={1}>
             <Descriptions.Item label="ID">{viewing.id}</Descriptions.Item>
-            <Descriptions.Item label="操作类型">{viewing.operation_type}</Descriptions.Item>
+            <Descriptions.Item label="操作类型">{operationLabel(viewing.operation_type)}</Descriptions.Item>
             <Descriptions.Item label="资源">{viewing.target_resource}</Descriptions.Item>
             <Descriptions.Item label="状态"><Tag color={statusColor(viewing.status)}>{viewing.status}</Tag></Descriptions.Item>
             <Descriptions.Item label="申请原因">{viewing.description || '-'}</Descriptions.Item>

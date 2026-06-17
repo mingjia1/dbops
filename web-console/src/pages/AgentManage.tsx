@@ -5,16 +5,13 @@ import type { ColumnsType } from 'antd/es/table'
 import { hostApi, type Host } from '../services/api'
 
 const actionOptions = [
-  { value: 'install', label: '添加/安装 Agent' },
-  { value: 'modify', label: '修改配置并重启' },
-  { value: 'update', label: '更新 Agent' },
   { value: 'stop', label: '停止 Agent' },
   { value: 'start', label: '启动 Agent' },
   { value: 'delete', label: '删除 Agent' },
   { value: 'status', label: '检查状态' },
 ]
 
-const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+const longRunningAgentActions = new Set(['restart'])
 const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
@@ -130,7 +127,7 @@ const AgentManage: React.FC = () => {
         title={<Space><CloudServerOutlined /><span>Agent 管理</span></Space>}
         extra={<Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>}
       >
-        <Form form={form} layout="inline" initialValues={{ action: 'install' }} style={{ marginBottom: 16 }}>
+        <Form form={form} layout="inline" initialValues={{ action: 'status' }} style={{ marginBottom: 16 }}>
           <Form.Item name="action" rules={[{ required: true }]}>
             <Select style={{ width: 180 }} options={actionOptions} />
           </Form.Item>

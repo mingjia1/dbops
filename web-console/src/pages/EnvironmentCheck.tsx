@@ -52,41 +52,6 @@ interface CheckResult {
 
 type Mode = 'from-hosts' | 'manual'
 
-const isFailedAgentStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
-}
-
-const isSubmittedAgentStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['submitted', 'pending', 'running'].includes(normalized)
-}
-
-const formatTimeoutLabel = (err: any) => {
-  const configured = err?.config?.timeout
-  if (typeof configured === 'number' && configured > 0) return configured >= 1000 ? `${Math.round(configured / 1000)}s` : `${configured}ms`
-  const raw = err?.response?.data?.message || err?.message || ''
-  const match = raw.match(/time\s+(\d+)ms\s+out/i)
-  if (match) {
-    const ms = Number(match[1])
-    if (Number.isFinite(ms) && ms > 0) return ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${ms}ms`
-  }
-  return '请求超时'
-}
-
-const isTimeoutError = (err: any) => {
-  const raw = err?.response?.data?.message || err?.message || ''
-  return err?.code === 'ECONNABORTED' || /timeout|timed?\s*out|time\s+\d+ms\s+out/i.test(raw)
-}
-
-const getAgentSubmitErrorMessage = (err: any, fallback: string) => {
-  const raw = err?.response?.data?.message || err?.message || fallback
-  if (isTimeoutError(err)) {
-    return `Agent 安装提交状态未知：提交请求在 ${formatTimeoutLabel(err)} 内未返回。Agent 安装按主机后台任务执行；请刷新主机列表或到 Agent 管理确认最终状态。如果主机仍不可用，请检查 SSH 连通性和主机管理中保存的 SSH 密码。`
-  }
-  return raw
-}
-
 const EnvironmentCheck: React.FC = () => {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
@@ -148,49 +113,6 @@ const EnvironmentCheck: React.FC = () => {
       } else {
         message.success('环境检查通过')
       }
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const installAgentForSelectedHosts = async () => {
-    if (selectedHosts.length === 0) {
-      message.warning('请先选择主机')
-      return
-    }
-    setSubmitting(true)
-    try {
-      const res: any = await hostApi.submitBatchAgentAction(selectedHosts, 'install')
-      const data = res?.data
-      const rows = data?.rows || []
-      const failedRows = rows.filter((row: any) => isFailedAgentStatus(row.status))
-      const submittedRows = rows.filter((row: any) => isSubmittedAgentStatus(row.status))
-      if ((data?.failed || 0) > 0 || failedRows.length > 0) {
-        Modal.warning({
-          title: `Agent 安装提交存在失败：已提交 ${data?.success ?? submittedRows.length} 个，失败 ${data?.failed ?? failedRows.length} 个`,
-          content: (
-            <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-              {failedRows
-                .map((row: any) => `${row.host_name || row.host_id}: ${row.message || 'install failed'}`)
-                .join('\n')}
-            </div>
-          ),
-        })
-      } else if (data?.async || submittedRows.length > 0) {
-        Modal.info({
-          title: `Agent 安装任务已提交：${submittedRows.length || selectedHosts.length} 台主机`,
-          content: '平台已提交后台安装任务。这里仅表示提交成功，不代表 Agent 已安装成功；请稍后刷新主机列表或 Agent 管理查看最终状态。',
-        })
-      } else {
-        message.success(`Agent 安装完成：成功 ${data?.success ?? 0}`)
-      }
-      fetchHosts()
-    } catch (err: any) {
-      const timedOut = isTimeoutError(err)
-      Modal[timedOut ? 'warning' : 'error']({
-        title: timedOut ? 'Agent 安装提交状态未知' : 'Agent 安装请求失败',
-        content: getAgentSubmitErrorMessage(err, 'Agent 安装请求失败'),
-      })
     } finally {
       setSubmitting(false)
     }
@@ -304,15 +226,14 @@ const EnvironmentCheck: React.FC = () => {
                     },
                   ]}
                 />
-                <div style={{ marginTop: 16, textAlign: 'right' }}>
+                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Space>
-                    <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
                     <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
-                    <Button onClick={installAgentForSelectedHosts} loading={submitting} disabled={selectedHosts.length === 0}>安装 Agent</Button>
                     <Button type="primary" icon={<PlayCircleOutlined />} onClick={onFinish} loading={submitting} disabled={selectedHosts.length === 0}>
                       启动环境检查
                     </Button>
                   </Space>
+                  <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
                 </div>
               </>
             )}

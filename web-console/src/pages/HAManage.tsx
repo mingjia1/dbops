@@ -71,8 +71,8 @@ const instanceEndpoint = (instance?: Instance) => {
 }
 
 const normalizeRole = (role?: string) => (role || '').toLowerCase()
-const isPrimaryRole = (role?: string) => ['master', 'primary', 'primary_master'].includes(normalizeRole(role))
-const isReplicaRole = (role?: string) => ['slave', 'secondary', 'replica'].includes(normalizeRole(role))
+const isPrimaryRole = (role?: string) => ['master', 'primary', 'primary_master', 'bootstrap'].includes(normalizeRole(role))
+const isReplicaRole = (role?: string) => ['slave', 'secondary', 'replica', 'donor', 'joiner'].includes(normalizeRole(role))
 
 const isFailedHAStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
@@ -357,7 +357,11 @@ const HAManage: React.FC = () => {
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={6}>
               <Card size="small">
-                <Statistic title="主节点" value={masterInstance?.name || '无主'} valueStyle={{ fontSize: 14, color: masterInstance ? '#3f8600' : '#cf1322' }} />
+                <Statistic
+                  title="主节点"
+                  value={masterInstance ? instanceEndpoint(masterInstance) : '无主'}
+                  valueStyle={{ fontSize: 14, color: masterInstance ? '#3f8600' : '#cf1322' }}
+                />
               </Card>
             </Col>
             <Col span={6}>

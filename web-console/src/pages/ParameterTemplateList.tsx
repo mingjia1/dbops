@@ -69,6 +69,7 @@ const ParameterTemplateList: React.FC = () => {
   }, [])
 
   const parsedParams = useMemo(() => {
+    if (!paramsText?.trim()) return { ok: true, rows: [] }
     try {
       return { ok: true, rows: parseParams(paramsText) }
     } catch (err: any) {

@@ -8,6 +8,14 @@ import { clusterDeployApi, hostApi, instanceApi, type Host, type Instance } from
 
 type ArchType = 'ha' | 'mha' | 'mgr' | 'pxc'
 
+const createMgrGroupName = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const hex = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}00000000000000000000000000000000`.slice(0, 32)
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+
 const DEFAULT_MYSQL_CREDENTIAL = {
   username: 'root',
   password: 'Hcfc@DboOps#2024_80',
@@ -564,7 +572,7 @@ const ClusterDeploy: React.FC = () => {
     onFinish: (values: any) => void,
     options?: { simpleReplica?: boolean },
   ) => (
-    <Form form={form} layout="horizontal" labelCol={{ span: 4 }} wrapperCol={{ span: 20 }} onFinish={onFinish}>
+    <Form form={form} layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }} onFinish={onFinish}>
       <Row gutter={16}>
         <Col span={12}>
           <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
@@ -625,37 +633,37 @@ const ClusterDeploy: React.FC = () => {
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="mysql_version" label="MySQL version" initialValue="8.0">
+          <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0">
             <Input placeholder="8.0" />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="package_url" label="Package URL">
+          <Form.Item name="package_url" label="安装包">
             <Input placeholder="https://repo.example/mysql.tar.gz" />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="package_checksum" label="SHA256">
-            <Input placeholder="64-char sha256" />
+          <Form.Item name="package_checksum" label="校验值">
+            <Input placeholder="64 位 SHA256" />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="master_data_dir" label="Master data dir">
+          <Form.Item name="master_data_dir" label="主数据目录">
             <Input placeholder="/data/mysql/3306" />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="replica_data_dir" label="Replica data dir">
+          <Form.Item name="replica_data_dir" label="从数据目录">
             <Input placeholder="/data/mysql/3307" />
           </Form.Item>
         </Col>
         {(arch === 'ha' || arch === 'mgr') && (
           <Col span={12}>
-            <Form.Item name="master_server_id" label="Master server_id">
+            <Form.Item name="master_server_id" label="主server_id">
               <InputNumber min={1} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
@@ -664,13 +672,13 @@ const ClusterDeploy: React.FC = () => {
       {(arch === 'ha' || arch === 'mgr') && (
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name="replica_server_id" label="Replica server_id">
+            <Form.Item name="replica_server_id" label="从server_id">
               <InputNumber min={1} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
           {arch === 'mgr' && (
             <Col span={12}>
-              <Form.Item name="local_port" label="MGR local port">
+              <Form.Item name="local_port" label="MGR端口">
                 <InputNumber min={1} max={65535} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
@@ -680,26 +688,26 @@ const ClusterDeploy: React.FC = () => {
       {arch === 'ha' && (
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name="semi_sync_enabled" label="Semi sync" valuePropName="checked" initialValue={false}>
-              <Checkbox>Enable</Checkbox>
+            <Form.Item name="semi_sync_enabled" label="半同步复制" valuePropName="checked" initialValue={false}>
+              <Checkbox>启用</Checkbox>
             </Form.Item>
           </Col>
         </Row>
       )}
       {arch === 'mha' && (
         <Row gutter={16}>
-          <Col span={8}>
-            <Form.Item name="vip_interface" label="VIP iface">
+          <Col span={12}>
+            <Form.Item name="vip_interface" label="VIP 网卡">
               <Input placeholder="eth0" />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item name="ping_interval" label="Ping interval">
+          <Col span={12}>
+            <Form.Item name="ping_interval" label="探测间隔">
               <InputNumber min={1} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item name="ssh_user" label="SSH user">
+          <Col span={12}>
+            <Form.Item name="ssh_user" label="SSH 用户">
               <Input placeholder="root" />
             </Form.Item>
           </Col>
@@ -707,27 +715,31 @@ const ClusterDeploy: React.FC = () => {
       )}
       {arch === 'pxc' && (
         <Row gutter={16}>
-          <Col span={8}>
-            <Form.Item name="cluster_name" label="PXC name">
+          <Col span={12}>
+            <Form.Item name="cluster_name" label="PXC集群">
               <Input placeholder="pxc-prod" />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item name="sst_method" label="SST method" initialValue="xtrabackup-v2">
+          <Col span={12}>
+            <Form.Item name="sst_method" label="SST方法" initialValue="xtrabackup-v2">
               <Input />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false}>
-              <Checkbox>Enable</Checkbox>
+          <Col span={12}>
+            <Form.Item name="wsrep_ssl_enabled" label="wsrepSSL" valuePropName="checked" initialValue={false}>
+              <Checkbox>启用</Checkbox>
             </Form.Item>
           </Col>
         </Row>
       )}
-      <Form.Item name="mysql_config_text" label="MySQL config">
+      <Row gutter={16}>
+        <Col span={24}>
+          <Form.Item name="mysql_config_text" label="MySQL配置">
         <Input.TextArea rows={3} placeholder={'max_connections=512\ninnodb_buffer_pool_size=2G'} />
-      </Form.Item>
-      <Form.Item wrapperCol={{ offset: 4 }}>
+          </Form.Item>
+        </Col>
+      </Row>
+      <Form.Item wrapperCol={{ offset: 6 }}>
         <Space>
           <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
             启动部署
@@ -887,7 +899,7 @@ const ClusterDeploy: React.FC = () => {
                 key: 'mgr',
                 label: 'MGR 部署',
                 children: renderForm('mgr', mgrForm,
-                  <Form.Item name="group_name" label="Group Name" initialValue="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
+                  <Form.Item name="group_name" label="MGR 组名" initialValue={createMgrGroupName()}>
                     <Input />
                   </Form.Item>,
                   (values) => runDeploy('mgr', values),

@@ -376,6 +376,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			Name:         name,
 			Status:       "partial",
 			Message:      errMsg,
+			ErrorMessage: errMsg,
 			StartedAt:    dep.StartedAt,
 			FinishedAt:   &finish,
 			CreatedAt:    dep.CreatedAt,
@@ -479,6 +480,7 @@ func (s *ClusterDeployService) buildPartialResponse(ctx context.Context, cluster
 		Name:         name,
 		Status:       "failed",
 		Message:      errMsg,
+		ErrorMessage: errMsg,
 		StartedAt:    dep.StartedAt,
 		FinishedAt:   finishedAt,
 		CreatedAt:    dep.CreatedAt,
@@ -1068,6 +1070,7 @@ type DeployResponse struct {
 	Stage        string       `json:"stage,omitempty"`
 	Progress     int          `json:"progress"`
 	Message      string       `json:"message"`
+	ErrorMessage string       `json:"error_message,omitempty"`
 	StartedAt    *time.Time   `json:"started_at,omitempty"`
 	FinishedAt   *time.Time   `json:"finished_at,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`

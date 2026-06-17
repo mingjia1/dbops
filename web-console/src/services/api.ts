@@ -616,6 +616,9 @@ const normalizeAuditLog = (item: any): AuditLog => ({
 
 const normalizeAuditResponse = (res: any) => {
   if (Array.isArray(res?.data)) return { ...res, data: res.data.map(normalizeAuditLog) }
+  if (Array.isArray(res?.data?.items)) return { ...res, data: res.data.items.map(normalizeAuditLog) }
+  if (Array.isArray(res?.data?.logs)) return { ...res, data: res.data.logs.map(normalizeAuditLog) }
+  if (Array.isArray(res?.data?.data)) return { ...res, data: res.data.data.map(normalizeAuditLog) }
   if (res?.data) return { ...res, data: normalizeAuditLog(res.data) }
   return res
 }

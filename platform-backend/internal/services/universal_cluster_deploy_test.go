@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/config"
@@ -177,6 +178,56 @@ func TestUniversalClusterDeployMapsCustomParametersToMHARequest(t *testing.T) {
 	require.Equal(t, "2G", out.ConfigParams["innodb_buffer_pool_size"])
 }
 
+func TestUniversalClusterDeployBuildsMHAPlanInstallsMySQLBeforeManager(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "mha-full-flow",
+		ClusterType: "mha",
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.10", Role: "manager", AgentPort: 19090},
+			{Host: "10.0.0.11", Role: "master", MySQLPort: 3306, AgentPort: 19091, DataDir: "/data/mysql/3306", ServerID: 11},
+			{Host: "10.0.0.12", Role: "replica", MySQLPort: 3306, AgentPort: 19092, DataDir: "/data/mysql/3306", ServerID: 12},
+		},
+	}
+
+	steps := buildMHAPlanSteps([]PlanNode{
+		{ID: "manager", Host: "10.0.0.10", Role: "manager", AgentPort: 19090, MySQLPort: 3306},
+		{ID: "master", Host: "10.0.0.11", Role: "master", AgentPort: 19091, MySQLPort: 3306, DataDir: "/data/mysql/3306", ServerID: 11},
+		{ID: "replica", Host: "10.0.0.12", Role: "replica", AgentPort: 19092, MySQLPort: 3306, DataDir: "/data/mysql/3306", ServerID: 12},
+	}, req)
+
+	require.Contains(t, stepIDs(steps), "bootstrap_master")
+	require.Contains(t, stepIDs(steps), "join_replica")
+	require.Contains(t, stepIDs(steps), "configure_master_master")
+	require.Contains(t, stepIDs(steps), "configure_replica_replica")
+	require.Contains(t, stepIDs(steps), "deploy_mha_manager")
+
+	masterStep := findStepByID(steps, "bootstrap_master")
+	replicaStep := findStepByID(steps, "join_replica")
+	configureMasterStep := findStepByID(steps, "configure_master_master")
+	configureReplicaStep := findStepByID(steps, "configure_replica_replica")
+	managerStep := findStepByID(steps, "deploy_mha_manager")
+	require.NotNil(t, masterStep)
+	require.NotNil(t, replicaStep)
+	require.NotNil(t, configureMasterStep)
+	require.NotNil(t, configureReplicaStep)
+	require.NotNil(t, managerStep)
+	require.Equal(t, "single", masterStep.Config["deploy_mode"])
+	require.Equal(t, "single", replicaStep.Config["deploy_mode"])
+	require.Equal(t, "ha-master", configureMasterStep.Config["deploy_mode"])
+	require.Equal(t, "ha-replica", configureReplicaStep.Config["deploy_mode"])
+	require.Equal(t, 3306, masterStep.Config["port"])
+	require.Equal(t, 3306, replicaStep.Config["port"])
+	require.Equal(t, 11, configureMasterStep.Config["server_id"])
+	require.Equal(t, 12, configureReplicaStep.Config["server_id"])
+	require.Equal(t, []string{"bootstrap_master"}, configureMasterStep.DependsOn)
+	require.Equal(t, []string{"configure_master_master"}, replicaStep.DependsOn)
+	require.Equal(t, []string{"join_replica"}, configureReplicaStep.DependsOn)
+	require.Equal(t, []string{"prepare_ssh"}, managerStep.DependsOn)
+	require.Equal(t, []string{"configure_replica_replica"}, findStepByID(steps, "prepare_ssh").DependsOn)
+}
+
 func TestUniversalClusterDeployMapsCustomParametersToMGRRequest(t *testing.T) {
 	req := UniversalClusterDeployRequest{
 		ClusterID:   "mgr-custom",
@@ -200,6 +251,43 @@ func TestUniversalClusterDeployMapsCustomParametersToMGRRequest(t *testing.T) {
 	require.Len(t, out.SecondaryHosts, 1)
 	require.Equal(t, 102, out.SecondaryHosts[0].ServerID)
 	require.Equal(t, 33162, out.SecondaryHosts[0].LocalPort)
+}
+
+func TestUniversalClusterDeployGeneratesRandomMGRGroupName(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "mgr-default",
+		Name:        "mgr-default",
+		ClusterType: "mgr",
+		Replication: ReplicationOptions{Mode: "single-primary"},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", Role: "primary", MySQLPort: 3306},
+			{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306},
+		},
+	}
+
+	first := universalToMGRRequest(req)
+	second := universalToMGRRequest(req)
+	firstGroupName, ok := first.ConfigParams["group_name"]
+	require.True(t, ok)
+	secondGroupName, ok := second.ConfigParams["group_name"]
+	require.True(t, ok)
+
+	_, err := uuid.Parse(firstGroupName)
+	require.NoError(t, err)
+	_, err = uuid.Parse(secondGroupName)
+	require.NoError(t, err)
+	require.NotEqual(t, firstGroupName, secondGroupName)
+
+	steps := buildMGRPlanSteps([]PlanNode{
+		{ID: "primary", Host: "10.0.0.11", Role: "primary", MySQLPort: 3306},
+		{ID: "secondary", Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306},
+	}, req)
+	step := findStepByID(steps, "bootstrap_primary")
+	require.NotNil(t, step)
+	groupName, ok := step.Config["group_name"].(string)
+	require.True(t, ok)
+	_, err = uuid.Parse(groupName)
+	require.NoError(t, err)
 }
 
 func TestUniversalClusterDeployMapsCustomParametersToPXCRequest(t *testing.T) {
@@ -532,4 +620,13 @@ func stepIDs(steps []PlanStep) []string {
 		out = append(out, step.ID)
 	}
 	return out
+}
+
+func findStepByID(steps []PlanStep, id string) *PlanStep {
+	for i := range steps {
+		if steps[i].ID == id {
+			return &steps[i]
+		}
+	}
+	return nil
 }

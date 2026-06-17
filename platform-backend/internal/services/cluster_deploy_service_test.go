@@ -145,10 +145,10 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
 	require.Len(t, payloads, 3)
-	require.Equal(t, "ha-master", payloads[0].Config["deploy_mode"])
+	require.Equal(t, "single", payloads[0].Config["deploy_mode"])
 	require.Equal(t, "ha-replica", payloads[1].Config["deploy_mode"])
 	require.Equal(t, "ha-replica", payloads[2].Config["deploy_mode"])
-	require.Equal(t, "127.0.0.1", payloads[0].Config["master_host"])
+	require.Equal(t, "127.0.0.1", payloads[0].Config["host"])
 	require.Equal(t, "127.0.0.1", payloads[1].Config["slave_host"])
 	require.Equal(t, float64(11), payloads[0].Config["server_id"])
 	require.Equal(t, "/data/mysql/3306", payloads[0].Config["data_dir"])
@@ -371,7 +371,14 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-error","status":"error","progress":100,"message":"agent deploy error"}}`))
+		var payload map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		configMap, _ := payload["config"].(map[string]interface{})
+		if configMap["deploy_mode"] == "mha" {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-error","status":"error","progress":100,"message":"agent deploy error"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-prep","status":"completed","progress":100,"message":"mysql deployed"}}`))
 	}))
 	defer server.Close()
 
@@ -394,8 +401,8 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	hostID := "mha-master"
 	// Create host entries for SSH password resolution
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-manager", Name: "mha-manager", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: agentPort}))
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-master", Name: "mha-master", Address: "10.0.0.31", SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: 9090}))
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-slave", Name: "mha-slave", Address: "10.0.0.32", SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: 9090}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-master", Name: "mha-master", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: agentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-slave", Name: "mha-slave", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: agentPort}))
 
 	// Create managed instances for management sync
 	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "mha-master-inst", Name: "mha-master", HostID: &hostID}))
@@ -409,14 +416,18 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 
 	service.SetEncryptionKey("test-encryption-key")
 
-	resp, err := service.DeployMHA(ctx, DeployMHARequest{
-		ClusterID:        "mha-error-cluster",
-		Name:             "mha-error-cluster",
-		ManagerHost:      agentHost,
-		ManagerAgentPort: agentPort,
-		MasterHost:       "10.0.0.31",
-		MasterPort:       3306,
-		SlaveHosts:       []SlaveNode{{Host: "10.0.0.32", Port: 3306}},
+	resp, err := service.DeployCluster(ctx, UniversalClusterDeployRequest{
+		ClusterID:   "mha-error-cluster",
+		Name:        "mha-error-cluster",
+		ClusterType: "mha",
+		Mode:        "real",
+		MySQL:       MySQLDeployOptions{User: "root", Password: "Root#2026"},
+		Replication: ReplicationOptions{User: "repl", Password: "Repl#2026"},
+		Nodes: []ClusterDeployNode{
+			{HostID: "mha-manager", Host: agentHost, AgentPort: agentPort, MySQLPort: 3306, Role: "manager"},
+			{HostID: "mha-master", Host: agentHost, AgentPort: agentPort, MySQLPort: 3306, Role: "master"},
+			{HostID: "mha-slave", Host: agentHost, AgentPort: agentPort, MySQLPort: 3307, Role: "replica"},
+		},
 	})
 
 	require.NoError(t, err)
@@ -430,7 +441,15 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 
 func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(clusterDeployOKHandler(t))
+	payloads := make([]DeployTaskPayload, 0, 5)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		var payload DeployTaskPayload
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-ok","status":"completed","progress":100,"message":"ok"}}`))
+	}))
 	defer server.Close()
 	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
 
@@ -444,25 +463,43 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 	sshPassword, err := utils.Encrypt("sshpass", "test-encryption-key")
 	require.NoError(t, err)
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-manager-host", Name: "mha-manager-host", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: agentPort}))
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-master-host", Name: "mha-master-host", Address: "10.1.81.21", SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: 9090}))
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-replica-host", Name: "mha-replica-host", Address: "10.1.81.22", SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: 9090}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-master-host", Name: "mha-master-host", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: agentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mha-replica-host", Name: "mha-replica-host", Address: agentHost, SSHPort: 22, SSHUser: "root", SSHCredential: sshPassword, AgentPort: agentPort}))
 
-	resp, err := service.DeployMHA(ctx, DeployMHARequest{
-		ClusterID:        "mha-three-node",
-		Name:             "mha-three-node",
-		ManagerHostID:    "mha-manager-host",
-		ManagerHost:      agentHost,
-		ManagerAgentPort: agentPort,
-		MasterHostID:     "mha-master-host",
-		MasterHost:       "10.1.81.21",
-		MasterPort:       3306,
-		SlaveHosts:       []SlaveNode{{Host: "10.1.81.22", Port: 3306}},
-		MySQLUser:        "root",
-		MySQLPassword:    "Root#2026",
+	resp, err := service.DeployCluster(ctx, UniversalClusterDeployRequest{
+		ClusterID:   "mha-three-node",
+		Name:        "mha-three-node",
+		ClusterType: "mha",
+		Mode:        "real",
+		MySQL:       MySQLDeployOptions{User: "root", Password: "Root#2026"},
+		Replication: ReplicationOptions{User: "repl", Password: "Repl#2026"},
+		Custom:      map[string]interface{}{"ssh_user": "root", "vip_interface": "eth1"},
+		Nodes: []ClusterDeployNode{
+			{HostID: "mha-manager-host", Host: agentHost, AgentPort: agentPort, MySQLPort: 3306, Role: "manager"},
+			{HostID: "mha-master-host", Host: agentHost, AgentPort: agentPort, MySQLPort: 3306, Role: "master", ServerID: 11, DataDir: "/data/mysql/3306"},
+			{HostID: "mha-replica-host", Host: agentHost, AgentPort: agentPort, MySQLPort: 3307, Role: "replica", ServerID: 12, DataDir: "/data/mysql/3307"},
+		},
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
+	require.Len(t, payloads, 3)
+	var managerPayload DeployTaskPayload
+	for _, payload := range payloads {
+		if payload.Config["deploy_mode"] == "mha" {
+			managerPayload = payload
+			break
+		}
+	}
+	require.Equal(t, "mha", managerPayload.Config["deploy_mode"])
+	require.Equal(t, "root", managerPayload.Config["ssh_user"])
+	require.Equal(t, "eth1", managerPayload.Config["vip_interface"])
+	require.Equal(t, []interface{}{agentHost}, managerPayload.Config["slave_hosts"])
+	require.Equal(t, []interface{}{float64(3307)}, managerPayload.Config["slave_ports"])
+	sshPasswords, ok := managerPayload.Config["ssh_passwords"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "sshpass", sshPasswords[agentHost])
+
 	instances, err := instRepo.ListByClusterID(ctx, "mha-three-node")
 	require.NoError(t, err)
 	require.Len(t, instances, 2)
@@ -473,18 +510,19 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 		require.NoError(t, err)
 		conn, err := instRepo.GetConnection(ctx, inst.ID)
 		require.NoError(t, err)
-		require.NotEqual(t, agentHost, conn.Host)
 		require.Equal(t, "root", conn.Username)
 		plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
 		require.NoError(t, err)
 		require.Equal(t, "Root#2026", plain)
 		switch conn.Host {
-		case "10.1.81.21":
+		case agentHost:
+			if conn.Port == 3307 {
+				replicaID = inst.ID
+				require.Equal(t, "replica", managed.Status.Role)
+				continue
+			}
 			masterID = inst.ID
 			require.Equal(t, "master", managed.Status.Role)
-		case "10.1.81.22":
-			replicaID = inst.ID
-			require.Equal(t, "replica", managed.Status.Role)
 		default:
 			t.Fatalf("unexpected managed host %s", conn.Host)
 		}

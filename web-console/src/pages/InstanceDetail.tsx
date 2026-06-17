@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Button,
   Card,
@@ -9,7 +9,6 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
-  Progress,
   Select,
   Space,
   Spin,
@@ -25,7 +24,6 @@ import {
   KeyOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -71,17 +69,10 @@ const InstanceDetail: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [deploying, setDeploying] = useState(false)
-  const [deployOpen, setDeployOpen] = useState(false)
-  const [deployProgress, setDeployProgress] = useState(0)
-  const [deployStage, setDeployStage] = useState('已提交')
-  const [deployStatus, setDeployStatus] = useState<'running' | 'success' | 'failed' | null>(null)
-  const [deployMessage, setDeployMessage] = useState('')
   const [adminLoading, setAdminLoading] = useState(false)
   const [users, setUsers] = useState<AdminRow[]>([])
   const [variables, setVariables] = useState<AdminRow[]>([])
   const [serviceOutput, setServiceOutput] = useState('')
-  const pollRef = useRef<number | null>(null)
   const [form] = Form.useForm()
   const [userForm] = Form.useForm()
   const [grantForm] = Form.useForm()
@@ -97,8 +88,6 @@ const InstanceDetail: React.FC = () => {
   useEffect(() => {
     fetchInstance()
   }, [id])
-
-  useEffect(() => () => stopDeployPolling(), [])
 
   const fetchInstance = async () => {
     if (!id) return
@@ -290,62 +279,6 @@ const InstanceDetail: React.FC = () => {
     }
   }
 
-  const stopDeployPolling = () => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }
-
-  const startDeployPolling = () => {
-    stopDeployPolling()
-    let attempts = 0
-    pollRef.current = window.setInterval(async () => {
-      attempts += 1
-      try {
-        const res: any = await instanceApi.get(id!)
-        const status = res?.data?.status
-        if (!status) return
-        if (typeof status.deploy_progress === 'number') setDeployProgress(status.deploy_progress)
-        if (status.stage) setDeployStage(status.stage)
-        if (status.deploy_status) setDeployStatus(status.deploy_status)
-        if (status.deploy_message) setDeployMessage(status.deploy_message)
-        if (status.deploy_status === 'success') {
-          setDeployStatus('success')
-          setDeployProgress(100)
-          setDeployStage('部署完成')
-          stopDeployPolling()
-          fetchInstance()
-        } else if (status.deploy_status === 'failed' || attempts > 600) {
-          setDeployStatus(status.deploy_status === 'failed' ? 'failed' : null)
-          stopDeployPolling()
-        }
-      } catch {
-        // keep polling transient failures
-      }
-    }, 2000)
-  }
-
-  const handleDeploy = async () => {
-    if (!id) return
-    setDeploying(true)
-    setDeployOpen(true)
-    setDeployProgress(0)
-    setDeployStage('已提交，等待后端执行')
-    setDeployStatus('running')
-    setDeployMessage('')
-    try {
-      await instanceApi.deploy(id)
-      message.success('部署任务已提交')
-      startDeployPolling()
-    } catch {
-      setDeployStatus('failed')
-      setDeployMessage('提交失败')
-    } finally {
-      setDeploying(false)
-    }
-  }
-
   const checkPasswordComplexity = (pw: string) => {
     const errors: string[] = []
     if (pw.length < 8) errors.push('至少8位')
@@ -373,30 +306,27 @@ const InstanceDetail: React.FC = () => {
   const handleForceReset = async () => {
     if (!id) return
     const values = await forceResetForm.validateFields()
-    const useDefaultPassword = values.use_default_password === true
-    if (!useDefaultPassword) {
-      if (values.new_password !== values.confirm_password) {
-        message.error('两次输入的密码不一致')
-        return
-      }
-      const errors = checkPasswordComplexity(values.new_password)
-      if (errors.length > 0) {
-        message.error(`密码复杂度不足: ${errors.join(', ')}`)
-        return
-      }
+    if (values.new_password !== values.confirm_password) {
+      message.error('两次输入的密码不一致')
+      return
+    }
+    const errors = checkPasswordComplexity(values.new_password)
+    if (errors.length > 0) {
+      message.error(`密码复杂度不足: ${errors.join(', ')}`)
+      return
     }
     setForceResetting(true)
     try {
       await instanceApi.forceResetPassword(id, {
         username: values.username || 'root',
         user_host: values.user_host || '%',
-        new_password: useDefaultPassword ? undefined : values.new_password,
+        new_password: values.new_password,
       })
-      message.success('密码强制重置成功，平台连接密码已同步更新')
+      message.success('密码强制修改成功，平台连接密码已同步更新')
       setForceResetOpen(false)
       forceResetForm.resetFields()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '强制重置密码失败')
+      message.error(err?.response?.data?.message || err?.message || '强制修改密码失败')
     } finally {
       setForceResetting(false)
     }
@@ -442,11 +372,8 @@ const InstanceDetail: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchInstance}>
             刷新
           </Button>
-          <Button icon={<ThunderboltOutlined />} loading={deploying} onClick={handleDeploy}>
-            部署
-          </Button>
           <Button icon={<KeyOutlined />} onClick={() => setForceResetOpen(true)}>
-            强制重置密码
+            强制修改密码
           </Button>
           <Button icon={<EditOutlined />} onClick={openEdit}>编辑</Button>
           <Popconfirm title="确定删除此实例？" onConfirm={handleDelete} okText="确定" cancelText="取消">
@@ -663,35 +590,20 @@ const InstanceDetail: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`部署实例：${instance.name}`}
-        open={deployOpen}
-        onCancel={() => { stopDeployPolling(); setDeployOpen(false) }}
-        footer={[<Button key="close" onClick={() => { stopDeployPolling(); setDeployOpen(false) }}>关闭</Button>]}
-        width={600}
-      >
-        <div style={{ marginBottom: 8 }}>当前阶段：<b>{deployStage}</b></div>
-        <Progress percent={deployProgress} status={deployStatus === 'failed' ? 'exception' : deployStatus === 'success' ? 'success' : 'active'} />
-        {deployMessage && <div style={{ marginTop: 16, color: '#595959' }}>{deployMessage}</div>}
-      </Modal>
-
-      <Modal
-        title="强制重置 MySQL root 密码"
+        title="强制修改 MySQL root 密码"
         open={forceResetOpen}
         onCancel={() => { setForceResetOpen(false); forceResetForm.resetFields() }}
         onOk={handleForceReset}
         confirmLoading={forceResetting}
-        okText="确认重置"
+        okText="确认修改"
         cancelText="取消"
         okButtonProps={{ danger: true }}
         width={500}
       >
         <div style={{ marginBottom: 16, color: '#faad14' }}>
-          注意：此操作将通过 SSH 跳过权限验证强制重置 MySQL root 密码。重置后平台连接密码将同步更新。
+          注意：此操作会在实例服务运行状态下通过当前可用连接修改 MySQL 密码，不会停止实例服务。修改成功后平台连接密码将同步更新。
         </div>
-        <Form form={forceResetForm} layout="vertical" autoComplete="off" initialValues={{ username: 'root', user_host: '%', use_default_password: true }}>
-          <Form.Item name="use_default_password" valuePropName="checked">
-            <Checkbox>使用部署默认 MySQL 密码</Checkbox>
-          </Form.Item>
+        <Form form={forceResetForm} layout="vertical" autoComplete="off" initialValues={{ username: 'root', user_host: '%' }}>
           <Form.Item name="username" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
             <Input placeholder="root" />
           </Form.Item>
@@ -701,11 +613,10 @@ const InstanceDetail: React.FC = () => {
           <Form.Item
             name="new_password"
             label="新密码"
-            dependencies={['use_default_password']}
             rules={[
-              ({ getFieldValue }) => ({
+              () => ({
                 validator(_, value) {
-                  if (getFieldValue('use_default_password') || value) return Promise.resolve()
+                  if (value) return Promise.resolve()
                   return Promise.reject(new Error('请输入新密码'))
                 },
               }),
@@ -730,11 +641,10 @@ const InstanceDetail: React.FC = () => {
           <Form.Item
             name="confirm_password"
             label="确认密码"
-            dependencies={['new_password', 'use_default_password']}
+            dependencies={['new_password']}
             rules={[
               ({ getFieldValue }) => ({
                 validator(_, value) {
-                  if (getFieldValue('use_default_password')) return Promise.resolve()
                   if (!value) return Promise.reject(new Error('请再次输入新密码'))
                   if (!value || getFieldValue('new_password') === value) return Promise.resolve()
                   return Promise.reject(new Error('两次输入的密码不一致'))

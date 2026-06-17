@@ -11,12 +11,12 @@ type Instance struct {
 	HostID    *string   `json:"host_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	
-	Connection  InstanceConnection  `json:"connection"`
-	Version     InstanceVersion     `json:"version"`
-	Config      InstanceConfig      `json:"config"`
-	Status      InstanceStatus      `json:"status"`
-	Topology    InstanceTopology    `json:"topology"`
+
+	Connection InstanceConnection `json:"connection"`
+	Version    InstanceVersion    `json:"version"`
+	Config     InstanceConfig     `json:"config"`
+	Status     InstanceStatus     `json:"status"`
+	Topology   InstanceTopology   `json:"topology"`
 }
 
 type InstanceConnection struct {
@@ -29,33 +29,33 @@ type InstanceConnection struct {
 	SSLEnabled        bool   `json:"ssl_enabled"`
 	// Install / upgrade paths. These let the platform install or upgrade to
 	// ANY version from the catalog (not hard-coded to 5.7/8.0).
-	Basedir    string `json:"basedir"    `
-	Datadir    string `json:"datadir"    `
-	OSUser     string `json:"os_user"    `
+	Basedir    string `json:"basedir"`
+	Datadir    string `json:"datadir"`
+	OSUser     string `json:"os_user"`
 	PackageURL string `json:"package_url"`
-	VersionID  string `json:"version_id" ` // FK to version catalog id e.g. "mysql-8.0.36"
+	VersionID  string `json:"version_id"` // FK to version catalog id e.g. "mysql-8.0.36"
 }
 
 type InstanceVersion struct {
-	ID            string    `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID    string    `json:"instance_id"`
-	Flavor        string    `json:"flavor"`
-	Version       string    `json:"version"`
-	FullVersion   string    `json:"full_version"`
-	ReleaseDate   time.Time `json:"release_date"`
-	EOLDate       time.Time `json:"eol_date"`
-	IsLTS         bool      `json:"is_lts"`
-	Features      string    `json:"features"`
-	Engines       string    `json:"engines"`
+	ID          string    `gorm:"primaryKey;type:varchar(64)"`
+	InstanceID  string    `json:"instance_id"`
+	Flavor      string    `json:"flavor"`
+	Version     string    `json:"version"`
+	FullVersion string    `json:"full_version"`
+	ReleaseDate time.Time `json:"release_date"`
+	EOLDate     time.Time `json:"eol_date"`
+	IsLTS       bool      `json:"is_lts"`
+	Features    string    `json:"features"`
+	Engines     string    `json:"engines"`
 }
 
 type InstanceConfig struct {
-	ID                string `gorm:"primaryKey;type:varchar(64)"`
-	InstanceID        string `json:"instance_id"`
+	ID                  string `gorm:"primaryKey;type:varchar(64)"`
+	InstanceID          string `json:"instance_id"`
 	ParameterTemplateID string `json:"parameter_template_id"`
-	Parameters        string `json:"parameters"`
-	Charset           string `json:"charset"`
-	Collation         string `json:"collation"`
+	Parameters          string `json:"parameters"`
+	Charset             string `json:"charset"`
+	Collation           string `json:"collation"`
 }
 
 type InstanceStatus struct {

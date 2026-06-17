@@ -95,6 +95,18 @@ func TestParseGTIDFromGzipDump(t *testing.T) {
 	assert.Equal(t, "uuid:1-100", gtid)
 }
 
+func TestParseGTIDFromDumpReturnsMissingGTIDError(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "full.sql")
+	require.NoError(t, os.WriteFile(path, []byte("-- dump without GTID_PURGED\nCREATE DATABASE db1;\n"), 0o644))
+
+	gtid, err := parseGTIDFromDump(path)
+
+	require.Error(t, err)
+	assert.Empty(t, gtid)
+	assert.Contains(t, err.Error(), "GTID_PURGED not found")
+}
+
 func TestExecuteColdDatadirBackupCreatesArchive(t *testing.T) {
 	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")
 	root := t.TempDir()
