@@ -1,4 +1,4 @@
-# MySQL Ops Platform
+# MySQL Ops Platform 
 
 > **A commercial-grade DevOps platform for database architecture-level lifecycle management**
 > 

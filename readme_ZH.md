@@ -1,6 +1,6 @@
-# MySQL Ops Platform / MySQL 操作平台
+# MySQL Ops Platform / MySQL 操作平台 
 
-> **商业化数据库架构级生命周期管理平台 / A commercial-grade DevOps platform**
+> **商业化数据库架构级生命周期管理平台
 > 
 > 管理系统和 MySQL 实例，通过 Agent 执行操作，支持 HA/MHA/MGR/pxc 等集群架构。/ Manages MySQL hosts and instances through agents with HA/MHA/MGR/pxc cluster support.
 > 
