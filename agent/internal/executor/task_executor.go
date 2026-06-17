@@ -36,6 +36,25 @@ func NewTaskExecutor() *TaskExecutor {
 	}
 }
 
+func resolveBinaryPath(name string) string {
+	for _, candidate := range []string{
+		name,
+		filepath.Join("/opt/dbops-pxc/usr/sbin", name),
+		filepath.Join("/opt/dbops-pxc/usr/bin", name),
+		filepath.Join("/usr/sbin", name),
+		filepath.Join("/usr/bin", name),
+		filepath.Join("/usr/local/mysql/bin", name),
+	} {
+		if p, err := exec.LookPath(candidate); err == nil {
+			return p
+		}
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return name
+}
+
 func (e *TaskExecutor) SetRelayConfig(relayHost string, relayPort int, relayToken string) {
 	if relayHost != "" {
 		e.relayCli = newRelayClient(relayHost, relayPort, relayToken)
@@ -617,7 +636,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 	} else {
 		// Legacy: rely on PATH
-		mysqld = "mysqld"
+		mysqld = resolveBinaryPath("mysqld")
 		if basedir != "" {
 			mysqld = filepath.Join(basedir, "bin", "mysqld")
 		}
@@ -728,7 +747,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// Skip the original password setup - it seems to return success but doesn't actually set the password
 	// We'll handle it in the health check retry logic below
 
-	healthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "ping")
+	healthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "ping")
 	if mysqlPass != "" {
 		healthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 	}
@@ -748,14 +767,14 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser),
 		)
-		retryCmd := exec.CommandContext(ctx, "mysql", "-S", socketPath, "-u", mysqlUser, "-e", retrySQL)
+		retryCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", mysqlUser, "-e", retrySQL)
 		retryOut, retryErr := retryCmd.CombinedOutput()
 		if retryErr != nil {
 			fmt.Fprintf(os.Stderr, "Password setup via socket failed: %v, output: %s\n", retryErr, string(retryOut))
 		}
 
 		// Try health check again after password setup
-		retryHealthCmd := exec.CommandContext(ctx, "mysqladmin", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "ping")
+		retryHealthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "ping")
 		retryHealthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
@@ -837,7 +856,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		SET GLOBAL super_read_only=0;
 		SET GLOBAL read_only=0;
 	`
-	disableCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", disableReadOnlySQL)...)
+	disableCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", disableReadOnlySQL)...)
 	disableCmd.Env = env
 	if out, err := disableCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("disable read-only failed: %v, output: %s", err, string(out))
@@ -853,7 +872,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='repl' FOR CHANNEL 'group_replication_recovery';
 	`
 
-	replCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", replicationSQL)...)
+	replCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", replicationSQL)...)
 	replCmd.Env = env
 	if out, err := replCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create replication user failed: %v, output: %s", err, string(out))
@@ -867,7 +886,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 			START GROUP_REPLICATION;
 			SET GLOBAL group_replication_bootstrap_group=OFF;
 		`
-		bootCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", bootstrapSQL)...)
+		bootCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", bootstrapSQL)...)
 		bootCmd.Env = env
 		if out, err := bootCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("bootstrap MGR failed: %v, output: %s", err, string(out))
@@ -875,7 +894,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	} else {
 		// 副本节点：直接start
 		startSQL := "START GROUP_REPLICATION;"
-		startCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-e", startSQL)...)
+		startCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", startSQL)...)
 		startCmd.Env = env
 		if out, err := startCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("start MGR failed: %v, output: %s", err, string(out))
@@ -887,7 +906,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 
 	// 4. 验证MGR状态
 	checkSQL := "SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;"
-	checkCmd := exec.CommandContext(ctx, "mysql", append(baseCmd, "-N", "-e", checkSQL)...)
+	checkCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-N", "-e", checkSQL)...)
 	checkCmd.Env = env
 	out, err := checkCmd.CombinedOutput()
 	if err != nil {

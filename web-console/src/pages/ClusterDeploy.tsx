@@ -733,7 +733,7 @@ const ClusterDeploy: React.FC = () => {
         </Row>
       )}
       <Row gutter={16}>
-        <Col span={24}>
+        <Col span={12}>
           <Form.Item name="mysql_config_text" label="MySQL配置">
         <Input.TextArea rows={3} placeholder={'max_connections=512\ninnodb_buffer_pool_size=2G'} />
           </Form.Item>

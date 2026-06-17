@@ -110,3 +110,22 @@ backups/
 data/
 .omo/
 .cache/
+
+# ---------- 敏感信息 ----------
+login.json
+deploy_mgr.json
+agent/test.json
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+credentials.json
+secrets.yaml
+secrets.yml
+
+# ---------- 文档与报告 ----------
+# 文档目录（临时测试报告和指南）
+docs/
+# 临时文件
+*.tmp
