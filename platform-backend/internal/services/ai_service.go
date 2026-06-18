@@ -30,6 +30,10 @@ func NewAIService(provider aiprovider.Provider, diagnosisRepo *repositories.Diag
 
 // Diagnosis runs AI diagnosis for an instance.
 func (s *AIService) Diagnosis(ctx context.Context, instanceID string) (*models.DiagnosisRecord, error) {
+	if s.provider == nil {
+		return nil, fmt.Errorf("AI provider is not configured")
+	}
+
 	// Gather instance data
 	metrics, _ := s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
 		InstanceID: instanceID,
@@ -92,6 +96,10 @@ func (s *AIService) Diagnosis(ctx context.Context, instanceID string) (*models.D
 
 // SQLAdvice analyzes SQL with AI.
 func (s *AIService) SQLAdvice(ctx context.Context, sqlText, explainPlan, schema string) (*models.SQLAdvice, error) {
+	if s.provider == nil {
+		return nil, fmt.Errorf("AI provider is not configured")
+	}
+
 	prompt := strings.ReplaceAll(aiprovider.PromptTemplates.SQLAdvisor, "{{SQL}}", sqlText)
 	prompt = strings.ReplaceAll(prompt, "{{EXPLAIN}}", explainPlan)
 	prompt = strings.ReplaceAll(prompt, "{{SCHEMA}}", schema)

@@ -24,13 +24,25 @@ func NewUpgradeController(service *services.UpgradeService, taskRepo *repositori
 }
 
 func (c *UpgradeController) PlanUpgradePath(ctx *gin.Context) {
-	var req services.PlanUpgradePathRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	var controllerReq struct {
+		InstanceID    string `json:"instance_id" binding:"required"`
+		TargetVersion string `json:"target_version" binding:"required"`
+		TargetFlavor  string `json:"target_flavor"`
+		Strategy      string `json:"strategy" binding:"required"`
+		SourceVersion string `json:"source_version"`
+		FromVersion   string `json:"from_version"`
+	}
+	if err := ctx.ShouldBindJSON(&controllerReq); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
 
-	result, err := c.service.PlanUpgradePath(ctx.Request.Context(), req)
+	result, err := c.service.PlanUpgradePath(ctx.Request.Context(), services.PlanUpgradePathRequest{
+		InstanceID:    controllerReq.InstanceID,
+		TargetVersion: controllerReq.TargetVersion,
+		TargetFlavor:  controllerReq.TargetFlavor,
+		Strategy:      controllerReq.Strategy,
+	})
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to plan upgrade path", err)
 		return

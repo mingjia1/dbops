@@ -1370,7 +1370,8 @@ func (s *InstanceService) GetInstanceCredentials(ctx context.Context, id string)
 	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password: %w", err)
+		log.Printf("WARN: failed to decrypt password for instance %s, returning empty password: %v", id, err)
+		password = ""
 	}
 	if s.auditSvc != nil {
 		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
