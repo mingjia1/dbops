@@ -470,6 +470,42 @@ func TestResolveInstanceConfigPathUsesPXCManagedConfig(t *testing.T) {
 	assert.Equal(t, "/custom/my.cnf", resolveInstanceConfigPath(conn, "/custom/my.cnf"))
 }
 
+func TestResolveInstanceConfigPathDetectsMHA(t *testing.T) {
+	conn := &models.InstanceConnection{
+		Port:    3307,
+		Datadir: "/data/mysql/mha-3307",
+	}
+
+	assert.Equal(t, "/etc/mha/app1.cnf", resolveInstanceConfigPath(conn, ""))
+	assert.Equal(t, "/etc/mha/app1.cnf", resolveInstanceConfigPath(conn, "/etc/my.cnf"))
+	assert.Equal(t, "/custom/my.cnf", resolveInstanceConfigPath(conn, "/custom/my.cnf"))
+}
+
+func TestResolveInstanceConfigPathDetectsMGR(t *testing.T) {
+	conn := &models.InstanceConnection{
+		Port:    3306,
+		Datadir: "/data/mysql/mgr-3306",
+	}
+
+	assert.Equal(t, "/etc/my.cnf", resolveInstanceConfigPath(conn, ""))
+	assert.Equal(t, "/etc/my.cnf", resolveInstanceConfigPath(conn, "/etc/my.cnf"))
+	assert.Equal(t, "/custom/my.cnf", resolveInstanceConfigPath(conn, "/custom/my.cnf"))
+}
+
+func TestResolveInstanceConfigPathReturnsDefaultForStandardInstance(t *testing.T) {
+	conn := &models.InstanceConnection{
+		Port:    3306,
+		Datadir: "/data/mysql/3306",
+	}
+
+	assert.Equal(t, "/etc/my.cnf", resolveInstanceConfigPath(conn, ""))
+	assert.Equal(t, "/etc/my.cnf", resolveInstanceConfigPath(conn, "/etc/my.cnf"))
+}
+
+func TestResolveInstanceConfigPathReturnsDefaultWhenConnIsNil(t *testing.T) {
+	assert.Equal(t, "/etc/my.cnf", resolveInstanceConfigPath(nil, ""))
+}
+
 func TestBatchUpdatePasswordWithoutAgentClientReturnsFailedRow(t *testing.T) {
 	service, _ := newInstanceAdminServiceWithoutAgent(t)
 

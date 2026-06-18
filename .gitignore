@@ -163,3 +163,4 @@ platform-backend/go.mod
 platform-backend/go.sum
 bin/
 *.json
+agent/test*.py

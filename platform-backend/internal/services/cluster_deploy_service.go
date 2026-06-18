@@ -339,20 +339,20 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 				}
 
-			if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
-				errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
-				s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
-				// Mark whole deployment as failed for critical steps
-				// Secondary/join failures are marked as partial (some nodes may still be OK)
-				isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
-				if isCritical {
-					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-				} else {
-					s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+					errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
+					s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
+					// Mark whole deployment as failed for critical steps
+					// Secondary/join failures are marked as partial (some nodes may still be OK)
+					isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
+					if isCritical {
+						s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+					} else {
+						s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+					}
+					finish := time.Now()
+					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 				}
-				finish := time.Now()
-				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
-			}
 
 				nodeReadyMsg := fmt.Sprintf("Node %s (%s) deployed successfully", targetNode.Host, targetNode.Role)
 				s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
@@ -1452,4 +1452,204 @@ func defaultInt(v, fallback int) int {
 		return v
 	}
 	return fallback
+}
+
+// ClusterPasswordChangeRequest 集群级密码修改请求。
+// 适配所有4种架构：single / mha / mgr / pxc。
+// CurrentPassword 可选：如果提供则优先使用，否则从各节点存储的密码自动推测。
+type ClusterPasswordChangeRequest struct {
+	NewPassword     string `json:"new_password" binding:"required"`
+	CurrentPassword string `json:"current_password"`
+	Username        string `json:"username"`
+	UserHost        string `json:"user_host"`
+}
+
+type ClusterPasswordChangeResult struct {
+	ClusterID    string                      `json:"cluster_id"`
+	ClusterType  string                      `json:"cluster_type"`
+	TotalNodes   int                         `json:"total_nodes"`
+	SuccessNodes int                         `json:"success_nodes"`
+	FailedNodes  int                         `json:"failed_nodes"`
+	NodeResults  []ClusterPasswordNodeResult `json:"node_results,omitempty"`
+}
+
+type ClusterPasswordNodeResult struct {
+	InstanceID string `json:"instance_id"`
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Role       string `json:"role"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+}
+
+// ChangeClusterPassword 修改集群所有节点的 MySQL 密码。
+// 根据集群架构类型（single/mha/mgr/pxc）自动决定需要修改的节点。
+func (s *ClusterDeployService) ChangeClusterPassword(ctx context.Context, clusterID string, req ClusterPasswordChangeRequest) (*ClusterPasswordChangeResult, error) {
+	dep, err := s.repo.GetByID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("cluster %s not found: %w", clusterID, err)
+	}
+
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = "root"
+	}
+	userHost := strings.TrimSpace(req.UserHost)
+	if userHost == "" {
+		userHost = "%"
+	}
+
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("list instances for cluster %s failed: %w", clusterID, err)
+	}
+	if len(instances) == 0 {
+		return nil, fmt.Errorf("cluster %s has no managed instances", clusterID)
+	}
+
+	result := &ClusterPasswordChangeResult{
+		ClusterID:   clusterID,
+		ClusterType: dep.ClusterType,
+		TotalNodes:  len(instances),
+		NodeResults: make([]ClusterPasswordNodeResult, 0, len(instances)),
+	}
+
+	for _, inst := range instances {
+		nodeResult := ClusterPasswordNodeResult{
+			InstanceID: inst.ID,
+			Name:       inst.Name,
+			Role:       inst.Status.Role,
+			Status:     "pending",
+		}
+
+		conn, connErr := s.instRepo.GetConnection(ctx, inst.ID)
+		if connErr != nil {
+			nodeResult.Status = "failed"
+			nodeResult.Message = fmt.Sprintf("connection not found: %v", connErr)
+			result.NodeResults = append(result.NodeResults, nodeResult)
+			result.FailedNodes++
+			continue
+		}
+
+		nodeResult.Host = conn.Host
+		nodeResult.Port = conn.Port
+
+		agentHost, agentPort, agentErr := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
+		if agentErr != nil {
+			nodeResult.Status = "failed"
+			nodeResult.Message = fmt.Sprintf("agent host resolution failed: %v", agentErr)
+			result.NodeResults = append(result.NodeResults, nodeResult)
+			result.FailedNodes++
+			continue
+		}
+
+		candidates := s.passwordCandidates(ctx, conn, req.CurrentPassword)
+		var lastAgentResult *AgentTaskResult
+		success := false
+
+		for _, candidate := range candidates {
+			targetHost := localMySQLHostForAgent(conn.Host, agentHost)
+			agentResult, agentCallErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+				"task_id":     "cluster-change-password-" + uuid.New().String(),
+				"instance_id": inst.ID,
+				"config": map[string]interface{}{
+					"action":      "change_password",
+					"target_host": targetHost,
+					"target_port": conn.Port,
+					"target_user": conn.Username,
+					"target_pass": candidate,
+					"username":    username,
+					"user_host":   userHost,
+					"password":    req.NewPassword,
+				},
+			})
+			lastAgentResult = agentResult
+			if agentCallErr == nil && agentResult != nil && isSuccessfulTaskStatus(agentResult.Status) {
+				success = true
+				break
+			}
+		}
+
+		if success && username == conn.Username {
+			enc, encErr := utils.Encrypt(req.NewPassword, s.encKey)
+			if encErr == nil {
+				_ = s.instRepo.UpdateConnectionPassword(ctx, inst.ID, enc)
+			}
+		}
+
+		if success {
+			nodeResult.Status = "completed"
+			nodeResult.Message = "password changed successfully"
+			result.SuccessNodes++
+		} else {
+			nodeResult.Status = "failed"
+			if lastAgentResult != nil {
+				nodeResult.Message = lastAgentResult.Message
+			} else {
+				nodeResult.Message = "failed to connect with any known password"
+			}
+			result.FailedNodes++
+		}
+
+		result.NodeResults = append(result.NodeResults, nodeResult)
+	}
+
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Operation:    "change_cluster_password",
+			Action:       "change_password",
+			ResourceType: "cluster_deployment",
+			ResourceID:   clusterID,
+			Details:      fmt.Sprintf("cluster_type=%s total=%d success=%d failed=%d", dep.ClusterType, result.TotalNodes, result.SuccessNodes, result.FailedNodes),
+			Result:       clusterPasswordAuditResult(result),
+		})
+	}
+
+	return result, nil
+}
+
+func clusterPasswordAuditResult(r *ClusterPasswordChangeResult) string {
+	if r.SuccessNodes == r.TotalNodes {
+		return "success"
+	}
+	if r.SuccessNodes > 0 {
+		return "partial_success"
+	}
+	return "failed"
+}
+
+func (s *ClusterDeployService) passwordCandidates(ctx context.Context, conn *models.InstanceConnection, explicitCurrentPassword string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 8)
+
+	add := func(v string) {
+		if !seen[v] && v != "" {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+
+	// 0. Explicit current_password from request (highest priority)
+	add(explicitCurrentPassword)
+
+	// 1. Stored encrypted password for THIS node (decrypted per node)
+	if stored, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey); err == nil && stored != "" {
+		add(stored)
+	}
+
+	// 2. Known passwords for common MHA/PXC deployments
+	add("hcfc!2017")
+	add("Root#2026")
+	add("Hcfc@DboOps#2024_80")
+	add("Hcfc@DboOps#2024_57")
+
+	// 3. Empty password as last resort
+	if !seen[""] {
+		seen[""] = true
+		out = append(out, "")
+	}
+
+	return out
 }

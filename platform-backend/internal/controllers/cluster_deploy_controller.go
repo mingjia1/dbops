@@ -161,6 +161,28 @@ func (c *ClusterDeployController) List(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, response)
 }
 
+func (c *ClusterDeployController) ChangeClusterPassword(ctx *gin.Context) {
+	clusterID := ctx.Param("id")
+
+	var req services.ClusterPasswordChangeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	result, err := c.service.ChangeClusterPassword(ctx.Request.Context(), clusterID, req)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			utils.NotFoundResponse(ctx, "Deployment not found")
+			return
+		}
+		utils.InternalServerErrorResponse(ctx, "Failed to change cluster password", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
 func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
 	deploymentID := ctx.Param("id")
 

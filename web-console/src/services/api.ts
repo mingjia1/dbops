@@ -821,6 +821,8 @@ export const clusterDeployApi = {
   deployPXC: (data: any) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (id: string) => api.get(`/deployments/${id}`),
   destroy: (id: string) => api.delete(`/deployments/${id}`),
+  changePassword: (clusterId: string, data: { new_password: string; username?: string; user_host?: string }) =>
+    api.post(`/deployments/${clusterId}/change-password`, data),
 }
 
 export const haApi = {

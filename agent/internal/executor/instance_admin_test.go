@@ -134,6 +134,67 @@ func TestExecuteInstanceAdminReadConfigReportsDefaultPathCandidates(t *testing.T
 	assert.Contains(t, normalizedMessage, filepath.ToSlash(filepath.Join(datadir, "my.cnf")))
 }
 
+func TestConfigPathCandidatesIncludesMHAPath(t *testing.T) {
+	candidates := configPathCandidates(map[string]interface{}{
+		"target_port": 3307,
+		"datadir":     "/data/mysql/mha-3307",
+	})
+
+	foundMHA := false
+	for _, c := range candidates {
+		if filepath.ToSlash(c) == "/etc/mha/app1.cnf" {
+			foundMHA = true
+			break
+		}
+	}
+	require.True(t, foundMHA, "configPathCandidates should include /etc/mha/app1.cnf, got: %v", candidates)
+
+	foundDefault := false
+	for _, c := range candidates {
+		if filepath.ToSlash(c) == "/etc/my.cnf" {
+			foundDefault = true
+			break
+		}
+	}
+	require.True(t, foundDefault, "configPathCandidates should include /etc/my.cnf, got: %v", candidates)
+
+	foundPXC := false
+	for _, c := range candidates {
+		if filepath.ToSlash(c) == "/etc/dbops-pxc/dbops-pxc-3307.cnf" {
+			foundPXC = true
+			break
+		}
+	}
+	require.True(t, foundPXC, "configPathCandidates should include PXC path when port is given, got: %v", candidates)
+}
+
+func TestConfigPathCandidatesDeduplicatesPaths(t *testing.T) {
+	candidates := configPathCandidates(map[string]interface{}{})
+
+	seen := make(map[string]bool)
+	for _, c := range candidates {
+		if seen[c] {
+			t.Errorf("duplicate path found: %s", c)
+		}
+		seen[c] = true
+	}
+}
+
+func TestConfigPathCandidatesWithMGRPortHasMHAFallback(t *testing.T) {
+	candidates := configPathCandidates(map[string]interface{}{
+		"target_port": 3306,
+	})
+
+	foundMHA := false
+	for _, c := range candidates {
+		if filepath.ToSlash(c) == "/etc/mha/app1.cnf" {
+			foundMHA = true
+			break
+		}
+	}
+	require.True(t, foundMHA, "configPathCandidates should always include /etc/mha/app1.cnf as a candidate, got: %v", candidates)
+}
+
 func TestProcessMatchesDatadirAllowsProcessCWD(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("process cwd matching uses /proc")

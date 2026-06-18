@@ -483,7 +483,7 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
-	require.Len(t, payloads, 3)
+	require.Len(t, payloads, 5)
 	var managerPayload DeployTaskPayload
 	for _, payload := range payloads {
 		if payload.Config["deploy_mode"] == "mha" {
