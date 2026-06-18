@@ -39,12 +39,29 @@ func (c *VersionController) GetOne(ctx *gin.Context) {
 func (c *VersionController) ValidatePath(ctx *gin.Context) {
 	var req struct {
 		SourceFlavor  string `json:"source_flavor"`
-		SourceVersion string `json:"source_version" binding:"required"`
+		SourceVersion string `json:"source_version"`
 		TargetFlavor  string `json:"target_flavor"`
-		TargetVersion string `json:"target_version" binding:"required"`
+		TargetVersion string `json:"target_version"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "invalid request")
+		return
+	}
+	// Accept from_version/to_version as aliases
+	if req.SourceVersion == "" {
+		var alt struct {
+			SourceVersion string `json:"from_version"`
+			TargetVersion string `json:"to_version"`
+		}
+		if err := ctx.ShouldBindJSON(&alt); err == nil {
+			req.SourceVersion = alt.SourceVersion
+			if req.TargetVersion == "" {
+				req.TargetVersion = alt.TargetVersion
+			}
+		}
+	}
+	if req.SourceVersion == "" || req.TargetVersion == "" {
+		utils.BadRequestResponse(ctx, "source_version and target_version are required")
 		return
 	}
 	if req.SourceFlavor == "" {

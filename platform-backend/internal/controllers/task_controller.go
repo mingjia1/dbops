@@ -40,6 +40,10 @@ func (c *TaskController) GetByID(ctx *gin.Context) {
 // ListByInstance 给前端展示某实例的所有任务历史.
 func (c *TaskController) ListByInstance(ctx *gin.Context) {
 	instanceID := ctx.Query("instance_id")
+	if instanceID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "instance_id query parameter is required"})
+		return
+	}
 	limit := 50
 	if v := ctx.Query("limit"); v != "" {
 		// 简单解析, 失败 fallback 50

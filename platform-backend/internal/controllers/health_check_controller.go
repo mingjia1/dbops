@@ -24,7 +24,14 @@ func NewHealthCheckController(service *services.HealthCheckService, instanceServ
 func (c *HealthCheckController) ExecuteHealthCheck(ctx *gin.Context) {
 	var req services.HealthCheckRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		// GET requests don't have bodies; fall back to query params
+		req.InstanceID = ctx.Query("instance_id")
+	}
+	if req.InstanceID == "" {
+		req.InstanceID = ctx.Query("instance_id")
+	}
+	if req.InstanceID == "" {
+		utils.BadRequestResponse(ctx, "instance_id is required")
 		return
 	}
 

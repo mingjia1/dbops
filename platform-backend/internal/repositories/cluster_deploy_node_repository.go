@@ -159,6 +159,17 @@ func (r *ClusterDeployNodeRepository) DeleteByDeploymentID(ctx context.Context, 
 	return err
 }
 
+func (r *ClusterDeployNodeRepository) UpdateStatusByDeploymentID(ctx context.Context, deploymentID, status, message string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	now := time.Now()
+	_, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE cluster_deploy_nodes SET status = ?, message = ?, finished_at = ? WHERE deployment_id = ? AND status NOT IN ('completed', 'success', 'failed', 'error', 'cancelled')`,
+		status, message, now, deploymentID)
+	return err
+}
+
 func isFinalNodeStatus(status string) bool {
 	switch status {
 	case "completed", "success", "failed", "error", "cancelled":

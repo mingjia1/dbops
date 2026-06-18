@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log"
 	"strings"
 	"time"
 
@@ -222,6 +223,8 @@ func (c *InstanceController) UpdateStatus(ctx *gin.Context) {
 
 func (c *InstanceController) GetCredentials(ctx *gin.Context) {
 	id := ctx.Param("id")
+	adminUser := ctx.GetString("user_id")
+	log.Printf("AUDIT: admin=%s accessed credentials for instance=%s", adminUser, id)
 
 	creds, err := c.service.GetInstanceCredentials(ctx.Request.Context(), id)
 	if err != nil {

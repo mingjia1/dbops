@@ -371,6 +371,24 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	if result == nil {
 		return nil, fmt.Errorf("version detect returned no result")
 	}
+	if isFailedTaskStatus(result.Status) {
+		log.Printf("WARN: version detect failed for instance %s: %s", id, result.Message)
+		versionRow := &models.InstanceVersion{
+			InstanceID:  id,
+			Flavor:      "unknown",
+			Version:     "unknown",
+			FullVersion: "unknown",
+			IsLTS:       false,
+			ReleaseDate: time.Now(),
+			EOLDate:     time.Now().AddDate(3, 0, 0),
+			Features:    result.Message,
+			Engines:     "",
+		}
+		if err := s.repo.CreateVersion(ctx, versionRow); err != nil {
+			return nil, fmt.Errorf("failed to create version: %w", err)
+		}
+		return versionRow, nil
+	}
 	// agent 返 message 形如 "8.0.36\tuuid\tMySQL Community Server"
 	// 解析成 3 段, 失败则把整段当 full_version.
 	parts := strings.SplitN(strings.TrimSpace(result.Message), "\t", 3)

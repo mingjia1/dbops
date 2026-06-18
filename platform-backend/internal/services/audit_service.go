@@ -102,7 +102,7 @@ func (s *AuditService) ListAuditLogsFiltered(ctx context.Context, filter reposit
 func (s *AuditService) VerifyChain(ctx context.Context, fromID string) (bool, string, error) {
 	log, err := s.auditRepo.GetByID(ctx, fromID)
 	if err != nil {
-		return false, "", err
+		return false, "", fmt.Errorf("audit log not found: %s", fromID)
 	}
 
 	currentHash := log.Hash
@@ -110,9 +110,9 @@ func (s *AuditService) VerifyChain(ctx context.Context, fromID string) (bool, st
 		if log.PrevHash == "" {
 			return true, "chain intact", nil
 		}
-		prev, err := s.auditRepo.GetByID(ctx, log.ID)
+		prev, err := s.auditRepo.GetByID(ctx, log.PrevHash)
 		if err != nil {
-			return false, "", fmt.Errorf("broken chain at %s: %w", log.ID, err)
+			return false, "", fmt.Errorf("broken chain at %s: previous entry %s not found", log.ID, log.PrevHash)
 		}
 		expectedHash := s.computeAuditHash(prev.PrevHash, prev)
 		if prev.Hash != expectedHash {

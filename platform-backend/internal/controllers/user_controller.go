@@ -70,7 +70,7 @@ func (c *UserController) Delete(ctx *gin.Context) {
 		return
 	}
 	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
-		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
+		utils.ErrorResponse(ctx, http.StatusBadRequest, "Failed to delete user", nil)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"message": "User deleted successfully"})

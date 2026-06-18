@@ -71,7 +71,7 @@ type FailoverResult struct {
 
 type FailoverPreflightRequest struct {
 	ClusterID      string `json:"cluster_id" binding:"required"`
-	TargetMasterID string `json:"target_master_id"`
+	TargetMasterID string `json:"target_master_id" binding:"required"`
 	Force          bool   `json:"force"`
 }
 

@@ -394,6 +394,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
+	if s.nodeRepo != nil {
+		_ = s.nodeRepo.UpdateStatusByDeploymentID(ctx, clusterID, "completed", "deployment completed successfully")
+	}
 	s.updateProgress(clusterID, "集群验证", "集群部署完成", 100)
 	finish := time.Now()
 

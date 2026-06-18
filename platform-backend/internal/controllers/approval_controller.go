@@ -68,6 +68,10 @@ func (c *ApprovalController) CreateApprovalRequest(ctx *gin.Context) {
 		return
 	}
 
+	if req.RequesterID == "" {
+		req.RequesterID = ctx.GetString("user_id")
+	}
+
 	if req.Priority == 0 {
 		req.Priority = 1
 	}

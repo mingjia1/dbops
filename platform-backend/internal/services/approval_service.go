@@ -157,7 +157,7 @@ func (s *ApprovalService) createAuditLog(ctx context.Context, auditLog *models.A
 }
 
 type CreateApprovalRequestRequest struct {
-	RequesterID   string `json:"requester_id" binding:"required"`
+	RequesterID   string `json:"requester_id"`
 	OperationType string `json:"operation_type" binding:"required"`
 	ResourceType  string `json:"resource_type" binding:"required"`
 	ResourceID    string `json:"resource_id" binding:"required"`

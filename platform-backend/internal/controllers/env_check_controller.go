@@ -62,5 +62,5 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(ctx, result)
+	utils.BadRequestResponse(ctx, "unsupported export format: "+format)
 }

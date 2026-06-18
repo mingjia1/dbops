@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -115,6 +116,10 @@ func (c *AuditController) VerifyChain(ctx *gin.Context) {
 
 	ok, msg, err := c.service.VerifyChain(ctx.Request.Context(), id)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.NotFoundResponse(ctx, err.Error())
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Chain verification failed", err)
 		return
 	}
