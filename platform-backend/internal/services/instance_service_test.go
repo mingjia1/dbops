@@ -561,7 +561,8 @@ func TestBatchUpdatePasswordRejectsWeakPassword(t *testing.T) {
 }
 
 func TestDefaultMySQLPasswordForConnection(t *testing.T) {
-	assert.Equal(t, "Hcfc@DboOps#2024_57", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-5.7.44"}))
-	assert.Equal(t, "Hcfc@DboOps#2024_56", defaultMySQLPasswordForConnection(&models.InstanceConnection{Basedir: "/opt/mysql-5.6"}))
-	assert.Equal(t, "Hcfc@DboOps#2024_80", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-8.0.36"}))
+	// Hardcoded credentials removed for security (#1.1) — function now always returns ""
+	assert.Equal(t, "", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-5.7.44"}))
+	assert.Equal(t, "", defaultMySQLPasswordForConnection(&models.InstanceConnection{Basedir: "/opt/mysql-5.6"}))
+	assert.Equal(t, "", defaultMySQLPasswordForConnection(&models.InstanceConnection{VersionID: "mysql-8.0.36"}))
 }

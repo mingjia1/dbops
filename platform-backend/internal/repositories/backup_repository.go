@@ -128,19 +128,18 @@ func (r *BackupRepository) DeletePolicy(ctx context.Context, id string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
-	var recordCount int
-	if err := r.db.Pool.QueryRowContext(ctx, `SELECT COUNT(1) FROM backup_records WHERE policy_id = ?`, id).Scan(&recordCount); err != nil {
-		return fmt.Errorf("failed to check backup policy records: %w", err)
-	}
-	if recordCount > 0 {
-		return fmt.Errorf("backup policy has backup records and cannot be deleted")
-	}
-	res, err := r.db.Pool.ExecContext(ctx, `DELETE FROM backup_policies WHERE id = ?`, id)
+	res, err := r.db.Pool.ExecContext(ctx,
+		`DELETE FROM backup_policies WHERE id = ? AND (SELECT COUNT(*) FROM backup_records WHERE policy_id = ?) = 0`,
+		id, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete backup policy: %w", err)
 	}
-	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
-		return fmt.Errorf("backup policy not found")
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("backup policy not found or has backup records and cannot be deleted")
 	}
 	return nil
 }
@@ -208,14 +207,17 @@ func (r *BackupRepository) GetRecordByID(ctx context.Context, id string) (*model
 		return nil, fmt.Errorf("database not available")
 	}
 	query := `
-		SELECT id, policy_id, instance_id, backup_type, COALESCE(task_id, ''), started_at, completed_at, status, COALESCE(message, ''), file_path, file_size, checksum, created_at
+		SELECT id, policy_id, instance_id, backup_type, task_id, started_at, completed_at, status, message, file_path, file_size, checksum, created_at
 		FROM backup_records WHERE id = ?
 	`
 	record := &models.BackupRecord{}
 	var policyID sql.NullString
+	var taskID sql.NullString
+	var message sql.NullString
+	var completedAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(
 		&record.ID, &policyID, &record.InstanceID, &record.BackupType,
-		&record.TaskID, &record.StartedAt, &record.CompletedAt, &record.Status, &record.Message, &record.FilePath,
+		&taskID, &record.StartedAt, &completedAt, &record.Status, &message, &record.FilePath,
 		&record.FileSize, &record.Checksum, &record.CreatedAt,
 	)
 	if err != nil {
@@ -226,6 +228,15 @@ func (r *BackupRepository) GetRecordByID(ctx context.Context, id string) (*model
 	}
 	if policyID.Valid {
 		record.PolicyID = policyID.String
+	}
+	if taskID.Valid {
+		record.TaskID = taskID.String
+	}
+	if message.Valid {
+		record.Message = message.String
+	}
+	if completedAt.Valid {
+		record.CompletedAt = completedAt.Time
 	}
 	return record, nil
 }
@@ -290,16 +301,19 @@ func (r *BackupRepository) LatestCompletedRecord(ctx context.Context, instanceID
 		return nil, fmt.Errorf("database not available")
 	}
 	query := `
-		SELECT id, policy_id, instance_id, backup_type, COALESCE(task_id, ''), started_at, completed_at, status, COALESCE(message, ''), file_path, file_size, checksum, created_at
+		SELECT id, policy_id, instance_id, backup_type, task_id, started_at, completed_at, status, message, file_path, file_size, checksum, created_at
 		FROM backup_records
 		WHERE instance_id = ? AND backup_type = ? AND status = 'completed' AND file_path <> ''
 		ORDER BY completed_at DESC, created_at DESC LIMIT 1
 	`
 	record := &models.BackupRecord{}
 	var policyID sql.NullString
+	var taskID sql.NullString
+	var message sql.NullString
+	var completedAt sql.NullTime
 	err := r.db.Pool.QueryRowContext(ctx, query, instanceID, backupType).Scan(
 		&record.ID, &policyID, &record.InstanceID, &record.BackupType,
-		&record.TaskID, &record.StartedAt, &record.CompletedAt, &record.Status, &record.Message, &record.FilePath,
+		&taskID, &record.StartedAt, &completedAt, &record.Status, &message, &record.FilePath,
 		&record.FileSize, &record.Checksum, &record.CreatedAt,
 	)
 	if err != nil {
@@ -307,6 +321,15 @@ func (r *BackupRepository) LatestCompletedRecord(ctx context.Context, instanceID
 	}
 	if policyID.Valid {
 		record.PolicyID = policyID.String
+	}
+	if taskID.Valid {
+		record.TaskID = taskID.String
+	}
+	if message.Valid {
+		record.Message = message.String
+	}
+	if completedAt.Valid {
+		record.CompletedAt = completedAt.Time
 	}
 	return record, nil
 }

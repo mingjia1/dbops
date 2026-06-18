@@ -5,12 +5,16 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -29,13 +33,19 @@ func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string, aud
 	if len(auditSvc) > 0 {
 		audit = auditSvc[0]
 	}
+	tokenExpiry := 24 * time.Hour
+	if v := os.Getenv("DBOPS_JWT_EXPIRY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			tokenExpiry = d
+		}
+	}
 	return &AuthService{
 		userRepo:    userRepo,
 		auditSvc:    audit,
 		db:          db,
 		standalone:  userRepo == nil,
 		jwtSecret:   jwtSecret,
-		tokenExpiry: 24 * time.Hour,
+		tokenExpiry: tokenExpiry,
 	}
 }
 
@@ -79,6 +89,7 @@ type Claims struct {
 func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginResponse, error) {
 	// Standalone 模式：允许任意用户名密码登录
 	if s.IsStandalone() {
+		log.Printf("[SECURITY] WARNING: Standalone mode active — all authentication bypassed")
 		expiresAt := time.Now().Add(s.tokenExpiry)
 		claims := &Claims{
 			UserID:   "standalone-user",
@@ -115,20 +126,15 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 
 	user, err := s.userRepo.GetByUsername(ctx, req.Username)
 	if err != nil {
-		fmt.Printf("[DEBUG] GetByUsername error: %v\n", err)
 		return nil, errors.New("invalid credentials")
 	}
 	if user == nil {
-		fmt.Printf("[DEBUG] User not found: %s\n", req.Username)
 		return nil, errors.New("invalid credentials")
 	}
 
-	fmt.Printf("[DEBUG] User found: %s, hash: %s\n", user.Username, user.Password[:20])
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		fmt.Printf("[DEBUG] Password compare failed: %v\n", err)
 		return nil, errors.New("invalid credentials")
 	}
-	fmt.Printf("[DEBUG] Password verified successfully\n")
 
 	if user.Status != "active" {
 		return nil, errors.New("user account is not active")
@@ -192,8 +198,15 @@ func (s *AuthService) HasPermission(role, permission string) bool {
 	}
 
 	permissions := rolePermissions[role]
+	prefix := ""
+	if idx := strings.Index(permission, ":"); idx > 0 {
+		prefix = permission[:idx]
+	}
 	for _, p := range permissions {
 		if p == "*" || p == permission {
+			return true
+		}
+		if prefix != "" && strings.HasSuffix(p, ":*") && strings.HasPrefix(p, prefix+":") {
 			return true
 		}
 	}
@@ -264,6 +277,9 @@ func (s *AuthService) Register(ctx context.Context, username, password, email, r
 	}
 	if existing, _ := s.userRepo.GetByUsername(ctx, username); existing != nil {
 		return errors.New("username already exists")
+	}
+	if err := utils.ValidatePasswordComplexity(password); err != nil {
+		return fmt.Errorf("password does not meet complexity requirements: %w", err)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

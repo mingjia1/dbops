@@ -21,6 +21,9 @@ func NewParameterTemplateRepository(db *Database) *ParameterTemplateRepository {
 }
 
 func (r *ParameterTemplateRepository) Create(ctx context.Context, template *models.ParameterTemplate) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	template.ID = uuid.New().String()
 	template.CreatedAt = template.CreatedAt.Round(0)
 	template.UpdatedAt = template.UpdatedAt.Round(0)
@@ -42,6 +45,9 @@ func (r *ParameterTemplateRepository) Create(ctx context.Context, template *mode
 }
 
 func (r *ParameterTemplateRepository) GetByID(ctx context.Context, id string) (*models.ParameterTemplate, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	query := `
 		SELECT id, name, description, category, is_preset, created_by, created_at, updated_at
 		FROM parameter_templates WHERE id = ?
@@ -61,6 +67,9 @@ func (r *ParameterTemplateRepository) GetByID(ctx context.Context, id string) (*
 }
 
 func (r *ParameterTemplateRepository) GetByName(ctx context.Context, name string) (*models.ParameterTemplate, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	query := `
 		SELECT id, name, description, category, is_preset, created_by, created_at, updated_at
 		FROM parameter_templates WHERE name = ?
@@ -136,6 +145,9 @@ func (r *ParameterTemplateRepository) ListPresetTemplates(ctx context.Context) (
 }
 
 func (r *ParameterTemplateRepository) Update(ctx context.Context, template *models.ParameterTemplate) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	query := `
 		UPDATE parameter_templates
 		SET name = ?, description = ?, category = ?, updated_at = ?
@@ -154,6 +166,9 @@ func (r *ParameterTemplateRepository) Update(ctx context.Context, template *mode
 }
 
 func (r *ParameterTemplateRepository) Delete(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	query := `DELETE FROM parameter_templates WHERE id = ? AND is_preset = 0`
 	_, err := r.db.Pool.ExecContext(ctx, query, id)
 	if err != nil {
@@ -163,6 +178,9 @@ func (r *ParameterTemplateRepository) Delete(ctx context.Context, id string) err
 }
 
 func (r *ParameterTemplateRepository) CreateVersion(ctx context.Context, version *models.ParameterTemplateVersion) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	version.ID = uuid.New().String()
 
 	query := `
@@ -181,6 +199,9 @@ func (r *ParameterTemplateRepository) CreateVersion(ctx context.Context, version
 }
 
 func (r *ParameterTemplateRepository) GetVersionByID(ctx context.Context, id string) (*models.ParameterTemplateVersion, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	query := `
 		SELECT id, template_id, version, description, is_active, created_at
 		FROM parameter_template_versions WHERE id = ?
@@ -201,6 +222,9 @@ func (r *ParameterTemplateRepository) GetVersionByID(ctx context.Context, id str
 }
 
 func (r *ParameterTemplateRepository) ListVersions(ctx context.Context, templateID string) ([]models.ParameterTemplateVersion, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	query := `
 		SELECT id, template_id, version, description, is_active, created_at
 		FROM parameter_template_versions WHERE template_id = ? ORDER BY created_at DESC
@@ -227,6 +251,9 @@ func (r *ParameterTemplateRepository) ListVersions(ctx context.Context, template
 }
 
 func (r *ParameterTemplateRepository) CreateParameter(ctx context.Context, param *models.ParameterTemplateParameter) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	param.ID = uuid.New().String()
 
 	query := `
@@ -256,6 +283,9 @@ func nullableText(value string) interface{} {
 }
 
 func (r *ParameterTemplateRepository) GetParameterByID(ctx context.Context, id string) (*models.ParameterTemplateParameter, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	query := `
 		SELECT id, template_id, version_id, parameter_name, value, data_type,
 			min_value, max_value, unit, description, is_dynamic, is_mandatory, category
@@ -276,6 +306,9 @@ func (r *ParameterTemplateRepository) GetParameterByID(ctx context.Context, id s
 }
 
 func (r *ParameterTemplateRepository) ListParameters(ctx context.Context, templateID string, versionID *string) ([]models.ParameterTemplateParameter, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
 	var query string
 	var args []interface{}
 
@@ -377,6 +410,9 @@ func parseTimeString(value string) time.Time {
 }
 
 func (r *ParameterTemplateRepository) UpdateParameter(ctx context.Context, param *models.ParameterTemplateParameter) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	query := `
 		UPDATE parameter_template_parameters
 		SET parameter_name = ?, value = ?, data_type = ?, min_value = ?, max_value = ?,
@@ -397,6 +433,9 @@ func (r *ParameterTemplateRepository) UpdateParameter(ctx context.Context, param
 }
 
 func (r *ParameterTemplateRepository) DeleteParameter(ctx context.Context, id string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	query := `DELETE FROM parameter_template_parameters WHERE id = ?`
 	_, err := r.db.Pool.ExecContext(ctx, query, id)
 	if err != nil {
@@ -406,6 +445,9 @@ func (r *ParameterTemplateRepository) DeleteParameter(ctx context.Context, id st
 }
 
 func (r *ParameterTemplateRepository) DeleteParametersByTemplate(ctx context.Context, templateID string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
 	query := `DELETE FROM parameter_template_parameters WHERE template_id = ?`
 	_, err := r.db.Pool.ExecContext(ctx, query, templateID)
 	if err != nil {

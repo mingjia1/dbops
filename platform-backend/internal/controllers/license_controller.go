@@ -26,7 +26,7 @@ func (c *LicenseController) GetLicenseInfo(ctx *gin.Context) {
 }
 
 func (c *LicenseController) UploadLicense(ctx *gin.Context) {
-	body, err := io.ReadAll(ctx.Request.Body)
+	body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, 1<<20))
 	if err != nil {
 		utils.BadRequestResponse(ctx, "Failed to read request body")
 		return

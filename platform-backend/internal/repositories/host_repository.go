@@ -43,24 +43,27 @@ func (r *HostRepository) Create(ctx context.Context, host *models.Host) error {
 	host.CreatedAt = now
 	host.UpdatedAt = now
 
-	// 检查重名
-	var existing string
-	err := r.db.Pool.QueryRowContext(ctx, `SELECT id FROM hosts WHERE name = ? LIMIT 1`, host.Name).Scan(&existing)
-	if err == nil {
-		return fmt.Errorf("host with name %s already exists", host.Name)
+	var err error
+	if r.db.IsSQLite() {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			INSERT OR IGNORE INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential,
+				agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
+			nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
+			nullableTime(host.LastCheckAt), host.CreatedAt, host.UpdatedAt,
+		)
+	} else {
+		_, err = r.db.Pool.ExecContext(ctx, `
+			INSERT INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential,
+				agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE id=id`,
+			host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
+			nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
+			nullableTime(host.LastCheckAt), host.CreatedAt, host.UpdatedAt,
+		)
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("failed to check host name: %w", err)
-	}
-
-	_, err = r.db.Pool.ExecContext(ctx, `
-		INSERT INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential,
-			agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
-		nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
-		nullableTime(host.LastCheckAt), host.CreatedAt, host.UpdatedAt,
-	)
 	if err != nil {
 		return fmt.Errorf("failed to create host: %w", err)
 	}

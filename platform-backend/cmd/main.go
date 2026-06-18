@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,7 +38,10 @@ func main() {
 	logInstance.Info("Starting MySQL Ops Platform API Server")
 
 	// Force use old database file
-	sqlitePath := "./data/dbops.db"
+	sqlitePath := cfg.SQLitePath
+	if sqlitePath == "" {
+		sqlitePath = "./data/dbops.db"
+	}
 	logInstance.Info("Forcing SQLite path: " + sqlitePath)
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
@@ -199,12 +206,18 @@ func main() {
 	inspectionController := controllers.NewInspectionController(alertService)
 	diagnosisRepo := repositories.NewDiagnosisRepository(db)
 	adviceRepo := repositories.NewSQLAdviceRepository(db)
+	aiTemp := 0.3
+	if v := os.Getenv("DBOPS_AI_TEMPERATURE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 2 {
+			aiTemp = f
+		}
+	}
 	aiConfig := aiprovider.Config{
 		BaseURL:     cfg.AIBaseURL,
 		APIKey:      cfg.AIAPIKey,
 		Model:       cfg.AIModel,
 		MaxTokens:   defaultInt(cfg.AIMaxTokens, 2048),
-		Temperature: 0.3,
+		Temperature: aiTemp,
 	}
 	aiProvider := aiprovider.NewOpenAIProvider(aiConfig)
 	aiService := services.NewAIService(aiProvider, diagnosisRepo, adviceRepo, monitorService)
@@ -242,7 +255,13 @@ func main() {
 
 	r := gin.Default()
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
-	r.MaxMultipartMemory = 10 << 20
+	maxMem := int64(10 << 20)
+	if v := os.Getenv("DBOPS_MAX_MULTIPART_MEMORY"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			maxMem = n
+		}
+	}
+	r.MaxMultipartMemory = maxMem
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
 	r.Use(middleware.RateLimitByIP(middleware.NewRateLimiter(100, time.Second)))
 	r.Use(middleware.Logger(logInstance))
@@ -263,7 +282,13 @@ func main() {
 		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "alive"}})
 	})
 	r.GET("/health/ready", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		healthTimeout := 2 * time.Second
+		if v := os.Getenv("DBOPS_HEALTH_CHECK_TIMEOUT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				healthTimeout = d
+			}
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), healthTimeout)
 		defer cancel()
 		checks := gin.H{}
 		allOK := true
@@ -616,9 +641,29 @@ func main() {
 	}
 
 	logInstance.Info("Server starting on port " + cfg.ServerPort)
-	if err := r.Run(":" + cfg.ServerPort); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.ServerPort,
+		Handler: r,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logInstance.Info("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+	logInstance.Info("Server exited")
 }
 
 func runMigrations(db *repositories.Database) error {

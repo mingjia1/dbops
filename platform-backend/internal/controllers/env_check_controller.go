@@ -54,8 +54,8 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 	}
 
 	if format == "pdf" {
-		ctx.JSON(http.StatusOK, gin.H{
-			"code":    200,
+		ctx.JSON(http.StatusNotImplemented, gin.H{
+			"code":    501,
 			"message": "PDF export feature will be implemented",
 			"data":    result,
 		})

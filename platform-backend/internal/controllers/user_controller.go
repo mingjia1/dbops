@@ -64,8 +64,13 @@ func (c *UserController) Update(ctx *gin.Context) {
 }
 
 func (c *UserController) Delete(ctx *gin.Context) {
-	if err := c.service.Delete(ctx.Request.Context(), ctx.Param("id")); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete user", err)
+	id := ctx.Param("id")
+	if ctx.GetString("user_id") == id {
+		utils.ErrorResponse(ctx, http.StatusBadRequest, "cannot delete yourself", nil)
+		return
+	}
+	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
+		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"message": "User deleted successfully"})

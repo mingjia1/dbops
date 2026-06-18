@@ -4,7 +4,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/monkeycode/mysql-ops-platform/internal/services"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
-	"strconv"
 )
 
 type ParameterTemplateController struct {
@@ -44,18 +43,7 @@ func (c *ParameterTemplateController) GetByID(ctx *gin.Context) {
 }
 
 func (c *ParameterTemplateController) List(ctx *gin.Context) {
-	limitStr := ctx.DefaultQuery("limit", "20")
-	offsetStr := ctx.DefaultQuery("offset", "0")
-
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		limit = 20
-	}
-
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil {
-		offset = 0
-	}
+	limit, offset := parsePagination(ctx)
 
 	templates, err := c.service.List(ctx.Request.Context(), limit, offset)
 	if err != nil {

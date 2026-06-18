@@ -3,6 +3,8 @@ package middleware
 import (
 	"net/http"
 	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -12,6 +14,7 @@ func Logger(logger *zap.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		traceID := uuid.New().String()
 		ctx.Set("trace_id", traceID)
+		start := time.Now()
 
 		logger.Info("Request started",
 			zap.String("trace_id", traceID),
@@ -25,6 +28,7 @@ func Logger(logger *zap.Logger) gin.HandlerFunc {
 			zap.String("trace_id", traceID),
 			zap.Int("status", ctx.Writer.Status()),
 			zap.Int("response_size", ctx.Writer.Size()),
+			zap.Duration("latency", time.Since(start)),
 		)
 	}
 }
@@ -34,11 +38,30 @@ func ErrorHandler() gin.HandlerFunc {
 		ctx.Next()
 
 		if len(ctx.Errors) > 0 {
+			if ctx.Writer.Status() > 0 {
+				return
+			}
 			err := ctx.Errors.Last()
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"code":    500,
-				"message": "Internal server error",
-				"error":   err.Error(),
+			status := http.StatusInternalServerError
+			message := "Internal server error"
+			errMsg := err.Error()
+			switch {
+			case strings.Contains(errMsg, "validation"):
+				status = http.StatusBadRequest
+				message = "Invalid request parameters"
+			case strings.Contains(errMsg, "unauthorized") || strings.Contains(errMsg, "token"):
+				status = http.StatusUnauthorized
+				message = "Authentication required"
+			case strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "permission"):
+				status = http.StatusForbidden
+				message = "Permission denied"
+			case strings.Contains(errMsg, "not found"):
+				status = http.StatusNotFound
+				message = "Resource not found"
+			}
+			ctx.JSON(status, gin.H{
+				"code":    status,
+				"message": message,
 				"trace_id": ctx.GetString("trace_id"),
 			})
 		}
@@ -67,7 +90,7 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 				ctx.Header("Vary", "Origin")
 			}
 		}
-		ctx.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		ctx.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		ctx.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
 		ctx.Header("Access-Control-Max-Age", "600")
 
@@ -98,17 +121,24 @@ func RequirePermission(permission string) gin.HandlerFunc {
 		}
 
 		rolePermissions := map[string][]string{
-			"dba":      {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
-			"operator": {"instance:view", "deploy:execute", "backup:execute", "restore:execute", "monitor:view"},
+			"dba":       {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
+			"operator":  {"instance:view", "deploy:execute", "backup:execute", "restore:execute", "monitor:view"},
 			"developer": {"instance:view_own", "backup:apply", "monitor:view_own"},
-			"auditor":  {"instance:view", "monitor:view", "audit:view"},
+			"auditor":   {"instance:view", "monitor:view", "audit:view"},
 		}
 
 		permissions := rolePermissions[role]
 		hasPermission := false
-		
+		prefix := ""
+		if idx := strings.Index(permission, ":"); idx > 0 {
+			prefix = permission[:idx]
+		}
 		for _, p := range permissions {
-			if p == "*" || p == permission || strings.HasPrefix(p, strings.Split(permission, ":")[0]+":*") {
+			if p == "*" || p == permission {
+				hasPermission = true
+				break
+			}
+			if prefix != "" && strings.HasSuffix(p, ":*") && strings.HasPrefix(p, prefix+":") {
 				hasPermission = true
 				break
 			}

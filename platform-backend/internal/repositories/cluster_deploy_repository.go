@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,15 +12,11 @@ import (
 
 type ClusterDeployRepository struct {
 	db *Database
-
-	mu    sync.RWMutex
-	memDB map[string]*models.ClusterDeployment
 }
 
 func NewClusterDeployRepository(db *Database) *ClusterDeployRepository {
 	return &ClusterDeployRepository{
-		db:    db,
-		memDB: make(map[string]*models.ClusterDeployment),
+		db: db,
 	}
 }
 
@@ -30,30 +25,6 @@ func (r *ClusterDeployRepository) Create(ctx context.Context, dep *models.Cluste
 		return fmt.Errorf("database not available")
 	}
 	return r.createInDB(ctx, dep)
-}
-
-func (r *ClusterDeployRepository) createInMemory(dep *models.ClusterDeployment) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if dep.ID == "" {
-		dep.ID = uuid.New().String()
-	}
-	if dep.Status == "" {
-		dep.Status = "pending"
-	}
-	now := time.Now()
-	if dep.StartedAt != nil {
-		startCopy := *dep.StartedAt
-		dep.StartedAt = &startCopy
-	}
-	if dep.FinishedAt != nil {
-		finishCopy := *dep.FinishedAt
-		dep.FinishedAt = &finishCopy
-	}
-	dep.CreatedAt = now
-	dep.UpdatedAt = now
-	r.memDB[dep.ID] = dep
-	return nil
 }
 
 func (r *ClusterDeployRepository) createInDB(ctx context.Context, dep *models.ClusterDeployment) error {
@@ -122,17 +93,6 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 		return nil, err
 	}
 	return deployments, nil
-}
-
-func (r *ClusterDeployRepository) getByIDInMemory(id string) (*models.ClusterDeployment, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	dep, ok := r.memDB[id]
-	if !ok {
-		return nil, fmt.Errorf("deployment not found")
-	}
-	copy := *dep
-	return &copy, nil
 }
 
 func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {

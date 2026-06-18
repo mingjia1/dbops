@@ -137,5 +137,21 @@ func (s *UserService) Delete(ctx context.Context, id string) error {
 	if s.userRepo == nil {
 		return errors.New("user repository not available")
 	}
+	user, err := s.userRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+	if user.Role == "admin" {
+		adminCount, err := s.userRepo.CountByRole(ctx, "admin")
+		if err != nil {
+			return fmt.Errorf("failed to count admin users: %w", err)
+		}
+		if adminCount <= 1 {
+			return errors.New("cannot delete the last admin user")
+		}
+	}
 	return s.userRepo.Delete(ctx, id)
 }

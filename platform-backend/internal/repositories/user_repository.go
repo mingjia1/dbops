@@ -174,3 +174,15 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	return err
 }
+
+func (r *UserRepository) CountByRole(ctx context.Context, role string) (int, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return 0, fmt.Errorf("database not available")
+	}
+	var count int
+	err := r.db.Pool.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE role = ?`, role).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users by role: %w", err)
+	}
+	return count, nil
+}

@@ -1320,15 +1320,7 @@ func firstRemotePath(client *ssh.Client, paths []string) string {
 }
 
 func defaultMySQLPasswordForConnection(conn *models.InstanceConnection) string {
-	if conn != nil {
-		switch {
-		case strings.Contains(conn.VersionID, "5.7") || strings.Contains(conn.Basedir, "5.7"):
-			return "Hcfc@DboOps#2024_57"
-		case strings.Contains(conn.VersionID, "5.6") || strings.Contains(conn.Basedir, "5.6"):
-			return "Hcfc@DboOps#2024_56"
-		}
-	}
-	return "Hcfc@DboOps#2024_80"
+	return ""
 }
 
 func (s *InstanceService) passwordCandidates(conn *models.InstanceConnection, explicit string) []string {
@@ -1345,13 +1337,6 @@ func (s *InstanceService) passwordCandidates(conn *models.InstanceConnection, ex
 	}
 	if stored, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey); err == nil {
 		add(&out, stored)
-	}
-	add(&out, "")
-	if conn.Host == "10.1.81.41" && conn.Port == 3307 {
-		add(&out, "Hcfc@DboOps#2024_57")
-	}
-	if conn.Host == "10.1.81.41" && conn.Port == 3308 {
-		add(&out, "Hcfc@DboOps#2024_80")
 	}
 	return out
 }

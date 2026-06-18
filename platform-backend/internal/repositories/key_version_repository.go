@@ -135,6 +135,15 @@ func (r *KeyVersionRepository) UpdateEncryptedValue(ctx context.Context, table, 
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
+	validUpdates := map[string]map[string]bool{
+		"hosts":                {"ssh_credential": true},
+		"instance_connections": {"password_encrypted": true},
+	}
+	if tables, ok := validUpdates[table]; !ok {
+		return fmt.Errorf("invalid table: %s", table)
+	} else if !tables[column] {
+		return fmt.Errorf("invalid column %s for table %s", column, table)
+	}
 	q := fmt.Sprintf(`UPDATE %s SET %s = ? WHERE id = ?`, table, column)
 	_, err := r.db.Pool.ExecContext(ctx, q, newValue, rowID)
 	if err != nil {

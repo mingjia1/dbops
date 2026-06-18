@@ -102,7 +102,8 @@ func (c *FailoverController) GetClusterStatus(ctx *gin.Context) {
 
 	history, err := c.service.GetFailoverHistory(ctx.Request.Context(), clusterID, historyLimit)
 	if err != nil {
-		history = nil
+		utils.InternalServerErrorResponse(ctx, "Failed to get failover history", err)
+		return
 	}
 
 	status := gin.H{

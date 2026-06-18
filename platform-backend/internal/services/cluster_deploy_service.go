@@ -1639,13 +1639,7 @@ func (s *ClusterDeployService) passwordCandidates(ctx context.Context, conn *mod
 		add(stored)
 	}
 
-	// 2. Known passwords for common MHA/PXC deployments
-	add("hcfc!2017")
-	add("Root#2026")
-	add("Hcfc@DboOps#2024_80")
-	add("Hcfc@DboOps#2024_57")
-
-	// 3. Empty password as last resort
+	// 2. Empty password as last resort
 	if !seen[""] {
 		seen[""] = true
 		out = append(out, "")

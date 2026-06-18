@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -374,8 +376,14 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 		}
 	}
 
-	if result.MaxReplicationLag > 30 {
-		result.BlockingReasons = append(result.BlockingReasons, fmt.Sprintf("max replication lag %ds exceeds threshold 30s", result.MaxReplicationLag))
+	lagThreshold := 30
+	if v := os.Getenv("DBOPS_REPLICATION_LAG_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			lagThreshold = n
+		}
+	}
+	if result.MaxReplicationLag > lagThreshold {
+		result.BlockingReasons = append(result.BlockingReasons, fmt.Sprintf("max replication lag %ds exceeds threshold %ds", result.MaxReplicationLag, lagThreshold))
 	}
 
 	result.Pass = len(result.BlockingReasons) == 0
@@ -873,25 +881,28 @@ func (s *FailoverService) SwitchVIP(ctx context.Context, req VIPSwitchRequest) *
 }
 
 func (s *FailoverService) UpdateTopology(ctx context.Context, clusterID, oldMasterID, newMasterID string) error {
-	updateOldMaster := `UPDATE instance_statuses SET role = 'failed_master' WHERE instance_id = ?`
-	_, err := s.db.Pool.ExecContext(ctx, updateOldMaster, oldMasterID)
+	tx, err := s.db.Pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `UPDATE instance_statuses SET role = 'failed_master' WHERE instance_id = ?`, oldMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update old master status: %w", err)
 	}
 
-	updateNewMaster := `UPDATE instance_statuses SET role = 'master' WHERE instance_id = ?`
-	_, err = s.db.Pool.ExecContext(ctx, updateNewMaster, newMasterID)
+	_, err = tx.ExecContext(ctx, `UPDATE instance_statuses SET role = 'master' WHERE instance_id = ?`, newMasterID)
 	if err != nil {
 		return fmt.Errorf("failed to update new master status: %w", err)
 	}
 
-	updateTopology := `UPDATE instance_topologies SET master_id = ? WHERE cluster_id = ?`
-	_, err = s.db.Pool.ExecContext(ctx, updateTopology, newMasterID, clusterID)
+	_, err = tx.ExecContext(ctx, `UPDATE instance_topologies SET master_id = ? WHERE cluster_id = ?`, newMasterID, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to update topology: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *FailoverService) getInstanceConnection(ctx context.Context, instanceID string) (*models.InstanceConnection, error) {

@@ -145,7 +145,7 @@ func (c *InstanceController) HealthCheck(ctx *gin.Context) {
 	}
 
 	if isFailedInstanceTaskStatus(result.Status) {
-		ctx.JSON(200, utils.Response{
+		ctx.JSON(424, utils.Response{
 			Code:      424,
 			Message:   "health check failed",
 			Data:      result,

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -196,6 +197,9 @@ func (s *BackupService) DeletePolicy(ctx context.Context, policyID string) error
 
 func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequest) (*BackupTaskResult, error) {
 	targetDir := "/backup/mysql"
+	if v := os.Getenv("DBOPS_BACKUP_DIR"); v != "" {
+		targetDir = v
+	}
 	if req.PolicyID != "" {
 		policy, err := s.policyRepo.GetPolicyByID(ctx, req.PolicyID)
 		if err != nil {

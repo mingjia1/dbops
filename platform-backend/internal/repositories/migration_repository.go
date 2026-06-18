@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,15 +12,11 @@ import (
 
 type MigrationRepository struct {
 	db *Database
-
-	mu    sync.RWMutex
-	memDB map[string]*models.MigrationTask
 }
 
 func NewMigrationRepository(db *Database) *MigrationRepository {
 	return &MigrationRepository{
-		db:    db,
-		memDB: make(map[string]*models.MigrationTask),
+		db: db,
 	}
 }
 
@@ -30,22 +25,6 @@ func (r *MigrationRepository) Create(ctx context.Context, task *models.Migration
 		return fmt.Errorf("database not available")
 	}
 	return r.createInDB(ctx, task)
-}
-
-func (r *MigrationRepository) createInMemory(task *models.MigrationTask) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if task.ID == "" {
-		task.ID = uuid.New().String()
-	}
-	if task.Status == "" {
-		task.Status = models.MigrationStatusPending
-	}
-	now := time.Now()
-	task.CreatedAt = now
-	task.UpdatedAt = now
-	r.memDB[task.ID] = task
-	return nil
 }
 
 func (r *MigrationRepository) createInDB(ctx context.Context, task *models.MigrationTask) error {
@@ -69,17 +48,6 @@ func (r *MigrationRepository) GetByID(ctx context.Context, id string) (*models.M
 		return nil, fmt.Errorf("database not available")
 	}
 	return r.getByIDInDB(ctx, id)
-}
-
-func (r *MigrationRepository) getByIDInMemory(id string) (*models.MigrationTask, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	task, ok := r.memDB[id]
-	if !ok {
-		return nil, fmt.Errorf("migration task not found")
-	}
-	copy := *task
-	return &copy, nil
 }
 
 func (r *MigrationRepository) getByIDInDB(ctx context.Context, id string) (*models.MigrationTask, error) {
@@ -147,16 +115,6 @@ func (r *MigrationRepository) List(ctx context.Context) ([]models.MigrationTask,
 		return nil, fmt.Errorf("database not available")
 	}
 	return r.listInDB(ctx)
-}
-
-func (r *MigrationRepository) listInMemory() ([]models.MigrationTask, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	result := make([]models.MigrationTask, 0, len(r.memDB))
-	for _, t := range r.memDB {
-		result = append(result, *t)
-	}
-	return result, nil
 }
 
 func (r *MigrationRepository) listInDB(ctx context.Context) ([]models.MigrationTask, error) {

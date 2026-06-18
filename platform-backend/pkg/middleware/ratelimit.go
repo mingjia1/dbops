@@ -16,14 +16,50 @@ type RateLimiter struct {
 	buckets  map[string][]time.Time
 	limit    int
 	interval time.Duration
+	stopCh   chan struct{}
 }
 
 func NewRateLimiter(limit int, interval time.Duration) *RateLimiter {
-	return &RateLimiter{
+	r := &RateLimiter{
 		buckets:  make(map[string][]time.Time),
 		limit:    limit,
 		interval: interval,
+		stopCh:   make(chan struct{}),
 	}
+	go r.cleanup()
+	return r
+}
+
+func (r *RateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			r.mu.Lock()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			for key, bucket := range r.buckets {
+				i := 0
+				for ; i < len(bucket); i++ {
+					if bucket[i].After(cutoff) {
+						break
+					}
+				}
+				if i >= len(bucket) {
+					delete(r.buckets, key)
+				} else {
+					r.buckets[key] = bucket[i:]
+				}
+			}
+			r.mu.Unlock()
+		case <-r.stopCh:
+			return
+		}
+	}
+}
+
+func (r *RateLimiter) Stop() {
+	close(r.stopCh)
 }
 
 // Allow 记录一次命中, 返回 true=放行 / false=超限.

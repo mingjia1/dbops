@@ -35,7 +35,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	if resp != nil && resp.Token != "" {
 		// 7 天, 与现有 auth_service token expiry 对齐.
 		ctx.SetSameSite(http.SameSiteLaxMode)
-		ctx.SetCookie("auth_token", resp.Token, 7*24*3600, "/", "", false, true)
+		ctx.SetCookie("auth_token", resp.Token, 7*24*3600, "/", "", true, true)
 	}
 
 	utils.SuccessResponse(ctx, resp)
@@ -53,6 +53,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
+	req.Role = "operator"
 
 	if err := c.authService.Register(ctx.Request.Context(), req.Username, req.Password, req.Email, req.Role); err != nil {
 		utils.ErrorResponse(ctx, 400, err.Error(), nil)
@@ -68,7 +69,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 // Logout 清 HttpOnly cookie. 客户端收到 200 后清 localStorage user 信息即可.
 func (c *AuthController) Logout(ctx *gin.Context) {
 	ctx.SetSameSite(http.SameSiteLaxMode)
-	ctx.SetCookie("auth_token", "", -1, "/", "", false, true)
+	ctx.SetCookie("auth_token", "", -1, "/", "", true, true)
 	ctx.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
@@ -29,6 +28,11 @@ func NewAgentClient(agentToken string) *AgentClient {
 		// 修: 30s 适合短 op; 长 op 走 fire-and-forget + GetTaskProgress 轮询.
 		httpClient: &http.Client{
 			Timeout: agentDefaultTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		agentToken: agentToken,
 	}
@@ -168,70 +172,78 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d%s", hostAddr, agentPort, path)
 
-	// DEBUG: Log the Agent URL being called
-	log.Printf("[DEBUG] Calling Agent: %s with payload: %+v", url, payload)
-
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// P0: 把 backend 中间件生成的 trace_id 透传给 agent, 跨组件排障可串联.
-	if tid := ctx.Value("trace_id"); tid != nil {
-		if s, ok := tid.(string); ok && s != "" {
-			req.Header.Set("X-Trace-Id", s)
+	const maxRetries = 2
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-	}
-	// P1-2: 携带 agent_token 鉴权, 与 Agent 端校验.
-	if c.agentToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.agentToken)
-	}
 
-	client := c.httpClient
-	if timeout > 0 && (client == nil || client.Timeout != timeout) {
-		transport := http.DefaultTransport
-		if client != nil && client.Transport != nil {
-			transport = client.Transport
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		client = &http.Client{Timeout: timeout, Transport: transport}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("agent request failed after timeout=%s: %w", client.Timeout, err)
-	}
-	defer resp.Body.Close()
+		req.Header.Set("Content-Type", "application/json")
+		if tid := ctx.Value("trace_id"); tid != nil {
+			if s, ok := tid.(string); ok && s != "" {
+				req.Header.Set("X-Trace-Id", s)
+			}
+		}
+		if c.agentToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.agentToken)
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
+		client := c.httpClient
+		if timeout > 0 && (client == nil || client.Timeout != timeout) {
+			transport := http.DefaultTransport
+			if client != nil && client.Transport != nil {
+				transport = client.Transport
+			}
+			client = &http.Client{Timeout: timeout, Transport: transport}
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("agent request failed (attempt %d/%d) after timeout=%s: %w", attempt+1, maxRetries+1, client.Timeout, err)
+			continue
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
-	}
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
 
-	var result agentResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
+			continue
+		}
 
-	if result.Code != 200 {
-		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
-	}
-	if result.Data == nil {
-		return nil, fmt.Errorf("agent returned empty data")
-	}
+		var result agentResponse
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			lastErr = fmt.Errorf("failed to parse response: %w", err)
+			continue
+		}
 
-	return result.Data, nil
+		if result.Code != 200 {
+			return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
+		}
+		if result.Data == nil {
+			return nil, fmt.Errorf("agent returned empty data")
+		}
+
+		return result.Data, nil
+	}
+	return nil, lastErr
 }
 
 func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskResult, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -245,7 +257,7 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -284,7 +296,7 @@ func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

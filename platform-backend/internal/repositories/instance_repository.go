@@ -43,7 +43,13 @@ func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instan
 		return fmt.Errorf("failed to check instance name: %w", err)
 	}
 
-	_, err = r.db.Pool.ExecContext(ctx,
+	tx, err := r.db.Pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO instances (id, name, cluster_id, host_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		instance.ID, instance.Name, nullableString(instance.ClusterID), nullableStringPtr(instance.HostID),
 		instance.CreatedAt, instance.UpdatedAt,
@@ -55,18 +61,39 @@ func (r *InstanceRepository) Create(ctx context.Context, instance *models.Instan
 	if instance.Connection.InstanceID != "" {
 		instance.Connection.ID = uuid.New().String()
 		instance.Connection.InstanceID = instance.ID
-		if err := r.CreateConnection(ctx, &instance.Connection); err != nil {
-			return err
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO instance_connections (id, instance_id, host, port, username, password_encrypted, ssl_enabled, basedir, datadir, os_user, package_url, version_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			instance.Connection.ID, instance.Connection.InstanceID, instance.Connection.Host,
+			instance.Connection.Port, instance.Connection.Username, instance.Connection.PasswordEncrypted,
+			instance.Connection.SSLEnabled, instance.Connection.Basedir, instance.Connection.Datadir,
+			instance.Connection.OSUser, instance.Connection.PackageURL, instance.Connection.VersionID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create instance connection: %w", err)
 		}
 	}
 	if instance.Version.InstanceID != "" {
 		instance.Version.ID = uuid.New().String()
 		instance.Version.InstanceID = instance.ID
-		if err := r.CreateVersion(ctx, &instance.Version); err != nil {
-			return err
+		_, err = tx.ExecContext(ctx, `DELETE FROM instance_versions WHERE instance_id = ?`, instance.Version.InstanceID)
+		if err != nil {
+			return fmt.Errorf("failed to replace existing version: %w", err)
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO instance_versions (id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, features, engines)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			instance.Version.ID, instance.Version.InstanceID, instance.Version.Flavor,
+			instance.Version.Version, instance.Version.FullVersion,
+			nullableTime(&instance.Version.ReleaseDate), nullableTime(&instance.Version.EOLDate),
+			instance.Version.IsLTS, instance.Version.Features, instance.Version.Engines,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create instance version: %w", err)
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 func (r *InstanceRepository) CreateConnection(ctx context.Context, conn *models.InstanceConnection) error {
@@ -159,17 +186,27 @@ func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.
 	if version.ID == "" {
 		version.ID = uuid.New().String()
 	}
-	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM instance_versions WHERE instance_id = ?`, version.InstanceID)
+
+	tx, err := r.db.Pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM instance_versions WHERE instance_id = ?`, version.InstanceID)
 	if err != nil {
 		return fmt.Errorf("failed to replace existing version: %w", err)
 	}
-	_, err = r.db.Pool.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO instance_versions (id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, features, engines)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		version.ID, version.InstanceID, version.Flavor, version.Version, version.FullVersion,
 		nullableTime(&version.ReleaseDate), nullableTime(&version.EOLDate), version.IsLTS, version.Features, version.Engines,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *InstanceRepository) GetVersion(ctx context.Context, instanceID string) (*models.InstanceVersion, error) {
@@ -261,20 +298,27 @@ func (r *InstanceRepository) UpsertTopology(ctx context.Context, instanceID stri
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not initialized")
 	}
-	var existing string
-	err := r.db.Pool.QueryRowContext(ctx, `SELECT id FROM instance_topologies WHERE instance_id = ?`, instanceID).Scan(&existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = r.db.Pool.ExecContext(ctx, `
-			INSERT INTO instance_topologies (id, instance_id, cluster_id, master_id, slave_ids, replication_mode)
+	id := uuid.New().String()
+	if r.db.IsSQLite() {
+		_, err := r.db.Pool.ExecContext(ctx, `
+			INSERT OR REPLACE INTO instance_topologies (id, instance_id, cluster_id, master_id, slave_ids, replication_mode)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			uuid.New().String(), instanceID, nullableString(topology.ClusterID), nullableString(topology.MasterID), nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode))
-	} else if err == nil {
-		_, err = r.db.Pool.ExecContext(ctx, `
-			UPDATE instance_topologies SET cluster_id=?, master_id=?, slave_ids=?, replication_mode=? WHERE instance_id=?`,
-			nullableString(topology.ClusterID), nullableString(topology.MasterID), nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode), instanceID)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to upsert topology: %w", err)
+			id, instanceID, nullableString(topology.ClusterID), nullableString(topology.MasterID),
+			nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode))
+		if err != nil {
+			return fmt.Errorf("failed to upsert topology: %w", err)
+		}
+	} else {
+		_, err := r.db.Pool.ExecContext(ctx, `
+			INSERT INTO instance_topologies (id, instance_id, cluster_id, master_id, slave_ids, replication_mode)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE cluster_id=VALUES(cluster_id), master_id=VALUES(master_id),
+				slave_ids=VALUES(slave_ids), replication_mode=VALUES(replication_mode)`,
+			id, instanceID, nullableString(topology.ClusterID), nullableString(topology.MasterID),
+			nullableString(topology.SlaveIDs), nullableString(topology.ReplicationMode))
+		if err != nil {
+			return fmt.Errorf("failed to upsert topology: %w", err)
+		}
 	}
 	return nil
 }
@@ -310,22 +354,28 @@ func (r *InstanceRepository) UpsertStatus(ctx context.Context, instanceID string
 	}
 	now := time.Now().UTC()
 	status.UpdatedAt = now
-	// 先看是否存在
-	var existing string
-	err := r.db.Pool.QueryRowContext(ctx, `SELECT id FROM instance_statuses WHERE instance_id = ?`, instanceID).Scan(&existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = r.db.Pool.ExecContext(ctx, `
-			INSERT INTO instance_statuses (id, instance_id, run_status, health_status, role, replication_status, seconds_behind_master, updated_at)
+	id := uuid.New().String()
+	if r.db.IsSQLite() {
+		_, err := r.db.Pool.ExecContext(ctx, `
+			INSERT OR REPLACE INTO instance_statuses (id, instance_id, run_status, health_status, role, replication_status, seconds_behind_master, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			uuid.New().String(), instanceID, status.RunStatus, status.HealthStatus, status.Role,
+			id, instanceID, status.RunStatus, status.HealthStatus, status.Role,
 			nullableString(status.ReplicationStatus), status.SecondsBehindMaster, now)
-	} else if err == nil {
-		_, err = r.db.Pool.ExecContext(ctx, `
-			UPDATE instance_statuses SET run_status=?, health_status=?, role=?, replication_status=?, seconds_behind_master=?, updated_at=? WHERE instance_id=?`,
-			status.RunStatus, status.HealthStatus, status.Role, nullableString(status.ReplicationStatus), status.SecondsBehindMaster, now, instanceID)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to upsert status: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to upsert status: %w", err)
+		}
+	} else {
+		_, err := r.db.Pool.ExecContext(ctx, `
+			INSERT INTO instance_statuses (id, instance_id, run_status, health_status, role, replication_status, seconds_behind_master, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE run_status=VALUES(run_status), health_status=VALUES(health_status),
+				role=VALUES(role), replication_status=VALUES(replication_status),
+				seconds_behind_master=VALUES(seconds_behind_master), updated_at=VALUES(updated_at)`,
+			id, instanceID, status.RunStatus, status.HealthStatus, status.Role,
+			nullableString(status.ReplicationStatus), status.SecondsBehindMaster, now)
+		if err != nil {
+			return fmt.Errorf("failed to upsert status: %w", err)
+		}
 	}
 	return nil
 }
