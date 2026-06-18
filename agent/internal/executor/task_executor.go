@@ -3852,6 +3852,64 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 	return string(out), err
 }
 
+func changeMySQLUserPassword(ctx context.Context, host string, port int, user, pass, username, userHost, password string) (string, error) {
+	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
+
+	execSQL := func(sql string) (string, error) {
+		out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
+		return string(out), err
+	}
+
+	tryAlter := func(sql string) (string, bool, error) {
+		out, err := execSQL(sql)
+		if err == nil {
+			return out, true, nil
+		}
+		if strings.Contains(out, "1396") || strings.Contains(out, "Operation ALTER USER failed") {
+			return out, false, nil
+		}
+		return out, false, err
+	}
+
+	output, userExists, err := tryAlter(alterSQL)
+	if userExists {
+		return output, nil
+	}
+	if err == nil {
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
+		localhostOut, _, localhostErr := tryAlter(localhostSQL)
+		if localhostErr == nil {
+			return localhostOut, nil
+		}
+		return output, localhostErr
+	}
+	if !strings.Contains(strings.ToLower(output), "read-only") {
+		return output, err
+	}
+
+	stateOut, _ := execSQL("SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
+	restoreReadOnly, restoreSuperReadOnly := parseReadOnlyState(stateOut)
+	disableSQL := "SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF"
+	if disableOut, disableErr := execSQL(disableSQL); disableErr != nil {
+		return strings.TrimSpace(output + "\n" + disableOut), err
+	}
+	alterOut, userExists, alterErr := tryAlter(alterSQL)
+	if !userExists {
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
+		alterOut, _, alterErr = tryAlter(localhostSQL)
+	}
+	restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))
+	restoreOut, restoreErr := execSQL(restoreSQL)
+	combined := strings.TrimSpace(output + "\n" + alterOut + "\n" + restoreOut)
+	if alterErr != nil {
+		return combined, alterErr
+	}
+	if restoreErr != nil {
+		return combined, fmt.Errorf("password changed but failed to restore read_only state: %w", restoreErr)
+	}
+	return combined, nil
+}
+
 func parseReadOnlyState(output string) (bool, bool) {
 	fields := strings.Fields(output)
 	if len(fields) < 2 {
