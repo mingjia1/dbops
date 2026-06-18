@@ -121,7 +121,7 @@ func main() {
 	// P0: 提前建 auditService, 让 instanceService/hostService 等可注入.
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
-	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey, cfg.AgentToken)
+	hostService := services.NewHostService(hostRepo, cfg.EncryptionKey, cfg.AgentToken, cfg.DataDir)
 	hostService.SetInstanceRepo(instanceRepo)
 	hostService.SetAgentClient(agentClient)
 	hostController := controllers.NewHostController(hostService)
@@ -253,7 +253,8 @@ func main() {
 	licenseService := services.NewLicenseService(licenseRepo, auditService, cfg.EncryptionKey)
 	licenseController := controllers.NewLicenseController(licenseService)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
 	maxMem := int64(10 << 20)
 	if v := os.Getenv("DBOPS_MAX_MULTIPART_MEMORY"); v != "" {
@@ -647,8 +648,16 @@ func main() {
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+		if cfg.TLSCertPath != "" && cfg.TLSKeyPath != "" {
+			logInstance.Info("TLS enabled, certificate: " + cfg.TLSCertPath)
+			if err := srv.ListenAndServeTLS(cfg.TLSCertPath, cfg.TLSKeyPath); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Failed to start TLS server: %v", err)
+			}
+		} else {
+			logInstance.Info("TLS not configured, serving HTTP")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Failed to start server: %v", err)
+			}
 		}
 	}()
 

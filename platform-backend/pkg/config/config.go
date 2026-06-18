@@ -7,6 +7,8 @@ import (
 
 type Config struct {
 	ServerPort     string
+	TLSCertPath    string
+	TLSKeyPath     string
 	LogLevel       string
 	DatabaseURL    string
 	SQLitePath     string
@@ -47,6 +49,8 @@ func Load() (*Config, error) {
 	viper.AddConfigPath("../../config")
 
 	viper.SetDefault("server_port", "8080")
+	viper.SetDefault("tls_cert_path", "")
+	viper.SetDefault("tls_key_path", "")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("database_url", "root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local")
 	viper.SetDefault("sqlite_path", "") // 空表示使用 <DataDir>/dbops.db
@@ -90,6 +94,8 @@ func Load() (*Config, error) {
 
 	return &Config{
 		ServerPort:    viper.GetString("server_port"),
+		TLSCertPath:   viper.GetString("tls_cert_path"),
+		TLSKeyPath:    viper.GetString("tls_key_path"),
 		LogLevel:      viper.GetString("log_level"),
 		DatabaseURL:   viper.GetString("database_url"),
 		SQLitePath:    viper.GetString("sqlite_path"),

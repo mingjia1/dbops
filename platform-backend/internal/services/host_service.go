@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -39,6 +41,8 @@ type HostService struct {
 	agentToken   string
 	agentClient  *AgentClient
 
+	dataDir     string
+
 	taskMu      sync.RWMutex
 	testResults map[string]*HostTestResult
 
@@ -46,15 +50,24 @@ type HostService struct {
 	scanResults map[string]*HostScanResult
 }
 
-func NewHostService(repo *repositories.HostRepository, encKey string, agentToken ...string) *HostService {
+func NewHostService(repo *repositories.HostRepository, encKey string, opts ...string) *HostService {
 	token := ""
-	if len(agentToken) > 0 {
-		token = agentToken[0]
+	dir := "./data"
+	for i, opt := range opts {
+		switch i {
+		case 0:
+			token = opt
+		case 1:
+			if opt != "" {
+				dir = opt
+			}
+		}
 	}
 	return &HostService{
 		repo:        repo,
 		encKey:      encKey,
 		agentToken:  token,
+		dataDir:     dir,
 		testResults: make(map[string]*HostTestResult),
 		scanResults: make(map[string]*HostScanResult),
 	}
@@ -549,10 +562,52 @@ func (s *HostService) sshClient(host *models.Host, credential string) (*ssh.Clie
 	config := &ssh.ClientConfig{
 		User:            host.SSHUser,
 		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: s.hostKeyCallback(host.Address),
 		Timeout:         10 * time.Second,
 	}
 	return ssh.Dial("tcp", net.JoinHostPort(host.Address, strconv.Itoa(host.SSHPort)), config)
+}
+
+// hostKeyCallback 返回 SSH 主机密钥验证回调.
+// 使用 known_hosts 文件进行持久化验证: 首次连接时记录主机密钥, 后续连接验证一致性.
+func (s *HostService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
+	knownHostsPath := filepath.Join(s.dataDir, "known_hosts")
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		log.Printf("WARN: cannot load known_hosts at %s, falling back to key recording: %v", knownHostsPath, err)
+		// 如果 known_hosts 文件不存在, 使用回调自动记录首次连接的主机密钥
+		return s.hostKeyRecorder(knownHostsPath, hostAddr)
+	}
+	return callback
+}
+
+// hostKeyRecorder 在首次连接时自动记录主机密钥到 known_hosts 文件.
+// 后续连接如果密钥不匹配, 拒绝连接 (抗 MITM).
+func (s *HostService) hostKeyRecorder(knownHostsPath, hostAddr string) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		// 检查是否已存在 known_hosts 文件, 如果后续存在则尝试用已知主机验证
+		if data, err := os.ReadFile(knownHostsPath); err == nil && len(data) > 0 {
+			if cb, cbErr := knownhosts.New(knownHostsPath); cbErr == nil {
+				if verifyErr := cb(hostname, remote, key); verifyErr == nil {
+					return nil
+				}
+				return fmt.Errorf("host key verification failed for %s: host key has changed! Possible MITM attack", hostAddr)
+			}
+		}
+		// 首次连接: 记录主机密钥到 known_hosts
+		log.Printf("WARN: First SSH connection to %s — recording host key to %s", hostAddr, knownHostsPath)
+		_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
+		f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("cannot write known_hosts: %w", err)
+		}
+		defer f.Close()
+		line := knownhosts.Line([]string{knownhosts.Normalize(hostAddr)}, key)
+		if _, err := fmt.Fprintln(f, line); err != nil {
+			return fmt.Errorf("write known_hosts: %w", err)
+		}
+		return nil
+	}
 }
 
 func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
