@@ -154,6 +154,21 @@ build/
 # ---------- 临时工具/脚本 ----------
 .gitcleanup-paths*
 
+# ---------- Windows 临时/设备文件 ----------
+nul
+*/nul
+*/*/nul
+*/*/*/nul
+
+# ---------- 独立部署脚本 ----------
+deploy_mha_real.py
+real_mha_deploy.py
+
+# ---------- 编译产物（二进制） ----------
+agent/mysql-ops-agent-linux-amd64
+agent/agent-linux-amd64
+platform-backend/platform-backend-linux-amd64
+
 # ---------- 备份目录 ----------
 .git.backup/
 .mailmap

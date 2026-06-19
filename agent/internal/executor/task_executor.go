@@ -585,7 +585,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// If so, skip initialization and just start MySQL.
 	// For MGR deployments, always re-initialize to get a clean group state.
 	needInit := true
-	if installType != "mgr" {
+	// When a MySQL password is explicitly provided, always re-initialize
+	// to ensure clean auth plugin setup (avoids stale mysql_native_password
+	// users from previous deployments on MySQL 8.4+ where the plugin is removed).
+	if installType != "mgr" && mysqlPass == "" {
 		if _, err := os.Stat(dataDir); err == nil {
 			if isDataDirInitialized(dataDir) {
 				needInit = false
@@ -747,24 +750,35 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	time.Sleep(5 * time.Second)
 
-	// Skip the original password setup - it seems to return success but doesn't actually set the password
-	// We'll handle it in the health check retry logic below
+	// Wait for the MySQL socket file to exist before attempting password setup.
+	// After --initialize-insecure and --daemonize, the socket file is created
+	// asynchronously. Without this wait, the socket-based retrySQL would fail
+	// silently and root@% would never be created.
+	socketPath := filepath.Join(dataDir, "mysql.sock")
+	for i := 0; i < 30; i++ {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
 
-	healthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "ping")
+	healthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "--get-server-public-key", "ping")
 	if mysqlPass != "" {
 		healthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 	}
 	healthErr := healthCmd.Run()
 
-	// If health check failed and password was configured, try to set it via socket
-	if healthErr != nil && mysqlPass != "" {
+	// Always set up password when configured, even if health check passed.
+	// mysqladmin ping can succeed without valid credentials (server is alive)
+	// but root@% might not exist yet, causing Access denied for cross-host connections.
+	if mysqlPass != "" {
 		if mysqlUser == "" {
 			mysqlUser = "root"
 		}
 		socketPath := filepath.Join(dataDir, "mysql.sock")
 		retrySQL := fmt.Sprintf(
-			"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-				"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+				"ALTER USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
@@ -777,7 +791,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 
 		// Try health check again after password setup
-		retryHealthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "ping")
+		retryHealthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "--get-server-public-key", "ping")
 		retryHealthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
@@ -857,7 +871,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	// 1. 创建复制用户（主节点和副本都需要）
 	replicationSQL := `
 		SET SQL_LOG_BIN=0;
-		CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED BY 'repl';
+		CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED WITH caching_sha2_password BY 'repl';
 		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO 'repl'@'%';
 		FLUSH PRIVILEGES;
 		SET SQL_LOG_BIN=1;
@@ -1013,7 +1027,7 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 
 func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveConfig) *TaskResult {
 	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%';",
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser,
 	)
@@ -1026,8 +1040,7 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 			Timestamp: time.Now(),
 		}
 	}
-	_, _ = mysqlExecWithSocketFallback(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass,
-		fmt.Sprintf("ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';", escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass)))
+	// Repl user uses default caching_sha2_password which works with CHANGE MASTER TO GET_MASTER_PUBLIC_KEY=1
 
 	if out, err := setServerID(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, config.ServerID); err != nil {
 		return &TaskResult{
@@ -1227,7 +1240,7 @@ func mysqlExecWithSocketFallback(ctx context.Context, host string, port int, use
 }
 func setServerID(ctx context.Context, host string, port int, user, pass string, serverID int) ([]byte, error) {
 	return mysqlExecWithSocketFallback(ctx, host, port, user, pass,
-		fmt.Sprintf("SET PERSIST server_id=%d; SET GLOBAL server_id=%d;", serverID, serverID),
+		fmt.Sprintf("SET GLOBAL server_id=%d;", serverID),
 	)
 }
 
@@ -2204,7 +2217,8 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 	cmd := exec.CommandContext(ctx, "mysqladmin", "ping",
 		"-h", host,
 		"-P", fmt.Sprintf("%d", port),
-		"-u", user)
+		"-u", user,
+		"--get-server-public-key")
 	if pass != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	}
@@ -3260,7 +3274,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			return adminFailed(req.TaskID, "invalid username"), nil
 		}
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password)))
+			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED WITH caching_sha2_password BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password)))
 	case "drop_user":
 		username, _ := req.Config["username"].(string)
 		userHost, _ := req.Config["user_host"].(string)
@@ -3772,7 +3786,7 @@ func mysqlExecCommand(ctx context.Context, host string, port int, user string, p
 	}
 	host = normalizeLocalMySQLHost(host)
 
-	cmd := exec.CommandContext(ctx, getMySQLBinary(), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-e", sql)
+	cmd := exec.CommandContext(ctx, getMySQLBinary(), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "--get-server-public-key", "-e", sql)
 	if password != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
 	}
@@ -3788,12 +3802,11 @@ func normalizeLocalMySQLHost(host string) string {
 
 // getMySQLBinary returns the path to mysql command, preferring absolute path
 func getMySQLBinary() string {
-	mysqlPath := "/usr/bin/mysql"
-	if _, err := os.Stat(mysqlPath); err != nil {
-		// Fallback to PATH lookup if /usr/bin/mysql doesn't exist
-		mysqlPath = "mysql"
-	}
-	return mysqlPath
+	// Use resolveBinaryPath for consistent binary discovery across the agent.
+	// This searches in /opt/dbops-pxc, /usr/local/mysql, and PATH,
+	// preferring MySQL 8.0+ client which fully supports --get-server-public-key
+	// and caching_sha2_password authentication.
+	return resolveBinaryPath("mysql")
 }
 
 func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string) error {
@@ -3802,14 +3815,14 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 	var sql string
 	if user == "root" {
 		sql = fmt.Sprintf(
-			"ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; "+
-				"CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s'; "+
+			"ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+				"CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapedPass, escapedPass,
 		)
 	} else {
 		sql = fmt.Sprintf(
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapedUser, escapedPass, escapedUser,
 		)
@@ -3845,7 +3858,7 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 }
 
 func changeMySQLUserPassword(ctx context.Context, host string, port int, user, pass, username, userHost, password string) (string, error) {
-	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
+	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED WITH caching_sha2_password BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
 
 	execSQL := func(sql string) (string, error) {
 		out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
@@ -3868,7 +3881,7 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 		return output, nil
 	}
 	if err == nil {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH caching_sha2_password BY '%s'", escapeSQL(username), escapeSQL(password))
 		localhostOut, _, localhostErr := tryAlter(localhostSQL)
 		if localhostErr == nil {
 			return localhostOut, nil
@@ -3887,7 +3900,7 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 	}
 	alterOut, userExists, alterErr := tryAlter(alterSQL)
 	if !userExists {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH caching_sha2_password BY '%s'", escapeSQL(username), escapeSQL(password))
 		alterOut, _, alterErr = tryAlter(localhostSQL)
 	}
 	restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))
