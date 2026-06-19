@@ -684,6 +684,13 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 }
 
 // buildMGRPlanSteps generates MGR-specific deployment steps.
+// Uses a single-step-per-node approach with deploy_mode="single" and install_type="mgr".
+// - host uses the external IP of each node.
+// - The health check initially fails since no root@% user exists yet.
+// - Password is then set via Unix socket (creates root@% with caching_sha2_password).
+// - Retry health check succeeds because root@% now exists with the correct password.
+// - initializeMGR connects via external IP, matching root@% (caching_sha2_password).
+// - local_address uses the external IP for group_replication_local_address (MGR inter-node communication).
 func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
 	steps := preamblePlanSteps()
 	last := "prepare_credentials"
@@ -704,27 +711,45 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		}
 	}
 
-	// Build group seeds
+	// Build group seeds (all nodes for the seeds list)
 	var groupSeeds []string
 	for i := range nodes {
 		groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", nodes[i].Host, localPorts[i]))
 	}
 
+	// Single consolidated step per node: install MySQL + initialize MGR
+	// deploy_mode="single" with install_type="mgr" triggers:
+	// 1. MySQL install + start with MGR startup params (group_replication plugin etc.)
+	// 2. Root password set via Unix socket (creates root@localhost + root@%)
+	// 3. initializeMGR called: creates repl user, starts group replication
+	//
+	// host uses the external IP of each node. The password setup creates root@%
+	// with caching_sha2_password, which allows TCP connections from the external IP
+	// to authenticate via RSA public key exchange (handled by the mysql client library
+	// with MYSQL_PWD env var).
 	for i := range nodes {
 		isPrimary := nodes[i].Role == "primary" || nodes[i].Role == "bootstrap"
 		nodeConfig := map[string]interface{}{
-			"deploy_mode":    "mgr",
-			"group_name":     groupName,
-			"group_seeds":    groupSeeds,
-			"local_address":  nodes[i].Host,
-			"local_port":     localPorts[i],
-			"mysql_port":     nodes[i].MySQLPort,
+			"deploy_mode":    "single",
+			"host":           nodes[i].Host,
+			"port":           nodes[i].MySQLPort,
+			"mysql_user":     req.MySQL.User,
+			"mysql_pass":     req.MySQL.Password,
 			"server_id":      defaultInt(nodes[i].ServerID, i+1),
-			"bootstrap":      isPrimary,
+			"install_type":   "mgr",
+			"is_primary":     isPrimary,
+			"group_name":     groupName,
+			"local_address":  fmt.Sprintf("%s:%d", nodes[i].Host, localPorts[i]),
+			"seeds":          strings.Join(groupSeeds, ","),
 			"replicate_user": req.Replication.User,
 			"replicate_pass": req.Replication.Password,
-			"mysql_user":     req.MySQL.User,
-			"mysql_password": req.MySQL.Password,
+		}
+		if nodes[i].DataDir != "" {
+			nodeConfig["data_dir"] = nodes[i].DataDir
+			nodeConfig["datadir"] = nodes[i].DataDir
+		}
+		if nodes[i].Basedir != "" {
+			nodeConfig["basedir"] = nodes[i].Basedir
 		}
 		mergeCommonDeployConfig(nodeConfig, req)
 
@@ -732,7 +757,7 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		if isPrimary {
 			stepType = "bootstrap"
 		}
-		id := fmt.Sprintf("%s_%s", stepType, nodes[i].ID)
+		id := fmt.Sprintf("deploy_mgr_%s", nodes[i].ID)
 		steps = append(steps, PlanStep{
 			ID: id, Name: fmt.Sprintf("Deploy MGR node %s (%s)", nodes[i].Host, nodes[i].Role),
 			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",

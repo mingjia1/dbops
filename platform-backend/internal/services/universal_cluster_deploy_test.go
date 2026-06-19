@@ -41,8 +41,8 @@ func TestUniversalClusterDeployBuildsMGRPlan(t *testing.T) {
 	require.Len(t, plan.Nodes, 3)
 	require.Equal(t, "10.0.0.11", plan.Nodes[0].Host)
 	require.Equal(t, 19091, plan.Nodes[0].AgentPort)
-	require.Contains(t, stepIDs(plan.Steps), "bootstrap_node-1")
-	require.Contains(t, stepIDs(plan.Steps), "join_node-2")
+	require.Contains(t, stepIDs(plan.Steps), "deploy_mgr_node-1")
+	require.Contains(t, stepIDs(plan.Steps), "deploy_mgr_node-2")
 	require.Contains(t, stepIDs(plan.Steps), "sync_metadata")
 }
 
@@ -282,7 +282,7 @@ func TestUniversalClusterDeployGeneratesRandomMGRGroupName(t *testing.T) {
 		{ID: "primary", Host: "10.0.0.11", Role: "primary", MySQLPort: 3306},
 		{ID: "secondary", Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306},
 	}, req)
-	step := findStepByID(steps, "bootstrap_primary")
+	step := findStepByID(steps, "deploy_mgr_primary")
 	require.NotNil(t, step)
 	groupName, ok := step.Config["group_name"].(string)
 	require.True(t, ok)

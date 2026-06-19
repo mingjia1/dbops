@@ -583,10 +583,13 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// Check if data directory exists and has been initialized.
 	// If so, skip initialization and just start MySQL.
+	// For MGR deployments, always re-initialize to get a clean group state.
 	needInit := true
-	if _, err := os.Stat(dataDir); err == nil {
-		if isDataDirInitialized(dataDir) {
-			needInit = false
+	if installType != "mgr" {
+		if _, err := os.Stat(dataDir); err == nil {
+			if isDataDirInitialized(dataDir) {
+				needInit = false
+			}
 		}
 	}
 
@@ -716,11 +719,11 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// 在启动MySQL前，杀掉所有可能使用该数据目录的mysqld进程
 	// 这样可以避免端口和文件锁冲突
-	psCmd := exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf("ps aux | grep 'mysqld.*%s' | grep -v grep | awk '{print $2}'", dataDir))
+	psCmd := exec.CommandContext(ctx, "sh", "-c", "ps aux | grep mysqld | grep -v grep | awk '{print $2}'")
 	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
 		pids := strings.TrimSpace(string(pidBytes))
 		if pids != "" {
-			fmt.Fprintf(os.Stderr, "Found mysqld process(es) using datadir %s, PIDs: %s, killing them\n", dataDir, pids)
+			fmt.Fprintf(os.Stderr, "Found mysqld process(es), PIDs: %s, killing them to free port\n", pids)
 			for _, pid := range strings.Split(pids, "\n") {
 				if pid != "" {
 					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
@@ -760,7 +763,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 		socketPath := filepath.Join(dataDir, "mysql.sock")
 		retrySQL := fmt.Sprintf(
-			"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
+			"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 				"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
@@ -841,25 +844,14 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 }
 
 // initializeMGR initializes MySQL Group Replication
+// Uses mysqlExecWithSocketFallback which tries TCP first, then falls back to
+// Unix socket authentication. This resolves the ERROR 1130 issue where
+// MySQL 8.0 creates only root@localhost (no root@%), so TCP auth fails
+// but socket auth works.
 func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName string) error {
-	// 构建MySQL连接命令
-	baseCmd := []string{
-		"-h", host,
-		"-P", fmt.Sprintf("%d", port),
-		"-u", user,
-	}
-
-	env := append(os.Environ(), "MYSQL_PWD="+pass)
-
 	// 0. 关闭super-read-only以便创建用户
-	disableReadOnlySQL := `
-		SET GLOBAL super_read_only=0;
-		SET GLOBAL read_only=0;
-	`
-	disableCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", disableReadOnlySQL)...)
-	disableCmd.Env = env
-	if out, err := disableCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("disable read-only failed: %v, output: %s", err, string(out))
+	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
+		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
 	// 1. 创建复制用户（主节点和副本都需要）
@@ -871,33 +863,23 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		SET SQL_LOG_BIN=1;
 		CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='repl' FOR CHANNEL 'group_replication_recovery';
 	`
-
-	replCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", replicationSQL)...)
-	replCmd.Env = env
-	if out, err := replCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("create replication user failed: %v, output: %s", err, string(out))
+	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, replicationSQL); err != nil {
+		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
 	// 2. 启动Group Replication
 	if isPrimary {
-		// 主节点：bootstrap group
 		bootstrapSQL := `
 			SET GLOBAL group_replication_bootstrap_group=ON;
 			START GROUP_REPLICATION;
 			SET GLOBAL group_replication_bootstrap_group=OFF;
 		`
-		bootCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", bootstrapSQL)...)
-		bootCmd.Env = env
-		if out, err := bootCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("bootstrap MGR failed: %v, output: %s", err, string(out))
+		if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, bootstrapSQL); err != nil {
+			return fmt.Errorf("bootstrap MGR failed: %v", err)
 		}
 	} else {
-		// 副本节点：直接start
-		startSQL := "START GROUP_REPLICATION;"
-		startCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-e", startSQL)...)
-		startCmd.Env = env
-		if out, err := startCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("start MGR failed: %v, output: %s", err, string(out))
+		if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "START GROUP_REPLICATION;"); err != nil {
+			return fmt.Errorf("start MGR failed: %v", err)
 		}
 	}
 
@@ -905,10 +887,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	time.Sleep(3 * time.Second)
 
 	// 4. 验证MGR状态
-	checkSQL := "SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;"
-	checkCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), append(baseCmd, "-N", "-e", checkSQL)...)
-	checkCmd.Env = env
-	out, err := checkCmd.CombinedOutput()
+	out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
 	if err != nil {
 		return fmt.Errorf("check MGR status failed: %v", err)
 	}
@@ -920,7 +899,6 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 
 	return nil
 }
-
 func (e *TaskExecutor) deployMasterSlave(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMasterSlaveConfig(req.Config)
 
@@ -1220,19 +1198,33 @@ func mysqlExecWithSocketFallback(ctx context.Context, host string, port int, use
 	if err == nil {
 		return out, nil
 	}
-	// TCP failed — try local socket as fallback
-	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
-	socketCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
-	if pass != "" {
-		socketCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
-	}
-	if socketOut, socketErr := socketCmd.CombinedOutput(); socketErr == nil {
-		return socketOut, nil
-	}
-	// Both failed, return original TCP error
-	return out, err
-}
+	tcpErr := fmt.Sprintf("TCP: %v - %s", err, strings.TrimSpace(string(out)))
 
+	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+
+	// Fallback 1: socket WITHOUT password (for auth_socket plugin in MySQL 8.0)
+	noPassCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+	noPassOut, noPassErr := noPassCmd.CombinedOutput()
+	if noPassErr == nil {
+		return noPassOut, nil
+	}
+
+	// Fallback 2: socket WITH password (for mysql_native_password after ALTER USER)
+	withPassCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+	if pass != "" {
+		withPassCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+	}
+	withPassOut, withPassErr := withPassCmd.CombinedOutput()
+	if withPassErr == nil {
+		return withPassOut, nil
+	}
+
+	// All failed, return original out with detailed diagnostic error
+	return out, fmt.Errorf("%s; socket(no-pass): %v - %s; socket(with-pass): %v - %s",
+		tcpErr,
+		noPassErr, strings.TrimSpace(string(noPassOut)),
+		withPassErr, strings.TrimSpace(string(withPassOut)))
+}
 func setServerID(ctx context.Context, host string, port int, user, pass string, serverID int) ([]byte, error) {
 	return mysqlExecWithSocketFallback(ctx, host, port, user, pass,
 		fmt.Sprintf("SET PERSIST server_id=%d; SET GLOBAL server_id=%d;", serverID, serverID),
@@ -3719,7 +3711,7 @@ func backupMySQLHostCandidates(host string) []string {
 	}
 	candidates := []string{host}
 	if isLocalHost(host) {
-		candidates = append(candidates, "localhost", "127.0.0.1")
+		candidates = append(candidates, "127.0.0.1", "localhost")
 	}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(candidates))

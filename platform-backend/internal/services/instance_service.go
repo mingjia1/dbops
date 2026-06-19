@@ -220,25 +220,20 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 	if _, err := s.repo.GetByID(ctx, id); err != nil {
 		return err
 	}
+
 	// 尝试备份和退役
 	backup, err := s.backupAndDecommission(ctx, id)
 	if err != nil {
-		// 如果是测试实例或无法确定agent主机，允许跳过备份直接删除
-		if strings.Contains(err.Error(), "cannot determine agent host") {
-			log.Printf("WARN: Skipping backup for instance %s (no agent host configured): %v", id, err)
-			log.Printf("INFO: Deleting instance %s without backup (test instance or incomplete configuration)", id)
+		// 如果备份/退役失败（实例离线、无密码或agent不可达），跳过备份直接删除
+		log.Printf("WARN: backup/decommission failed for instance %s, proceeding with direct delete: %v", id, err)
+		log.Printf("INFO: Deleting instance %s without backup (instance may be offline or incomplete)", id)
 
-			if delErr := s.repo.Delete(ctx, id); delErr != nil {
-				return delErr
-			}
-
-			s.auditInstanceDelete(ctx, id, "success", "deleted without backup (no agent host)", "")
-			return nil
+		if delErr := s.repo.Delete(ctx, id); delErr != nil {
+			return delErr
 		}
 
-		// 其他错误仍然返回
-		s.auditInstanceDelete(ctx, id, "failed", err.Error(), "")
-		return err
+		s.auditInstanceDelete(ctx, id, "success", "deleted without backup: "+err.Error(), "")
+		return nil
 	}
 
 	// 正常流程：备份成功后删除

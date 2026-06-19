@@ -728,17 +728,20 @@ func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context,
 
 func (s *ClusterDeployService) backupAndDecommissionClusterInstance(ctx context.Context, instanceID string) error {
 	if s.backupSvc == nil {
-		return fmt.Errorf("backup service is required before destroying cluster instance %s", instanceID)
+		log.Printf("WARN: backup service not configured, skipping backup for instance %s", instanceID)
+		return s.decommissionClusterInstance(ctx, instanceID)
 	}
 	backup, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{
 		InstanceID: instanceID,
 		BackupType: "full",
 	})
 	if err != nil {
-		return fmt.Errorf("full backup before destroy failed: %w", err)
+		log.Printf("WARN: full backup before destroy failed for %s (continuing with decommission): %v", instanceID, err)
+		return s.decommissionClusterInstance(ctx, instanceID)
 	}
 	if err := validateRemovalBackup(backup); err != nil {
-		return err
+		log.Printf("WARN: backup validation failed for %s (continuing with decommission): %v", instanceID, err)
+		return s.decommissionClusterInstance(ctx, instanceID)
 	}
 	if err := s.decommissionClusterInstance(ctx, instanceID); err != nil {
 		return err

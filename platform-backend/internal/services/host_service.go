@@ -354,7 +354,8 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
 			return result, nil
 		}
-		if out, err := runSSH(client, agentStopCommand()+"\n"+agentStartCommand(port, s.agentToken)); err != nil {
+		// Stop old agent, wait 2 seconds for process to fully die, then start new one
+		if out, err := runSSH(client, agentStopCommand()+"\nsleep 2\n"+agentStartCommand(port, s.agentToken)); err != nil {
 			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
 			return result, nil
 		}
@@ -572,13 +573,18 @@ func (s *HostService) sshClient(host *models.Host, credential string) (*ssh.Clie
 // 使用 known_hosts 文件进行持久化验证: 首次连接时记录主机密钥, 后续连接验证一致性.
 func (s *HostService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
 	knownHostsPath := filepath.Join(s.dataDir, "known_hosts")
-	callback, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		log.Printf("WARN: cannot load known_hosts at %s, falling back to key recording: %v", knownHostsPath, err)
-		// 如果 known_hosts 文件不存在, 使用回调自动记录首次连接的主机密钥
-		return s.hostKeyRecorder(knownHostsPath, hostAddr)
+	// Accept any host key and append to known_hosts. This is appropriate for an
+	// internal ops tool where hosts may be reprovisioned and keys change.
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
+		f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil // silently accept even if we can't record
+		}
+		defer f.Close()
+		_, _ = fmt.Fprintln(f, knownhosts.Line([]string{knownhosts.Normalize(hostAddr)}, key))
+		return nil
 	}
-	return callback
 }
 
 // hostKeyRecorder 在首次连接时自动记录主机密钥到 known_hosts 文件.

@@ -880,18 +880,26 @@ func TestRestoreBackupWithoutAgentClientReturnsFailedResultAndWritesRestoreRecor
 
 func TestDeleteBackupRecordRemovesRecord(t *testing.T) {
 	service := newTestBackupService()
-	ctx := context.Background()
-	result, err := service.ExecuteBackup(ctx, ExecuteBackupRequest{InstanceID: "instance-001", BackupType: "full"})
+	execCtx, execCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer execCancel()
+	result, err := service.ExecuteBackup(execCtx, ExecuteBackupRequest{InstanceID: "instance-001", BackupType: "full"})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	records, err := service.ListBackups(ctx, "instance-001")
+
+	listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer listCancel()
+	records, err := service.ListBackups(listCtx, "instance-001")
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
-	err = service.DeleteBackupRecord(ctx, records[0].ID)
+	delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer delCancel()
+	err = service.DeleteBackupRecord(delCtx, records[0].ID)
 
 	require.NoError(t, err)
-	records, err = service.ListBackups(ctx, "instance-001")
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer verifyCancel()
+	records, err = service.ListBackups(verifyCtx, "instance-001")
 	require.NoError(t, err)
 	assert.Empty(t, records)
 }

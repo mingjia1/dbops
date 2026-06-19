@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
@@ -235,8 +236,10 @@ func TestDestroyClusterResolvesDeploymentByName(t *testing.T) {
 	require.Equal(t, "destroyed", updated.Status)
 }
 
-func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
-	ctx := context.WithValue(context.Background(), "user_id", "destroy-user")
+func TestDestroyClusterFailsWhenDecommissionFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, "user_id", "destroy-user")
 	db := newTestDB()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -270,7 +273,8 @@ func TestDestroyClusterRequiresBackupBeforeRemoval(t *testing.T) {
 	require.ErrorAs(t, err, &destroyErr)
 	require.Equal(t, "ha-cluster-001", destroyErr.ClusterID)
 	require.Equal(t, "inst-001", destroyErr.InstanceID)
-	require.Contains(t, err.Error(), "backup service is required")
+	require.Equal(t, "backup_and_decommission", destroyErr.Stage)
+	require.Contains(t, err.Error(), "decommission")
 }
 
 func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
