@@ -273,7 +273,7 @@ func deployMySQLConfigSQLs(config map[string]string) []string {
 
 func applyDeployMySQLConfig(ctx context.Context, host string, port int, user, pass string, config map[string]string) error {
 	for _, sql := range deployMySQLConfigSQLs(config) {
-		if out, err := mysqlExecCommand(ctx, host, port, user, pass, sql).CombinedOutput(); err != nil {
+		if out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql); err != nil {
 			return fmt.Errorf("apply %s failed: %v, output: %s", strings.TrimSuffix(sql, ";"), err, strings.TrimSpace(string(out)))
 		}
 	}

@@ -456,6 +456,33 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 	// Note: master_host uses master's real IP (for replica to connect to),
 	// while slave_host is "127.0.0.1" because the agent runs locally.
 	for i := range replicaNodes {
+		// Step 1: Initialize MySQL on the replica as a single instance
+		initConfig := map[string]interface{}{
+			"deploy_mode": "single",
+			"host":        replicaNodes[i].Host,
+			"port":        replicaNodes[i].MySQLPort,
+			"mysql_user":  req.MySQL.User,
+			"mysql_pass":  req.MySQL.Password,
+		}
+		if replicaNodes[i].DataDir != "" {
+			initConfig["data_dir"] = replicaNodes[i].DataDir
+			initConfig["datadir"] = replicaNodes[i].DataDir
+		}
+		if replicaNodes[i].Basedir != "" {
+			initConfig["basedir"] = replicaNodes[i].Basedir
+		}
+		if replicaNodes[i].ServerID != 0 {
+			initConfig["server_id"] = replicaNodes[i].ServerID
+		}
+		mergeCommonDeployConfig(initConfig, req)
+		initID := fmt.Sprintf("init_%s", replicaNodes[i].ID)
+		steps = append(steps, PlanStep{
+			ID: initID, Name: fmt.Sprintf("Install replica MySQL %s", replicaNodes[i].Host),
+			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{last}, Config: initConfig,
+		})
+
+		// Step 2: Configure replication on the replica
 		replicaConfig := map[string]interface{}{
 			"deploy_mode":    "ha-replica",
 			"master_host":    masterNode.Host,
@@ -476,13 +503,13 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 			replicaConfig["basedir"] = replicaNodes[i].Basedir
 		}
 		mergeCommonDeployConfig(replicaConfig, req)
-		id := fmt.Sprintf("join_%s", replicaNodes[i].ID)
+		joinID := fmt.Sprintf("join_%s", replicaNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Deploy replica %s", replicaNodes[i].Host),
-			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
-			DependsOn: []string{last}, Config: replicaConfig,
+			ID: joinID, Name: fmt.Sprintf("Configure replica replication %s", replicaNodes[i].Host),
+			Type: "configure", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			DependsOn: []string{initID}, Config: replicaConfig,
 		})
-		last = id
+		last = joinID
 	}
 
 	return appendPostambleSteps(steps, last)

@@ -398,7 +398,7 @@ func (e *MHAExecutor) installMHANode(ctx context.Context, config MHAConfig) *Tas
 func (e *MHAExecutor) configureMHAManager(ctx context.Context, config MHAConfig) *TaskResult {
 	createUserSQL := fmt.Sprintf(
 		"SET SESSION SQL_LOG_BIN=0; "+
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
 		config.ManagerUser, config.ManagerPass, config.ManagerUser,
 	)
@@ -478,7 +478,7 @@ func repairReplicaMHAUser(ctx context.Context, host string, port int, config MHA
 		"SET SESSION SQL_LOG_BIN=0; "+
 			"SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF; "+
 			"DROP USER IF EXISTS '%s'@'%%'; "+
-			"CREATE USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+			"CREATE USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; "+
 			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
 		config.ManagerUser, config.ManagerUser, config.ManagerPass, config.ManagerUser,
@@ -490,7 +490,7 @@ func repairReplicaReplicationUser(ctx context.Context, host string, port int, co
 	sql := fmt.Sprintf(
 		"SET SESSION SQL_LOG_BIN=0; "+
 			"SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF; "+
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; "+
 			"SET GLOBAL read_only=ON; SET GLOBAL super_read_only=ON;",
 		config.ReplUser, config.ReplPass, config.ReplUser,
@@ -874,7 +874,7 @@ func (e *MHAExecutor) ConfigureMHANode(ctx context.Context, req DeployTaskReques
 	}
 
 	createReplUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%';",
 		config.ReplUser, config.ReplPass, config.ReplUser,
 	)
