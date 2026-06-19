@@ -219,7 +219,12 @@ func main() {
 		MaxTokens:   defaultInt(cfg.AIMaxTokens, 2048),
 		Temperature: aiTemp,
 	}
-	aiProvider := aiprovider.NewOpenAIProvider(aiConfig)
+	var aiProvider aiprovider.Provider = nil
+	if cfg.AIBaseURL != "" && cfg.AIAPIKey != "" {
+		aiProvider = aiprovider.NewOpenAIProvider(aiConfig)
+	} else {
+		logInstance.Info("AI provider not configured (set DBOPS_AI_BASE_URL and DBOPS_AI_API_KEY to enable)")
+	}
 	aiService := services.NewAIService(aiProvider, diagnosisRepo, adviceRepo, monitorService)
 	aiController := controllers.NewAIController(aiService)
 	faultTplRepo := repositories.NewFaultTemplateRepository(db)
@@ -639,6 +644,16 @@ func main() {
 				licenseGroup.POST("/upload", middleware.RequirePermission("admin"), licenseController.UploadLicense)
 			}
 		}
+	}
+
+	if _, err := os.Stat("./web-console/dist"); err == nil {
+		r.Static("/assets", "./web-console/dist/assets")
+		r.NoRoute(func(c *gin.Context) {
+			c.File("./web-console/dist/index.html")
+		})
+		logInstance.Info("Serving frontend SPA from ./web-console/dist")
+	} else {
+		logInstance.Info("Frontend SPA not found at ./web-console/dist, API-only mode")
 	}
 
 	logInstance.Info("Server starting on port " + cfg.ServerPort)

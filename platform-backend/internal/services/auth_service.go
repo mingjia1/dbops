@@ -331,7 +331,7 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 }
 
 func generateRandomPassword(n int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%"
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, n)
 	max := big.NewInt(int64(len(charset)))
 	for i := range b {

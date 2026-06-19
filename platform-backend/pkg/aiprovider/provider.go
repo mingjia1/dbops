@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -71,7 +72,11 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		return nil, fmt.Errorf("aiprovider: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.config.BaseURL+"/v1/chat/completions", bytes.NewReader(payload))
+		baseURL := strings.TrimRight(p.config.BaseURL, "/")
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL += "/v1"
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("aiprovider: create request: %w", err)
 	}
