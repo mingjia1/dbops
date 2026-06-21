@@ -203,3 +203,14 @@ platform-backend/internal/services/license_service_test.go
 platform-backend/internal/services/masking_service_test.go
 platform-backend/internal/services/parameter_template_service_test.go
 platform-backend/internal/services/user_service_test.go
+
+# ---------- Auto-generated cleanup patterns ----------
+agent/agent-new
+agent/agent-old
+platform-backend/mysql-ops-platform
+deploy_all.py
+mgr_*.py
+fix_*.py
+fix_*.sh
+deploy_*.py
+*_result.txt
