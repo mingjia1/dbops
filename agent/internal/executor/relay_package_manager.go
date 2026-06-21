@@ -653,9 +653,14 @@ func (t *ToolInstaller) resolvePackageURLsForVersion(mysqlVersion string, info H
 
 	switch info.Distribution {
 	case "ubuntu", "debian":
+		// mysql-apt-config: 5.7 uses 0.8.12-1, 8.0+ uses 0.8.33-1
+		aptConfigVersion := "0.8.33-1"
+		if strings.HasPrefix(mysqlVersion, "5.") {
+			aptConfigVersion = "0.8.12-1"
+		}
 		urls = append(urls, packageURLSpec{
-			Name: fmt.Sprintf("mysql-apt-config_0.8.33-1_all.deb"),
-			URL:  "https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb",
+			Name: fmt.Sprintf("mysql-apt-config_%s_all.deb", aptConfigVersion),
+			URL:  fmt.Sprintf("https://dev.mysql.com/get/mysql-apt-config_%s_all.deb", aptConfigVersion),
 			Type: "mysql_apt_config",
 		})
 
