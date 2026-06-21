@@ -63,8 +63,7 @@ func (e *TaskExecutor) SetRelayConfig(relayHost string, relayPort int, relayToke
 	}
 }
 
-// ExecuteVerifyMigration A1: 之前 /agent/tasks/migration-verify 路由不存在,
-// backend 调过去 404, 现在转发到 MigrationExecutor.VerifyMigration.
+// ExecuteVerifyMigration forwards to MigrationExecutor.VerifyMigration.
 func (t *TaskExecutor) ExecuteVerifyMigration(ctx context.Context, req DeployTaskRequest) *MigrationVerifyResult {
 	return t.MigrationExecutor.VerifyMigration(ctx, req)
 }
@@ -555,8 +554,14 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	localAddress, _ := req.Config["local_address"].(string)
 	seeds, _ := req.Config["seeds"].(string)
 
-	fmt.Fprintf(os.Stderr, "DEBUG: deploySingleInstance - mysqlUser=%s, mysqlPass=%s, installType=%s, isPrimary=%v\n",
-		mysqlUser, mysqlPass, installType, isPrimary)
+	replicateUser, _ := req.Config["replicate_user"].(string)
+	if replicateUser == "" {
+		replicateUser, _ = req.Config["repl_user"].(string)
+	}
+	replicatePass, _ := req.Config["replicate_pass"].(string)
+	if replicatePass == "" {
+		replicatePass, _ = req.Config["repl_pass"].(string)
+	}
 
 	if host == "" {
 		host = "127.0.0.1"
@@ -652,12 +657,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// 在初始化前，杀掉所有可能使用该数据目录的mysqld进程
 	// 这样可以确保数据目录能被正确清理
-	fmt.Fprintf(os.Stderr, "DEBUG: step1 - looking for mysqld processes to kill\n")
 	psCmd := exec.CommandContext(ctx, "sh", "-c", "ps aux | grep '[m]ysqld' | awk '{print $2}'")
 	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
 		pids := strings.TrimSpace(string(pidBytes))
 		if pids != "" {
-			fmt.Fprintf(os.Stderr, "Found mysqld process(es), PIDs: %s, killing them to free port\n", pids)
 			for _, pid := range strings.Split(pids, "\n") {
 				if pid != "" {
 					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
@@ -667,18 +670,13 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			time.Sleep(3 * time.Second)
 		}
 	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG: ps command error: %v, output: %s\n", err, string(pidBytes))
 	} else {
-		fmt.Fprintf(os.Stderr, "DEBUG: no mysqld processes found\n")
 	}
 
 	// Only run initialization if the data directory hasn't been initialized yet.
 	if needInit {
-		fmt.Fprintf(os.Stderr, "DEBUG: step2 - removing datadir %s\n", dataDir)
 		if rmErr := os.RemoveAll(dataDir); rmErr != nil {
-			fmt.Fprintf(os.Stderr, "DEBUG: RemoveAll failed: %v\n", rmErr)
 		} else {
-			fmt.Fprintf(os.Stderr, "DEBUG: RemoveAll succeeded\n")
 		}
 
 		initArgs := []string{
@@ -692,7 +690,6 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if basedir != "" {
 			initArgs = append(initArgs, "--basedir="+basedir)
 		}
-		fmt.Fprintf(os.Stderr, "DEBUG: step3 - running init: %s %v\n", mysqld, initArgs)
 		initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
 		if out, err := initCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
@@ -703,7 +700,6 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 				Timestamp: time.Now(),
 			}, nil
 		}
-		fmt.Fprintf(os.Stderr, "DEBUG: step4 - init completed successfully\n")
 	}
 
 	startArgs := []string{
@@ -810,7 +806,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
 			if installType == "mgr" && groupName != "" {
-				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName); err != nil {
+				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass); err != nil {
 					return &TaskResult{
 						TaskID:    req.TaskID,
 						Status:    "failed",
@@ -851,7 +847,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// Health check passed. Initialize MGR if needed
 	if installType == "mgr" && groupName != "" {
-		if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName); err != nil {
+		if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass); err != nil {
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "failed",
@@ -876,21 +872,27 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 // Unix socket authentication. This resolves the ERROR 1130 issue where
 // MySQL 8.0 creates only root@localhost (no root@%), so TCP auth fails
 // but socket auth works.
-func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName string) error {
+func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName, replicateUser, replicatePass string) error {
+	if replicateUser == "" {
+		replicateUser = "repl"
+	}
+	if replicatePass == "" {
+		replicatePass = "repl"
+	}
 	// 0. 关闭super-read-only以便创建用户
 	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
 		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
-	// 1. 创建复制用户（主节点和副本都需要）
-	replicationSQL := `
+	// 1. 使用配置的复制用户（主节点和副本都需要）
+	replicationSQL := fmt.Sprintf(`
 		SET SQL_LOG_BIN=0;
-		CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED WITH caching_sha2_password BY 'repl';
-		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO 'repl'@'%';
+		CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s';
+		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%';
 		FLUSH PRIVILEGES;
 		SET SQL_LOG_BIN=1;
-		CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='repl' FOR CHANNEL 'group_replication_recovery';
-	`
+		CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
+	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
 	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, replicationSQL); err != nil {
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
@@ -1503,8 +1505,6 @@ func parseBackupConfig(config map[string]interface{}) BackupConfig {
 }
 
 func (e *TaskExecutor) executeXtrabackup(ctx context.Context, config BackupConfig, allowLogicalFallback bool) (*TaskResult, error) {
-	// P0: 之前用 time.Now().Unix() 1 秒精度, 同秒并发会写同 dir 互相覆盖.
-	// 改 UnixNano 纳秒精度, 并发 backup 不可能撞.
 	if _, err := exec.LookPath("xtrabackup"); err != nil {
 		if config.BackupType == "incremental" || !allowLogicalFallback {
 			return &TaskResult{
@@ -2349,10 +2349,7 @@ func commandOutput(ctx context.Context, name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// ExecuteVersionDetect P0: 之前 backend DetectVersion 直接返 error, 阻断所有
-// 升级链路 (PlanUpgradePath / CheckCompatibility 都需要 source version).
-// 修: agent 调 mysql -e "SELECT @@version, @@version_comment", 真实探测.
-// 走 MYSQL_PWD env 传密码避免 ps 泄露.
+// ExecuteVersionDetect detects the MySQL version on the target instance.
 func (e *TaskExecutor) ExecuteVersionDetect(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	host, _ := req.Config["target_host"].(string)
 	if host == "" {
@@ -2539,9 +2536,6 @@ type RoleSwitchConfig struct {
 	ReplicationPass string `json:"replication_pass"`
 	Force           bool   `json:"force"`
 	GracePeriodSec  int    `json:"grace_period_sec"`
-	// A3 part 2/3: 之前 executor 硬编 127.0.0.1:3306 root ''.
-	// 改成 backend 通过 req.Config 传入 target host/port/user/pass.
-	// (即 "本实例" 的连接信息 - 同一个 agent 跑多实例时要按 instance_id 区分)
 	TargetHost string `json:"target_host"`
 	TargetPort int    `json:"target_port"`
 	TargetUser string `json:"target_user"`
@@ -2660,8 +2654,8 @@ func mysqlBaseArgs(host string, port int, user, pass string) []string {
 	}
 }
 
-// resolveTargetConn A3 part 2 prefers target connection values from cfg.
-// Missing values fall back to 127.0.0.1:3306 root with an empty password, with a warning.
+// resolveTargetConn prefers target connection values from cfg.
+// Missing values fall back to 127.0.0.1:3306 root with an empty password.
 func resolveTargetConn(cfg RoleSwitchConfig) (string, int, string, string) {
 	if cfg.TargetHost != "" {
 		return cfg.TargetHost, cfg.TargetPort, cfg.TargetUser, cfg.TargetPass
@@ -2922,8 +2916,6 @@ func (e *TaskExecutor) ExecuteRoleReplicaRebuild(ctx context.Context, req Deploy
 			Timestamp: time.Now(),
 		}, nil
 	}
-	// A3 part 3: 之前直接用 cfg.NewMasterID (UUID) 当 MASTER_HOST, 复制永远起不来.
-	// 修: 优先用 cfg.NewMasterHost/Port/User/Pass, 缺失时 fail 让人补, 不再猜.
 	if cfg.NewMasterHost == "" {
 		return &TaskResult{
 			TaskID:    req.TaskID,

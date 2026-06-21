@@ -144,39 +144,6 @@ func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTask
 	}, nil
 }
 
-func (e *MGRExecutor) DeployMGRMultiPrimary(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
-	config := parseMGRConfig(req.Config)
-
-	pluginResult := e.installGroupReplicationPlugin(ctx, config)
-	if pluginResult.Status == "failed" {
-		return pluginResult, nil
-	}
-
-	configResult := e.configureMGRParameters(ctx, config)
-	if configResult.Status == "failed" {
-		return configResult, nil
-	}
-
-	configResult = e.enableMultiPrimaryMode(ctx, config)
-	if configResult.Status == "failed" {
-		return configResult, nil
-	}
-
-	groupResult := e.startGroupReplication(ctx, config)
-	if groupResult.Status == "failed" {
-		return groupResult, nil
-	}
-
-	return &TaskResult{
-		TaskID:   req.TaskID,
-		Status:   "completed",
-		Progress: 100,
-		Message: fmt.Sprintf("MGR multi-primary cluster deployed successfully. Group: %s",
-			config.GroupName),
-		Timestamp: time.Now(),
-	}, nil
-}
-
 func (e *MGRExecutor) ConfigureGroupMember(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMGRConfig(req.Config)
 
@@ -322,33 +289,6 @@ func (e *MGRExecutor) configureMGRParameters(ctx context.Context, config MGRConf
 		Status:    "completed",
 		Progress:  50,
 		Message:   "MGR parameters configured successfully",
-		Timestamp: time.Now(),
-	}
-}
-
-func (e *MGRExecutor) enableMultiPrimaryMode(ctx context.Context, config MGRConfig) *TaskResult {
-	configSQLs := []string{
-		"SET GLOBAL group_replication_single_primary_mode = OFF;",
-		"SET GLOBAL group_replication_enforce_update_everywhere_checks = ON;",
-	}
-
-	for _, sql := range configSQLs {
-		cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, sql)
-
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return &TaskResult{
-				Status:    "failed",
-				Progress:  40,
-				Message:   fmt.Sprintf("Failed to enable multi-primary mode: %v, output: %s", err, string(output)),
-				Timestamp: time.Now(),
-			}
-		}
-	}
-
-	return &TaskResult{
-		Status:    "completed",
-		Progress:  60,
-		Message:   "Multi-primary mode enabled",
 		Timestamp: time.Now(),
 	}
 }

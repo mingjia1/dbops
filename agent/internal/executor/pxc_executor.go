@@ -29,16 +29,6 @@ type PXCConfig struct {
 	MySQLConfig     map[string]string
 }
 
-type GaleraConfig struct {
-	WSREPClusterAddress string `json:"wsrep_cluster_address"`
-	WSREPNodeAddress    string `json:"wsrep_node_address"`
-	WSREPNodeName       string `json:"wsrep_node_name"`
-	WSREPSSTMethod      string `json:"wsrep_sst_method"`
-	WSREPProvider       string `json:"wsrep_provider"`
-	GCacheSize          string `json:"gcache_size"`
-	GCachePageSize      string `json:"gcache_page_size"`
-	GCacheKeepPagesSize string `json:"gcache_keep_pages_size"`
-}
 
 type PXCSyncStatus struct {
 	ClusterSize       int    `json:"cluster_size"`
@@ -50,13 +40,6 @@ type PXCSyncStatus struct {
 	InnoDBBufferPool  string `json:"innodb_buffer_pool"`
 }
 
-type SplitBrainInfo struct {
-	Detected         bool     `json:"detected"`
-	IsolatedNodes    []string `json:"isolated_nodes"`
-	ActiveNodes      []string `json:"active_nodes"`
-	QuorumStatus     string   `json:"quorum_status"`
-	PrimaryComponent bool     `json:"primary_component"`
-}
 
 func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	pc := PXCConfig{
@@ -126,42 +109,6 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	return pc
 }
 
-func parseGaleraConfig(config map[string]interface{}) GaleraConfig {
-	gc := GaleraConfig{
-		WSREPSSTMethod:      "xtrabackup-v2",
-		WSREPProvider:       "/usr/lib/galera4/libgalera_smm.so",
-		GCacheSize:          "1G",
-		GCachePageSize:      "1G",
-		GCacheKeepPagesSize: "0",
-	}
-
-	if v, ok := config["wsrep_cluster_address"].(string); ok {
-		gc.WSREPClusterAddress = v
-	}
-	if v, ok := config["wsrep_node_address"].(string); ok {
-		gc.WSREPNodeAddress = v
-	}
-	if v, ok := config["wsrep_node_name"].(string); ok {
-		gc.WSREPNodeName = v
-	}
-	if v, ok := config["wsrep_sst_method"].(string); ok {
-		gc.WSREPSSTMethod = v
-	}
-	if v, ok := config["wsrep_provider"].(string); ok {
-		gc.WSREPProvider = v
-	}
-	if v, ok := config["gcache_size"].(string); ok {
-		gc.GCacheSize = v
-	}
-	if v, ok := config["gcache_page_size"].(string); ok {
-		gc.GCachePageSize = v
-	}
-	if v, ok := config["gcache_keep_pages_size"].(string); ok {
-		gc.GCacheKeepPagesSize = v
-	}
-
-	return gc
-}
 
 func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parsePXCConfig(req.Config)
@@ -931,96 +878,6 @@ func pxcProviderPath() string {
 	return "/usr/lib/galera4/libgalera_smm.so"
 }
 
-func (e *TaskExecutor) ConfigureGalera(ctx context.Context, nodeHost string, nodePort int, config map[string]interface{}) (*TaskResult, error) {
-	gc := parseGaleraConfig(config)
-
-	if gc.WSREPClusterAddress == "" {
-		return &TaskResult{
-			TaskID:    "configure-galera",
-			Status:    "failed",
-			Progress:  0,
-			Message:   "wsrep_cluster_address is required for Galera configuration",
-			Timestamp: time.Now(),
-		}, nil
-	}
-
-	configSQL := fmt.Sprintf(
-		"SET GLOBAL wsrep_cluster_address='%s'; "+
-			"SET GLOBAL wsrep_node_address='%s:%d'; "+
-			"SET GLOBAL wsrep_node_name='%s'; "+
-			"SET GLOBAL wsrep_sst_method='%s'; "+
-			"SET GLOBAL wsrep_provider='%s';",
-		gc.WSREPClusterAddress, gc.WSREPNodeAddress, nodePort, gc.WSREPNodeName,
-		gc.WSREPSSTMethod, gc.WSREPProvider,
-	)
-
-	cmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", configSQL)
-
-	if err := cmd.Run(); err != nil {
-		return &TaskResult{
-			TaskID:    "configure-galera",
-			Status:    "failed",
-			Progress:  30,
-			Message:   fmt.Sprintf("Failed to set Galera variables: %v", err),
-			Timestamp: time.Now(),
-		}, nil
-	}
-
-	gcacheSQL := fmt.Sprintf(
-		"SET GLOBAL wsrep_provider_options='gcache.size=%s; gcache.page_size=%s; gcache.keep_pages_size=%s';",
-		gc.GCacheSize, gc.GCachePageSize, gc.GCacheKeepPagesSize,
-	)
-
-	gcacheCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", gcacheSQL)
-
-	if err := gcacheCmd.Run(); err != nil {
-		return &TaskResult{
-			TaskID:    "configure-galera",
-			Status:    "failed",
-			Progress:  60,
-			Message:   fmt.Sprintf("Failed to set Galera gcache options: %v", err),
-			Timestamp: time.Now(),
-		}, nil
-	}
-
-	verifyCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW VARIABLES LIKE 'wsrep_%';")
-
-	output, err := verifyCmd.Output()
-	if err != nil {
-		return &TaskResult{
-			TaskID:    "configure-galera",
-			Status:    "failed",
-			Progress:  80,
-			Message:   fmt.Sprintf("Failed to verify Galera configuration: %v", err),
-			Timestamp: time.Now(),
-		}, nil
-	}
-
-	if !strings.Contains(string(output), gc.WSREPClusterAddress) {
-		return &TaskResult{
-			TaskID:    "configure-galera",
-			Status:    "warning",
-			Progress:  100,
-			Message:   "Galera configuration applied but verification incomplete",
-			Timestamp: time.Now(),
-		}, nil
-	}
-
-	return &TaskResult{
-		TaskID:    "configure-galera",
-		Status:    "completed",
-		Progress:  100,
-		Message:   fmt.Sprintf("Galera configuration applied successfully to node %s:%d", nodeHost, nodePort),
-		Timestamp: time.Now(),
-	}, nil
-}
-
 func (e *TaskExecutor) MonitorPXCSync(ctx context.Context, nodeHost string, nodePort int) *PXCSyncStatus {
 	return e.monitorPXCSyncWithAuth(ctx, nodeHost, nodePort, "root", "")
 }
@@ -1118,140 +975,3 @@ func (e *TaskExecutor) monitorPXCSyncWithAuth(ctx context.Context, nodeHost stri
 	return status
 }
 
-func (e *TaskExecutor) DetectSplitBrain(ctx context.Context, nodeHost string, nodePort int) (*SplitBrainInfo, error) {
-	splitInfo := &SplitBrainInfo{
-		Detected:         false,
-		IsolatedNodes:    []string{},
-		ActiveNodes:      []string{},
-		QuorumStatus:     "unknown",
-		PrimaryComponent: false,
-	}
-
-	statusCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW STATUS LIKE 'wsrep_cluster_status';")
-
-	statusOutput, err := statusCmd.Output()
-	if err != nil {
-		splitInfo.QuorumStatus = "disconnected"
-		return splitInfo, nil
-	}
-
-	statusStr := string(statusOutput)
-	if strings.Contains(statusStr, "Non-Primary") {
-		splitInfo.Detected = true
-		splitInfo.QuorumStatus = "non-primary"
-		splitInfo.PrimaryComponent = false
-	} else if strings.Contains(statusStr, "Primary") {
-		splitInfo.QuorumStatus = "primary"
-		splitInfo.PrimaryComponent = true
-	}
-
-	sizeCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW STATUS LIKE 'wsrep_cluster_size';")
-
-	sizeOutput, err := sizeCmd.Output()
-	if err != nil {
-		return splitInfo, nil
-	}
-
-	var actualClusterSize int
-	sizeStr := string(sizeOutput)
-	fmt.Sscanf(sizeStr, "wsrep_cluster_size\t%d", &actualClusterSize)
-
-	addressCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW VARIABLES LIKE 'wsrep_cluster_address';")
-
-	addressOutput, err := addressCmd.Output()
-	if err != nil {
-		return splitInfo, nil
-	}
-
-	addressStr := string(addressOutput)
-	configuredNodes := parseWSREPAddress(addressStr)
-
-	if len(configuredNodes) > 0 && actualClusterSize < len(configuredNodes) {
-		splitInfo.Detected = true
-		splitInfo.IsolatedNodes = identifyIsolatedNodes(configuredNodes, actualClusterSize)
-	}
-
-	stateCmd := exec.CommandContext(ctx, "mysql", "-h", nodeHost,
-		"-P", fmt.Sprintf("%d", nodePort),
-		"-u", "root", "-e", "SHOW STATUS LIKE 'wsrep_local_state_comment';")
-
-	stateOutput, err := stateCmd.Output()
-	if err != nil {
-		return splitInfo, nil
-	}
-
-	stateStr := string(stateOutput)
-	if strings.Contains(stateStr, "Synced") {
-		splitInfo.ActiveNodes = append(splitInfo.ActiveNodes, nodeHost)
-	}
-
-	if splitInfo.Detected {
-		splitInfo.ActiveNodes = identifyActiveNodes(configuredNodes, splitInfo.IsolatedNodes)
-	}
-
-	return splitInfo, nil
-}
-
-func parseWSREPAddress(addressStr string) []string {
-	var nodes []string
-
-	startIdx := strings.Index(addressStr, "gcomm://")
-	if startIdx == -1 {
-		return nodes
-	}
-
-	addressPart := addressStr[startIdx+8:]
-	endIdx := strings.Index(addressPart, "\n")
-	if endIdx != -1 {
-		addressPart = addressPart[:endIdx]
-	}
-
-	if addressPart == "" {
-		return nodes
-	}
-
-	nodeList := strings.Split(addressPart, ",")
-	for _, node := range nodeList {
-		node = strings.TrimSpace(node)
-		if node != "" {
-			nodes = append(nodes, node)
-		}
-	}
-
-	return nodes
-}
-
-func identifyIsolatedNodes(configuredNodes []string, activeSize int) []string {
-	if activeSize >= len(configuredNodes) {
-		return []string{}
-	}
-
-	isolatedCount := len(configuredNodes) - activeSize
-	if isolatedCount > 0 && isolatedCount < len(configuredNodes) {
-		return configuredNodes[activeSize:]
-	}
-
-	return []string{}
-}
-
-func identifyActiveNodes(configuredNodes []string, isolatedNodes []string) []string {
-	isolatedMap := make(map[string]bool)
-	for _, node := range isolatedNodes {
-		isolatedMap[node] = true
-	}
-
-	var activeNodes []string
-	for _, node := range configuredNodes {
-		if !isolatedMap[node] {
-			activeNodes = append(activeNodes, node)
-		}
-	}
-
-	return activeNodes
-}
