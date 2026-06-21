@@ -258,6 +258,9 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 		if node.AgentPort == 0 {
 			node.AgentPort = 9090
 		}
+		if node.DataDir == "" {
+			node.DataDir = fmt.Sprintf("/data/mysql/%d", node.MySQLPort)
+		}
 		if node.Custom == nil {
 			node.Custom = map[string]interface{}{}
 		}
@@ -1125,8 +1128,13 @@ func universalToMHARequest(req UniversalClusterDeployRequest) DeployMHARequest {
 			out.MasterHostID = node.HostID
 			out.MasterHost = node.Host
 			out.MasterPort = node.MySQLPort
+			out.MasterDataDir = node.DataDir
+			out.MasterBasedir = node.Basedir
 		case "replica":
-			out.SlaveHosts = append(out.SlaveHosts, SlaveNode{Host: node.Host, Port: node.MySQLPort})
+			out.SlaveHosts = append(out.SlaveHosts, SlaveNode{
+				Host: node.Host, Port: node.MySQLPort,
+				DataDir: node.DataDir, Basedir: node.Basedir,
+			})
 		}
 	}
 	return out
@@ -1316,9 +1324,15 @@ func TypedMHARequestToUniversal(req DeployMHARequest) UniversalClusterDeployRequ
 		out.Custom["vip"] = req.VIP
 	}
 	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.ManagerHostID, Host: req.ManagerHost, MySQLPort: req.MasterPort, Role: "manager", AgentPort: req.ManagerAgentPort})
-	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.MasterHostID, Host: req.MasterHost, MySQLPort: req.MasterPort, Role: "master"})
+	out.Nodes = append(out.Nodes, ClusterDeployNode{
+		HostID: req.MasterHostID, Host: req.MasterHost, MySQLPort: req.MasterPort, Role: "master",
+		DataDir: req.MasterDataDir, Basedir: req.MasterBasedir,
+	})
 	for _, s := range req.SlaveHosts {
-		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: s.Host, MySQLPort: s.Port, Role: "replica"})
+		out.Nodes = append(out.Nodes, ClusterDeployNode{
+			Host: s.Host, MySQLPort: s.Port, Role: "replica",
+			DataDir: s.DataDir, Basedir: s.Basedir,
+		})
 	}
 	return out
 }
@@ -1337,10 +1351,29 @@ func TypedMGRRequestToUniversal(req DeployMGRRequest) UniversalClusterDeployRequ
 	if req.PseudoMode {
 		out.Mode = DeployModePseudo
 	}
+	// Propagate package_url / package_checksum from ConfigParams (same as HA/PXC typed converters)
+	if v, ok := req.ConfigParams["package_url"]; ok {
+		out.MySQL.PackageURL = v
+	}
+	if v, ok := req.ConfigParams["package_checksum"]; ok {
+		out.MySQL.PackageChecksum = v
+	}
+	// Propagate replication credentials from ConfigParams
+	if v, ok := req.ConfigParams["replicate_user"]; ok && out.Replication.User == "" {
+		out.Replication.User = v
+	}
+	if v, ok := req.ConfigParams["replicate_pass"]; ok && out.Replication.Password == "" {
+		out.Replication.Password = v
+	}
 	role := "primary"
 	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.PrimaryHostID, Host: req.PrimaryHost, MySQLPort: req.PrimaryPort, Role: role, AgentPort: req.PrimaryAgentPort})
+	// Propagate SecondaryNode.DataDir / Basedir to ClusterDeployNode for mgr secondaries.
+	// normalizeUniversalDeployRequest will fill in the default /data/mysql/{port} if empty.
 	for _, s := range req.SecondaryHosts {
-		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: s.Host, MySQLPort: s.Port, Role: "secondary", AgentPort: s.AgentPort, ServerID: s.ServerID})
+		out.Nodes = append(out.Nodes, ClusterDeployNode{
+			Host: s.Host, MySQLPort: s.Port, Role: "secondary", AgentPort: s.AgentPort,
+			ServerID: s.ServerID, DataDir: s.DataDir, Basedir: s.Basedir,
+		})
 	}
 	// Carry config_params as MySQL.Config where allowed
 	if len(req.ConfigParams) > 0 {

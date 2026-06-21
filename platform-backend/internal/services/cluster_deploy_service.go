@@ -983,6 +983,8 @@ type DeployMHARequest struct {
 	VIP              string            `json:"vip"`
 	ManagerHost      string            `json:"manager_host"`
 	ManagerAgentPort int               `json:"manager_agent_port"`
+	MasterDataDir    string            `json:"master_data_dir,omitempty"`
+	MasterBasedir    string            `json:"master_basedir,omitempty"`
 	ReplicaPort      int               `json:"replica_port"`
 	ReplUser         string            `json:"repl_user"`
 	ReplPassword     string            `json:"repl_password"`
@@ -1048,8 +1050,10 @@ type DeployHARequest struct {
 }
 
 type SlaveNode struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	DataDir string `json:"data_dir,omitempty"`
+	Basedir string `json:"basedir,omitempty"`
 }
 
 type SecondaryNode struct {

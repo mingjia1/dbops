@@ -1508,8 +1508,7 @@ func (t *ToolInstaller) createReplicationUser(ctx context.Context, config Master
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	alterSQL := fmt.Sprintf(
-		"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';",
+	alterSQL := fmt.Sprintf(			"ALTER USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s';",
 		escapeSQL(config.ReplicateUser), escapeSQL(config.ReplicatePass),
 	)
 	alterCmd := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, alterSQL)
@@ -1756,7 +1755,7 @@ func (t *ToolInstaller) initMGRCluster(ctx context.Context, req GeneralClusterIn
 
 func (t *ToolInstaller) configureMGRBootstrap(ctx context.Context, config MGRConfig) error {
 	if err := t.executeMySQLSQL(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword,
-		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
+		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
 			config.ReplicateUser, config.ReplicatePass, config.ReplicateUser)); err != nil {
 		return fmt.Errorf("create repl user: %w", err)
 	}

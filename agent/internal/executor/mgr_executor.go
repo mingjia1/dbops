@@ -569,8 +569,8 @@ func (e *MGRExecutor) bootstrapPrimaryNode(ctx context.Context, config MGRConfig
 	_, _ = prepCmd.CombinedOutput()
 
 	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-			"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+			"ALTER USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
 		config.ReplicateUser, config.ReplicatePass,
 		config.ReplicateUser, config.ReplicatePass,
