@@ -24,6 +24,7 @@ func TestParsePXCConfig_Defaults(t *testing.T) {
 	assert.Empty(t, got.Nodes)
 	assert.Empty(t, got.NodeHost)
 	assert.Empty(t, got.MySQLPassword)
+	assert.Empty(t, got.MySQLVersion)
 }
 
 func TestParsePXCConfig_CustomValues(t *testing.T) {
@@ -77,6 +78,34 @@ func TestParsePXCConfig_WrongTypes(t *testing.T) {
 	assert.Equal(t, 4567, got.WSREPPort)
 	assert.False(t, got.Bootstrap)
 	assert.Equal(t, 4444, got.WSREPSSTPort)
+}
+
+// --- PXC MySQLVersion parsing (MySQL 5.7 specific) ---
+
+func TestParsePXCConfig_MySQLVersion57(t *testing.T) {
+	got := parsePXCConfig(map[string]interface{}{
+		"mysql_version": "5.7",
+	})
+	assert.Equal(t, "5.7", got.MySQLVersion)
+}
+
+func TestParsePXCConfig_MySQLVersion80(t *testing.T) {
+	got := parsePXCConfig(map[string]interface{}{
+		"mysql_version": "8.0",
+	})
+	assert.Equal(t, "8.0", got.MySQLVersion)
+}
+
+func TestParsePXCConfig_MySQLVersionEmpty(t *testing.T) {
+	got := parsePXCConfig(map[string]interface{}{})
+	assert.Empty(t, got.MySQLVersion)
+}
+
+func TestParsePXCConfig_MySQLVersionWrongType(t *testing.T) {
+	got := parsePXCConfig(map[string]interface{}{
+		"mysql_version": 5.7,
+	})
+	assert.Empty(t, got.MySQLVersion)
 }
 
 // --- safeNodeName ---
@@ -165,11 +194,13 @@ func TestPXCConfig_Fields(t *testing.T) {
 		MySQLUser:       "root",
 		MySQLPassword:   "rootpass",
 		NodeHost:        "10.0.0.1",
+		MySQLVersion:    "5.7",
 	}
 	assert.Equal(t, "pxc-test", c.ClusterName)
 	assert.Len(t, c.Nodes, 2)
 	assert.True(t, c.Bootstrap)
 	assert.Equal(t, "rootpass", c.MySQLPassword)
+	assert.Equal(t, "5.7", c.MySQLVersion)
 }
 
 // --- PXCSyncStatus struct ---
@@ -187,4 +218,57 @@ func TestPXCSyncStatus_Fields(t *testing.T) {
 	assert.Equal(t, 3, s.ClusterSize)
 	assert.Equal(t, "Primary", s.ClusterStatus)
 	assert.True(t, s.Ready)
+}
+
+// --- DeployPXC (struct-level, no mysql) ---
+
+func TestDeployPXC_MissingNodes(t *testing.T) {
+	e := &TaskExecutor{}
+	// No nodes config should fail with "requires at least one node"
+	result, err := e.DeployPXC(nil, DeployTaskRequest{
+		TaskID: "test-pxc",
+		Config: map[string]interface{}{},
+	})
+	// Note: nil context will panic if code reaches sql execution, but missing nodes check should happen first
+	if err != nil {
+		assert.Contains(t, err.Error(), "requires")
+	} else if result != nil {
+		assert.Equal(t, "failed", result.Status)
+	}
+}
+
+func TestDeployPXC_MissingPassword(t *testing.T) {
+	e := &TaskExecutor{}
+	result, err := e.DeployPXC(nil, DeployTaskRequest{
+		TaskID: "test-pxc",
+		Config: map[string]interface{}{
+			"nodes": []interface{}{"10.0.0.1"},
+		},
+	})
+	if err != nil {
+		assert.Contains(t, err.Error(), "password")
+	} else if result != nil {
+		assert.Equal(t, "failed", result.Status)
+	}
+}
+
+// --- buildPXCConfigContent (does not require mysql) ---
+
+func TestBuildPXCConfigContent_Basic(t *testing.T) {
+	config := PXCConfig{
+		ClusterName: "pxc-test",
+		Nodes:       []string{"10.0.0.1", "10.0.0.2"},
+		MySQLPort:   3306,
+		WSREPPort:   4567,
+		SSTMethod:   "xtrabackup-v2",
+		DataDir:     "/data/mysql/pxc-3306",
+		NodeHost:    "10.0.0.1",
+		MySQLConfig: map[string]string{},
+	}
+	content := buildPXCConfigContent(config)
+	assert.Contains(t, content, "pxc-test")
+	assert.Contains(t, content, "gcomm://")
+	assert.Contains(t, content, "10.0.0.1:4567")
+	assert.Contains(t, content, "10.0.0.2:4567")
+	assert.Contains(t, content, "xtrabackup-v2")
 }

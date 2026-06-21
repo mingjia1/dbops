@@ -26,6 +26,7 @@ type PXCConfig struct {
 	MySQLUser       string   `json:"mysql_user"`
 	MySQLPassword   string   `json:"mysql_password"`
 	NodeHost        string   `json:"node_host"`
+	MySQLVersion    string   `json:"mysql_version"`
 	MySQLConfig     map[string]string
 }
 
@@ -104,6 +105,9 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	if v, ok := config["node_host"].(string); ok {
 		pc.NodeHost = v
 	}
+	if v, ok := config["mysql_version"].(string); ok {
+		pc.MySQLVersion = v
+	}
 	pc.MySQLConfig = deployMySQLConfig(config)
 
 	return pc
@@ -136,7 +140,7 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		}, nil
 	}
 
-	if err := installPXCSystemPackage(ctx, e.relayCli); err != nil {
+	if err := installPXCSystemPackage(ctx, e.relayCli, config.MySQLVersion); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -207,13 +211,31 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 		}, nil
 	}
 
-	sstUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; "+
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
-			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'localhost'; "+
-			"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
-		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicatePass, config.ReplicateUser, config.ReplicateUser,
-	)
+	// Use version-aware auth plugin for SST user
+	authPlugin := mysqlAuthPlugin(config.MySQLVersion)
+	// MySQL 8.0+ includes BACKUP_ADMIN privilege, 5.7 does not have it
+	var sstUserSQL string
+	if strings.HasPrefix(config.MySQLVersion, "5.") {
+		sstUserSQL = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED WITH %s BY '%s'; "+
+				"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH %s BY '%s'; "+
+				"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'localhost'; "+
+				"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+			config.ReplicateUser, authPlugin, config.ReplicatePass,
+			config.ReplicateUser, authPlugin, config.ReplicatePass,
+			config.ReplicateUser, config.ReplicateUser,
+		)
+	} else {
+		sstUserSQL = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED WITH %s BY '%s'; "+
+				"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH %s BY '%s'; "+
+				"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'localhost'; "+
+				"GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, BACKUP_ADMIN ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+			config.ReplicateUser, authPlugin, config.ReplicatePass,
+			config.ReplicateUser, authPlugin, config.ReplicatePass,
+			config.ReplicateUser, config.ReplicateUser,
+		)
+	}
 
 	nodeCmd := pxcMysqlExecCommand(ctx, "127.0.0.1", config.MySQLPort, config.MySQLUser, config.MySQLPassword, sstUserSQL)
 	if out, err := nodeCmd.CombinedOutput(); err != nil {
@@ -246,7 +268,13 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 	}, nil
 }
 
-func installPXCSystemPackage(ctx context.Context, relayClient *relayClient) error {
+func installPXCSystemPackage(ctx context.Context, relayClient *relayClient, mysqlVersion string) error {
+	// Determine PXC repo version (pxc57 for MySQL 5.7, pxc80 for MySQL 8.0+)
+	pxcRepoVersion := "pxc80"
+	if strings.HasPrefix(mysqlVersion, "5.") {
+		pxcRepoVersion = "pxc57"
+	}
+
 	// Try relay-based pre-installation if relay is configured
 	if relayClient != nil {
 		xtraCheck := exec.CommandContext(ctx, "bash", "-c", "command -v xtrabackup >/dev/null 2>&1 && echo installed || echo missing")
@@ -282,12 +310,13 @@ dpkg -i %s || {
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-lc", `
+	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
+	PXC_REPO="%s"
 	patch_pxc_sst_path() {
 	  script=/opt/dbops-pxc/usr/bin/wsrep_sst_xtrabackup-v2
 	  if [ -f "$script" ]; then
@@ -303,8 +332,6 @@ export NEEDRESTART_SUSPEND=1
 	    fi
 	  done
 	}
-	patch_pxc_sst_path
-	link_pxc_sst_tools
 	if [ -x /opt/dbops-pxc/usr/sbin/mysqld ] && [ -f /opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so ] && command -v mysql >/dev/null 2>&1 && command -v mysqladmin >/dev/null 2>&1 && command -v xtrabackup >/dev/null 2>&1 && command -v qpress >/dev/null 2>&1 && command -v socat >/dev/null 2>&1; then
 	  echo "PXC payload and client tools are already installed; skipping package installation"
 	  exit 0
@@ -387,11 +414,15 @@ apt_install_base_tools() {
   echo "base apt tools are ready"
 }
 	apt_install_pxc_tools() {
+	  xtrabackup_pkg="percona-xtrabackup-80"
+	  if [ "$PXC_REPO" = "pxc57" ]; then
+	    xtrabackup_pkg="percona-xtrabackup-24"
+	  fi
 	  timeout 180s apt-get \
 	    -o Dpkg::Options::="--force-confdef" \
 	    -o Dpkg::Options::="--force-confold" \
 	    -o Dpkg::Options::="--force-overwrite" \
-    install -y percona-xtrabackup-80 qpress socat || {
+    install -y "$xtrabackup_pkg" qpress socat || {
     command -v xtrabackup >/dev/null 2>&1 &&
     command -v qpress >/dev/null 2>&1 &&
     command -v socat >/dev/null 2>&1
@@ -455,7 +486,7 @@ download_pxc_payload() {
 	}
 	show_pxc_apt_packages() {
 	  echo "PXC packages from configured apt sources:"
-	  apt-cache policy percona-xtradb-cluster percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtradb-cluster-server percona-xtrabackup-80 qpress socat || true
+	  apt-cache policy percona-xtradb-cluster percona-xtradb-cluster-common percona-xtradb-cluster-client percona-xtradb-cluster-server percona-xtrabackup-80 percona-xtrabackup-24 qpress socat || true
 	  apt-cache search '^percona-xtradb-cluster' || true
 }
 wait_dpkg_lock
@@ -474,7 +505,7 @@ timeout 180s apt-get \
 wait_dpkg_lock
 apt_install_base_tools
 if command -v percona-release >/dev/null 2>&1; then
-  percona-release setup -y pxc80 || true
+  percona-release setup -y "$PXC_REPO" || true
 else
   echo "percona-release is not installed; using existing apt sources for PXC packages"
 fi
@@ -496,7 +527,7 @@ wait_dpkg_lock
 	download_pxc_payload
 	patch_pxc_sst_path
 	verify_pxc_runtime
-	`)
+	`, pxcRepoVersion))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
@@ -974,4 +1005,3 @@ func (e *TaskExecutor) monitorPXCSyncWithAuth(ctx context.Context, nodeHost stri
 
 	return status
 }
-
