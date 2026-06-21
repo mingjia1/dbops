@@ -431,6 +431,20 @@ func isDataDirInitialized(dataDir string) bool {
 	return err == nil && info.Size() > 0
 }
 
+// mysqlAuthPlugin returns the appropriate auth plugin for the given MySQL version.
+// MySQL 5.7 uses mysql_native_password, MySQL 8.0+ uses caching_sha2_password.
+func mysqlAuthPlugin(mysqlVersion string) string {
+	if strings.HasPrefix(mysqlVersion, "5.") {
+		return "mysql_native_password"
+	}
+	return "caching_sha2_password"
+}
+
+// mysqlHasGetServerPublicKey returns true if the MySQL client supports --get-server-public-key.
+func mysqlHasGetServerPublicKey(mysqlVersion string) bool {
+	return !strings.HasPrefix(mysqlVersion, "5.")
+}
+
 func (e *TaskExecutor) deployBlankHostInit(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	ti := NewToolInstaller()
 	initReq := BlankHostInitRequest{
@@ -561,6 +575,11 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	replicatePass, _ := req.Config["replicate_pass"].(string)
 	if replicatePass == "" {
 		replicatePass, _ = req.Config["repl_pass"].(string)
+	}
+
+	mysqlVersion, _ := req.Config["mysql_version"].(string)
+	if mysqlVersion == "" {
+		mysqlVersion = "8.0"
 	}
 
 	if host == "" {
@@ -770,7 +789,13 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		time.Sleep(1 * time.Second)
 	}
 
-	healthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"), "--get-server-public-key", "ping")
+	var healthArgs []string
+	healthArgs = append(healthArgs, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", defaultString(mysqlUser, "root"))
+	if mysqlHasGetServerPublicKey(mysqlVersion) {
+		healthArgs = append(healthArgs, "--get-server-public-key")
+	}
+	healthArgs = append(healthArgs, "ping")
+	healthCmd := exec.CommandContext(ctx, healthArgs[0], healthArgs[1:]...)
 	if mysqlPass != "" {
 		healthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 	}
@@ -801,12 +826,18 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 
 		// Try health check again after password setup
-		retryHealthCmd := exec.CommandContext(ctx, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser, "--get-server-public-key", "ping")
+		var retryHealthArgs []string
+		retryHealthArgs = append(retryHealthArgs, resolveBinaryPath("mysqladmin"), "-h", host, "-P", fmt.Sprintf("%d", port), "-u", mysqlUser)
+		if mysqlHasGetServerPublicKey(mysqlVersion) {
+			retryHealthArgs = append(retryHealthArgs, "--get-server-public-key")
+		}
+		retryHealthArgs = append(retryHealthArgs, "ping")
+		retryHealthCmd := exec.CommandContext(ctx, retryHealthArgs[0], retryHealthArgs[1:]...)
 		retryHealthCmd.Env = append(os.Environ(), "MYSQL_PWD="+mysqlPass)
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
 			if installType == "mgr" && groupName != "" {
-				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass); err != nil {
+				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass, mysqlVersion); err != nil {
 					return &TaskResult{
 						TaskID:    req.TaskID,
 						Status:    "failed",
@@ -847,7 +878,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// Health check passed. Initialize MGR if needed
 	if installType == "mgr" && groupName != "" {
-		if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass); err != nil {
+		if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass, mysqlVersion); err != nil {
 			return &TaskResult{
 				TaskID:    req.TaskID,
 				Status:    "failed",
@@ -872,7 +903,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 // Unix socket authentication. This resolves the ERROR 1130 issue where
 // MySQL 8.0 creates only root@localhost (no root@%), so TCP auth fails
 // but socket auth works.
-func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName, replicateUser, replicatePass string) error {
+func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName, replicateUser, replicatePass, mysqlVersion string) error {
 	if replicateUser == "" {
 		replicateUser = "repl"
 	}
@@ -885,7 +916,20 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	}
 
 	// 1. 使用配置的复制用户（主节点和副本都需要）
-	replicationSQL := fmt.Sprintf(`
+	// MySQL 5.7 使用 mysql_native_password + CHANGE MASTER TO + 精简权限
+	// MySQL 8.0 使用 caching_sha2_password + CHANGE REPLICATION SOURCE TO + 扩展权限
+	var replicationSQL string
+	if strings.HasPrefix(mysqlVersion, "5.") {
+		replicationSQL = fmt.Sprintf(`
+		SET SQL_LOG_BIN=0;
+		CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';
+		GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';
+		FLUSH PRIVILEGES;
+		SET SQL_LOG_BIN=1;
+		CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
+	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
+	} else {
+		replicationSQL = fmt.Sprintf(`
 		SET SQL_LOG_BIN=0;
 		CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s';
 		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%';
@@ -893,6 +937,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		SET SQL_LOG_BIN=1;
 		CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
 	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
+	}
 	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, replicationSQL); err != nil {
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
@@ -2240,11 +2285,16 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 	}
 	pass, _ := req.Config["target_pass"].(string)
 
-	cmd := exec.CommandContext(ctx, "mysqladmin", "ping",
+	var mysqlAdminArgs []string
+	mysqlAdminArgs = append(mysqlAdminArgs, "mysqladmin", "ping",
 		"-h", host,
 		"-P", fmt.Sprintf("%d", port),
-		"-u", user,
-		"--get-server-public-key")
+		"-u", user)
+	mysqlVersion := configString(req.Config, "mysql_version")
+	if mysqlHasGetServerPublicKey(mysqlVersion) {
+		mysqlAdminArgs = append(mysqlAdminArgs, "--get-server-public-key")
+	}
+	cmd := exec.CommandContext(ctx, mysqlAdminArgs[0], mysqlAdminArgs[1:]...)
 	if pass != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	}

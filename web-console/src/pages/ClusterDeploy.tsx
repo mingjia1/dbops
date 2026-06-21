@@ -666,7 +666,11 @@ const ClusterDeploy: React.FC = () => {
       <Row gutter={16}>
         <Col span={12}>
           <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0">
-            <Input placeholder="8.0" />
+            <Select options={[
+              { value: '5.7', label: 'MySQL 5.7' },
+              { value: '8.0', label: 'MySQL 8.0' },
+              { value: '8.4', label: 'MySQL 8.4' },
+            ]} placeholder="选择版本" />
           </Form.Item>
         </Col>
         <Col span={12}>

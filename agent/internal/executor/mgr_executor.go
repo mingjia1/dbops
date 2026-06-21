@@ -27,6 +27,7 @@ type MGRConfig struct {
 	PrimaryPort   int      `json:"primary_port"`
 	MySQLUser     string   `json:"mysql_user"`
 	MySQLPassword string   `json:"mysql_password"`
+	MySQLVersion  string   `json:"mysql_version"`
 }
 
 type GroupMemberStatus struct {
@@ -86,6 +87,9 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 	}
 	if v, ok := config["mysql_password"].(string); ok {
 		mc.MySQLPassword = v
+	}
+	if v, ok := config["mysql_version"].(string); ok {
+		mc.MySQLVersion = v
 	}
 	if seeds, ok := config["group_seeds"].([]interface{}); ok {
 		for _, s := range seeds {
@@ -508,13 +512,23 @@ func (e *MGRExecutor) bootstrapPrimaryNode(ctx context.Context, config MGRConfig
 	prepCmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, prepSQL)
 	_, _ = prepCmd.CombinedOutput()
 
-	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
-			"ALTER USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
-			"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
-		config.ReplicateUser, config.ReplicatePass,
-		config.ReplicateUser, config.ReplicatePass,
-		config.ReplicateUser)
+	var createUserSQL string
+	authPlugin := mysqlAuthPlugin(config.MySQLVersion)
+	if authPlugin == "mysql_native_password" {
+		createUserSQL = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+				"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
+			config.ReplicateUser, config.ReplicatePass,
+			config.ReplicateUser)
+	} else {
+		createUserSQL = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+				"ALTER USER '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+				"GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';",
+			config.ReplicateUser, config.ReplicatePass,
+			config.ReplicateUser, config.ReplicatePass,
+			config.ReplicateUser)
+	}
 
 	cmd := mysqlExecCommand(ctx, config.LocalAddress, config.MySQLPort, config.MySQLUser, config.MySQLPassword, createUserSQL)
 
