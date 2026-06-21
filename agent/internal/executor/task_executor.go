@@ -41,6 +41,8 @@ func resolveBinaryPath(name string) string {
 		name,
 		filepath.Join("/opt/dbops-pxc/usr/sbin", name),
 		filepath.Join("/opt/dbops-pxc/usr/bin", name),
+		filepath.Join("/opt/mysql/bin", name),
+		filepath.Join("/usr/local/bin", name),
 		filepath.Join("/usr/sbin", name),
 		filepath.Join("/usr/bin", name),
 		filepath.Join("/usr/local/mysql/bin", name),
@@ -648,11 +650,36 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 	}
 
+	// 在初始化前，杀掉所有可能使用该数据目录的mysqld进程
+	// 这样可以确保数据目录能被正确清理
+	fmt.Fprintf(os.Stderr, "DEBUG: step1 - looking for mysqld processes to kill\n")
+	psCmd := exec.CommandContext(ctx, "sh", "-c", "ps aux | grep '[m]ysqld' | awk '{print $2}'")
+	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
+		pids := strings.TrimSpace(string(pidBytes))
+		if pids != "" {
+			fmt.Fprintf(os.Stderr, "Found mysqld process(es), PIDs: %s, killing them to free port\n", pids)
+			for _, pid := range strings.Split(pids, "\n") {
+				if pid != "" {
+					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
+					killCmd.Run()
+				}
+			}
+			time.Sleep(3 * time.Second)
+		}
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "DEBUG: ps command error: %v, output: %s\n", err, string(pidBytes))
+	} else {
+		fmt.Fprintf(os.Stderr, "DEBUG: no mysqld processes found\n")
+	}
+
 	// Only run initialization if the data directory hasn't been initialized yet.
 	if needInit {
-		// Percona/Percona XtraDB Cluster mysqld requires the data directory to NOT
-		// exist when running --initialize-insecure. Remove it if we just created it.
-		os.RemoveAll(dataDir)
+		fmt.Fprintf(os.Stderr, "DEBUG: step2 - removing datadir %s\n", dataDir)
+		if rmErr := os.RemoveAll(dataDir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "DEBUG: RemoveAll failed: %v\n", rmErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "DEBUG: RemoveAll succeeded\n")
+		}
 
 		initArgs := []string{
 			"--no-defaults",
@@ -665,6 +692,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if basedir != "" {
 			initArgs = append(initArgs, "--basedir="+basedir)
 		}
+		fmt.Fprintf(os.Stderr, "DEBUG: step3 - running init: %s %v\n", mysqld, initArgs)
 		initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
 		if out, err := initCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
@@ -675,6 +703,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 				Timestamp: time.Now(),
 			}, nil
 		}
+		fmt.Fprintf(os.Stderr, "DEBUG: step4 - init completed successfully\n")
 	}
 
 	startArgs := []string{
@@ -720,23 +749,6 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		startArgs = append(startArgs, "--basedir="+basedir)
 	}
 
-	// 在启动MySQL前，杀掉所有可能使用该数据目录的mysqld进程
-	// 这样可以避免端口和文件锁冲突
-	psCmd := exec.CommandContext(ctx, "sh", "-c", "ps aux | grep mysqld | grep -v grep | awk '{print $2}'")
-	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
-		pids := strings.TrimSpace(string(pidBytes))
-		if pids != "" {
-			fmt.Fprintf(os.Stderr, "Found mysqld process(es), PIDs: %s, killing them to free port\n", pids)
-			for _, pid := range strings.Split(pids, "\n") {
-				if pid != "" {
-					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
-					killCmd.Run()
-				}
-			}
-			time.Sleep(3 * time.Second)
-		}
-	}
-
 	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
 	if out, err := startCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
@@ -777,9 +789,11 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 		socketPath := filepath.Join(dataDir, "mysql.sock")
 		retrySQL := fmt.Sprintf(
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-				"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"ALTER USER '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser),
@@ -1032,26 +1046,17 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 
 func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveConfig) *TaskResult {
 	createUserSQL := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+		"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
 			"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%';",
 		config.ReplicateUser, config.ReplicatePass, config.ReplicateUser,
 	)
 
-	if out, err := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, createUserSQL).CombinedOutput(); err != nil {
+	// Try TCP first, then fall back to socket auth (handles mismatched root@localhost / root@% credentials)
+	if out, err := mysqlExecWithSocketFallback(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, createUserSQL); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  20,
 			Message:   fmt.Sprintf("Failed to create replication user on master: %v, output: %s", err, strings.TrimSpace(string(out))),
-			Timestamp: time.Now(),
-		}
-	}
-	// Repl user uses mysql_native_password for maximum replication compatibility (no RSA key exchange needed)
-
-	if out, err := mysqlExecCommand(ctx, config.MasterHost, config.MasterPort, config.MySQLUser, config.MySQLPass, fmt.Sprintf("SET GLOBAL server_id=%d;", config.ServerID)).CombinedOutput(); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  30,
-			Message:   fmt.Sprintf("Failed to configure master server_id: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}
 	}
@@ -3295,7 +3300,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			return adminFailed(req.TaskID, "invalid username"), nil
 		}
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED WITH mysql_native_password BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password)))
+			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password)))
 	case "drop_user":
 		username, _ := req.Config["username"].(string)
 		userHost, _ := req.Config["user_host"].(string)
@@ -3405,8 +3410,13 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		}
 		output, err = controlInstanceService(ctx, req.Config)
 	case "decommission":
-		if err := validateServiceControlConfig(req.Config); err != nil {
-			return adminFailed(req.TaskID, err.Error()), nil
+		// Ensure datadir has a sensible default so decommission can clean up
+		if _, ok := req.Config["datadir"]; !ok || strings.TrimSpace(req.Config["datadir"].(string)) == "" {
+			port := configInt(req.Config, "target_port")
+			if port <= 0 {
+				port = 3306
+			}
+			req.Config["datadir"] = fmt.Sprintf("/data/mysql/%d", port)
 		}
 		output, err = decommissionInstance(ctx, req.Config)
 	default:
@@ -3836,14 +3846,14 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 	var sql string
 	if user == "root" {
 		sql = fmt.Sprintf(
-			"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-				"CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+			"ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; "+
+				"CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapedPass, escapedPass,
 		)
 	} else {
 		sql = fmt.Sprintf(
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapedUser, escapedPass, escapedUser,
 		)
@@ -3879,7 +3889,7 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 }
 
 func changeMySQLUserPassword(ctx context.Context, host string, port int, user, pass, username, userHost, password string) (string, error) {
-	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED WITH mysql_native_password BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
+	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
 
 	execSQL := func(sql string) (string, error) {
 		out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
@@ -3902,7 +3912,7 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 		return output, nil
 	}
 	if err == nil {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'", escapeSQL(username), escapeSQL(password))
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
 		localhostOut, _, localhostErr := tryAlter(localhostSQL)
 		if localhostErr == nil {
 			return localhostOut, nil
@@ -3921,7 +3931,7 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 	}
 	alterOut, userExists, alterErr := tryAlter(alterSQL)
 	if !userExists {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'", escapeSQL(username), escapeSQL(password))
+		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
 		alterOut, _, alterErr = tryAlter(localhostSQL)
 	}
 	restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))

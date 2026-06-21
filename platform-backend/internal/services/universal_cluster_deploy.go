@@ -561,7 +561,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 
 		masterHAConfig := map[string]interface{}{
 			"deploy_mode":    "ha-master",
-			"master_host":    "127.0.0.1",
+			"master_host":    masterNode.Host,
 			"master_port":    masterNode.MySQLPort,
 			"server_id":      defaultInt(masterNode.ServerID, 1),
 			"replicate_user": req.Replication.User,
@@ -646,7 +646,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 
 	// Prepare SSH credentials step
 	sshStepID := "prepare_ssh"
-	sshUser := req.Replication.User
+	sshUser := "root"
 	if v, ok := stringCustom(req.Custom, "ssh_user"); ok {
 		sshUser = v
 	}

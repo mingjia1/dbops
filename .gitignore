@@ -159,6 +159,7 @@ nul
 */nul
 */*/nul
 */*/*/nul
+.codegraph
 
 # ---------- 独立部署脚本 ----------
 deploy_mha_real.py
