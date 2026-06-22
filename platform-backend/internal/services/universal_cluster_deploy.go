@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -286,7 +287,155 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if err := validateDeployCustomOptions(req.ClusterType, req.Custom, req.MySQL.Config, req.Nodes); err != nil {
 		return req, err
 	}
+	if err := s.checkDeployConflicts(ctx, req); err != nil {
+		return req, err
+	}
 	return req, nil
+}
+
+func (s *ClusterDeployService) checkDeployConflicts(ctx context.Context, req UniversalClusterDeployRequest) error {
+	if s.instRepo == nil {
+		return nil
+	}
+	if err := s.checkClusterIDConflict(ctx, req.ClusterID); err != nil {
+		return err
+	}
+	if err := s.checkNodePortDataDirConflicts(ctx, req.Nodes, req.ClusterID); err != nil {
+		return err
+	}
+	if req.ClusterType == ClusterTypeMGR {
+		groupName := stringFromMap(req.Custom, "group_name")
+		if groupName != "" {
+			if err := s.checkMgrGroupNameConflict(ctx, groupName, req.ClusterID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) checkClusterIDConflict(ctx context.Context, clusterID string) error {
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for _, d := range deployments {
+		if d.Status == "destroyed" || d.Status == "failed" {
+			continue
+		}
+		dcid := extractClusterIDFromRequest(d.RequestJSON)
+		if dcid == clusterID {
+			return fmt.Errorf("cluster_id %q already exists (deployment %s, status=%s). Please choose a different cluster ID", clusterID, d.Name, d.Status)
+		}
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context, nodes []ClusterDeployNode, currentClusterID string) error {
+	instances, err := s.instRepo.List(ctx, 10000, 0)
+	if err != nil {
+		return nil
+	}
+	type endpoint struct {
+		host      string
+		port      int
+		dataDir   string
+		instName  string
+		clusterID string
+	}
+	var existing []endpoint
+	for _, inst := range instances {
+		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
+		if err != nil || conn == nil {
+			continue
+		}
+		if conn.Host == "" {
+			continue
+		}
+		existing = append(existing, endpoint{
+			host:      conn.Host,
+			port:      conn.Port,
+			dataDir:   conn.Datadir,
+			instName:  inst.Name,
+			clusterID: inst.ClusterID,
+		})
+	}
+	for _, dep := range nodes {
+		host := strings.TrimSpace(dep.Host)
+		for _, ex := range existing {
+			if host != ex.host {
+				continue
+			}
+			if ex.clusterID == currentClusterID {
+				continue
+			}
+			if dep.MySQLPort == ex.port {
+				return fmt.Errorf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, dep.MySQLPort, ex.instName, ex.clusterID)
+			}
+			if dep.DataDir != "" && dep.DataDir == ex.dataDir {
+				return fmt.Errorf("datadir conflict: %s on %s already in use by instance %q (cluster=%s). Please change data_dir for this node", dep.DataDir, host, ex.instName, ex.clusterID)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, groupName, currentClusterID string) error {
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for _, d := range deployments {
+		if d.Status == "destroyed" || d.Status == "failed" {
+			continue
+		}
+		dcid := extractClusterIDFromRequest(d.RequestJSON)
+		if dcid == currentClusterID {
+			continue
+		}
+		if d.ClusterType != ClusterTypeMGR {
+			continue
+		}
+		existingGroupName := extractGroupNameFromRequest(d.RequestJSON)
+		if existingGroupName == groupName {
+			return fmt.Errorf("MGR group_name %q already in use by deployment %q. Please choose a different group name", groupName, d.Name)
+		}
+	}
+	return nil
+}
+
+func extractClusterIDFromRequest(requestJSON string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(requestJSON), &m) != nil {
+		return ""
+	}
+	if v, ok := m["cluster_id"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func extractGroupNameFromRequest(requestJSON string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(requestJSON), &m) != nil {
+		return ""
+	}
+	if custom, ok := m["custom"].(map[string]interface{}); ok {
+		if v, ok := custom["group_name"].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func stringFromMap(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func validateUniversalClusterType(clusterType string) error {

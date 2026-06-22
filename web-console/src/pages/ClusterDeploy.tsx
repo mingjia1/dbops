@@ -18,11 +18,6 @@ const createMgrGroupName = () => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
 
-const DEFAULT_MYSQL_CREDENTIAL = {
-  username: 'root',
-  password: 'Hcfc@DboOps#2024_80',
-}
-
 const DEFAULT_CREDENTIAL_ACK_KEY = 'dbops.clusterDeploy.defaultMysqlCredentialAck'
 const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证']
 
@@ -124,10 +119,10 @@ const ClusterDeploy: React.FC = () => {
     mysql_password: string
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
-  const [credential, setCredential] = useState(DEFAULT_MYSQL_CREDENTIAL)
+  const [credential, setCredential] = useState<{ username: string; password: string }>({ username: 'root', password: '' })
   const [credentialModalOpen, setCredentialModalOpen] = useState(false)
   const [showDefaultCredential, setShowDefaultCredential] = useState(false)
-  const [oneTimeCredential, setOneTimeCredential] = useState<typeof DEFAULT_MYSQL_CREDENTIAL | null>(null)
+  const [oneTimeCredential, setOneTimeCredential] = useState<{ username: string; password: string } | null>(null)
   const pollRef = useRef<number | null>(null)
 
   // Plan preview state
@@ -317,6 +312,10 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const doPreview = (arch: ArchType, values: any) => {
+    if (!credential.password) {
+      message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
+      return
+    }
     const payload = buildDeployPayload(arch, values)
     setPlanPreviewLoading(true)
     setPlanPreviewArch(arch)
@@ -612,7 +611,7 @@ const ClusterDeploy: React.FC = () => {
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="pseudo_mode" label="演练模式" valuePropName="checked" initialValue={false}>
+          <Form.Item name="pseudo_mode" label="演练模式" valuePropName="checked" initialValue={false} style={{ display: 'none' }}>
             <Checkbox>伪集群演练</Checkbox>
           </Form.Item>
         </Col>
@@ -624,7 +623,7 @@ const ClusterDeploy: React.FC = () => {
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="mysql_port" label="主端口" initialValue={3309}>
+          <Form.Item name="mysql_port" label="MySQL端口" initialValue={3306} style={{ display: 'none' }}>
             <InputNumber min={1} max={65535} style={{ width: '100%' }} />
           </Form.Item>
         </Col>
@@ -646,132 +645,13 @@ const ClusterDeploy: React.FC = () => {
       )}
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="repl_user" label="复制用户" rules={[{ required: true }]} initialValue="repl_user">
-            <Input />
+          <Form.Item name="repl_user" label="复制用户" initialValue="repl">
+            <Input placeholder="repl" />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="repl_password" label="复制密码" rules={[{ required: true }]} initialValue="ReplPass#2026">
-            <Input.Password />
-          </Form.Item>
-        </Col>
-      </Row>
-      <Row gutter={16}>
-        <Col span={12}>
-          <Form.Item name="vip" label="VIP">
-            <Input placeholder="可选" />
-          </Form.Item>
-        </Col>
-      </Row>
-      <Row gutter={16}>
-        <Col span={12}>
-          <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0">
-            <Select options={[
-              { value: '5.7', label: 'MySQL 5.7' },
-              { value: '8.0', label: 'MySQL 8.0' },
-              { value: '8.4', label: 'MySQL 8.4' },
-            ]} placeholder="选择版本" />
-          </Form.Item>
-        </Col>
-        <Col span={12}>
-          <Form.Item name="package_url" label="安装包">
-            <Input placeholder="https://repo.example/mysql.tar.gz" />
-          </Form.Item>
-        </Col>
-      </Row>
-      <Row gutter={16}>
-        <Col span={12}>
-          <Form.Item name="package_checksum" label="校验值">
-            <Input placeholder="64 位 SHA256" />
-          </Form.Item>
-        </Col>
-        <Col span={12}>
-          <Form.Item name="master_data_dir" label="主数据目录">
-            <Input placeholder="/data/mysql/3306" />
-          </Form.Item>
-        </Col>
-      </Row>
-      <Row gutter={16}>
-        <Col span={12}>
-          <Form.Item name="replica_data_dir" label="从数据目录">
-            <Input placeholder="/data/mysql/3307" />
-          </Form.Item>
-        </Col>
-        {(arch === 'ha' || arch === 'mgr') && (
-          <Col span={12}>
-            <Form.Item name="master_server_id" label="主server_id">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-        )}
-      </Row>
-      {(arch === 'ha' || arch === 'mgr') && (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item name="replica_server_id" label="从server_id">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-          {arch === 'mgr' && (
-            <Col span={12}>
-              <Form.Item name="local_port" label="MGR端口">
-                <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          )}
-        </Row>
-      )}
-      {arch === 'ha' && (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item name="semi_sync_enabled" label="半同步复制" valuePropName="checked" initialValue={false}>
-              <Checkbox>启用</Checkbox>
-            </Form.Item>
-          </Col>
-        </Row>
-      )}
-      {arch === 'mha' && (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item name="vip_interface" label="VIP 网卡">
-              <Input placeholder="eth0" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="ping_interval" label="探测间隔">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="ssh_user" label="SSH 用户">
-              <Input placeholder="root" />
-            </Form.Item>
-          </Col>
-        </Row>
-      )}
-      {arch === 'pxc' && (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item name="cluster_name" label="PXC集群">
-              <Input placeholder="pxc-prod" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="sst_method" label="SST方法" initialValue="xtrabackup-v2">
-              <Input />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="wsrep_ssl_enabled" label="wsrepSSL" valuePropName="checked" initialValue={false}>
-              <Checkbox>启用</Checkbox>
-            </Form.Item>
-          </Col>
-        </Row>
-      )}
-      <Row gutter={16}>
-        <Col span={12}>
-          <Form.Item name="mysql_config_text" label="MySQL配置">
-            <Input.TextArea rows={3} placeholder={'max_connections=512\ninnodb_buffer_pool_size=2G'} />
+          <Form.Item name="repl_password" label="复制密码" initialValue="Repl#2024">
+            <Input.Password placeholder="Repl#2024" />
           </Form.Item>
         </Col>
       </Row>
