@@ -214,3 +214,4 @@ fix_*.py
 fix_*.sh
 deploy_*.py
 *_result.txt
+test_57_full.py

@@ -1309,7 +1309,12 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 	if replicaErr == nil || strings.Contains(replicaText, "Replica is not configured") || strings.Contains(replicaText, "This server is not configured as slave") {
 		return replicaOut, nil
 	}
-	if !strings.Contains(replicaText, "ERROR 1064") {
+	// Check both output and error for ERROR 1064 to handle the case where
+	// mysqlExecWithSocketFallback returns output from socket (ERROR 1045)
+	// while the TCP attempt had the 1064 syntax error.
+	has1064 := strings.Contains(replicaText, "ERROR 1064") ||
+		strings.Contains(replicaErr.Error(), "ERROR 1064")
+	if !has1064 {
 		return replicaOut, replicaErr
 	}
 	legacyOut, legacyErr := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP SLAVE; RESET SLAVE ALL;")
