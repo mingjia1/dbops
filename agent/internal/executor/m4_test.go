@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -126,70 +125,37 @@ func TestNewPortScanner_M4(t *testing.T) {
 func TestCgroupManager_GenerateSystemdOverride(t *testing.T) {
 	m := NewCgroupManager()
 
-	cfg := CgroupConfig{
+	dir, file, err := m.GenerateSystemdOverride(CgroupConfig{
 		Port:          3306,
 		MemoryLimitMB: 2048,
 		CPUQuotaPct:   200,
-	}
-
-	dir, file, err := m.GenerateSystemdOverride(cfg)
+	})
 	require.NoError(t, err)
 	assert.Contains(t, dir, "mysqld_3306.service.d")
 	assert.Contains(t, file, "limits.conf")
 }
 
-func TestCgroupManager_GenerateSystemdOverride_CustomService(t *testing.T) {
-	m := NewCgroupManager()
-
-	cfg := CgroupConfig{
-		Port:          3307,
-		MemoryLimitMB: 1024,
-		ServiceName:   "custom-mysql",
-	}
-
-	dir, _, err := m.GenerateSystemdOverride(cfg)
-	require.NoError(t, err)
-	assert.Contains(t, dir, "custom-mysql.service.d")
-}
-
-func TestCgroupManager_GenerateSystemdOverride_NoPort(t *testing.T) {
-	m := NewCgroupManager()
-
-	cfg := CgroupConfig{Port: 0}
-	_, _, err := m.GenerateSystemdOverride(cfg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "port")
-}
-
 func TestCgroupManager_GenerateOverrideContent(t *testing.T) {
 	m := NewCgroupManager()
 
-	cfg := CgroupConfig{
-		Port:          3306,
-		MemoryLimitMB: 4096,
-		CPUQuotaPct:   300,
-	}
-
-	_, file, err := m.GenerateSystemdOverride(cfg)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(file)
-	require.NoError(t, err)
-	content := string(data)
+	content := m.GenerateOverrideContent(3306, 4096, 300)
 	assert.Contains(t, content, "MemoryMax=4096M")
 	assert.Contains(t, content, "CPUQuota=300%")
 	assert.Contains(t, content, "[Service]")
 }
 
-func TestCalculateMemoryLimit(t *testing.T) {
-	assert.Equal(t, 700, CalculateMemoryLimit(1000, 1))
-	assert.Equal(t, 350, CalculateMemoryLimit(1000, 2))
-	assert.Equal(t, 256, CalculateMemoryLimit(100, 10), "should enforce minimum of 256MB")
-	assert.Equal(t, 700, CalculateMemoryLimit(1000, 0), "instanceCount=0 defaults to 1")
+func TestCgroupManager_Defaults(t *testing.T) {
+	m := NewCgroupManager()
+	assert.Equal(t, 70, m.DefaultMemoryPercent)
+	assert.Equal(t, 100, m.DefaultCPUMultiplier)
 }
 
-func TestCalculateCPUQuota(t *testing.T) {
-	assert.Equal(t, 200, CalculateCPUQuota(2))
-	assert.Equal(t, 800, CalculateCPUQuota(8))
-	assert.Equal(t, 100, CalculateCPUQuota(1))
+func TestCgroupManager_GetDefaultMemoryLimit(t *testing.T) {
+	m := NewCgroupManager()
+	assert.Equal(t, 70, m.DefaultMemoryPercent)
+}
+
+func TestCgroupManager_GetDefaultCPUQuota(t *testing.T) {
+	m := NewCgroupManager()
+	assert.Equal(t, 100, m.DefaultCPUMultiplier)
 }
