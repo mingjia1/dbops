@@ -88,6 +88,9 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 	if v, ok := config["mysql_password"].(string); ok {
 		mc.MySQLPassword = v
 	}
+	if v, ok := config["mysql_pass"].(string); ok && mc.MySQLPassword == "" {
+		mc.MySQLPassword = v
+	}
 	if v, ok := config["mysql_version"].(string); ok {
 		mc.MySQLVersion = v
 	}

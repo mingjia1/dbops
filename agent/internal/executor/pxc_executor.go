@@ -102,6 +102,9 @@ func parsePXCConfig(config map[string]interface{}) PXCConfig {
 	if v, ok := config["mysql_password"].(string); ok {
 		pc.MySQLPassword = v
 	}
+	if v, ok := config["mysql_pass"].(string); ok && pc.MySQLPassword == "" {
+		pc.MySQLPassword = v
+	}
 	if v, ok := config["node_host"].(string); ok {
 		pc.NodeHost = v
 	}

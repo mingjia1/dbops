@@ -95,6 +95,9 @@ func parseMHAConfig(config map[string]interface{}) MHAConfig {
 	if v, ok := config["mysql_password"].(string); ok {
 		mc.MySQLPassword = v
 	}
+	if v, ok := config["mysql_pass"].(string); ok && mc.MySQLPassword == "" {
+		mc.MySQLPassword = v
+	}
 	if v := configInt(config, "ping_interval"); v != 0 {
 		mc.PingInterval = v
 	}
