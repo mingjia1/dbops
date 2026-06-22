@@ -1306,7 +1306,7 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 	// Try REPLICA syntax first (MySQL 8.4+), fall back to SLAVE for older versions
 	replicaOut, replicaErr := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP REPLICA; RESET REPLICA ALL;")
 	replicaText := string(replicaOut)
-	if replicaErr == nil || strings.Contains(replicaText, "Replica is not configured") || strings.Contains(replicaText, "This server is not configured as slave") {
+		if replicaErr == nil || strings.Contains(replicaText, "not configured as replica") || strings.Contains(replicaText, "not configured as slave") || strings.Contains(replicaErr.Error(), "not configured as replica") || strings.Contains(replicaErr.Error(), "not configured as slave") {
 		return replicaOut, nil
 	}
 	// Check both output and error for ERROR 1064 to handle the case where
@@ -1319,7 +1319,7 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 	}
 	legacyOut, legacyErr := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP SLAVE; RESET SLAVE ALL;")
 	legacyText := string(legacyOut)
-	if legacyErr == nil || strings.Contains(legacyText, "Slave is not configured") || strings.Contains(legacyText, "This server is not configured as slave") {
+		if legacyErr == nil || strings.Contains(legacyText, "not configured as slave") || strings.Contains(legacyText, "not configured as replica") || strings.Contains(legacyErr.Error(), "not configured as slave") || strings.Contains(legacyErr.Error(), "not configured as replica") {
 		return legacyOut, nil
 	}
 	return legacyOut, legacyErr
@@ -1394,8 +1394,8 @@ func (e *TaskExecutor) verifyReplication(ctx context.Context, config MasterSlave
 	}
 
 	// Fallback: try SHOW SLAVE STATUS (tabular, no \G) for MySQL 5.7
-	for _, query := range []string{"SHOW SLAVE STATUS", "SHOW REPLICA STATUS"} {
-		output, err := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, query)
+		for _, query := range []string{"SHOW SLAVE STATUS", "SHOW REPLICA STATUS"} {
+			output, err = mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, query)
 		if err == nil && len(output) > 0 {
 			yesCount := strings.Count(string(output), "Yes")
 			if yesCount >= 2 {
