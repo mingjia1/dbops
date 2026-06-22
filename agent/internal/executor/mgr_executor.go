@@ -108,6 +108,16 @@ func parseMGRConfig(config map[string]interface{}) MGRConfig {
 func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMGRConfig(req.Config)
 
+	if config.MySQLVersion != "" && strings.HasPrefix(config.MySQLVersion, "5.") {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Group Replication is not supported on MySQL %s (requires 8.0+)", config.MySQLVersion),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
 	bootstrapResult := e.bootstrapPrimaryNode(ctx, config)
 	if bootstrapResult.Status == "failed" {
 		return bootstrapResult, nil
@@ -153,6 +163,16 @@ func (e *MGRExecutor) DeployMGRSinglePrimary(ctx context.Context, req DeployTask
 
 func (e *MGRExecutor) ConfigureGroupMember(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMGRConfig(req.Config)
+
+	if config.MySQLVersion != "" && strings.HasPrefix(config.MySQLVersion, "5.") {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Group Replication is not supported on MySQL %s (requires 8.0+)", config.MySQLVersion),
+			Timestamp: time.Now(),
+		}, nil
+	}
 
 	pluginResult := e.installGroupReplicationPlugin(ctx, config)
 	if pluginResult.Status == "failed" {
