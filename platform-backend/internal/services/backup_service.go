@@ -234,6 +234,9 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	if err != nil {
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
+	if conn.PasswordEncrypted == "" {
+		return nil, fmt.Errorf("instance has no password configured, please update instance credentials first")
+	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
@@ -250,6 +253,32 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			Progress:   0,
 			CreatedAt:  now,
 		})
+	}
+	if s.agentClient == nil {
+		errMsg := "agent client not configured"
+		out := &BackupTaskResult{
+			InstanceID: req.InstanceID,
+			BackupType: req.BackupType,
+			TaskID:     taskID,
+			Status:     "failed",
+			Message:    errMsg,
+			StartedAt:  now,
+		}
+		_ = s.createRecord(&models.BackupRecord{
+			InstanceID: req.InstanceID,
+			PolicyID:   req.PolicyID,
+			BackupType: req.BackupType,
+			TaskID:     taskID,
+			StartedAt:  now,
+			Status:     "failed",
+			Message:    errMsg,
+			CreatedAt:  now,
+		})
+		if s.taskRepo != nil {
+			_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, "failed", 0, errMsg)
+		}
+		s.auditBackupExecution(ctx, out, "failed")
+		return out, nil
 	}
 	config := map[string]interface{}{
 		"backup_type":   req.BackupType,
@@ -300,25 +329,6 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		BackupType: req.BackupType,
 		TaskID:     taskID,
 		StartedAt:  now,
-	}
-	if s.agentClient == nil {
-		out.Status = "failed"
-		out.Message = "agent client not configured"
-		_ = s.createRecord(&models.BackupRecord{
-			InstanceID: req.InstanceID,
-			PolicyID:   req.PolicyID,
-			BackupType: req.BackupType,
-			TaskID:     taskID,
-			StartedAt:  now,
-			Status:     "failed",
-			Message:    out.Message,
-			CreatedAt:  now,
-		})
-		if s.taskRepo != nil {
-			_ = s.taskRepo.UpdateStatusWithMessage(ctx, taskID, "failed", 0, out.Message)
-		}
-		s.auditBackupExecution(ctx, out, "failed")
-		return out, nil
 	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
 		"task_id":     taskID,

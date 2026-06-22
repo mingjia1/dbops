@@ -13,11 +13,18 @@ import (
 
 type bodyWriter struct {
 	gin.ResponseWriter
-	body *bytes.Buffer
+	body      *bytes.Buffer
+	overflow  bool
+	maxBuffer int
 }
 
 func (w *bodyWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
+	if !w.overflow && w.body.Len()+len(b) > w.maxBuffer {
+		w.overflow = true
+		w.body.Reset()
+	} else if !w.overflow {
+		w.body.Write(b)
+	}
 	return w.ResponseWriter.Write(b)
 }
 
@@ -49,11 +56,11 @@ func DataMask(maskingService *services.MaskingService) gin.HandlerFunc {
 			return
 		}
 
-		w := &bodyWriter{body: &bytes.Buffer{}, ResponseWriter: ctx.Writer}
+		w := &bodyWriter{body: &bytes.Buffer{}, ResponseWriter: ctx.Writer, maxBuffer: 2 << 20} // 2MB cap
 		ctx.Writer = w
 		ctx.Next()
 
-		if ctx.Writer.Status() != http.StatusOK {
+		if ctx.Writer.Status() != http.StatusOK || w.overflow {
 			return
 		}
 		contentType := ctx.Writer.Header().Get("Content-Type")

@@ -657,9 +657,25 @@ func main() {
 	}
 
 	logInstance.Info("Server starting on port " + cfg.ServerPort)
+	readTimeout := time.Duration(cfg.ServerTimeouts.ReadTimeoutSec) * time.Second
+	writeTimeout := time.Duration(cfg.ServerTimeouts.WriteTimeoutSec) * time.Second
+	idleTimeout := time.Duration(cfg.ServerTimeouts.IdleTimeoutSec) * time.Second
+	if readTimeout == 0 {
+		readTimeout = 30 * time.Second
+	}
+	if writeTimeout == 0 {
+		writeTimeout = 60 * time.Second
+	}
+	if idleTimeout == 0 {
+		idleTimeout = 120 * time.Second
+	}
 	srv := &http.Server{
-		Addr:    ":" + cfg.ServerPort,
-		Handler: r,
+		Addr:              ":" + cfg.ServerPort,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	go func() {

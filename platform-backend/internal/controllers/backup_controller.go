@@ -78,7 +78,7 @@ func (c *BackupController) ExecuteBackup(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteBackup(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute backup", err)
+		utils.InternalServerErrorResponse(ctx, err.Error(), err)
 		return
 	}
 

@@ -12,15 +12,66 @@ type Redis struct {
 	Client *redis.Client
 }
 
-func NewRedis(addr, password string, db int) (*Redis, error) {
-	client := redis.NewClient(&redis.Options{
+type RedisConfig struct {
+	Addr         string
+	Password     string
+	DB           int
+	PoolSize     int
+	MinIdleConns int
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+func NewRedis(addr, password string, db int, configOverride ...*RedisConfig) (*Redis, error) {
+	cfg := &RedisConfig{
 		Addr:         addr,
 		Password:     password,
 		DB:           db,
+		PoolSize:     10,
+		MinIdleConns: 2,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
-		PoolSize:     10,
+	}
+
+	if len(configOverride) > 0 && configOverride[0] != nil {
+		oc := configOverride[0]
+		if oc.Addr != "" {
+			cfg.Addr = oc.Addr
+		}
+		if oc.Password != "" {
+			cfg.Password = oc.Password
+		}
+		if oc.DB != 0 {
+			cfg.DB = oc.DB
+		}
+		if oc.PoolSize > 0 {
+			cfg.PoolSize = oc.PoolSize
+		}
+		if oc.MinIdleConns > 0 {
+			cfg.MinIdleConns = oc.MinIdleConns
+		}
+		if oc.DialTimeout > 0 {
+			cfg.DialTimeout = oc.DialTimeout
+		}
+		if oc.ReadTimeout > 0 {
+			cfg.ReadTimeout = oc.ReadTimeout
+		}
+		if oc.WriteTimeout > 0 {
+			cfg.WriteTimeout = oc.WriteTimeout
+		}
+	}
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         cfg.Addr,
+		Password:     cfg.Password,
+		DB:           cfg.DB,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		PoolSize:     cfg.PoolSize,
+		MinIdleConns: cfg.MinIdleConns,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

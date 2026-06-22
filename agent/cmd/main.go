@@ -185,7 +185,8 @@ func main() {
 
 				result, err := taskExecutor.ExecuteVersionDetect(c.Request.Context(), req)
 				if err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": "Version detect failed: " + err.Error()})
+					log.Printf("[ERROR] Version detect failed: %v", err)
+					c.JSON(500, gin.H{"code": 500, "message": "Version detect failed"})
 					return
 				}
 
@@ -478,7 +479,8 @@ func main() {
 				}
 				result, err := relayManager.FetchAndCache(c.Request.Context(), req)
 				if err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": "Fetch failed: " + err.Error()})
+					log.Printf("[ERROR] Relay fetch failed: %v", err)
+					c.JSON(500, gin.H{"code": 500, "message": "Fetch failed"})
 					return
 				}
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
@@ -506,7 +508,8 @@ func main() {
 				}
 				results, err := relayManager.PrefetchPackages(c.Request.Context(), req)
 				if err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": "Prefetch failed: " + err.Error()})
+					log.Printf("[ERROR] Prefetch failed: %v", err)
+					c.JSON(500, gin.H{"code": 500, "message": "Prefetch failed"})
 					return
 				}
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": results})
@@ -545,7 +548,7 @@ func main() {
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Minute,
+		WriteTimeout:      10 * time.Minute, // normal API timeout; long tasks use background context
 		IdleTimeout:       120 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {

@@ -6,27 +6,34 @@ import (
 )
 
 type Config struct {
-	ServerPort     string
-	TLSCertPath    string
-	TLSKeyPath     string
-	LogLevel       string
-	DatabaseURL    string
-	SQLitePath     string
-	StorageMode    string
-	RedisURL       string
-	RedisPassword  string
-	RedisDB        int
-	JWTSecret      string
-	EncryptionKey  string
-	AgentToken     string
-	ClickHouseURL  string
-	DataDir        string
-	AllowedOrigins []string
-	AIBaseURL     string
-	AIAPIKey      string
-	AIModel       string
-	AIMaxTokens   int
+	ServerPort      string
+	TLSCertPath     string
+	TLSKeyPath      string
+	LogLevel        string
+	DatabaseURL     string
+	SQLitePath      string
+	StorageMode     string
+	RedisURL        string
+	RedisPassword   string
+	RedisDB         int
+	JWTSecret       string
+	EncryptionKey   string
+	AgentToken      string
+	ClickHouseURL   string
+	DataDir         string
+	AllowedOrigins  []string
+	AIBaseURL       string
+	AIAPIKey        string
+	AIModel         string
+	AIMaxTokens     int
 	ClusterDefaults ClusterDefaults
+	ServerTimeouts  ServerTimeouts
+}
+
+type ServerTimeouts struct {
+	ReadTimeoutSec  int
+	WriteTimeoutSec int
+	IdleTimeoutSec  int
 }
 
 type ClusterDefaults struct {
@@ -76,6 +83,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("ai_api_key", "")
 	viper.SetDefault("ai_model", "gpt-4")
 	viper.SetDefault("ai_max_tokens", 2048)
+	viper.SetDefault("server_timeouts.read_timeout_sec", 30)
+	viper.SetDefault("server_timeouts.write_timeout_sec", 60)
+	viper.SetDefault("server_timeouts.idle_timeout_sec", 120)
 	// B7: 强制从环境变量注入敏感配置. 即使 config.yaml 误提交, 环境变量也会覆盖.
 	viper.SetDefault("agent_token", "")
 	viper.BindEnv("database_url", "DBOPS_DB_URL")
@@ -119,6 +129,11 @@ func Load() (*Config, error) {
 			SSTUser:         viper.GetString("cluster_defaults.sst_user"),
 			SSTPass:         viper.GetString("cluster_defaults.sst_pass"),
 			SSHUser:         viper.GetString("cluster_defaults.ssh_user"),
+		},
+		ServerTimeouts: ServerTimeouts{
+			ReadTimeoutSec:  viper.GetInt("server_timeouts.read_timeout_sec"),
+			WriteTimeoutSec: viper.GetInt("server_timeouts.write_timeout_sec"),
+			IdleTimeoutSec:  viper.GetInt("server_timeouts.idle_timeout_sec"),
 		},
 	}, nil
 }

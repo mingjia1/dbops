@@ -12,6 +12,7 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/internal/models"
 	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 type HealthCheckService struct {
@@ -384,17 +385,62 @@ func (s *HealthCheckService) checkReplication(ctx context.Context, host string, 
 	}
 
 	details := CheckDetails{}
-	row := db.QueryRowContext(checkCtx, "SHOW SLAVE STATUS")
-	var slaveIORunning, slaveSQLRunning string
-	var secondsBehind sql.NullInt64
 
-	err = row.Scan(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &slaveIORunning, &slaveSQLRunning, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &secondsBehind)
+	// Use SHOW SLAVE STATUS with column-name based scanning
+	rows, err := db.QueryContext(checkCtx, "SHOW SLAVE STATUS")
 	if err != nil {
 		return &HealthCheckResult{
 			CheckType:    "replication",
 			IsHealthy:    false,
 			ResponseTime: time.Since(startTime),
 			ErrorMessage: fmt.Sprintf("Failed to get slave status: %v", err),
+		}
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	if !rows.Next() {
+		return &HealthCheckResult{
+			CheckType:    "replication",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: "No slave status found (not a replica?)",
+		}
+	}
+
+	vals := make([]interface{}, len(cols))
+	for i := range vals {
+		vals[i] = new(sql.NullString)
+	}
+	if err := rows.Scan(vals...); err != nil {
+		return &HealthCheckResult{
+			CheckType:    "replication",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: fmt.Sprintf("Failed to scan slave status: %v", err),
+		}
+	}
+
+	slaveIORunning := ""
+	slaveSQLRunning := ""
+	var secondsBehind sql.NullInt64
+
+	colMap := make(map[string]string, len(cols))
+	for i, col := range cols {
+		if ns, ok := vals[i].(*sql.NullString); ok && ns.Valid {
+			colMap[col] = ns.String
+		}
+	}
+
+	if v, ok := colMap["Slave_IO_Running"]; ok {
+		slaveIORunning = v
+	}
+	if v, ok := colMap["Slave_SQL_Running"]; ok {
+		slaveSQLRunning = v
+	}
+	if v, ok := colMap["Seconds_Behind_Master"]; ok {
+		if n, err := parseInt64(v); err == nil {
+			secondsBehind = sql.NullInt64{Int64: n, Valid: true}
 		}
 	}
 
@@ -466,26 +512,40 @@ func (s *HealthCheckService) updateFailureState(instanceID string, isHealthy boo
 }
 
 func (s *HealthCheckService) BatchHealthCheck(ctx context.Context, instanceIDs []string) ([]HealthCheckResult, error) {
-	results := make([]HealthCheckResult, 0, len(instanceIDs))
+	results := make([]HealthCheckResult, len(instanceIDs))
+	var mu sync.Mutex
 
-	for _, instanceID := range instanceIDs {
-		req := HealthCheckRequest{
-			InstanceID: instanceID,
-			Config: HealthCheckConfig{
-				CheckTypes: batchHealthCheckTypes(),
-			},
-		}
-		result, err := s.ExecuteHealthCheck(ctx, req)
-		if err != nil {
-			result = &HealthCheckResult{
-				InstanceID:   instanceID,
-				Status:       "error",
-				IsHealthy:    false,
-				ErrorMessage: err.Error(),
-				CheckTime:    time.Now(),
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(5) // max 5 concurrent health checks
+
+	for i, instanceID := range instanceIDs {
+		i, instanceID := i, instanceID
+		g.Go(func() error {
+			req := HealthCheckRequest{
+				InstanceID: instanceID,
+				Config: HealthCheckConfig{
+					CheckTypes: batchHealthCheckTypes(),
+				},
 			}
-		}
-		results = append(results, *result)
+			result, err := s.ExecuteHealthCheck(ctx, req)
+			if err != nil {
+				result = &HealthCheckResult{
+					InstanceID:   instanceID,
+					Status:       "error",
+					IsHealthy:    false,
+					ErrorMessage: err.Error(),
+					CheckTime:    time.Now(),
+				}
+			}
+			mu.Lock()
+			results[i] = *result
+			mu.Unlock()
+			return nil // don't fail entire batch on individual errors
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return results, err
 	}
 
 	return results, nil
@@ -493,4 +553,10 @@ func (s *HealthCheckService) BatchHealthCheck(ctx context.Context, instanceIDs [
 
 func batchHealthCheckTypes() []string {
 	return []string{"tcp", "mysql"}
+}
+
+func parseInt64(s string) (int64, error) {
+	var n int64
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }
