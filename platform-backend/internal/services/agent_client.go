@@ -143,8 +143,11 @@ func (c *AgentClient) DeployCluster(ctx context.Context, hostAddr string, agentP
 }
 
 func (c *AgentClient) ExecuteHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string) (*AgentTaskResult, error) {
-	url := fmt.Sprintf("http://%s:%d/agent/tasks/health-check?instance_id=%s", hostAddr, agentPort, instanceID)
-	return c.callAgentGet(ctx, url)
+	payload := DeployTaskPayload{
+		TaskID:     "health-check-" + instanceID,
+		InstanceID: instanceID,
+	}
+	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/health-check", payload)
 }
 
 func (c *AgentClient) ExecuteMySQLHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) (*AgentTaskResult, error) {
