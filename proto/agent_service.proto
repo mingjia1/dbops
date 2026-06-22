@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package agent;
+
+option go_package = "github.com/monkeycode/mysql-ops-platform/pkg/grpc/agentpb";
+
+service AgentService {
+  rpc ExecuteTask (stream TaskRequest) returns (stream TaskProgress);
+  rpc HealthCheck (HealthRequest) returns (HealthResponse);
+}
+
+message TaskRequest {
+  string task_id = 1;
+  string task_type = 2;
+  map<string, string> config = 3;
+}
+
+message TaskProgress {
+  string task_id = 1;
+  int32 progress = 2;
+  string stage = 3;
+  string log_line = 4;
+  string status = 5;
+  map<string, string> metadata = 6;
+}
+
+message HealthRequest {
+  string host = 1;
+  int32 port = 2;
+}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+}
