@@ -130,6 +130,21 @@ func (o *DeployOrchestrator) ensureCredentials(ctx context.Context, req DeployOr
 		MonitorUser: "monitor",
 	}
 
+	// Try to load existing credentials first (for scale-out/rebuild scenarios)
+	existingRoot, err := vault.GetDecryptedPassword(ctx, req.ClusterID, "root")
+	if err == nil && existingRoot != "" {
+		creds.RootPassword = existingRoot
+		existingRepl, err2 := vault.GetDecryptedPassword(ctx, req.ClusterID, "repl")
+		if err2 == nil {
+			creds.ReplPassword = existingRepl
+		}
+		existingMonitor, err3 := vault.GetDecryptedPassword(ctx, req.ClusterID, "monitor")
+		if err3 == nil {
+			creds.MonitorPassword = existingMonitor
+		}
+		return creds, nil
+	}
+
 	rootPass, err := GenerateSecurePassword(24)
 	if err != nil {
 		return nil, err
