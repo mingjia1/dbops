@@ -13,6 +13,7 @@ import (
 
 type stubKernelPlugin struct {
 	name string
+	plugins.DefaultPluginMethods
 }
 
 func (s *stubKernelPlugin) Name() string              { return s.name }

@@ -131,3 +131,35 @@ func TestCredentialVault_EncryptionRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original, decrypted)
 }
+
+func TestCredentialVault_SyncCredentialToNode(t *testing.T) {
+	repo := newTestCredentialRepo()
+	vault := NewCredentialVault(repo, "sync-test-key")
+	ctx := context.Background()
+
+	err := vault.SetCredential(ctx, "cluster-sync", "root", "root", "secret123")
+	require.NoError(t, err)
+
+	var callHost string
+	var callPath string
+	fakeAgent := func(_ context.Context, host string, _ int, path string, payload map[string]interface{}) (map[string]interface{}, error) {
+		callHost = host
+		callPath = path
+		return map[string]interface{}{"status": "ok"}, nil
+	}
+
+	err = vault.SyncCredentialToNode(ctx, "cluster-sync", "root", "10.0.0.1", 9090, fakeAgent)
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.1", callHost)
+	assert.Equal(t, "/api/v1/accounts/rotate", callPath)
+}
+
+func TestCredentialVault_SyncCredentialToNode_NilCaller(t *testing.T) {
+	repo := newTestCredentialRepo()
+	vault := NewCredentialVault(repo, "sync-test-key")
+	ctx := context.Background()
+
+	err := vault.SyncCredentialToNode(ctx, "cluster-001", "root", "10.0.0.1", 9090, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "nil")
+}

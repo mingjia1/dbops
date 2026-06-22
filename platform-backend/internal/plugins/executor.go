@@ -54,3 +54,25 @@ func (e *Executor) RunTeardown(ctx context.Context, pluginName string, env Plugi
 	}
 	return nil
 }
+
+func (e *Executor) RunJoin(ctx context.Context, pluginName string, env PluginEnv, newNode PluginNode) error {
+	p, err := e.registry.Get(pluginName)
+	if err != nil {
+		return fmt.Errorf("plugin lookup: %w", err)
+	}
+	if err := p.Join(ctx, env, newNode); err != nil {
+		return fmt.Errorf("plugin %s join: %w", pluginName, err)
+	}
+	return nil
+}
+
+func (e *Executor) RunLeave(ctx context.Context, pluginName string, env PluginEnv, node PluginNode) error {
+	p, err := e.registry.Get(pluginName)
+	if err != nil {
+		return fmt.Errorf("plugin lookup: %w", err)
+	}
+	if err := p.Leave(ctx, env, node); err != nil {
+		return fmt.Errorf("plugin %s leave: %w", pluginName, err)
+	}
+	return nil
+}

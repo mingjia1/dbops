@@ -9,6 +9,7 @@ import (
 
 type MHAAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
+	plugins.DefaultPluginMethods
 }
 
 func NewMHAAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *MHAAddonPlugin {

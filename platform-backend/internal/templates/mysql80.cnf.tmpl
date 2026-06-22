@@ -1,0 +1,32 @@
+[mysqld]
+port={{.Port}}
+server-id={{.ServerID}}
+datadir={{.Datadir}}
+basedir={{.Basedir}}
+socket=/tmp/mysql_{{.Port}}.sock
+pid-file=/tmp/mysql_{{.Port}}.pid
+
+gtid_mode=ON
+enforce_gtid_consistency=ON
+
+{{- if .LogBin }}
+log_bin={{.Datadir}}/binlog
+binlog_format={{.BinlogFormat}}
+{{- end }}
+relay_log={{.Datadir}}/relay-log
+report_host={{.ReportHost}}
+report_port={{.ReportPort}}
+
+character-set-server={{.CharacterSet}}
+max_connections={{.MaxConnections}}
+innodb_buffer_pool_size={{.InnodbBufferPool}}
+{{- if .AuthPlugin }}
+default_authentication_plugin={{.AuthPlugin}}
+{{- end }}
+{{- if .GroupReplication }}
+plugin_load_add='group_replication.so'
+group_replication_group_name={{.GroupSeeds}}
+group_replication_local_address={{.GroupLocalAddr}}
+group_replication_group_seeds={{.GroupSeeds}}
+group_replication_start_on_boot=OFF
+{{- end }}

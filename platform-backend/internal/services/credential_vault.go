@@ -86,6 +86,27 @@ func (v *CredentialVault) DeleteClusterCredentials(ctx context.Context, clusterI
 	return v.repo.DeleteByCluster(ctx, clusterID)
 }
 
+func (v *CredentialVault) SyncCredentialToNode(ctx context.Context, clusterID, accountType string, host string, agentPort int, agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) error {
+	if agentCaller == nil {
+		return fmt.Errorf("agent caller is nil")
+	}
+	cred, err := v.repo.GetByClusterAndType(ctx, clusterID, accountType)
+	if err != nil {
+		return fmt.Errorf("get credential: %w", err)
+	}
+	password, err := utils.Decrypt(cred.PasswordEnc, v.encKey)
+	if err != nil {
+		return fmt.Errorf("decrypt: %w", err)
+	}
+	payload := map[string]interface{}{
+		"user":     cred.Username,
+		"password": password,
+		"action":   "rotate",
+	}
+	_, err = agentCaller(ctx, host, agentPort, "/api/v1/accounts/rotate", payload)
+	return err
+}
+
 func GenerateSecurePassword(length int) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
 	result := make([]byte, length)

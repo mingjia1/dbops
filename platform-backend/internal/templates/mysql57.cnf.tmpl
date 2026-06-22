@@ -1,0 +1,24 @@
+[mysqld]
+port={{.Port}}
+server-id={{.ServerID}}
+datadir={{.Datadir}}
+basedir={{.Basedir}}
+socket=/tmp/mysql_{{.Port}}.sock
+pid-file=/tmp/mysql_{{.Port}}.pid
+
+gtid_mode=ON
+enforce_gtid_consistency=ON
+
+{{- if .LogBin }}
+log_bin={{.Datadir}}/binlog
+binlog_format={{.BinlogFormat}}
+{{- end }}
+relay_log={{.Datadir}}/relay-log
+report_host={{.ReportHost}}
+report_port={{.ReportPort}}
+
+character-set-server={{.CharacterSet}}
+max_connections={{.MaxConnections}}
+innodb_buffer_pool_size={{.InnodbBufferPool}}
+
+# MySQL 5.7 specific: no default_authentication_plugin set

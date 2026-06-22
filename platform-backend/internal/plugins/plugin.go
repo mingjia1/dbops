@@ -18,6 +18,8 @@ type Plugin interface {
 	Execute(ctx context.Context, env PluginEnv, params map[string]interface{}) (*PluginResult, error)
 	Rollback(ctx context.Context, env PluginEnv) error
 	Teardown(ctx context.Context, env PluginEnv) error
+	Join(ctx context.Context, env PluginEnv, newNode PluginNode) error
+	Leave(ctx context.Context, env PluginEnv, node PluginNode) error
 }
 
 type PluginEnv struct {
@@ -50,4 +52,14 @@ type PluginResult struct {
 	Message  string                 `json:"message"`
 	Data     map[string]interface{} `json:"data,omitempty"`
 	Warnings []string               `json:"warnings,omitempty"`
+}
+
+type DefaultPluginMethods struct{}
+
+func (d *DefaultPluginMethods) Join(_ context.Context, _ PluginEnv, _ PluginNode) error {
+	return nil
+}
+
+func (d *DefaultPluginMethods) Leave(_ context.Context, _ PluginEnv, _ PluginNode) error {
+	return nil
 }

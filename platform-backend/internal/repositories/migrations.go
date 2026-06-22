@@ -602,6 +602,32 @@ var InitialSchema = []string{
 		UNIQUE INDEX idx_cred_cluster_type (cluster_id, account_type)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
+	// M1: Plugin registry table.
+	`CREATE TABLE IF NOT EXISTS plugin_registry (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(128) NOT NULL,
+		plugin_type VARCHAR(32) NOT NULL,
+		version VARCHAR(32) NOT NULL,
+		status VARCHAR(16) DEFAULT 'inactive',
+		config TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE INDEX idx_plugin_name (name)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// Phase 6: Topology change event tracking.
+	`CREATE TABLE IF NOT EXISTS topology_events (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		event_type VARCHAR(64) NOT NULL,
+		old_master_id VARCHAR(64) DEFAULT '',
+		new_master_id VARCHAR(64) DEFAULT '',
+		node_id VARCHAR(64) DEFAULT '',
+		details TEXT DEFAULT '',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_topology_events_cluster (cluster_id, created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
 	// Phase 4: Persist per-node deployment progress (was in-memory only).
 	`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (
 		id VARCHAR(64) PRIMARY KEY,
@@ -1214,6 +1240,32 @@ var schemaSQLite = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cred_cluster ON cluster_credentials(cluster_id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_cred_cluster_type ON cluster_credentials(cluster_id, account_type)`,
+
+	// M1: Plugin registry table.
+	`CREATE TABLE IF NOT EXISTS plugin_registry (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		plugin_type TEXT NOT NULL,
+		version TEXT NOT NULL,
+		status TEXT DEFAULT 'inactive',
+		config TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_name ON plugin_registry(name)`,
+
+	// Phase 6: Topology change event tracking.
+	`CREATE TABLE IF NOT EXISTS topology_events (
+		id TEXT PRIMARY KEY,
+		cluster_id TEXT NOT NULL,
+		event_type TEXT NOT NULL,
+		old_master_id TEXT DEFAULT '',
+		new_master_id TEXT DEFAULT '',
+		node_id TEXT DEFAULT '',
+		details TEXT DEFAULT '',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_topology_events_cluster ON topology_events(cluster_id, created_at)`,
 
 	// Phase 4: Persist per-node deployment progress (was in-memory only).
 	`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (

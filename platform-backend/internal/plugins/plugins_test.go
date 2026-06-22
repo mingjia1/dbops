@@ -17,6 +17,7 @@ type stubPlugin struct {
 	execErr    error
 	rollbacked bool
 	tornDown   bool
+	DefaultPluginMethods
 }
 
 func (s *stubPlugin) Name() string            { return s.name }
