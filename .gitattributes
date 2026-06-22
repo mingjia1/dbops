@@ -1,0 +1,56 @@
+# ============================================================
+#  Git Attributes — 跨平台换行符统一配置
+# ============================================================
+#  规则: .sh 必须 LF (Unix 兼容), .bat/.ps1 用 CRLF (Windows)
+#  生效: git add --renormalize .   (重写已有文件的索引)
+# ============================================================
+
+# ---------- Shell 脚本 (必须 LF, 否则 Linux 报错) ----------
+*.sh     text eol=lf
+
+# ---------- Windows 脚本 (CRLF) ----------
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# ---------- 源代码 (自动检测, 保持原生) ----------
+*.go     text
+*.ts     text
+*.tsx    text
+*.js     text
+*.jsx    text
+*.css    text
+*.html   text
+*.json   text
+*.yml    text
+*.yaml   text
+*.xml    text
+
+# ---------- 文档 (自动检测) ----------
+*.md     text
+*.txt    text
+
+# ---------- Makefile / Dockerfile (LF) ----------
+Makefile        text eol=lf
+Dockerfile      text eol=lf
+*.mk            text eol=lf
+
+# ---------- 配置文件 ----------
+*.example       text
+.env.example    text
+
+# ---------- Go 模块 ----------
+go.mod          text
+go.sum          text
+
+# ---------- 二进制文件 (不检测) ----------
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.dylib  binary
+*.png    binary
+*.jpg    binary
+*.ico    binary
+*.woff2  binary
+*.tar.gz binary
+*.zip    binary
