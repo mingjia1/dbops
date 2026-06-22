@@ -1055,7 +1055,6 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 		ReplicateUser: "repl",
 		ReplicatePass: "repl123",
 		MySQLUser:     "root",
-		ServerID:      1,
 		DeployMode:    "async",
 	}
 
@@ -1119,7 +1118,14 @@ func (e *TaskExecutor) configureMaster(ctx context.Context, config MasterSlaveCo
 }
 
 func (e *TaskExecutor) configureSlave(ctx context.Context, config MasterSlaveConfig) *TaskResult {
-	if out, err := setServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, config.ServerID); err != nil {
+	serverID := config.ServerID
+	if serverID <= 0 {
+		serverID = readCurrentServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass)
+		if serverID <= 0 {
+			serverID = config.SlavePort
+		}
+	}
+	if out, err := setServerID(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, serverID); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  50,
@@ -1302,6 +1308,24 @@ func setServerID(ctx context.Context, host string, port int, user, pass string, 
 	return mysqlExecWithSocketFallback(ctx, host, port, user, pass,
 		fmt.Sprintf("SET GLOBAL server_id=%d;", serverID),
 	)
+}
+
+func readCurrentServerID(ctx context.Context, host string, port int, user, pass string) int {
+	out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass,
+		"SELECT @@server_id",
+	)
+	if err != nil {
+		return 0
+	}
+	text := strings.TrimSpace(string(out))
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if id, err := strconv.Atoi(line); err == nil && id > 0 {
+			return id
+		}
+	}
+	return 0
 }
 
 func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, error) {
