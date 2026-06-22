@@ -113,6 +113,8 @@ type BackupConfig struct {
 
 type RestoreConfig struct {
 	BackupPath string `json:"backup_path"`
+	BackupType string `json:"backup_type"`
+	DataDir    string `json:"datadir"`
 	MySQLHost  string `json:"mysql_host"`
 	MySQLPort  int    `json:"mysql_port"`
 	MySQLUser  string `json:"mysql_user"`
@@ -2199,6 +2201,12 @@ func parseRestoreConfig(config map[string]interface{}) RestoreConfig {
 	if v, ok := config["backup_path"].(string); ok {
 		rc.BackupPath = v
 	}
+	if v, ok := config["backup_type"].(string); ok {
+		rc.BackupType = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v, ok := config["datadir"].(string); ok {
+		rc.DataDir = strings.TrimSpace(v)
+	}
 	if v, ok := config["mysql_host"].(string); ok {
 		rc.MySQLHost = v
 	}
@@ -2215,42 +2223,77 @@ func parseRestoreConfig(config map[string]interface{}) RestoreConfig {
 	return rc
 }
 
-func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {
-	prepareCmd := exec.CommandContext(ctx, "xtrabackup",
-		"--prepare",
-		"--target-dir="+config.BackupPath,
-	)
+func detectRestoreBackupType(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if info.IsDir() {
+		checkpoints := filepath.Join(path, "xtrabackup_checkpoints")
+		if _, err := os.Stat(checkpoints); err == nil {
+			return "xtrabackup"
+		}
+		return ""
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".sql") {
+		return "mysqldump"
+	}
+	return ""
+}
 
-	if err := prepareCmd.Run(); err != nil {
+func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {
+	backupType := config.BackupType
+	if backupType == "" {
+		backupType = detectRestoreBackupType(config.BackupPath)
+	}
+
+	switch backupType {
+	case "xtrabackup":
+		return e.executeXtrabackupRestore(ctx, config)
+	case "mysqldump", "mysqlbinlog":
+		return e.executeLogicalRestore(ctx, config)
+	default:
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("Unsupported or undetectable backup type for path %s (specify backup_type)", config.BackupPath),
+			Timestamp: time.Now(),
+		}, nil
+	}
+}
+
+func (e *TaskExecutor) executeXtrabackupRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {
+	datadir := config.DataDir
+	if datadir == "" {
+		datadir = "/var/lib/mysql"
+	}
+
+	prepareCmd := exec.CommandContext(ctx, "xtrabackup", "--prepare", "--target-dir="+config.BackupPath)
+	if out, err := prepareCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  20,
-			Message:   fmt.Sprintf("Restore prepare failed: %v", err),
+			Message:   fmt.Sprintf("Xtrabackup prepare failed: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}
 
-	copyCmd := exec.CommandContext(ctx, "xtrabackup",
-		"--copy-back",
-		"--target-dir="+config.BackupPath,
-		"--datadir=/var/lib/mysql",
-	)
-
-	if err := copyCmd.Run(); err != nil {
+	copyCmd := exec.CommandContext(ctx, "xtrabackup", "--copy-back", "--target-dir="+config.BackupPath, "--datadir="+datadir)
+	if out, err := copyCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  60,
-			Message:   fmt.Sprintf("Restore copy-back failed: %v", err),
+			Message:   fmt.Sprintf("Xtrabackup copy-back failed: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}
 
-	chownCmd := exec.CommandContext(ctx, "chown", "-R", "mysql:mysql", "/var/lib/mysql")
+	chownCmd := exec.CommandContext(ctx, "chown", "-R", "mysql:mysql", datadir)
 	if err := chownCmd.Run(); err != nil {
 		return &TaskResult{
-			Status:    "failed",
-			Progress:  80,
-			Message:   fmt.Sprintf("Restore chown failed: %v", err),
+			Status:    "completed",
+			Progress:  90,
+			Message:   fmt.Sprintf("Restore completed but chown failed: %v (datadir=%s)", err, datadir),
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -2258,7 +2301,58 @@ func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig)
 	return &TaskResult{
 		Status:    "completed",
 		Progress:  100,
-		Message:   fmt.Sprintf("Restore completed successfully from %s", config.BackupPath),
+		Message:   fmt.Sprintf("Xtrabackup restore completed to %s from %s", datadir, config.BackupPath),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (e *TaskExecutor) executeLogicalRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {
+	host := config.MySQLHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := config.MySQLPort
+	if port == 0 {
+		port = 3306
+	}
+	user := config.MySQLUser
+	if user == "" {
+		user = "root"
+	}
+
+	mysqlBin := getMySQLBinary()
+	restoreCmd := exec.CommandContext(ctx, mysqlBin, "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user)
+	if config.MySQLPass != "" {
+		restoreCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+	}
+
+	sqlFile, err := os.Open(config.BackupPath)
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  10,
+			Message:   fmt.Sprintf("Failed to open backup file %s: %v", config.BackupPath, err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	defer sqlFile.Close()
+
+	restoreCmd.Stdin = sqlFile
+
+	out, err := restoreCmd.CombinedOutput()
+	if err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  50,
+			Message:   fmt.Sprintf("Logical restore failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	return &TaskResult{
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("Logical restore completed from %s", config.BackupPath),
 		Timestamp: time.Now(),
 	}, nil
 }
