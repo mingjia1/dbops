@@ -1009,8 +1009,7 @@ func (s *SwitchService) recordHistory(ctx context.Context, r *RoleSwitchResult) 
 	// 优先落库, 失败也只是 log + 内存继续; 不阻塞业务流.
 	if s.historyRepo != nil {
 		if err := s.historyRepo.Create(ctx, record); err != nil {
-			// 落库失败也保留内存, 后端不会因此报错
-			// (用户体感: 重启后历史可能丢, 但本次操作不中断)
+			log.Printf("[WARN] recordHistory: failed to persist switch history cluster=%s instance=%s: %v", r.ClusterID, r.InstanceID, err)
 		}
 	}
 	s.mu.Lock()

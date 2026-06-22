@@ -137,7 +137,7 @@ func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverR
 	}
 
 	failureState := s.healthService.GetFailureState(master.InstanceID)
-	if failureState == nil || !failureState.IsMarkedFailed && !req.Manual {
+	if failureState == nil || (!failureState.IsMarkedFailed && !req.Manual) {
 		return &FailoverResult{
 			ClusterID:    req.ClusterID,
 			OldMasterID:  master.InstanceID,
@@ -855,12 +855,37 @@ func (s *FailoverService) GetMasterBinlogPosition(master *MasterInfo, conn *mode
 	}
 	defer db.Close()
 
-	row := db.QueryRow("SHOW MASTER STATUS")
-	var file string
-	var position int
-	err = row.Scan(&file, &position, nil, nil, nil)
+	rows, err := db.Query("SHOW MASTER STATUS")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get master status: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get master status columns: %w", err)
+	}
+	if !rows.Next() {
+		return nil, fmt.Errorf("SHOW MASTER STATUS returned no rows")
+	}
+
+	vals := make([]interface{}, len(cols))
+	for i := range vals {
+		vals[i] = new(sql.NullString)
+	}
+	if err := rows.Scan(vals...); err != nil {
+		return nil, fmt.Errorf("failed to scan master status: %w", err)
+	}
+
+	file := ""
+	position := 0
+	if len(cols) >= 2 {
+		if ns, ok := vals[0].(*sql.NullString); ok && ns.Valid {
+			file = ns.String
+		}
+		if ns, ok := vals[1].(*sql.NullString); ok && ns.Valid {
+			fmt.Sscanf(ns.String, "%d", &position)
+		}
 	}
 
 	return &BinlogPosition{File: file, Position: position}, nil

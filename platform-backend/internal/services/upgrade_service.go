@@ -353,11 +353,14 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	}
 	targetVersion := req.TargetVersion
 	if targetVersion == "" {
-		targetVersion = "8.0.36"
+		return nil, fmt.Errorf("target_version is required")
 	}
 	targetVersion, _ = normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
 
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
+	if len(steps) == 0 {
+		return nil, fmt.Errorf("no upgrade steps generated")
+	}
 	// P0: 派发前落 task 表, B8 端点能查, frontend 轮询可见.
 	taskID := s.createAndTrackTask("upgrade_in_place", req.InstanceID, req.PlanID)
 	s.dispatchAndTrack(req.InstanceID, taskID, instance, "in-place", targetVersion, map[string]interface{}{})
@@ -438,7 +441,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 	}
 	targetVersion := req.TargetVersion
 	if targetVersion == "" {
-		targetVersion = "8.0.36"
+		return nil, fmt.Errorf("target_version is required")
 	}
 	targetVersion, targetFlavor := normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
 
