@@ -589,6 +589,19 @@ var InitialSchema = []string{
 	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP NULL`,
 	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
 
+	// Phase 5: Credential vault for cluster-level account management.
+	`CREATE TABLE IF NOT EXISTS cluster_credentials (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		account_type VARCHAR(32) NOT NULL,
+		username VARCHAR(64) NOT NULL,
+		password_enc TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		rotated_at TIMESTAMP NULL,
+		INDEX idx_cred_cluster (cluster_id),
+		UNIQUE INDEX idx_cred_cluster_type (cluster_id, account_type)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
 	// Phase 4: Persist per-node deployment progress (was in-memory only).
 	`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (
 		id VARCHAR(64) PRIMARY KEY,
@@ -1188,6 +1201,19 @@ var schemaSQLite = []string{
 	`ALTER TABLE cluster_deployments ADD COLUMN started_at TIMESTAMP`,
 	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP`,
 	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
+
+	// Phase 5: Credential vault for cluster-level account management.
+	`CREATE TABLE IF NOT EXISTS cluster_credentials (
+		id TEXT PRIMARY KEY,
+		cluster_id TEXT NOT NULL,
+		account_type TEXT NOT NULL,
+		username TEXT NOT NULL,
+		password_enc TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		rotated_at TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_cred_cluster ON cluster_credentials(cluster_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_cred_cluster_type ON cluster_credentials(cluster_id, account_type)`,
 
 	// Phase 4: Persist per-node deployment progress (was in-memory only).
 	`CREATE TABLE IF NOT EXISTS cluster_deploy_nodes (
