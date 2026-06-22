@@ -602,6 +602,22 @@ var InitialSchema = []string{
 		UNIQUE INDEX idx_cred_cluster_type (cluster_id, account_type)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
+	// M2: Deploy workflow state machine tracking.
+	`CREATE TABLE IF NOT EXISTS deploy_workflows (
+		id VARCHAR(64) PRIMARY KEY,
+		cluster_id VARCHAR(64) NOT NULL,
+		workflow_type VARCHAR(32) NOT NULL,
+		current_phase VARCHAR(64) NOT NULL DEFAULT '',
+		completed_phases TEXT DEFAULT '',
+		status VARCHAR(32) DEFAULT 'running',
+		started_at TIMESTAMP NULL,
+		completed_at TIMESTAMP NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_deploy_workflows_cluster (cluster_id),
+		INDEX idx_deploy_workflows_status (status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
 	// M1: Plugin registry table.
 	`CREATE TABLE IF NOT EXISTS plugin_registry (
 		id VARCHAR(64) PRIMARY KEY,
@@ -1240,6 +1256,22 @@ var schemaSQLite = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cred_cluster ON cluster_credentials(cluster_id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_cred_cluster_type ON cluster_credentials(cluster_id, account_type)`,
+
+	// M2: Deploy workflow state machine tracking.
+	`CREATE TABLE IF NOT EXISTS deploy_workflows (
+		id TEXT PRIMARY KEY,
+		cluster_id TEXT NOT NULL,
+		workflow_type TEXT NOT NULL,
+		current_phase TEXT NOT NULL DEFAULT '',
+		completed_phases TEXT DEFAULT '',
+		status TEXT DEFAULT 'running',
+		started_at TIMESTAMP,
+		completed_at TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_deploy_workflows_cluster ON deploy_workflows(cluster_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_deploy_workflows_status ON deploy_workflows(status)`,
 
 	// M1: Plugin registry table.
 	`CREATE TABLE IF NOT EXISTS plugin_registry (

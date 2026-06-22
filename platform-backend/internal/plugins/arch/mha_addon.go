@@ -9,7 +9,23 @@ import (
 
 type MHAAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
-	plugins.DefaultPluginMethods
+}
+
+func (p *MHAAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	payload := map[string]interface{}{
+		"task_id":   fmt.Sprintf("mha-join-%s-%s", env.ClusterID, newNode.Address),
+		"repl_user": env.Credentials.ReplUser,
+		"repl_pass": env.Credentials.ReplPassword,
+	}
+	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/replication/setup", payload)
+	return err
+}
+
+func (p *MHAAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
+	return nil
 }
 
 func NewMHAAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *MHAAddonPlugin {

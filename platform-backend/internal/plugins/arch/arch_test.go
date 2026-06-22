@@ -121,3 +121,83 @@ func TestArchPluginTypes(t *testing.T) {
 	assert.Equal(t, plugins.PluginTypeArch, NewMHAAddonPlugin(nil).Type())
 	assert.Equal(t, plugins.PluginTypeArch, NewMGRAddonPlugin(nil).Type())
 }
+
+func TestReplicaAddon_Join(t *testing.T) {
+	fake := &archFakeCaller{resp: map[string]interface{}{"status": "ok"}}
+	p := NewReplicaAddonPlugin(fake.call)
+
+	env := plugins.PluginEnv{
+		ClusterID: "test-cluster",
+		Nodes: []plugins.PluginNode{
+			{Address: "10.0.0.1", AgentPort: 9090, MySQLPort: 3306, Role: "primary"},
+		},
+		Credentials: plugins.CredentialSet{ReplUser: "repl", ReplPassword: "replpass"},
+	}
+
+	err := p.Join(context.Background(), env, plugins.PluginNode{
+		Address: "10.0.0.5", AgentPort: 9090, MySQLPort: 3306,
+	})
+	require.NoError(t, err)
+	assert.Len(t, fake.calls, 1)
+	assert.Equal(t, "/api/v1/replication/setup", fake.calls[0])
+}
+
+func TestMGRAddon_Join(t *testing.T) {
+	fake := &archFakeCaller{resp: map[string]interface{}{"status": "ok"}}
+	p := NewMGRAddonPlugin(fake.call)
+
+	env := plugins.PluginEnv{
+		ClusterID: "test-cluster",
+		Nodes: []plugins.PluginNode{
+			{Address: "10.0.0.1", AgentPort: 9090},
+		},
+	}
+
+	err := p.Join(context.Background(), env, plugins.PluginNode{
+		Address: "10.0.0.4", AgentPort: 9090,
+	})
+	require.NoError(t, err)
+	assert.Len(t, fake.calls, 1)
+	assert.Equal(t, "/api/v1/mgr/setup", fake.calls[0])
+}
+
+func TestMGRAddon_Leave(t *testing.T) {
+	fake := &archFakeCaller{resp: map[string]interface{}{"status": "ok"}}
+	p := NewMGRAddonPlugin(fake.call)
+
+	env := plugins.PluginEnv{ClusterID: "test-cluster"}
+	err := p.Leave(context.Background(), env, plugins.PluginNode{Address: "10.0.0.2"})
+	require.NoError(t, err)
+	assert.Len(t, fake.calls, 1)
+}
+
+func TestPXCGaleraAddon_Join(t *testing.T) {
+	fake := &archFakeCaller{resp: map[string]interface{}{"status": "ok"}}
+	p := NewPXCGaleraAddonPlugin(fake.call)
+
+	env := plugins.PluginEnv{
+		ClusterID: "test-cluster",
+		Nodes: []plugins.PluginNode{
+			{Address: "10.0.0.1", AgentPort: 9090},
+		},
+	}
+
+	err := p.Join(context.Background(), env, plugins.PluginNode{
+		Address: "10.0.0.4", AgentPort: 9090,
+	})
+	require.NoError(t, err)
+	assert.Len(t, fake.calls, 1)
+	assert.Equal(t, "/api/v1/pxc/setup", fake.calls[0])
+}
+
+func TestReplicaAddon_Join_NilCaller(t *testing.T) {
+	p := NewReplicaAddonPlugin(nil)
+	err := p.Join(context.Background(), plugins.PluginEnv{}, plugins.PluginNode{})
+	assert.Error(t, err)
+}
+
+func TestMGRAddon_Join_NilCaller(t *testing.T) {
+	p := NewMGRAddonPlugin(nil)
+	err := p.Join(context.Background(), plugins.PluginEnv{}, plugins.PluginNode{})
+	assert.Error(t, err)
+}

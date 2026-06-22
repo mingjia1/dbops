@@ -74,9 +74,28 @@ func TestScaleService_ScaleIn(t *testing.T) {
 		RemoveNodeID: "instance-001",
 		Flavor:       "mysql",
 		ArchType:     "replica",
+		IsPrimary:    false,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "completed", result.Status)
+}
+
+func TestScaleService_ScaleIn_PrimaryRejected(t *testing.T) {
+	registry := newTestLifecycleRegistry()
+	repo := newTestInstanceRepo(context.Background())
+	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	orch := NewDeployOrchestrator(registry, vault, repo)
+	pluginExec := plugins.NewExecutor(registry)
+
+	svc := NewScaleService(orch, repo, pluginExec)
+
+	_, err := svc.ScaleIn(context.Background(), ScaleInRequest{
+		ClusterID:    "scale-in-primary",
+		RemoveNodeID: "instance-001",
+		IsPrimary:    true,
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "primary")
 }
 
 func TestScaleService_ScaleIn_EmptyID(t *testing.T) {

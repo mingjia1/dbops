@@ -56,6 +56,8 @@ var migrateTables = []string{
 	"migration_tasks",
 	"cluster_deployments",
 	"cluster_credentials",
+	"topology_events",
+	"deploy_workflows",
 }
 
 // Migrate src -> dst. src 和 dst 都必须是已经 Ping 通的 *sql.DB.

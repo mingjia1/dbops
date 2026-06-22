@@ -9,7 +9,38 @@ import (
 
 type MGRAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
-	plugins.DefaultPluginMethods
+}
+
+func (p *MGRAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	seeds := []string{fmt.Sprintf("%s:33061", newNode.Address)}
+	for _, n := range env.Nodes {
+		seeds = append(seeds, fmt.Sprintf("%s:33061", n.Address))
+	}
+	payload := map[string]interface{}{
+		"task_id":       fmt.Sprintf("mgr-join-%s-%s", env.ClusterID, newNode.Address),
+		"action":        "join",
+		"group_name":    env.ClusterID,
+		"local_address": fmt.Sprintf("%s:33061", newNode.Address),
+		"group_seeds":   seeds,
+		"bootstrap":     false,
+	}
+	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/mgr/setup", payload)
+	return err
+}
+
+func (p *MGRAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, node plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	payload := map[string]interface{}{
+		"task_id": fmt.Sprintf("mgr-leave-%s-%s", env.ClusterID, node.Address),
+		"action":  "leave",
+	}
+	_, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/mgr/setup", payload)
+	return err
 }
 
 func NewMGRAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *MGRAddonPlugin {

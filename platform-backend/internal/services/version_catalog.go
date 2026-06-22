@@ -11,21 +11,22 @@ import (
 // "supported upgrade path" matrix; validity is computed at runtime from
 // MajorVersion() and the engine's documented upgrade rules.
 type VersionEntry struct {
-	ID               string   `json:"id"`          // "<flavor>-<version>" e.g. "mysql-8.0.36"
-	Flavor           string   `json:"flavor"`      // "mysql" | "mariadb" | "percona"
-	Version          string   `json:"version"`     // "8.0.36"
-	MajorMinor       string   `json:"major_minor"` // "8.0"
-	IsLTS            bool     `json:"is_lts"`
-	ReleaseDate      string   `json:"release_date"`
-	EOLDate          string   `json:"eol_date"`
-	PackageURL       string   `json:"package_url"` // glibc2.17/x86_64 tarball/xz
-	Checksum         string   `json:"checksum"`    // sha256
-	ChecksumVerified bool     `json:"checksum_verified"`
-	MinGlibc         string   `json:"min_glibc"`    // e.g. "2.17"
-	OSFamily         []string `json:"os_family"`    // ["linux"]
-	Status           string   `json:"status"`       // "active" | "deprecated" | "eol"
-	UpgradeFrom      []string `json:"upgrade_from"` // e.g. ["5.7.44","5.7.43",...]
-	UpgradeNotes     string   `json:"upgrade_notes,omitempty"`
+	ID               string            `json:"id"`          // "<flavor>-<version>" e.g. "mysql-8.0.36"
+	Flavor           string            `json:"flavor"`      // "mysql" | "mariadb" | "percona"
+	Version          string            `json:"version"`     // "8.0.36"
+	MajorMinor       string            `json:"major_minor"` // "8.0"
+	IsLTS            bool              `json:"is_lts"`
+	ReleaseDate      string            `json:"release_date"`
+	EOLDate          string            `json:"eol_date"`
+	PackageURL       string            `json:"package_url"` // glibc2.17/x86_64 tarball/xz
+	Checksum         string            `json:"checksum"`    // sha256
+	ChecksumVerified bool              `json:"checksum_verified"`
+	MinGlibc         string            `json:"min_glibc"`    // e.g. "2.17"
+	OSFamily         []string          `json:"os_family"`    // ["linux"]
+	Status           string            `json:"status"`       // "active" | "deprecated" | "eol"
+	UpgradeFrom      []string          `json:"upgrade_from"` // e.g. ["5.7.44","5.7.43",...]
+	UpgradeNotes     string            `json:"upgrade_notes,omitempty"`
+	ConfigHints      map[string]string `json:"config_hints,omitempty"`
 }
 
 type VersionCatalog struct{}

@@ -131,6 +131,7 @@ type ScaleInRequest struct {
 	RemoveNodeID string
 	Flavor       string
 	ArchType     string
+	IsPrimary    bool
 }
 
 type ScaleInResult struct {
@@ -143,6 +144,21 @@ type ScaleInResult struct {
 func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleInResult, error) {
 	if req.RemoveNodeID == "" {
 		return nil, fmt.Errorf("remove node ID is required")
+	}
+
+	if req.IsPrimary {
+		return nil, fmt.Errorf("cannot remove primary node directly: perform role switch first")
+	}
+
+	if req.ArchType != "" && req.ArchType != "single" {
+		archPluginName := req.ArchType + "-addon"
+		leaveEnv := plugins.PluginEnv{
+			ClusterID: req.ClusterID,
+			Nodes:     []plugins.PluginNode{{Address: req.RemoveNodeID}},
+		}
+		if err := s.pluginExec.RunLeave(ctx, archPluginName, leaveEnv, plugins.PluginNode{}); err != nil {
+			log.Printf("WARN: arch leave failed for %s: %v", req.RemoveNodeID, err)
+		}
 	}
 
 	if s.instRepo != nil {

@@ -9,7 +9,25 @@ import (
 
 type PXCGaleraAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
-	plugins.DefaultPluginMethods
+}
+
+func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	bootstrap := env.Nodes[0]
+	payload := map[string]interface{}{
+		"task_id":            fmt.Sprintf("pxc-join-%s-%s", env.ClusterID, newNode.Address),
+		"action":             "join",
+		"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:4567", bootstrap.Address),
+		"node_address":       fmt.Sprintf("%s:4567", newNode.Address),
+	}
+	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/pxc/setup", payload)
+	return err
+}
+
+func (p *PXCGaleraAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
+	return nil
 }
 
 func NewPXCGaleraAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *PXCGaleraAddonPlugin {

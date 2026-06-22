@@ -9,7 +9,38 @@ import (
 
 type ReplicaAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
-	plugins.DefaultPluginMethods
+}
+
+func (p *ReplicaAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	var primary *plugins.PluginNode
+	for _, n := range env.Nodes {
+		if n.Role == "primary" || n.Role == "master" {
+			node := n
+			primary = &node
+			break
+		}
+	}
+	if primary == nil {
+		return fmt.Errorf("no primary node found for join")
+	}
+	payload := map[string]interface{}{
+		"task_id":      fmt.Sprintf("join-%s-%s", env.ClusterID, newNode.Address),
+		"master_host":  primary.Address,
+		"master_port":  primary.MySQLPort,
+		"repl_user":    env.Credentials.ReplUser,
+		"repl_pass":    env.Credentials.ReplPassword,
+		"replica_host": newNode.Address,
+		"replica_port": newNode.MySQLPort,
+	}
+	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/replication/setup", payload)
+	return err
+}
+
+func (p *ReplicaAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
+	return nil
 }
 
 func NewReplicaAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *ReplicaAddonPlugin {
