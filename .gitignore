@@ -138,8 +138,10 @@ secrets.yaml
 secrets.yml
 
 # ---------- 文档与报告 ----------
-# 文档目录（临时测试报告和指南）
-docs/
+# 仅忽略临时测试报告, 运维手册 docs/ 需纳入版本控制
+# docs/ 已被移除, 改为细粒度忽略:
+# 如果以后有自动生成的报告目录, 可以在这里添加
+# docs/reports/
 # 临时文件
 *.tmp
 
@@ -174,7 +176,11 @@ platform-backend/platform-backend-linux-amd64
 # ---------- 备份目录 ----------
 .git.backup/
 .mailmap
-bin/
+# bin/ 移除 — 启停脚本是项目核心交付物，需纳入版本控制
+# 仅忽略敏感/临时内容:
+bin/.env
+bin/.env.*
+bin/*.pid
 *.json
 agent/test*.py
 agent/agent-linux-amd64

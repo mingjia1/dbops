@@ -99,17 +99,17 @@ copy .env.example .env
 #   DBOPS_AGENT_TOKEN=你的Agent令牌(≥16字符)
 #   DBOPS_ENCRYPTION_KEY=你的加密密钥(≥32字符)
 
-# 3. 构建所有组件
-cd web-console && npm install && cd ..
-make build
+# 3. 一键构建并启动 (脚本会自动编译后端/Agent/前端)
+.\start.bat
 
-# 4. 启动服务
-Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList "-Command cd platform-backend; go run ./cmd/main.go"
-Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList "-Command cd agent; go run ./cmd/main.go"
-Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList "-Command cd web-console; npm run dev -- --host 0.0.0.0 --port 3000"
-
-# 5. 验证
+# 4. 验证
 Invoke-RestMethod http://localhost:8080/health
+
+# 5. 停止服务
+.\stop.bat
+
+# 6. 仅启动已有产物 (跳过重新编译)
+.\start.bat -SkipBuild
 ```
 
 ### 3.2 生产部署 (Linux)
@@ -196,7 +196,10 @@ curl -s -X POST http://localhost:9090/agent/tasks/health-check \
 ### 3.4 Web Console 部署
 
 ```bash
-# 构建静态文件
+# 构建静态文件 (自动编译)
+bash bin/start-backend.sh  # 启动后端
+
+# 或用脚本编译前端
 cd web-console
 npm install
 npm run build  # 输出在 web-console/dist/
@@ -219,25 +222,87 @@ server {
 }
 EOF
 
-# 开发模式
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
+# 开发模式 (通过脚本启动)
+bash bin/start-web.sh
 ```
 
 ---
 
 ## 4. 启动与停止
 
-### 4.1 Windows 一键启停
+### 4.1 一键启停
+
+本项目提供 `bin/` 下便捷脚本统一管理服务启停。
+
+#### Windows
 
 ```powershell
-# 启动所有服务
+# 启动所有服务 (含构建)
 .\start.bat
+
+# 跳过构建步骤 (仅启动)
+.\start.bat -SkipBuild
 
 # 停止所有服务
 .\stop.bat
+
+# 重启所有服务
+.\restart.bat
 ```
 
-### 4.2 手动管理 (Linux systemd)
+#### Linux (开发/调试模式)
+
+```bash
+# 启动所有服务 (前台运行，Ctrl+C 停止)
+bash bin/start-all.sh
+
+# 停止所有服务
+bash bin/stop.sh
+```
+
+> 生产环境建议使用 systemd 管理 (参见 §4.3)。
+
+### 4.2 单组件管理
+
+#### Windows
+
+```powershell
+# 一键启动 (脚本会自动编译并启动全部服务)
+.\start.bat
+
+# 仅启动指定组件 (backend / agent / frontend)
+.\start.bat -Component backend
+.\start.bat -Component agent
+.\start.bat -Component frontend
+
+# 跳过编译，直接启动
+.\start.bat -SkipBuild
+
+# 停止所有服务
+.\stop.bat
+
+# 重启所有服务
+.\restart.bat
+```
+
+#### Linux
+
+```bash
+# 使用 bin/ 下脚本 (自动编译并启动)
+bash bin/start-backend.sh
+bash bin/start-agent.sh
+bash bin/start-web.sh
+
+# 停止所有服务
+bash bin/stop.sh
+
+# 直接调试 (手动)
+cd platform-backend && go run ./cmd/main.go
+cd agent && go run ./cmd/main.go
+cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
+```
+
+### 4.3 生产部署 (Linux systemd)
 
 ```bash
 # 启动
@@ -253,7 +318,7 @@ systemctl status dbops-platform
 journalctl -u dbops-platform -f
 ```
 
-### 4.3 验证服务状态
+### 4.4 验证服务状态
 
 ```powershell
 # Backend
@@ -547,6 +612,24 @@ mysql -h 10.1.81.21 -P 3307 -u root -pTest@123456 -e "SELECT @@version, @@server
 ---
 
 ## 附录 A: 配置文件参考
+
+### 启停脚本指南
+
+```powershell
+# Windows (根目录或 bin/ 下均可执行)
+.\start.bat                    # 构建并启动全部服务
+.\start.bat -SkipBuild         # 仅启动已有产物
+.\start.bat -Component backend # 仅启动后端
+.\stop.bat                     # 停止全部服务
+.\restart.bat                  # 重启全部服务
+
+# Linux
+bash bin/start-backend.sh       # 启动后端
+bash bin/start-agent.sh         # 启动 Agent
+bash bin/start-web.sh           # 启动前端
+bash bin/start-all.sh           # 启动全部
+bash bin/stop.sh                # 停止全部
+```
 
 ### .env 文件
 
