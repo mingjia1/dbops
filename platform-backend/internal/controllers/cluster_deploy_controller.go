@@ -203,3 +203,54 @@ func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, response)
 }
+
+func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
+	deploymentID := ctx.Param("id")
+	var req struct {
+		NodeCount int `json:"node_count"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request")
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{
+		"deployment_id": deploymentID,
+		"action":        "scale-out",
+		"node_count":    req.NodeCount,
+		"status":        "submitted",
+	})
+}
+
+func (c *ClusterDeployController) ScaleIn(ctx *gin.Context) {
+	deploymentID := ctx.Param("id")
+	var req struct {
+		RemoveNodeID string `json:"remove_node_id"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request")
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{
+		"deployment_id":  deploymentID,
+		"action":         "scale-in",
+		"remove_node_id": req.RemoveNodeID,
+		"status":         "submitted",
+	})
+}
+
+func (c *ClusterDeployController) RebuildNode(ctx *gin.Context) {
+	deploymentID := ctx.Param("id")
+	var req struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request")
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{
+		"deployment_id": deploymentID,
+		"action":        "rebuild",
+		"node_id":       req.NodeID,
+		"status":        "submitted",
+	})
+}

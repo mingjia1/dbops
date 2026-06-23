@@ -450,6 +450,9 @@ func main() {
 				deployments.GET("/:id/plan", clusterDeployController.GetDeployPlan)
 				deployments.POST("/:id/change-password", middleware.RequirePermission("admin"), clusterDeployController.ChangeClusterPassword)
 				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
+				deployments.POST("/:id/scale-out", middleware.RequirePermission("admin"), clusterDeployController.ScaleOut)
+				deployments.POST("/:id/scale-in", middleware.RequirePermission("admin"), clusterDeployController.ScaleIn)
+				deployments.POST("/:id/rebuild", middleware.RequirePermission("admin"), clusterDeployController.RebuildNode)
 			}
 
 			switches := protected.Group("/switch")
