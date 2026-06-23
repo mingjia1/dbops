@@ -197,6 +197,7 @@ func main() {
 
 	versionCatalog := services.NewVersionCatalog()
 	versionController := controllers.NewVersionController(versionCatalog)
+	clusterDeployService.SetVersionCatalog(versionCatalog)
 
 	migrationRepo := repositories.NewMigrationRepository(db)
 	migrationService := services.NewMigrationService(migrationRepo, instanceRepo, hostRepo, agentClient, auditService)

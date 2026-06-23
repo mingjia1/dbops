@@ -225,6 +225,16 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if req.MySQL.Version == "" {
 		req.MySQL.Version = "8.0"
 	}
+	if req.MySQL.PackageURL == "" && s.versions != nil {
+		versionID := req.MySQL.Version
+		if !strings.Contains(versionID, "-") {
+			versionID = "mysql-" + versionID
+		}
+		if entry, err := s.versions.Get(versionID); err == nil && entry != nil && entry.PackageURL != "" {
+			req.MySQL.PackageURL = entry.PackageURL
+			req.MySQL.Version = entry.Version
+		}
+	}
 	if req.Replication.User == "" {
 		req.Replication.User = defaultString(s.defaults.ReplicationUser, "repl")
 	}

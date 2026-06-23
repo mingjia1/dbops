@@ -1183,12 +1183,12 @@ func (s *InstanceService) discoverInstanceMetadata(ctx context.Context, id strin
 		"task_id":     "meta-discover-" + uuid.New().String(),
 		"instance_id": id,
 		"config": map[string]interface{}{
-			"action":      "query_variables",
+			"action":      "show_variables",
 			"target_host": targetHost,
 			"target_port": conn.Port,
 			"target_user": conn.Username,
 			"target_pass": password,
-			"variables":   "datadir,basedir",
+			"pattern":     "datadir",
 		},
 	})
 	if err != nil {
@@ -1201,16 +1201,31 @@ func (s *InstanceService) discoverInstanceMetadata(ctx context.Context, id strin
 		}
 		return fmt.Errorf("agent returned failure: %s", msg)
 	}
-	// Parse the result message: "datadir=/var/lib/mysql\nbasedir=/usr/local/mysql"
-	discovered := parseVariableResult(result.Message)
-	datadir := strings.TrimSpace(discovered["datadir"])
-	basedir := strings.TrimSpace(discovered["basedir"])
+	// SHOW GLOBAL VARIABLES LIKE 'datadir' with -N -B returns: datadir\t/var/lib/mysql/
+	// Try parsing as key\tvalue first, then fall back to key=value format.
+	datadir := parseShowVariableOutput(result.Message, "datadir")
 	if datadir == "" {
 		return fmt.Errorf("agent could not determine datadir (is MySQL running?)")
 	}
 	conn.Datadir = datadir
-	if basedir != "" && strings.TrimSpace(conn.Basedir) == "" {
-		conn.Basedir = basedir
+	if strings.TrimSpace(conn.Basedir) == "" {
+		basedirResult, basedirErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+			"task_id":     "meta-discover-basedir-" + uuid.New().String(),
+			"instance_id": id,
+			"config": map[string]interface{}{
+				"action":      "show_variables",
+				"target_host": targetHost,
+				"target_port": conn.Port,
+				"target_user": conn.Username,
+				"target_pass": password,
+				"pattern":     "basedir",
+			},
+		})
+		if basedirErr == nil && basedirResult != nil && !isFailedTaskStatus(basedirResult.Status) {
+			if basedir := parseShowVariableOutput(basedirResult.Message, "basedir"); basedir != "" {
+				conn.Basedir = basedir
+			}
+		}
 	}
 	if err := s.repo.UpdateConnection(ctx, conn); err != nil {
 		log.Printf("WARN: discovered datadir=%s but failed to persist: %v", datadir, err)
@@ -1218,21 +1233,32 @@ func (s *InstanceService) discoverInstanceMetadata(ctx context.Context, id strin
 	return nil
 }
 
-func parseVariableResult(message string) map[string]string {
-	result := make(map[string]string)
+func parseShowVariableOutput(message, varName string) string {
 	for _, line := range strings.Split(strings.TrimSpace(message), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		if idx := strings.Index(line, "="); idx > 0 {
-			key := strings.TrimSpace(line[:idx])
+		// -N -B format: "datadir\t/var/lib/mysql/"
+		if idx := strings.Index(line, "\t"); idx > 0 {
+			name := strings.TrimSpace(line[:idx])
 			val := strings.TrimSpace(line[idx+1:])
-			result[key] = val
+			if strings.EqualFold(name, varName) {
+				return val
+			}
+		}
+		// key=value format
+		if idx := strings.Index(line, "="); idx > 0 {
+			name := strings.TrimSpace(line[:idx])
+			val := strings.TrimSpace(line[idx+1:])
+			if strings.EqualFold(name, varName) {
+				return val
+			}
 		}
 	}
-	return result
+	return ""
 }
+
 
 // UpdateInstanceStatusRequest 用于更新实例的角色、运行状态和复制状态。
 // 通过 PUT /api/v1/instances/:id/status 使用，无需经过 Agent。

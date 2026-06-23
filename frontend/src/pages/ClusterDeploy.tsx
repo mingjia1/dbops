@@ -604,6 +604,12 @@ const ClusterDeploy: React.FC = () => {
     options?: { simpleReplica?: boolean },
   ) => (
     <Form form={form} layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }} onFinish={onFinish}>
+      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue={false} hidden>
+        <Checkbox />
+      </Form.Item>
+      <Form.Item name="mysql_port" initialValue={3306} hidden>
+        <InputNumber />
+      </Form.Item>
       <Row gutter={16}>
         <Col span={12}>
           <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
@@ -611,20 +617,8 @@ const ClusterDeploy: React.FC = () => {
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="pseudo_mode" label="演练模式" valuePropName="checked" initialValue={false} style={{ display: 'none' }}>
-            <Checkbox>伪集群演练</Checkbox>
-          </Form.Item>
-        </Col>
-      </Row>
-      <Row gutter={16}>
-        <Col span={12}>
           <Form.Item name="master_host_id" label="主节点" rules={[{ required: true }]}>
             <Select options={hostOptions} placeholder="选择主节点主机" />
-          </Form.Item>
-        </Col>
-        <Col span={12}>
-          <Form.Item name="mysql_port" label="MySQL端口" initialValue={3306} style={{ display: 'none' }}>
-            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
           </Form.Item>
         </Col>
       </Row>
@@ -640,7 +634,16 @@ const ClusterDeploy: React.FC = () => {
       )}
       {options?.simpleReplica && (
         <Row gutter={16}>
-          <Col span={12}>{extraFields}</Col>
+          <Col span={12}>
+            <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]}>
+              <Select options={hostOptions} placeholder="选择从节点主机" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="replica_port" label="从端口" initialValue={3310}>
+              <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
         </Row>
       )}
       <Row gutter={16}>
@@ -656,18 +659,19 @@ const ClusterDeploy: React.FC = () => {
         </Col>
       </Row>
       <Row gutter={16}>
-        <Col span={24}>
+        <Col span={12}>
           <Form.Item label="中间件插件" tooltip="部署完成后自动装配所选中间件">
             <Space>
               <Form.Item name="enable_keepalived" valuePropName="checked" noStyle>
-                <Checkbox>Keepalived (VIP 漂移)</Checkbox>
+                <Checkbox>Keepalived</Checkbox>
               </Form.Item>
               <Form.Item name="enable_proxysql" valuePropName="checked" noStyle>
-                <Checkbox>ProxySQL (读写分离)</Checkbox>
+                <Checkbox>ProxySQL</Checkbox>
               </Form.Item>
             </Space>
           </Form.Item>
         </Col>
+        <Col span={12} />
       </Row>
       <Form.Item wrapperCol={{ offset: 6 }}>
         <Space>
@@ -803,14 +807,7 @@ const ClusterDeploy: React.FC = () => {
                 key: 'ha',
                 label: 'HA 主从',
                 children: renderForm('ha', haForm,
-                  <>
-                    <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]}>
-                      <Select options={hostOptions} placeholder="选择从节点主机" />
-                    </Form.Item>
-                    <Form.Item name="replica_port" label="从端口" initialValue={3310}>
-                      <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                    </Form.Item>
-                  </>,
+                  <></>,
                   (values) => runDeploy('ha', values),
                   { simpleReplica: true },
                 ),

@@ -25,6 +25,7 @@ type ClusterDeployService struct {
 	backupSvc   *BackupService
 	auditSvc    *AuditService
 	vault       *CredentialVault
+	versions    *VersionCatalog
 	defaults    config.ClusterDefaults
 	encKey      string
 	progressMu  sync.RWMutex
@@ -137,6 +138,10 @@ func (s *ClusterDeployService) SetBackupService(backupSvc *BackupService) {
 
 func (s *ClusterDeployService) SetCredentialVault(vault *CredentialVault) {
 	s.vault = vault
+}
+
+func (s *ClusterDeployService) SetVersionCatalog(catalog *VersionCatalog) {
+	s.versions = catalog
 }
 
 func (s *ClusterDeployService) updateProgress(deploymentID, stage, message string, progressPct int) {
