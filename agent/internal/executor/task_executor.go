@@ -852,6 +852,23 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
 			if installType == "mgr" && groupName != "" {
+				// Ensure password is set via socket before MGR init.
+				// MySQL 8.0 --initialize-insecure creates root with auth_socket,
+				// which blocks TCP password auth until explicitly changed.
+				if mysqlPass != "" {
+					socketPath := filepath.Join(dataDir, "mysql.sock")
+					ensurePassSQL := fmt.Sprintf(
+						"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+							"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+							"FLUSH PRIVILEGES;",
+						escapeSQL(mysqlUser), escapeSQL(mysqlPass),
+						escapeSQL(mysqlUser), escapeSQL(mysqlPass))
+					ensureCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", mysqlUser, "-e", ensurePassSQL)
+					if ensureOut, ensureErr := ensureCmd.CombinedOutput(); ensureErr != nil {
+						fmt.Fprintf(os.Stderr, "MGR pre-flight password setup failed: %v, output: %s\n", ensureErr, string(ensureOut))
+					}
+					time.Sleep(1 * time.Second)
+				}
 				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass, mysqlVersion); err != nil {
 					return &TaskResult{
 						TaskID:    req.TaskID,

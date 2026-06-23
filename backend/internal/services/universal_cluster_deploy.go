@@ -235,6 +235,13 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 			req.MySQL.Version = entry.Version
 		}
 	}
+	// Relay server override: when relay_url is set in custom, override package_url
+	// to ensure all nodes download from the relay server.
+	if relayURL, ok := stringCustom(req.Custom, "relay_url"); ok && relayURL != "" && req.MySQL.Version != "" {
+		tarball := fmt.Sprintf("mysql-%s-linux-glibc2.17-x86_64.tar.xz", req.MySQL.Version)
+		relayBase := strings.TrimRight(relayURL, "/")
+		req.MySQL.PackageURL = fmt.Sprintf("%s/mysql/%s/%s", relayBase, req.MySQL.Version, tarball)
+	}
 	if req.Replication.User == "" {
 		req.Replication.User = defaultString(s.defaults.ReplicationUser, "repl")
 	}
@@ -1082,9 +1089,16 @@ func mergeCommonDeployConfig(config map[string]interface{}, req UniversalCluster
 	if ss, ok := stringCustom(req.Custom, "semi_sync_enabled"); ok && req.ClusterType == ClusterTypeHA {
 		config["semi_sync_enabled"] = ss
 	}
-	// Relay server URL for package download
+	// Relay server URL: when set, construct package_url from relay server.
+	// This overrides any package_url from version catalog to ensure packages
+	// are downloaded from the relay server instead of dev.mysql.com.
 	if relayURL, ok := stringCustom(req.Custom, "relay_url"); ok && relayURL != "" {
-		config["relay_url"] = relayURL
+		version, _ := config["mysql_version"].(string)
+		if version != "" {
+			tarball := fmt.Sprintf("mysql-%s-linux-glibc2.17-x86_64.tar.xz", version)
+			relayBase := strings.TrimRight(relayURL, "/")
+			config["package_url"] = fmt.Sprintf("%s/mysql/%s/%s", relayBase, version, tarball)
+		}
 	}
 }
 
@@ -1188,6 +1202,7 @@ func allowedClusterCustomOptions(clusterType string) map[string]bool {
 	common := map[string]bool{
 		"package_url":      true,
 		"package_checksum": true,
+		"relay_url":        true,
 	}
 	switch clusterType {
 	case ClusterTypeHA:
