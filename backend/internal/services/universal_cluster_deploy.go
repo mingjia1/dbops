@@ -999,6 +999,11 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 
 	for i := range nodes {
 		isBootstrap := nodes[i].Role == "bootstrap"
+		// PXC agent requires datadir matching /data/mysql/pxc-* pattern
+		nodeDataDir := nodes[i].DataDir
+		if nodeDataDir == "" || !strings.Contains(nodeDataDir, "pxc") {
+			nodeDataDir = fmt.Sprintf("/data/mysql/pxc-%d", nodes[i].MySQLPort)
+		}
 		nodeConfig := map[string]interface{}{
 			"deploy_mode":    "pxc",
 			"cluster_name":   clusterName,
@@ -1012,9 +1017,7 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			"replicate_pass": req.Replication.Password,
 			"mysql_user":     req.MySQL.User,
 			"mysql_password": req.MySQL.Password,
-		}
-		if nodes[i].DataDir != "" {
-			nodeConfig["data_dir"] = nodes[i].DataDir
+			"data_dir":       nodeDataDir,
 		}
 		if hasWSREPSSTPort {
 			nodeConfig["wsrep_sst_port"] = wsrepSSTPort
