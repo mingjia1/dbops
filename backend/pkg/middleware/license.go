@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/pkg/license"
+	"github.com/jackcode/mysql-ops-platform/pkg/license"
 )
 
 type FeatureChecker func(feature license.Feature) bool

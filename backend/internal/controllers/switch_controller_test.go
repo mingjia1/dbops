@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/internal/services"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

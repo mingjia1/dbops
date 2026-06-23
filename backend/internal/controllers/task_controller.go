@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 )
 
 // TaskController B8: 暴露 GET /api/v1/tasks/:id, 让前端轮询长任务 (升级/备份/迁移) 进度.

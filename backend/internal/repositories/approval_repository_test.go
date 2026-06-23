@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/stretchr/testify/require"
 )
 

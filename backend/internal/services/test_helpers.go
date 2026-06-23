@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 )
 
 type TaskRepositoryInterface interface {

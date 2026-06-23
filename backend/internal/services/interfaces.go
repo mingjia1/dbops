@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/stretchr/testify/mock"
 )
 

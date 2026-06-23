@@ -13,14 +13,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/controllers"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/internal/services"
-	"github.com/monkeycode/mysql-ops-platform/pkg/aiprovider"
-	"github.com/monkeycode/mysql-ops-platform/pkg/config"
-	"github.com/monkeycode/mysql-ops-platform/pkg/logger"
-	"github.com/monkeycode/mysql-ops-platform/pkg/middleware"
-	"github.com/monkeycode/mysql-ops-platform/pkg/storage"
+	"github.com/jackcode/mysql-ops-platform/internal/controllers"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/internal/services"
+	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
+	"github.com/jackcode/mysql-ops-platform/pkg/config"
+	"github.com/jackcode/mysql-ops-platform/pkg/logger"
+	"github.com/jackcode/mysql-ops-platform/pkg/middleware"
+	"github.com/jackcode/mysql-ops-platform/pkg/storage"
 )
 
 func main() {

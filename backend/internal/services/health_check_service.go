@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"golang.org/x/sync/errgroup"
 )
 

@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/pkg/config"
-	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/config"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
 // DataMigrationController 用于"存储后端"切换:

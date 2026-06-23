@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 )
 
 // TestFailureStates_ConcurrentSafe 验证 B9 修复:

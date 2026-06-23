@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/pkg/alertexpr"
-	"github.com/monkeycode/mysql-ops-platform/pkg/notifier"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/alertexpr"
+	"github.com/jackcode/mysql-ops-platform/pkg/notifier"
 )
 
 type AlertService struct {

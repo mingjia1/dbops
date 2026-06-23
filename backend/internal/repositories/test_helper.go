@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 )
 
 // newRepoTestDB 返回一个使用独立 SQLite 文件的 Database, 并已跑完 schema migration.

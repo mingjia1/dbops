@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 )
 
 // JSONImporter 把旧的 data/*.json 文件一次性导入 SQLite.

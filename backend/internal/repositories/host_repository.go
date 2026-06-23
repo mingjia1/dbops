@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monkeycode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 )
 
 // HostRepository 直接走 SQL (MySQL 或 SQLite), 不再有 in-memory 分支.

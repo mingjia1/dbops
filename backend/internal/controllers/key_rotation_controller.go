@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 
 	"github.com/gin-gonic/gin"
-	"github.com/monkeycode/mysql-ops-platform/internal/services"
-	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"github.com/jackcode/mysql-ops-platform/internal/services"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
 type KeyRotationController struct {

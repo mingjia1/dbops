@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/repositories"
-	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
 type EnvironmentCheckService struct {

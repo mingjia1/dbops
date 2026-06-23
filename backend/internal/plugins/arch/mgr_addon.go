@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/plugins"
+	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 )
 
 type MGRAddonPlugin struct {

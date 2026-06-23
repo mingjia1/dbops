@@ -1,4 +1,4 @@
-module github.com/monkeycode/mysql-ops-platform
+module github.com/jackcode/mysql-ops-platform
 
 go 1.25.0
 

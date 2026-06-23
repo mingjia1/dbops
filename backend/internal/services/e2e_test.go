@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/monkeycode/mysql-ops-platform/internal/plugins"
-	"github.com/monkeycode/mysql-ops-platform/internal/plugins/arch"
+	"github.com/jackcode/mysql-ops-platform/internal/plugins"
+	"github.com/jackcode/mysql-ops-platform/internal/plugins/arch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
