@@ -22,6 +22,7 @@ type ClusterDeployService struct {
 	hostRepo    *repositories.HostRepository
 	instRepo    *repositories.InstanceRepository
 	agentClient *AgentClient
+	hostService *HostService
 	backupSvc   *BackupService
 	auditSvc    *AuditService
 	vault       *CredentialVault
@@ -142,6 +143,53 @@ func (s *ClusterDeployService) SetCredentialVault(vault *CredentialVault) {
 
 func (s *ClusterDeployService) SetVersionCatalog(catalog *VersionCatalog) {
 	s.versions = catalog
+}
+
+func (s *ClusterDeployService) SetHostService(hs *HostService) {
+	s.hostService = hs
+}
+
+// ensureAgentReady checks if the agent on the given host is reachable and accepts
+// our token. If not, it attempts to reinstall the agent via SSH (requires HostService).
+func (s *ClusterDeployService) ensureAgentReady(ctx context.Context, host string, agentPort int, hostID string) error {
+	if agentPort == 0 {
+		agentPort = 9090
+	}
+	// Quick probe: try a lightweight agent call
+	_, err := s.agentClient.callAgent(ctx, host, agentPort, "/agent/tasks/health-check", map[string]interface{}{
+		"task_id": "pre-flight-" + host,
+	})
+	if err == nil {
+		return nil // agent is reachable and accepts our token
+	}
+	if !strings.Contains(err.Error(), "401") {
+		return nil // agent is reachable but returned other error (still valid token)
+	}
+	// Agent returned 401 — token mismatch. Try to fix via SSH.
+	if s.hostService == nil {
+		return fmt.Errorf("agent token mismatch on %s and no HostService available for auto-fix", host)
+	}
+	if hostID == "" {
+		return fmt.Errorf("agent token mismatch on %s: host_id unknown, cannot auto-fix", host)
+	}
+	log.Printf("WARN: agent token mismatch on %s, attempting SSH reinstall", host)
+	result, installErr := s.hostService.AgentAction(ctx, hostID, HostAgentActionRequest{Action: "install", AgentPort: agentPort})
+	if installErr != nil {
+		return fmt.Errorf("agent token mismatch on %s, SSH reinstall failed: %v", host, installErr)
+	}
+	if result != nil && result.Status == "failed" {
+		return fmt.Errorf("agent token mismatch on %s, SSH reinstall returned: %s", host, result.Message)
+	}
+	// Wait for agent to restart
+	time.Sleep(5 * time.Second)
+	// Verify
+	_, verifyErr := s.agentClient.callAgent(ctx, host, agentPort, "/agent/tasks/health-check", map[string]interface{}{
+		"task_id": "post-fix-" + host,
+	})
+	if verifyErr != nil && strings.Contains(verifyErr.Error(), "401") {
+		return fmt.Errorf("agent token still mismatched on %s after reinstall", host)
+	}
+	return nil
 }
 
 func (s *ClusterDeployService) updateProgress(deploymentID, stage, message string, progressPct int) {
@@ -291,6 +339,20 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// In-memory progress tracking
 	s.updateProgress(clusterID, "初始化", "部署计划已创建", 5)
+
+	// Pre-flight: ensure agents on all nodes are reachable with correct token.
+	if isReal {
+		for _, node := range plan.Nodes {
+			if err := s.ensureAgentReady(ctx, node.Host, node.AgentPort, node.HostID); err != nil {
+				s.addStep(clusterID, "Pre-flight agent check", "running")
+				errMsg := fmt.Sprintf("agent pre-flight failed on %s: %v", node.Host, err)
+				s.updateStepStatus(clusterID, "Pre-flight agent check", "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+			}
+		}
+	}
 
 	// Execute each step in order
 	totalSteps := len(plan.Steps)
