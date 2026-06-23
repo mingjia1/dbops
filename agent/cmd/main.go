@@ -28,6 +28,7 @@ func main() {
 	}
 	metricsCollector := collector.NewMetricsCollector()
 	environmentChecker := executor.NewEnvironmentChecker()
+	accountManager := executor.NewAccountManager()
 
 	relayManager := executor.NewRelayPackageManager(cfg.Relay.CacheDir, cfg.Relay.MaxCacheSizeGB, cfg.Relay.CacheExpireHours)
 
@@ -70,6 +71,61 @@ func main() {
 
 	// 跳过授权的辅助: 把 agent 路由组挂上中间件.
 	_ = authAgent
+
+	compatAccounts := r.Group("/api/v1/accounts")
+	{
+		compatAccounts.POST("/setup", func(c *gin.Context) {
+			var req executor.AccountSetupRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+				return
+			}
+			ctx := c.Request.Context()
+			host := req.Host
+			if host == "" { host = "127.0.0.1" }
+			port := req.Port
+			if port == 0 { port = 3306 }
+			adminUser := req.AdminUser
+			if adminUser == "" { adminUser = "root" }
+			if req.RootPassword != "" {
+				if err := accountManager.SetupRootAccount(ctx, host, port, req.RootPassword); err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+			}
+			if req.ReplUser != "" && req.ReplPass != "" {
+				if err := accountManager.SetupReplAccount(ctx, host, port, adminUser, req.AdminPass, req.ReplUser, req.ReplPass); err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+			}
+			if req.MonitorUser != "" && req.MonitorPass != "" {
+				if err := accountManager.SetupMonitorAccount(ctx, host, port, adminUser, req.AdminPass, req.MonitorUser, req.MonitorPass); err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+			}
+			c.JSON(200, gin.H{"code": 200, "message": "Accounts setup completed"})
+		})
+		compatAccounts.POST("/rotate", func(c *gin.Context) {
+			var req executor.AccountRotateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+				return
+			}
+			if req.Host == "" { req.Host = "127.0.0.1" }
+			if req.Port == 0 { req.Port = 3306 }
+			if req.TargetUser == "" || req.NewPassword == "" {
+				c.JSON(400, gin.H{"code": 400, "message": "target_user and new_password are required"})
+				return
+			}
+			if err := accountManager.RotatePassword(c.Request.Context(), req.Host, req.Port, req.AdminUser, req.AdminPass, req.TargetUser, req.NewPassword); err != nil {
+				c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+				return
+			}
+			c.JSON(200, gin.H{"code": 200, "message": "Password rotated"})
+		})
+	}
 
 	agent := r.Group("/agent", authAgent)
 	{
@@ -456,6 +512,82 @@ func main() {
 				}
 
 				c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+			})
+
+			// 账号管理端点：初始化账号（root/repl/monitor）
+			tasks.POST("/account-setup", func(c *gin.Context) {
+				var req executor.AccountSetupRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				ctx := c.Request.Context()
+				host := req.Host
+				if host == "" {
+					host = "127.0.0.1"
+				}
+				port := req.Port
+				if port == 0 {
+					port = 3306
+				}
+				adminUser := req.AdminUser
+				if adminUser == "" {
+					adminUser = "root"
+				}
+
+				// Setup root account
+				if req.RootPassword != "" {
+					if err := accountManager.SetupRootAccount(ctx, host, port, req.RootPassword); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "Root account setup failed: " + err.Error()})
+						return
+					}
+				}
+
+				// Setup replication account
+				if req.ReplUser != "" && req.ReplPass != "" {
+					if err := accountManager.SetupReplAccount(ctx, host, port, adminUser, req.AdminPass, req.ReplUser, req.ReplPass); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "Replication account setup failed: " + err.Error()})
+						return
+					}
+				}
+
+				// Setup monitoring account
+				if req.MonitorUser != "" && req.MonitorPass != "" {
+					if err := accountManager.SetupMonitorAccount(ctx, host, port, adminUser, req.AdminPass, req.MonitorUser, req.MonitorPass); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "Monitor account setup failed: " + err.Error()})
+						return
+					}
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "Accounts setup completed successfully"})
+			})
+
+			// 账号管理端点：密码轮转
+			tasks.POST("/account-rotate", func(c *gin.Context) {
+				var req executor.AccountRotateRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+
+				if req.Host == "" {
+					req.Host = "127.0.0.1"
+				}
+				if req.Port == 0 {
+					req.Port = 3306
+				}
+				if req.TargetUser == "" || req.NewPassword == "" {
+					c.JSON(400, gin.H{"code": 400, "message": "target_user and new_password are required"})
+					return
+				}
+
+				if err := accountManager.RotatePassword(c.Request.Context(), req.Host, req.Port, req.AdminUser, req.AdminPass, req.TargetUser, req.NewPassword); err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": "Password rotation failed: " + err.Error()})
+					return
+				}
+
+				c.JSON(200, gin.H{"code": 200, "message": "Password rotated successfully"})
 			})
 		}
 
