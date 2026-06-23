@@ -70,6 +70,11 @@ func InstallFromURL(ctx context.Context, packageURL, expectedSHA256, basedir, os
 		return "", fmt.Errorf("chown: %w", err)
 	}
 
+	// 6. run ldconfig to update shared library cache (handles libprotobuf, libssl, etc.)
+	if err := runLdconfig(ctx, basedir); err != nil {
+		return "", fmt.Errorf("ldconfig: %w", err)
+	}
+
 	return mysqld, nil
 }
 
@@ -180,6 +185,26 @@ func extractTarball(ctx context.Context, tarball, dest string) error {
 }
 
 // findMysqldBinary walks dest looking for bin/mysqld.
+// runLdconfig 更新动态链接库缓存。如果 basedir 包含 lib/ 目录，先加入 ldconfig 缓存。
+func runLdconfig(ctx context.Context, basedir string) error {
+	// 检查 basedir 下是否有 lib 目录
+	libDir := filepath.Join(basedir, "lib")
+	if st, err := os.Stat(libDir); err == nil && st.IsDir() {
+		// 将该 lib 目录添加到 ldconfig 缓存
+		cmd := exec.CommandContext(ctx, "ldconfig", "-n", libDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			// ldconfig 失败不是致命错误，仅记录
+			_ = out
+		}
+	}
+	// 全局 ldconfig 刷新缓存
+	cmd := exec.CommandContext(ctx, "ldconfig")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ldconfig failed: %v: %s", err, string(out))
+	}
+	return nil
+}
+
 func findMysqldBinary(dest string) string {
 	candidate := filepath.Join(dest, "bin", "mysqld")
 	if _, err := os.Stat(candidate); err == nil {

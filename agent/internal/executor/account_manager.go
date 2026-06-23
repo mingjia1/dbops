@@ -11,13 +11,20 @@ func NewAccountManager() *AccountManager {
 	return &AccountManager{}
 }
 
+// AccountSetupRequest 初始化账号请求
 type AccountSetupRequest struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	AdminUser    string `json:"admin_user"`
+	AdminPass    string `json:"admin_pass"`
+	RootPassword string `json:"root_password"`
+	ReplUser     string `json:"repl_user"`
+	ReplPass     string `json:"repl_pass"`
+	MonitorUser  string `json:"monitor_user"`
+	MonitorPass  string `json:"monitor_pass"`
 }
 
+// AccountRotateRequest 密码轮转请求
 type AccountRotateRequest struct {
 	Host        string `json:"host"`
 	Port        int    `json:"port"`

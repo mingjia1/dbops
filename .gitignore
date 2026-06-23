@@ -222,3 +222,5 @@ fix_*.sh
 deploy_*.py
 *_result.txt
 test_57_full.py
+new_feature.txt
+check4.md
