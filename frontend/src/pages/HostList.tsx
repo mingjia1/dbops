@@ -216,20 +216,62 @@ const HostList: React.FC = () => {
       return
     }
     let deployed = 0
+    let totalInstances = 0
+    const noInstanceHosts: string[] = []
+    const occupiedPorts: string[] = []
+
     for (const host of selected) {
       try {
         const res: any = await instanceApi.listByHost(host.id, 1000, 0)
         const instances = res.data || []
-        for (const inst of instances) {
-          try {
-            await instanceApi.deploy(inst.id)
-            deployed += 1
-          } catch { /* skip */ }
+        if (instances.length === 0) {
+          noInstanceHosts.push(host.name || host.address)
+        } else {
+          totalInstances += instances.length
+          for (const inst of instances) {
+            const portInfo = inst.connection?.port || inst.port || 3306
+            const version = inst.version?.version || inst.version?.full_version || '未知版本'
+            occupiedPorts.push(`${host.name || host.address}:${portInfo} (${version})`)
+            try {
+              await instanceApi.deploy(inst.id)
+              deployed += 1
+            } catch { /* skip */ }
+          }
         }
       } catch { /* skip */ }
     }
-    if (deployed > 0) message.success(`已提交 ${deployed} 个 MySQL 实例部署任务`)
-    else message.warning('所选主机无实例可部署')
+
+    if (deployed > 0) {
+      Modal.success({
+        title: `已提交 ${deployed} 个实例部署任务`,
+        content: (
+          <div>
+            <p>部署中的实例：</p>
+            <ul style={{ maxHeight: 200, overflow: 'auto', paddingLeft: 20 }}>
+              {occupiedPorts.map((p, i) => <li key={i}>{p}</li>)}
+            </ul>
+          </div>
+        ),
+      })
+    } else if (noInstanceHosts.length === selected.length) {
+      Modal.confirm({
+        title: '所选主机暂无已注册实例',
+        content: (
+          <div>
+            <p>以下主机暂无实例记录，需要先创建实例才能部署 MySQL：</p>
+            <ul style={{ paddingLeft: 20 }}>
+              {noInstanceHosts.map((n, i) => <li key={i}>{n}</li>)}
+            </ul>
+            <p>是否跳转到实例管理页面创建实例？</p>
+          </div>
+        ),
+        okText: '去创建实例',
+        cancelText: '取消',
+        onOk: () => navigate('/dashboard/instances'),
+      })
+    } else {
+      message.info(`${noInstanceHosts.length} 台主机暂无实例，已跳过`)
+    }
   }
 
   const agentMenuItems: MenuProps['items'] = [

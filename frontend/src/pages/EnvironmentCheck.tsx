@@ -120,15 +120,20 @@ const EnvironmentCheck: React.FC = () => {
 
   const handleExport = async () => {
     if (!result) return
-    const res: any = await envCheckApi.export(result.check_id, 'json')
-    const blob = new Blob([JSON.stringify(res?.data || res, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${result.check_id}.json`
-    link.click()
-    URL.revokeObjectURL(url)
-    message.success('导出成功')
+    try {
+      const res: any = await envCheckApi.export(result.check_id, 'json')
+      const data = res?.data || res
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${result.check_id}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      message.success('导出成功')
+    } catch {
+      message.error('导出失败')
+    }
   }
 
   const columns: ColumnsType<CheckItem> = [
@@ -200,6 +205,13 @@ const EnvironmentCheck: React.FC = () => {
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无主机，请先在主机管理中添加" />
             ) : (
               <>
+                <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
+                  <Button type="primary" icon={<PlayCircleOutlined />} onClick={onFinish} loading={submitting} disabled={selectedHosts.length === 0}>
+                    启动环境检查
+                  </Button>
+                  <span style={{ color: '#8c8c8c', marginLeft: 'auto' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
+                </div>
                 <Table
                   rowKey="id"
                   size="small"
@@ -226,15 +238,6 @@ const EnvironmentCheck: React.FC = () => {
                     },
                   ]}
                 />
-                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Space>
-                    <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
-                    <Button type="primary" icon={<PlayCircleOutlined />} onClick={onFinish} loading={submitting} disabled={selectedHosts.length === 0}>
-                      启动环境检查
-                    </Button>
-                  </Space>
-                  <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
-                </div>
               </>
             )}
           </Spin>
@@ -289,7 +292,7 @@ const EnvironmentCheck: React.FC = () => {
           </Card>
 
           <Card style={{ marginTop: 16 }} title="检查结果明细">
-            <Collapse items={hostPanels} defaultActiveKey={failedHosts} />
+            <Collapse items={hostPanels} />
           </Card>
         </>
       )}

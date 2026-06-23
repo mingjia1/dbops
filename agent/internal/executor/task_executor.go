@@ -1715,6 +1715,27 @@ func isLogicalDumpBackupPath(path string) bool {
 	return strings.HasSuffix(normalized, ".sql") || strings.HasSuffix(normalized, ".sql.gz")
 }
 
+func (e *TaskExecutor) tryInstallMysqlClient(ctx context.Context) error {
+	packages := [][]string{
+		{"apt-get", "install", "-y", "-qq", "mysql-client"},
+		{"apt-get", "install", "-y", "-qq", "mysql-client-core-8.0"},
+		{"yum", "install", "-y", "-q", "mysql"},
+		{"yum", "install", "-y", "-q", "mysql-community-client"},
+		{"dnf", "install", "-y", "-q", "mysql"},
+	}
+	for _, args := range packages {
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Run(); err == nil {
+			if _, lookErr := exec.LookPath("mysqlbinlog"); lookErr == nil {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("failed to install mysql-client package automatically")
+}
+
 func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config BackupConfig) (*TaskResult, error) {
 	if strings.TrimSpace(config.BaseBackupPath) == "" {
 		return &TaskResult{
@@ -1728,12 +1749,22 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 		return e.executeXtrabackup(ctx, config, false)
 	}
 	if _, err := exec.LookPath("mysqlbinlog"); err != nil {
-		return &TaskResult{
-			Status:    "failed",
-			Progress:  0,
-			Message:   "mysqlbinlog is required for incremental backup based on mysqldump full backup but was not found on target host",
-			Timestamp: time.Now(),
-		}, nil
+		if installErr := e.tryInstallMysqlClient(ctx); installErr != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("mysqlbinlog is required for incremental backup but was not found on target host, auto-install failed: %v", installErr),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		if _, err := exec.LookPath("mysqlbinlog"); err != nil {
+			return &TaskResult{
+				Status:    "failed",
+				Progress:  0,
+				Message:   "mysqlbinlog is required for incremental backup but could not be installed on target host",
+				Timestamp: time.Now(),
+			}, nil
+		}
 	}
 	baseGTID, err := parseGTIDFromDump(config.BaseBackupPath)
 	gtidWarning := ""

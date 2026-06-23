@@ -13,20 +13,23 @@ const actionOptions = [
   { value: 'delete', label: '删除 Agent' },
 ]
 
-const isFailedStatus = (s?: string) => ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes((s || '').toLowerCase())
-const isSuccessStatus = (s?: string) => {
+const isFailed = (s?: string) => ['failed', 'error', 'timeout', 'cancelled', 'canceled', 'inactive'].includes((s || '').toLowerCase())
+const isOk = (s?: string) => {
   const n = (s || '').toLowerCase()
-  return ['success', 'succeeded', 'completed', 'ok'].includes(n) || n.startsWith('agent healthy')
+  return ['success', 'succeeded', 'completed', 'ok', 'active'].includes(n) || n.startsWith('agent healthy')
 }
 
-const statusColor = (s?: string) => {
-  if (isSuccessStatus(s)) return 'success'
-  if (isFailedStatus(s)) return 'error'
+const tagColor = (s?: string) => {
+  if (isOk(s)) return 'success'
+  if (isFailed(s)) return 'error'
   if (['submitted', 'pending', 'running', 'installing'].includes((s || '').toLowerCase())) return 'processing'
   return 'default'
 }
 
-const summarize = (rows: any[]) => rows.map(r => `${r?.host_name || r?.address || '-'}: ${r?.message || r?.status || '-'}`).join('\n')
+const summarize = (rows: any[]) =>
+  rows.map(r => `${r?.host_name || r?.address || '-'}: ${r?.message || r?.status || '-'}`).join('\n')
+
+interface LiveStatus { status: string; message?: string; action?: string }
 
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
@@ -34,7 +37,7 @@ const AgentManage: React.FC = () => {
   const [running, setRunning] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [resultRows, setResultRows] = useState<any[]>([])
-  const [localStatus, setLocalStatus] = useState<Record<string, { status: string; message?: string }>>({})
+  const [liveStatus, setLiveStatus] = useState<Record<string, LiveStatus>>({})
   const [form] = Form.useForm()
 
   const fetchHosts = useCallback(async () => {
@@ -49,24 +52,12 @@ const AgentManage: React.FC = () => {
 
   useEffect(() => { fetchHosts() }, [fetchHosts])
 
-  const runSync = async (hostIds: string[], action: string, agentPort?: number) => {
-    const results: any[] = []
-    setLocalStatus({})
-    for (const hid of hostIds) {
-      setLocalStatus(prev => ({ ...prev, [hid]: { status: 'running', message: `${action}中...` } }))
-      try {
-        const res: any = await hostApi.agentAction(hid, action, agentPort)
-        const d = res?.data
-        results.push(d)
-        setLocalStatus(prev => ({ ...prev, [hid]: { status: d?.status || 'unknown', message: d?.message } }))
-      } catch (err: any) {
-        const msg = err?.response?.data?.message || err?.message || '请求失败'
-        results.push({ host_id: hid, action, status: 'failed', message: msg })
-        setLocalStatus(prev => ({ ...prev, [hid]: { status: 'failed', message: msg } }))
-      }
-    }
-    setResultRows(results)
-    return results
+  const clearLive = (hostId: string) => {
+    setLiveStatus(prev => {
+      const next = { ...prev }
+      delete next[hostId]
+      return next
+    })
   }
 
   const execute = async () => {
@@ -79,25 +70,56 @@ const AgentManage: React.FC = () => {
 
     setRunning(true)
     setResultRows([])
+    setLiveStatus({})
+
     try {
       const action = values.action as string
-      const results = await runSync(hostIds, action, values.agent_port)
-      const failed = results.filter(r => !isSuccessStatus(r?.status))
+      const results: any[] = []
+
+      for (const hid of hostIds) {
+        setLiveStatus(prev => ({ ...prev, [hid]: { status: 'running', message: `${action}中...`, action } }))
+
+        try {
+          const res: any = await hostApi.agentAction(hid, action, values.agent_port)
+          const d = res?.data
+          results.push(d)
+          setLiveStatus(prev => ({ ...prev, [hid]: { status: d?.status || 'unknown', message: d?.message, action } }))
+        } catch (err: any) {
+          const msg = err?.response?.data?.message || err?.message || '请求失败'
+          results.push({ host_id: hid, action, status: 'failed', message: msg })
+          setLiveStatus(prev => ({ ...prev, [hid]: { status: 'failed', message: msg, action } }))
+        }
+      }
+
+      setResultRows(results)
+
+      const failed = results.filter(r => !isOk(r?.status))
       if (failed.length > 0) {
         message.error(`${failed.length} 台主机 ${action} 失败，详见执行结果`)
       } else {
         message.success(`${action} 成功：${results.length} 台`)
       }
-      fetchHosts()
+
+      await fetchHosts()
     } finally {
       setRunning(false)
     }
   }
 
-  const getCellStatus = (host: Host) => {
-    const local = localStatus[host.id]
-    if (local) return local
-    return { status: host.status, message: undefined }
+  const getStatusDisplay = (host: Host) => {
+    const live = liveStatus[host.id]
+    if (live) {
+      const s = live.status
+      let label = s || 'unknown'
+      if (s === 'running') label = live.message || '执行中...'
+      else if (isOk(s)) label = '可用'
+      else if (isFailed(s)) label = '不可用'
+      return { status: s, label, tip: live.message }
+    }
+    const dbStatus = host.status
+    if (dbStatus === 'active') return { status: 'success', label: '可用', tip: undefined }
+    if (dbStatus === 'failed' || dbStatus === 'inactive') return { status: 'failed', label: '不可用', tip: undefined }
+    return { status: dbStatus, label: dbStatus || 'unknown', tip: undefined }
   }
 
   const columns: ColumnsType<Host> = [
@@ -109,10 +131,8 @@ const AgentManage: React.FC = () => {
       title: '主机状态',
       key: 'status',
       render: (_, r) => {
-        const cs = getCellStatus(r)
-        const s = cs.status
-        const label = cs.message && cs.message.length < 40 ? cs.message : (s || 'unknown')
-        return <Tag color={statusColor(s)} title={cs.message}>{label}</Tag>
+        const d = getStatusDisplay(r)
+        return <Tag color={tagColor(d.status)} title={d.tip}>{d.label}</Tag>
       },
     },
   ]
@@ -121,7 +141,7 @@ const AgentManage: React.FC = () => {
     { title: '主机', dataIndex: 'host_name', key: 'host_name' },
     { title: '地址', dataIndex: 'address', key: 'address' },
     { title: '动作', dataIndex: 'action', key: 'action' },
-    { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={statusColor(v)}>{v || '-'}</Tag> },
+    { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={tagColor(v)}>{v || '-'}</Tag> },
     { title: '信息', dataIndex: 'message', key: 'message', ellipsis: true },
   ]
 
@@ -129,7 +149,7 @@ const AgentManage: React.FC = () => {
     <div style={{ padding: 24 }}>
       <Card
         title={<Space><CloudServerOutlined /><span>Agent 管理</span></Space>}
-        extra={<Button icon={<ReloadOutlined />} onClick={fetchHosts} loading={loading}>刷新</Button>}
+        extra={<Button icon={<ReloadOutlined />} onClick={() => { setLiveStatus({}); fetchHosts() }} loading={loading}>刷新</Button>}
       >
         <Form form={form} layout="inline" initialValues={{ action: 'status' }} style={{ marginBottom: 16 }}>
           <Form.Item name="action" rules={[{ required: true }]}>

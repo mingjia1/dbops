@@ -318,10 +318,13 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 
 	if action == "status" {
 		if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
+			_ = s.repo.UpdateStatus(ctx, host.ID, "active")
 			result.Status = "success"
 			result.Message = msg
 			return result, nil
 		} else {
+			_ = s.repo.UpdateStatus(ctx, host.ID, "failed")
+			result.Status = "failed"
 			result.Message = msg
 			return result, nil
 		}
@@ -400,6 +403,9 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	}
 
 	if action == "delete" || action == "remove" || action == "stop" {
+		if action == "stop" || action == "delete" || action == "remove" {
+			_ = s.repo.UpdateStatus(ctx, host.ID, "inactive")
+		}
 		result.Status = "success"
 		result.Message = "agent " + action + " completed"
 		return result, nil
@@ -647,6 +653,9 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	if err != nil {
 		return fmt.Errorf("read agent binary: %w", err)
 	}
+	if len(data) < 4 || !(data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F') {
+		return fmt.Errorf("agent binary %s is not a valid Linux ELF executable (wrong format)", binPath)
+	}
 	if out, err := runSSH(client, "mkdir -p /opt/dbops-agent"); err != nil {
 		return fmt.Errorf("prepare agent directory failed: %v\n%s", err, out)
 	}
@@ -688,11 +697,15 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 
 func findAgentBinary() (string, error) {
 	candidates := []string{
-		filepath.Join("agent", "bin", "mysql-ops-agent-linux-amd64"),
-		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
-		filepath.Join("..", "..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("agent", "bin", "agent-linux-amd64"),
+		filepath.Join("..", "agent", "bin", "agent-linux-amd64"),
+		filepath.Join("..", "..", "agent", "bin", "agent-linux-amd64"),
+		filepath.Join("agent", "bin", "agent_linux"),
+		filepath.Join("..", "agent", "bin", "agent_linux"),
 		filepath.Join("agent", "bin", "mysql-ops-agent-linux"),
 		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux"),
+		filepath.Join("agent", "bin", "dbops-agent-linux"),
+		filepath.Join("..", "agent", "bin", "dbops-agent-linux"),
 	}
 	for _, candidate := range candidates {
 		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {

@@ -46,21 +46,24 @@ func (c *EnvironmentCheckController) GetByID(ctx *gin.Context) {
 func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 	checkID := ctx.Param("id")
 	format := ctx.DefaultQuery("format", "json")
-	
+
 	result, err := c.service.GetByID(ctx.Request.Context(), checkID)
 	if err != nil {
 		utils.NotFoundResponse(ctx, "Check result not found")
 		return
 	}
 
-	if format == "pdf" {
+	switch format {
+	case "json":
+		ctx.Header("Content-Disposition", "attachment; filename="+checkID+".json")
+		ctx.JSON(http.StatusOK, result)
+	case "pdf":
 		ctx.JSON(http.StatusNotImplemented, gin.H{
 			"code":    501,
 			"message": "PDF export feature will be implemented",
 			"data":    result,
 		})
-		return
+	default:
+		utils.BadRequestResponse(ctx, "unsupported export format: "+format)
 	}
-
-	utils.BadRequestResponse(ctx, "unsupported export format: "+format)
 }

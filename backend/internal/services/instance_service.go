@@ -862,13 +862,7 @@ func validateInstanceAdminMetadata(conn *models.InstanceConnection, req Instance
 	if verb == "" {
 		verb = "status"
 	}
-	if strings.TrimSpace(conn.Datadir) == "" {
-		return fmt.Errorf("service control requires instance datadir metadata")
-	}
 	if verb == "start" || verb == "restart" {
-		if strings.TrimSpace(conn.Basedir) == "" {
-			return fmt.Errorf("service control %s requires instance basedir metadata", verb)
-		}
 		if conn.Port <= 0 {
 			return fmt.Errorf("service control %s requires instance port metadata", verb)
 		}
@@ -1002,31 +996,24 @@ func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string
 		return path
 	}
 	if conn == nil {
-		return defaultString(path, "/etc/my.cnf")
+		return "/etc/my.cnf"
 	}
 
-	// PXC: managed config at /etc/dbops-pxc/dbops-pxc-{port}.cnf
+	// If datadir is known, try datadir/my.cnf first
+	if strings.TrimSpace(conn.Datadir) != "" {
+		candidate := filepath.Join(conn.Datadir, "my.cnf")
+		if candidate != "" {
+			return candidate
+		}
+	}
+
+	// PXC: managed config
 	if strings.Contains(conn.Datadir, "/pxc-") && conn.Port > 0 {
 		return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", conn.Port)
 	}
 
-	// MHA: standard config at /etc/mha/app1.cnf
-	// Detect via datadir pattern /mha- or /mha (e.g. /data/mysql/mha-3307)
-	if strings.Contains(filepath.ToSlash(conn.Datadir), "/mha") {
-		return "/etc/mha/app1.cnf"
-	}
-
-	// MGR: check datadir for mgr-related patterns, or fallback
-	if strings.Contains(filepath.ToSlash(conn.Datadir), "/mgr-") ||
-		strings.Contains(filepath.ToSlash(conn.Datadir), "/group_repl") {
-		return "/etc/my.cnf"
-	}
-
-	// HA / standard: return default path or datadir/my.cnf
-	if path == "" {
-		return "/etc/my.cnf"
-	}
-	return path
+	// Let agent auto-discover via configPathCandidates
+	return ""
 }
 
 func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPasswordRequest) (*InstanceAdminResult, error) {
