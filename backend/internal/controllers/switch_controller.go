@@ -8,6 +8,11 @@ import (
 	"github.com/monkeycode/mysql-ops-platform/pkg/utils"
 )
 
+const (
+	defaultRoleSwitchHistoryLimit = 50
+	maxRoleSwitchHistoryLimit     = 500
+)
+
 type SwitchController struct {
 	service *services.SwitchService
 }
@@ -78,9 +83,9 @@ func (c *SwitchController) ListRoleSwitchHistory(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "cluster_id is required")
 		return
 	}
-	limit := 50
+	limit := defaultRoleSwitchHistoryLimit
 	if v := ctx.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= maxRoleSwitchHistoryLimit {
 			limit = n
 		}
 	}

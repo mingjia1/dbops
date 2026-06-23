@@ -23,9 +23,10 @@ type SwitchService struct {
 	agentClient *AgentClient
 	auditSvc    *AuditService
 	encKey      string
-	// P1: 角色切换历史持久化, 之前是 in-memory map 重启即丢.
+	// P1: role switch history persistence (previously in-memory map, lost on restart).
 	historyRepo *repositories.RoleSwitchHistoryRepository
 
+	logger  *log.Logger
 	mu      sync.RWMutex
 	history map[string][]RoleSwitchRecord
 }
@@ -42,6 +43,7 @@ func NewSwitchService(hostRepo *repositories.HostRepository, instRepo *repositor
 		historyRepo: historyRepo,
 		agentClient: agentClient,
 		auditSvc:    audit,
+		logger:      log.Default(),
 		history:     make(map[string][]RoleSwitchRecord),
 	}
 }
@@ -109,7 +111,7 @@ type RoleSwitchResult struct {
 	CompletedAt     time.Time `json:"completed_at"`
 }
 
-// RoleSwitchRecord 别名到 models.RoleSwitchRecord, 保持向后兼容 (controllers/前端用的就是这个类型).
+// RoleSwitchRecord is an alias for models.RoleSwitchRecord for backward compatibility.
 type RoleSwitchRecord = models.RoleSwitchRecord
 
 func (s *SwitchService) SingleToMHA(ctx context.Context, req SwitchClusterRequest) (*SwitchClusterResult, error) {
@@ -363,6 +365,7 @@ func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req Swit
 	return out, nil
 }
 
+// SwitchRoleWithinCluster switches the role of an instance within a cluster.
 func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwitchRequest) (*RoleSwitchResult, error) {
 	startedAt := time.Now()
 
@@ -576,10 +579,10 @@ func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context,
 		if strings.TrimSpace(mysqlPassword) != "" && s.encKey != "" {
 			enc, encErr := utils.Encrypt(mysqlPassword, s.encKey)
 			if encErr != nil {
-				log.Printf("WARN: failed to encrypt password for instance %s: %v", inst.ID, encErr)
+				s.logger.Printf("WARN: failed to encrypt password for instance %s: %v", inst.ID, encErr)
 			} else {
 				if err := s.instRepo.UpdateConnectionPassword(ctx, inst.ID, enc); err != nil {
-					log.Printf("WARN: failed to update password for instance %s: %v", inst.ID, err)
+					s.logger.Printf("WARN: failed to update password for instance %s: %v", inst.ID, err)
 				}
 			}
 			// Also update username if provided
@@ -588,7 +591,7 @@ func (s *SwitchService) applyClusterReconfigurationMetadata(ctx context.Context,
 					if conn.Username != mysqlUser {
 						conn.Username = mysqlUser
 						if uErr := s.instRepo.UpdateConnection(ctx, conn); uErr != nil {
-							log.Printf("WARN: failed to update username for instance %s: %v", inst.ID, uErr)
+							s.logger.Printf("WARN: failed to update username for instance %s: %v", inst.ID, uErr)
 						}
 					}
 				}
@@ -1006,10 +1009,10 @@ func (s *SwitchService) recordHistory(ctx context.Context, r *RoleSwitchResult) 
 		CompletedAt:     r.CompletedAt,
 	}
 
-	// 优先落库, 失败也只是 log + 内存继续; 不阻塞业务流.
+	// Persist to database first; on failure, log and continue with in-memory cache.
 	if s.historyRepo != nil {
 		if err := s.historyRepo.Create(ctx, record); err != nil {
-			log.Printf("[WARN] recordHistory: failed to persist switch history cluster=%s instance=%s: %v", r.ClusterID, r.InstanceID, err)
+			s.logger.Printf("WARN: failed to persist switch history cluster=%s instance=%s: %v", r.ClusterID, r.InstanceID, err)
 		}
 	}
 	s.mu.Lock()
@@ -1106,6 +1109,9 @@ func (s *SwitchService) ListRoleSwitchHistory(ctx context.Context, clusterID str
 	}
 	return out, nil
 }
+
+// ListRoleSwitchHistory returns role switch history for a cluster.
+// It prefers the persisted repository; falls back to in-memory cache.
 
 func isValidRoleForCluster(clusterType, role string) bool {
 	switch clusterType {

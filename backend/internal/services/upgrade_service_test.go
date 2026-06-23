@@ -12,49 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type MockInstanceRepo struct {
-	mock.Mock
-}
-
-func (m *MockInstanceRepo) GetByID(ctx context.Context, id string) (*models.Instance, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.Instance), args.Error(1)
-}
-
-func (m *MockInstanceRepo) List(ctx context.Context, limit, offset int) ([]models.Instance, error) {
-	args := m.Called(ctx, limit, offset)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]models.Instance), args.Error(1)
-}
-
-func (m *MockInstanceRepo) Create(ctx context.Context, instance *models.Instance) error {
-	args := m.Called(ctx, instance)
-	return args.Error(0)
-}
-
-func (m *MockInstanceRepo) Update(ctx context.Context, instance *models.Instance) error {
-	args := m.Called(ctx, instance)
-	return args.Error(0)
-}
-
-func (m *MockInstanceRepo) Delete(ctx context.Context, id string) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
-}
-
-func (m *MockInstanceRepo) ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error) {
-	args := m.Called(ctx, clusterID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*models.Instance), args.Error(1)
-}
-
 type MockTaskRepo struct {
 	mock.Mock
 }

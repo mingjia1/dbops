@@ -50,6 +50,34 @@ func (m *MockInstanceRepoForDestroy) Delete(ctx context.Context, id string) erro
 	return nil
 }
 
+func (m *MockInstanceRepoForDestroy) GetConnection(ctx context.Context, instanceID string) (*models.InstanceConnection, error) {
+	return nil, nil
+}
+
+func (m *MockInstanceRepoForDestroy) CreateConnection(ctx context.Context, conn *models.InstanceConnection) error {
+	return nil
+}
+
+func (m *MockInstanceRepoForDestroy) UpdateConnection(ctx context.Context, conn *models.InstanceConnection) error {
+	return nil
+}
+
+func (m *MockInstanceRepoForDestroy) UpdateConnectionPassword(ctx context.Context, instanceID, encryptedPassword string) error {
+	return nil
+}
+
+func (m *MockInstanceRepoForDestroy) UpsertStatus(ctx context.Context, instanceID string, status *models.InstanceStatus) error {
+	return nil
+}
+
+func (m *MockInstanceRepoForDestroy) UpsertTopology(ctx context.Context, instanceID string, topology *models.InstanceTopology) error {
+	return nil
+}
+
+func (m *MockInstanceRepoForDestroy) ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error) {
+	return nil, nil
+}
+
 // TestTopologyAfterClusterDestroy 测试集群销毁后拓扑信息的清除
 func TestTopologyAfterClusterDestroy(t *testing.T) {
 	mockRepo := &MockInstanceRepoForDestroy{

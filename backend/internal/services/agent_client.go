@@ -15,17 +15,19 @@ import (
 const (
 	agentDefaultTimeout    = 2 * time.Minute
 	agentDeploymentTimeout = 60 * time.Minute
+	agentInstallToolsTimeout = 30 * time.Minute
 )
 
 type AgentClient struct {
 	httpClient *http.Client
 	agentToken string
+	baseURL    string
 }
 
 func NewAgentClient(agentToken string) *AgentClient {
 	return &AgentClient{
-		// B8: 之前 300s timeout 撞死长任务 (backup/upgrade/migration/role-switch).
-		// 修: 30s 适合短 op; 长 op 走 fire-and-forget + GetTaskProgress 轮询.
+		// B8: Previously 300s timeout caused long tasks to timeout (backup/upgrade/migration/role-switch).
+		// Fix: 30s for short ops; long ops use fire-and-forget + GetTaskProgress polling.
 		httpClient: &http.Client{
 			Timeout: agentDefaultTimeout,
 			Transport: &http.Transport{
@@ -36,6 +38,10 @@ func NewAgentClient(agentToken string) *AgentClient {
 		},
 		agentToken: agentToken,
 	}
+}
+
+func (c *AgentClient) buildURL(hostAddr string, agentPort int, path string) string {
+	return fmt.Sprintf("http://%s:%d%s", hostAddr, agentPort, path)
 }
 
 type DeployTaskPayload struct {
@@ -173,7 +179,7 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 }
 
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
-	url := fmt.Sprintf("http://%s:%d%s", hostAddr, agentPort, path)
+	url := c.buildURL(hostAddr, agentPort, path)
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -215,32 +221,12 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 			continue
 		}
 
-		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-		resp.Body.Close()
+		result, err := readAgentResponse(resp)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
+			lastErr = err
 			continue
 		}
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
-			continue
-		}
-
-		var result agentResponse
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			lastErr = fmt.Errorf("failed to parse response: %w", err)
-			continue
-		}
-
-		if result.Code != 200 {
-			return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
-		}
-		if result.Data == nil {
-			return nil, fmt.Errorf("agent returned empty data")
-		}
-
-		return result.Data, nil
+		return result, nil
 	}
 	return nil, lastErr
 }
@@ -260,27 +246,7 @@ func (c *AgentClient) callAgentGet(ctx context.Context, url string) (*AgentTaskR
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var result agentResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	if result.Code != 200 {
-		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
-	}
-	if result.Data == nil {
-		return nil, fmt.Errorf("agent returned empty data")
-	}
-
-	return result.Data, nil
+	return readAgentResponse(resp)
 }
 
 func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int, taskID string) (*AgentTaskResult, error) {
@@ -323,7 +289,41 @@ func (c *AgentClient) GetTaskProgress(ctx context.Context, host string, port int
 	return result.Data, nil
 }
 
-// ExecuteBlankHostInit: 空白主机一键初始化 (OS检测→装MySQL→配数据目录→启动→设密码)
+func getInstanceConnection(instance *models.Instance) (*models.InstanceConnection, error) {
+	if instance.Connection.Host == "" {
+		return nil, fmt.Errorf("connection info not loaded")
+	}
+	return &instance.Connection, nil
+}
+
+func readAgentResponse(resp *http.Response) (*AgentTaskResult, error) {
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result agentResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if result.Code != 200 {
+		return nil, fmt.Errorf("agent error (code %d): %s", result.Code, result.Message)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("agent returned empty data")
+	}
+
+	return result.Data, nil
+}
+
+// ExecuteBlankHostInit: Blank host initialization (OS detection → install MySQL → configure datadir → start → set password)
 func (c *AgentClient) ExecuteBlankHostInit(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID:     taskID,
@@ -333,7 +333,7 @@ func (c *AgentClient) ExecuteBlankHostInit(ctx context.Context, hostAddr string,
 	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/blank-host-init", payload, agentDeploymentTimeout)
 }
 
-// ExecuteGeneralClusterInit: 通用集群一键初始化 (HA主从/MHA/MGR/PXC)
+// ExecuteGeneralClusterInit: General cluster initialization (HA master-slave/MHA/MGR/PXC)
 func (c *AgentClient) ExecuteGeneralClusterInit(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}, taskID string) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID:     taskID,
@@ -343,16 +343,16 @@ func (c *AgentClient) ExecuteGeneralClusterInit(ctx context.Context, hostAddr st
 	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/general-cluster-init", payload, agentDeploymentTimeout)
 }
 
-// ExecuteInstallTools: Agent端工具安装 (MySQL/XtraBackup)
+// ExecuteInstallTools: Agent-side tool installation (MySQL/XtraBackup)
 func (c *AgentClient) ExecuteInstallTools(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID: fmt.Sprintf("install-tools-%d", time.Now().UnixNano()),
 		Config: config,
 	}
-	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/install-tools", payload, 30*time.Minute)
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, "/agent/tasks/install-tools", payload, agentInstallToolsTimeout)
 }
 
-// ExecuteEnvironmentCheck: Agent端独立环境检查 (OS/Tools/Resources/Network)
+// ExecuteEnvironmentCheck: Agent-side environment check (OS/Tools/Resources/Network)
 func (c *AgentClient) ExecuteEnvironmentCheck(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID: fmt.Sprintf("env-check-%d", time.Now().UnixNano()),
@@ -361,15 +361,8 @@ func (c *AgentClient) ExecuteEnvironmentCheck(ctx context.Context, hostAddr stri
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/check-environment", payload)
 }
 
-// ExecuteCheckTools: Agent端工具可用性检查
+// ExecuteCheckTools: Agent-side tool availability check
 func (c *AgentClient) ExecuteCheckTools(ctx context.Context, hostAddr string, agentPort int) (*AgentTaskResult, error) {
 	url := fmt.Sprintf("http://%s:%d/agent/tasks/check-tools", hostAddr, agentPort)
 	return c.callAgentGet(ctx, url)
-}
-
-func getInstanceConnection(instance *models.Instance) (*models.InstanceConnection, error) {
-	if instance.Connection.Host == "" {
-		return nil, fmt.Errorf("connection info not loaded")
-	}
-	return &instance.Connection, nil
 }
