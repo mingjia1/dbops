@@ -825,9 +825,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 		socketPath := filepath.Join(dataDir, "mysql.sock")
 		retrySQL := fmt.Sprintf(
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-				"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-				"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"ALTER USER '%s'@'%%' IDENTIFIED BY '%s'; "+
+				"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
@@ -852,23 +852,6 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if retryHealthCmd.Run() == nil {
 			// Success! Now initialize MGR if needed
 			if installType == "mgr" && groupName != "" {
-				// Ensure password is set via socket before MGR init.
-				// MySQL 8.0 --initialize-insecure creates root with auth_socket,
-				// which blocks TCP password auth until explicitly changed.
-				if mysqlPass != "" {
-					socketPath := filepath.Join(dataDir, "mysql.sock")
-					ensurePassSQL := fmt.Sprintf(
-						"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-							"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
-							"FLUSH PRIVILEGES;",
-						escapeSQL(mysqlUser), escapeSQL(mysqlPass),
-						escapeSQL(mysqlUser), escapeSQL(mysqlPass))
-					ensureCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", mysqlUser, "-e", ensurePassSQL)
-					if ensureOut, ensureErr := ensureCmd.CombinedOutput(); ensureErr != nil {
-						fmt.Fprintf(os.Stderr, "MGR pre-flight password setup failed: %v, output: %s\n", ensureErr, string(ensureOut))
-					}
-					time.Sleep(1 * time.Second)
-				}
 				if err := initializeMGR(ctx, host, port, mysqlUser, mysqlPass, isPrimary, groupName, replicateUser, replicatePass, mysqlVersion); err != nil {
 					return &TaskResult{
 						TaskID:    req.TaskID,
@@ -942,14 +925,23 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	if replicatePass == "" {
 		replicatePass = "repl"
 	}
-	// 0. 关闭super-read-only以便创建用户
-	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
+
+	// Use socket connection for all MGR initialization SQL.
+	// After --initialize-insecure, root uses auth_socket which allows
+	// passwordless socket connections but rejects TCP with password.
+	// All SQL runs through the Unix socket to avoid auth issues.
+	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+	execSocket := func(sql string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+		return cmd.CombinedOutput()
+	}
+
+	// 0. Disable super_read_only so we can create users
+	if _, err := execSocket("SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
 		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
-	// 1. 使用配置的复制用户（主节点和副本都需要）
-	// MySQL 5.7 使用 mysql_native_password + CHANGE MASTER TO + 精简权限
-	// MySQL 8.0 使用 caching_sha2_password + CHANGE REPLICATION SOURCE TO + 扩展权限
+	// 1. Create replication user and configure recovery channel
 	var replicationSQL string
 	if strings.HasPrefix(mysqlVersion, "5.") {
 		replicationSQL = fmt.Sprintf(`
@@ -970,31 +962,31 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
 	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
 	}
-	if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, replicationSQL); err != nil {
+	if _, err := execSocket(replicationSQL); err != nil {
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. 启动Group Replication
+	// 2. Start Group Replication
 	if isPrimary {
 		bootstrapSQL := `
 			SET GLOBAL group_replication_bootstrap_group=ON;
 			START GROUP_REPLICATION;
 			SET GLOBAL group_replication_bootstrap_group=OFF;
 		`
-		if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, bootstrapSQL); err != nil {
+		if _, err := execSocket(bootstrapSQL); err != nil {
 			return fmt.Errorf("bootstrap MGR failed: %v", err)
 		}
 	} else {
-		if _, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "START GROUP_REPLICATION;"); err != nil {
+		if _, err := execSocket("START GROUP_REPLICATION;"); err != nil {
 			return fmt.Errorf("start MGR failed: %v", err)
 		}
 	}
 
-	// 3. 等待MGR启动
+	// 3. Wait for MGR to start
 	time.Sleep(3 * time.Second)
 
-	// 4. 验证MGR状态
-	out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, "SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
+	// 4. Verify MGR status
+	out, err := execSocket("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
 	if err != nil {
 		return fmt.Errorf("check MGR status failed: %v", err)
 	}
