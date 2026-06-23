@@ -15,11 +15,19 @@ func NewUpgradeExecutor() *UpgradeExecutor {
 	return &UpgradeExecutor{}
 }
 
+const (
+	UpgradeModeInPlace       = "in_place"
+	UpgradeModeLogical       = "logical"
+	UpgradeModeRolling       = "rolling"
+	UpgradeModeRollingArch   = "rolling_arch"
+)
+
 type UpgradeConfig struct {
 	CurrentVersion     string   `json:"current_version"`
 	TargetVersion      string   `json:"target_version"`
 	TargetFlavor       string   `json:"target_flavor"`
 	UpgradeType        string   `json:"upgrade_type"`
+	UpgradeMode        string   `json:"upgrade_mode"`
 	InstanceHost       string   `json:"instance_host"`
 	InstancePort       int      `json:"instance_port"`
 	MySQLUser          string   `json:"mysql_user"`
