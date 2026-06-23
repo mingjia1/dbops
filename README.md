@@ -17,25 +17,25 @@
 <div align="center">
 
 ### Login / 登录页面
-![Login](pic/1登录页面.png)
+![Login](docs/screenshots/1-login.png)
 
 ### Dashboard / 主界面
-![Dashboard](pic/2主界面.png)
+![Dashboard](docs/screenshots/2-dashboard.png)
 
 ### Cluster Deploy / 集群部署
-![Cluster Deploy](pic/3集群部署.png)
+![Cluster Deploy](docs/screenshots/3-cluster-deploy.png)
 
 ### Backup Management / 备份管理
-![Backup](pic/4备份管理.png)
+![Backup](docs/screenshots/4-backup.png)
 
 ### Cluster Switch / 集群切换角色
-![Cluster Switch](pic/5集群切换角色.png)
+![Cluster Switch](docs/screenshots/5-role-switch.png)
 
 ### Data Migration / 数据迁移管理
-![Data Migration](pic/6数据迁移管理.png)
+![Data Migration](docs/screenshots/6-migration.png)
 
 ### Topology View / 拓扑视图
-![Topology](pic/7拓扑视图.png)
+![Topology](docs/screenshots/7-topology.png)
 
 </div>
 

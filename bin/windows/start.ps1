@@ -41,7 +41,7 @@ function Normalize-ProcessPathEnvironment {
 Normalize-ProcessPathEnvironment
 
 # 路径定义
-$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.FullName } else { (Get-Location).Path }
+$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.Parent.FullName } else { (Get-Location).Path }
 $GoRoot      = "D:\Program Files\go"
 $BackendDir  = Join-Path $ProjectRoot "backend"
 $AgentDir    = Join-Path $ProjectRoot "agent"

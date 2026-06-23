@@ -224,3 +224,40 @@ deploy_*.py
 test_57_full.py
 new_feature.txt
 check4.md
+
+# ---------- 强制忽略测试/临时文件 ----------
+# 覆盖率报告
+**/*.out
+**/*.prof
+**/coverage*.html
+
+# 编译二进制
+**/*.exe
+**/*.exe~
+**/*.dll
+**/*.so
+**/*.dylib
+
+# 日志
+**/*.log
+**/*.err
+logs/
+
+# Python 临时脚本
+*.py
+!**/e2e/*.py
+
+# 数据库运行时
+db/*.db
+db/*.db-shm
+db/*.db-wal
+*.sqlite
+*.sqlite3
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*.bak
+nul
+**/nul

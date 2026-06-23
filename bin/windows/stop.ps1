@@ -19,7 +19,7 @@ function Write-Step    { param($msg) Write-Host "`n=== $msg ===" -ForegroundColo
 $BackendPort = 8080
 $AgentPort   = 9090
 $WebPort     = 3000
-$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.FullName } else { (Get-Location).Path }
+$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.Parent.FullName } else { (Get-Location).Path }
 $BackendDir = Join-Path $ProjectRoot "backend"
 $AgentDir   = Join-Path $ProjectRoot "agent"
 $WebDir     = Join-Path $ProjectRoot "frontend"
