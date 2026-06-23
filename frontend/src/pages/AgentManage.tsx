@@ -1,17 +1,19 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { Button, Card, Form, InputNumber, message, Modal, Select, Space, Table, Tag } from 'antd'
 import { CloudServerOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { hostApi, type Host } from '../services/api'
 
 const actionOptions = [
-  { value: 'stop', label: '停止 Agent' },
+  { value: 'install', label: '安装 Agent' },
   { value: 'start', label: '启动 Agent' },
-  { value: 'delete', label: '删除 Agent' },
+  { value: 'stop', label: '停止 Agent' },
+  { value: 'restart', label: '重启 Agent' },
   { value: 'status', label: '检查状态' },
+  { value: 'delete', label: '删除 Agent' },
 ]
 
-const longRunningAgentActions = new Set(['restart'])
+const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
 const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
@@ -40,6 +42,7 @@ const AgentManage: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [rows, setRows] = useState<any[]>([])
   const [form] = Form.useForm()
+  const pollRef = useRef<number | null>(null)
 
   const fetchHosts = async () => {
     setLoading(true)
@@ -53,7 +56,37 @@ const AgentManage: React.FC = () => {
 
   useEffect(() => {
     fetchHosts()
+    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
   }, [])
+
+  const scheduleStatusCheck = (hostIds: string[], action: string, delayMs: number) => {
+    if (pollRef.current) clearTimeout(pollRef.current)
+    pollRef.current = window.setTimeout(async () => {
+      await fetchHosts()
+      const checkRows: any[] = []
+      for (const hostId of hostIds) {
+        try {
+          const res: any = await hostApi.agentAction(hostId, 'status')
+          checkRows.push(res?.data)
+        } catch { /* ignore */ }
+      }
+      setRows(prev => {
+        const updated = [...prev]
+        for (const cr of checkRows) {
+          const idx = updated.findIndex(r => r.host_id === cr.host_id || r.address === cr.address)
+          if (idx >= 0) updated[idx] = { ...updated[idx], ...cr, delayed_check: true }
+        }
+        return updated
+      })
+      const stillFailed = checkRows.filter((r: any) => !isSuccessfulAgentStatus(r?.status))
+      if (stillFailed.length > 0) {
+        Modal.warning({
+          title: `${action} 后状态检查结果`,
+          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(stillFailed)}</div>,
+        })
+      }
+    }, delayMs)
+  }
 
   const execute = async () => {
     const values = await form.validateFields()
@@ -94,8 +127,9 @@ const AgentManage: React.FC = () => {
         } else if (asyncAction || res?.data?.async) {
           Modal.info({
             title: `Agent ${values.action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
-            content: `\u5df2\u63d0\u4ea4 ${resultRows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u8bf7\u7a0d\u540e\u5237\u65b0\u4e3b\u673a\u6216 Agent \u72b6\u6001\u67e5\u770b\u6700\u7ec8\u7ed3\u679c\u3002`,
+            content: `\u5df2\u63d0\u4ea4 ${resultRows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u5c06\u5728 10 \u79d2\u540e\u81ea\u52a8\u68c0\u67e5 Agent \u72b6\u6001\u3002`,
           })
+          scheduleStatusCheck(hostIds, values.action, 10000)
         } else {
           message.success(`Agent ${values.action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
         }

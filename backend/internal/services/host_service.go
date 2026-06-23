@@ -393,7 +393,12 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		result.Message = "agent " + action + " completed"
 		return result, nil
 	}
-	time.Sleep(500 * time.Millisecond)
+
+	waitSec := 2 * time.Second
+	if action == "install" || action == "add" || action == "update" {
+		waitSec = 5 * time.Second
+	}
+	time.Sleep(waitSec)
 	if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 		result.Status = "success"
 		result.Message = msg
