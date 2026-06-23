@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { Button, Card, Form, InputNumber, message, Modal, Select, Space, Table, Tag } from 'antd'
 import { CloudServerOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -14,37 +14,46 @@ const actionOptions = [
 ]
 
 const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+
 const isFailedAgentStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
+  const s = (status || '').toLowerCase()
+  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(s)
 }
 
 const isSuccessfulAgentStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
+  const s = (status || '').toLowerCase()
+  return ['success', 'succeeded', 'completed', 'ok', 'agent healthy'].includes(s) || s.startsWith('agent healthy')
 }
 
 const agentStatusColor = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  if (isSuccessfulAgentStatus(normalized)) return 'success'
-  if (isFailedAgentStatus(normalized)) return 'error'
-  if (['submitted', 'pending', 'running'].includes(normalized)) return 'processing'
+  const s = (status || '').toLowerCase()
+  if (isSuccessfulAgentStatus(s)) return 'success'
+  if (isFailedAgentStatus(s)) return 'error'
+  if (['submitted', 'pending', 'running', 'installing'].includes(s)) return 'processing'
   return 'default'
 }
 
-const summarizeAgentRows = (rows: any[]) =>
-  rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
+const hostStatusFromAgent = (actionResult?: any): string => {
+  if (!actionResult) return ''
+  if (isSuccessfulAgentStatus(actionResult.status)) return 'active'
+  if (isFailedAgentStatus(actionResult.status)) return 'failed'
+  return actionResult.status || ''
+}
+
+const summarizeRows = (rows: any[]) =>
+  rows.map((r: any) => `${r?.host_name || r?.address || '-'}: ${r?.message || r?.status || 'unknown'}`).join('\n')
 
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
-  const [rows, setRows] = useState<any[]>([])
+  const [resultRows, setResultRows] = useState<any[]>([])
+  const [actionStatus, setActionStatus] = useState<Record<string, string>>({})
   const [form] = Form.useForm()
   const pollRef = useRef<number | null>(null)
 
-  const fetchHosts = async () => {
+  const fetchHosts = useCallback(async () => {
     setLoading(true)
     try {
       const res: any = await hostApi.list(1000, 0)
@@ -52,99 +61,156 @@ const AgentManage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchHosts()
     return () => { if (pollRef.current) clearTimeout(pollRef.current) }
-  }, [])
-
-  const scheduleStatusCheck = (hostIds: string[], action: string, delayMs: number) => {
-    if (pollRef.current) clearTimeout(pollRef.current)
-    pollRef.current = window.setTimeout(async () => {
-      await fetchHosts()
-      const checkRows: any[] = []
-      for (const hostId of hostIds) {
-        try {
-          const res: any = await hostApi.agentAction(hostId, 'status')
-          checkRows.push(res?.data)
-        } catch { /* ignore */ }
-      }
-      setRows(prev => {
-        const updated = [...prev]
-        for (const cr of checkRows) {
-          const idx = updated.findIndex(r => r.host_id === cr.host_id || r.address === cr.address)
-          if (idx >= 0) updated[idx] = { ...updated[idx], ...cr, delayed_check: true }
-        }
-        return updated
-      })
-      const stillFailed = checkRows.filter((r: any) => !isSuccessfulAgentStatus(r?.status))
-      if (stillFailed.length > 0) {
-        Modal.warning({
-          title: `${action} 后状态检查结果`,
-          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(stillFailed)}</div>,
-        })
-      }
-    }, delayMs)
-  }
+  }, [fetchHosts])
 
   const execute = async () => {
     const values = await form.validateFields()
     const hostIds = selectedRowKeys.map(String)
     if (hostIds.length === 0) {
-      message.warning('\u8bf7\u5148\u9009\u62e9\u4e3b\u673a')
+      message.warning('请先选择主机')
       return
     }
+
     setRunning(true)
+    setResultRows([])
+
     try {
-      const asyncAction = longRunningAgentActions.has(values.action)
-      if (values.agent_port && !asyncAction) {
-        const resultRows = []
-        for (const hostId of hostIds) {
-          const res: any = await hostApi.agentAction(hostId, values.action, values.agent_port)
-          resultRows.push(res?.data)
-        }
-        setRows(resultRows)
-        const failedRows = resultRows.filter((row: any) => !isSuccessfulAgentStatus(row?.status))
-        if (failedRows.length > 0) {
-          Modal.error({
-            title: `Agent ${values.action} \u64cd\u4f5c\u5931\u8d25`,
-            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows)}</div>,
+      const action = values.action as string
+      const isAsync = longRunningAgentActions.has(action)
+
+      if (isAsync) {
+        const res: any = await hostApi.batchAgentAction(hostIds, action, true, values.agent_port)
+        const rows = res?.data?.rows || []
+        setResultRows(rows)
+
+        setActionStatus(prev => {
+          const next = { ...prev }
+          for (const r of rows) {
+            if (r.host_id) next[r.host_id] = 'installing'
+          }
+          return next
+        })
+
+        message.info(`已提交 ${rows.length || hostIds.length} 台主机的 ${action} 任务，正在后台执行...`)
+
+        const pollStatus = async (attempt: number) => {
+          if (attempt > 6) return
+          await new Promise(resolve => setTimeout(resolve, 5000))
+          await fetchHosts()
+
+          const checkResults: any[] = []
+          for (const hostId of hostIds) {
+            try {
+              const r: any = await hostApi.agentAction(hostId, 'status')
+              checkResults.push({ host_id: hostId, ...r?.data })
+            } catch { /* ignore */ }
+          }
+
+          setResultRows(prev => {
+            const updated = [...prev]
+            for (const cr of checkResults) {
+              const idx = updated.findIndex(r => r.host_id === cr.host_id)
+              if (idx >= 0) {
+                updated[idx] = { ...updated[idx], ...cr }
+              } else {
+                updated.push(cr)
+              }
+            }
+            return updated
           })
-        } else {
-          message.success(`Agent ${values.action} \u64cd\u4f5c\u5b8c\u6210`)
+
+          setActionStatus(prev => {
+            const next = { ...prev }
+            for (const cr of checkResults) {
+              if (cr.host_id && isSuccessfulAgentStatus(cr.status)) {
+                next[cr.host_id] = 'success'
+              } else if (cr.host_id && isFailedAgentStatus(cr.status)) {
+                next[cr.host_id] = 'failed'
+              }
+            }
+            return next
+          })
+
+          const allDone = checkResults.every(r => isSuccessfulAgentStatus(r.status))
+          const allFailed = checkResults.every(r => isFailedAgentStatus(r.status))
+          if (!allDone && !allFailed && attempt < 6) {
+            pollStatus(attempt + 1)
+          } else {
+            await fetchHosts()
+          }
         }
+
+        pollStatus(1)
       } else {
-        const res: any = await hostApi.batchAgentAction(hostIds, values.action, asyncAction, values.agent_port)
-        const resultRows = res?.data?.rows || []
-        setRows(resultRows)
-        const failedRows = resultRows.filter((row: any) => isFailedAgentStatus(row?.status))
-        if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
-          Modal.error({
-            title: `Agent ${values.action} \u64cd\u4f5c\u5931\u8d25`,
-            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : resultRows)}</div>,
-          })
-        } else if (asyncAction || res?.data?.async) {
-          Modal.info({
-            title: `Agent ${values.action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
-            content: `\u5df2\u63d0\u4ea4 ${resultRows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u5c06\u5728 10 \u79d2\u540e\u81ea\u52a8\u68c0\u67e5 Agent \u72b6\u6001\u3002`,
-          })
-          scheduleStatusCheck(hostIds, values.action, 10000)
-        } else {
-          message.success(`Agent ${values.action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
+        const resultRowsList: any[] = []
+        for (const hostId of hostIds) {
+          try {
+            const res: any = await hostApi.agentAction(hostId, action, values.agent_port)
+            resultRowsList.push(res?.data)
+          } catch (err: any) {
+            resultRowsList.push({
+              host_id: hostId,
+              action,
+              status: 'failed',
+              message: err?.message || 'request failed',
+            })
+          }
         }
+
+        setResultRows(resultRowsList)
+
+        const failed = resultRowsList.filter(r => !isSuccessfulAgentStatus(r?.status))
+        if (failed.length > 0) {
+          Modal.error({
+            title: `Agent ${action} 操作失败`,
+            content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeRows(failed)}</div>,
+          })
+        } else {
+          message.success(`Agent ${action} 完成：${resultRowsList.length} 台`)
+        }
+
+        await fetchHosts()
       }
-      fetchHosts()
     } finally {
       setRunning(false)
     }
   }
+
+  const getDisplayStatus = (host: Host): string => {
+    const override = actionStatus[host.id]
+    if (override === 'installing') return 'installing'
+    if (override === 'success') return 'active'
+    if (override === 'failed') return 'failed'
+    return host.status
+  }
+
+  const getDisplayStatusText = (host: Host): string => {
+    const override = actionStatus[host.id]
+    if (override === 'installing') return '安装中...'
+    if (override === 'success') return '可用'
+    if (override === 'failed') return '不可用'
+    return host.status || 'unknown'
+  }
+
   const columns: ColumnsType<Host> = [
     { title: '主机名称', dataIndex: 'name', key: 'name' },
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', render: (v) => v || 9090 },
-    { title: '主机状态', dataIndex: 'status', key: 'status', render: (v) => <Tag color={agentStatusColor(v)}>{v || 'unknown'}</Tag> },
+    {
+      title: '主机状态',
+      key: 'status',
+      render: (_, r) => {
+        const s = getDisplayStatus(r)
+        const text = getDisplayStatusText(r)
+        return <Tag color={agentStatusColor(s)}>{text}</Tag>
+      },
+    },
   ]
 
   const resultColumns: ColumnsType<any> = [
@@ -152,14 +218,14 @@ const AgentManage: React.FC = () => {
     { title: '地址', dataIndex: 'address', key: 'address' },
     { title: '动作', dataIndex: 'action', key: 'action' },
     { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={agentStatusColor(v)}>{v || 'unknown'}</Tag> },
-    { title: '信息', dataIndex: 'message', key: 'message' },
+    { title: '信息', dataIndex: 'message', key: 'message', ellipsis: true },
   ]
 
   return (
     <div style={{ padding: 24 }}>
       <Card
         title={<Space><CloudServerOutlined /><span>Agent 管理</span></Space>}
-        extra={<Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>}
+        extra={<Button icon={<ReloadOutlined />} onClick={fetchHosts} loading={loading}>刷新</Button>}
       >
         <Form form={form} layout="inline" initialValues={{ action: 'status' }} style={{ marginBottom: 16 }}>
           <Form.Item name="action" rules={[{ required: true }]}>
@@ -168,7 +234,13 @@ const AgentManage: React.FC = () => {
           <Form.Item name="agent_port">
             <InputNumber min={1} max={65535} placeholder="Agent 端口(可选)" style={{ width: 150 }} />
           </Form.Item>
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={execute} loading={running} disabled={selectedRowKeys.length === 0}>
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={execute}
+            loading={running}
+            disabled={selectedRowKeys.length === 0}
+          >
             执行选中主机
           </Button>
         </Form>
@@ -182,9 +254,14 @@ const AgentManage: React.FC = () => {
         />
       </Card>
 
-      {rows.length > 0 && (
+      {resultRows.length > 0 && (
         <Card title="执行结果" style={{ marginTop: 16 }}>
-          <Table columns={resultColumns} dataSource={rows.map((row, index) => ({ ...row, key: `${row?.host_id || index}-${index}` }))} pagination={false} />
+          <Table
+            columns={resultColumns}
+            dataSource={resultRows.map((row, i) => ({ ...row, key: `${row?.host_id || i}-${i}` }))}
+            pagination={false}
+            size="small"
+          />
         </Card>
       )}
     </div>
