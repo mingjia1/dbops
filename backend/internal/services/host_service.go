@@ -748,7 +748,13 @@ func agentStartCommand(port int, token string) string {
 }
 
 func agentStopCommand() string {
-	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\npkill -f '^/opt/dbops-agent/agent' 2>/dev/null || true\npkill -f '^/opt/mysql-ops-agent/mysql-ops-agent' 2>/dev/null || true\nfor p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); case \"$exe\" in /opt/dbops-agent/agent*|/opt/mysql-ops-agent/mysql-ops-agent*) kill \"${p##*/}\" 2>/dev/null || true ;; esac; done\nsleep 0.5"
+	return "if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi\n" +
+		"pkill -f '/opt/dbops-agent/agent' 2>/dev/null || true\n" +
+		"pkill -f 'dbops-agent' 2>/dev/null || true\n" +
+		"pkill -f 'mysql-ops-agent' 2>/dev/null || true\n" +
+		"fuser -k /opt/dbops-agent/agent 2>/dev/null || true\n" +
+		"for p in /proc/[0-9]*; do exe=$(readlink \"$p/exe\" 2>/dev/null || true); case \"$exe\" in */dbops-agent/*|*/mysql-ops-agent/*) kill -9 \"${p##*/}\" 2>/dev/null || true ;; esac; done\n" +
+		"sleep 1"
 }
 
 func shellEscape(value string) string {
