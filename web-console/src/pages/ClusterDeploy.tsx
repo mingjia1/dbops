@@ -655,6 +655,20 @@ const ClusterDeploy: React.FC = () => {
           </Form.Item>
         </Col>
       </Row>
+      <Row gutter={16}>
+        <Col span={24}>
+          <Form.Item label="中间件插件" tooltip="部署完成后自动装配所选中间件">
+            <Space>
+              <Form.Item name="enable_keepalived" valuePropName="checked" noStyle>
+                <Checkbox>Keepalived (VIP 漂移)</Checkbox>
+              </Form.Item>
+              <Form.Item name="enable_proxysql" valuePropName="checked" noStyle>
+                <Checkbox>ProxySQL (读写分离)</Checkbox>
+              </Form.Item>
+            </Space>
+          </Form.Item>
+        </Col>
+      </Row>
       <Form.Item wrapperCol={{ offset: 6 }}>
         <Space>
           <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
