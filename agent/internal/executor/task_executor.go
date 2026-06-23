@@ -706,9 +706,16 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		fmt.Sprintf("fuser -k %s 2>/dev/null || true; fuser -k %d/tcp 2>/dev/null || true; lsof -ti :%d 2>/dev/null | xargs kill -9 2>/dev/null || true", socketPath, port, port))
 	killBySocket.Run()
 	time.Sleep(2 * time.Second)
-	// Also clean up mysqlx socket that may block new instances
+	// Clean up mysqlx socket and group replication ports that may block new instances
 	os.Remove("/tmp/mysqlx.sock")
 	os.Remove(socketPath)
+	// Kill any process on MGR group communication port (default 33061 + port offset)
+	mgrPort := 33060 + (port - 33000)
+	if mgrPort > 33060 && mgrPort < 33200 {
+		killMGR := exec.CommandContext(ctx, "sh", "-c",
+			fmt.Sprintf("fuser -k %d/tcp 2>/dev/null || true", mgrPort))
+		killMGR.Run()
+	}
 
 	// Only run initialization if the data directory hasn't been initialized yet.
 	if needInit {
