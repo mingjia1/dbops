@@ -43,6 +43,14 @@ const rejectFailedTaskData = (res: any) => {
   return res
 }
 
+const showErrorToast = (msg: string) => {
+  try {
+    message.error(msg)
+  } catch {
+    console.error('[API Error]', msg)
+  }
+}
+
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
@@ -74,7 +82,7 @@ api.interceptors.response.use(
     }
     if (!(error.config as any)?.suppressGlobalError) {
       const errMsg = error.response?.data?.message || error.message || 'Request failed'
-      message.error(errMsg)
+      showErrorToast(errMsg)
     }
     return Promise.reject(error)
   }
@@ -394,11 +402,11 @@ export interface HostScanResult {
 
 export const envCheckApi = {
   execute: (data: { hosts?: { host: string; port: number; username: string; password: string }[]; host_ids?: string[] }) =>
-    api.post('/env-checks', data),
-  
+    api.post('/env-checks', data, { timeout: 120000 }),
+
   get: (checkId: string) =>
     api.get(`/env-checks/${checkId}`),
-  
+
   export: (checkId: string, format = 'json') =>
     api.get(`/env-checks/${checkId}/export?format=${format}`),
 }
