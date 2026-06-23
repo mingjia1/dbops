@@ -21,7 +21,11 @@ func New(level string) *zap.Logger {
 	
 	logger, err := config.Build()
 	if err != nil {
-		panic(err)
+		fallback, _ := zap.NewProduction()
+		if fallback == nil {
+			fallback = zap.NewNop()
+		}
+		return fallback
 	}
 	
 	return logger

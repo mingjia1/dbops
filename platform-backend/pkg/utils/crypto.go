@@ -8,19 +8,31 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
-func deriveKey(passphrase string) []byte {
-	sum := sha256.Sum256([]byte(passphrase))
-	return sum[:]
+const (
+	keyLen   = 32
+	saltLen  = 16
+	iter     = 100_000
+)
+
+func deriveKey(passphrase string, salt []byte) []byte {
+	return pbkdf2.Key([]byte(passphrase), salt, iter, keyLen, sha256.New)
 }
 
 func Encrypt(plaintext, passphrase string) (string, error) {
 	if plaintext == "" {
 		return "", nil
 	}
-	key := deriveKey(passphrase)
 
+	salt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return "", err
+	}
+
+	key := deriveKey(passphrase, salt)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -37,20 +49,27 @@ func Encrypt(plaintext, passphrase string) (string, error) {
 	}
 
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	payload := append(salt, ciphertext...)
+	return base64.StdEncoding.EncodeToString(payload), nil
 }
 
 func Decrypt(ciphertext, passphrase string) (string, error) {
 	if ciphertext == "" {
 		return "", nil
 	}
-	key := deriveKey(passphrase)
-
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", err
 	}
 
+	if len(data) < saltLen {
+		return "", errors.New("ciphertext too short")
+	}
+
+	salt := data[:saltLen]
+	encrypted := data[saltLen:]
+
+	key := deriveKey(passphrase, salt)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -61,11 +80,11 @@ func Decrypt(ciphertext, passphrase string) (string, error) {
 		return "", err
 	}
 
-	if len(data) < gcm.NonceSize() {
+	if len(encrypted) < gcm.NonceSize() {
 		return "", errors.New("ciphertext too short")
 	}
 
-	nonce, ct := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	nonce, ct := encrypted[:gcm.NonceSize()], encrypted[gcm.NonceSize():]
 	plaintext, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
 		return "", err

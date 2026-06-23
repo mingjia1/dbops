@@ -676,23 +676,12 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 	}
 
-	// 在初始化前，杀掉所有可能使用该数据目录的mysqld进程
-	// 这样可以确保数据目录能被正确清理
-	psCmd := exec.CommandContext(ctx, "sh", "-c", "ps aux | grep '[m]ysqld' | awk '{print $2}'")
-	if pidBytes, err := psCmd.Output(); err == nil && len(pidBytes) > 0 {
-		pids := strings.TrimSpace(string(pidBytes))
-		if pids != "" {
-			for _, pid := range strings.Split(pids, "\n") {
-				if pid != "" {
-					killCmd := exec.CommandContext(ctx, "kill", "-9", pid)
-					killCmd.Run()
-				}
-			}
-			time.Sleep(3 * time.Second)
-		}
-	} else if err != nil {
-	} else {
-	}
+	// Kill only the mysqld process using the target port (not all mysqld processes)
+	socketPath := fmt.Sprintf("/tmp/mysql_%d.sock", port)
+	killBySocket := exec.CommandContext(ctx, "sh", "-c",
+		fmt.Sprintf("fuser -k %s 2>/dev/null || lsof -ti :%d | xargs kill -15 2>/dev/null || true", socketPath, port))
+	killBySocket.Run()
+	time.Sleep(2 * time.Second)
 
 	// Only run initialization if the data directory hasn't been initialized yet.
 	if needInit {
@@ -783,9 +772,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// After --initialize-insecure and --daemonize, the socket file is created
 	// asynchronously. Without this wait, the socket-based retrySQL would fail
 	// silently and root@% would never be created.
-	socketPath := filepath.Join(dataDir, "mysql.sock")
+	dataSocketPath := filepath.Join(dataDir, "mysql.sock")
 	for i := 0; i < 30; i++ {
-		if _, err := os.Stat(socketPath); err == nil {
+		if _, err := os.Stat(dataSocketPath); err == nil {
 			break
 		}
 		time.Sleep(1 * time.Second)

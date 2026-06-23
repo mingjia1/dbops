@@ -703,7 +703,9 @@ func runSSH(client *ssh.Client, command string) (string, error) {
 }
 
 func agentConfigCommand(port int, token string) string {
-	return fmt.Sprintf("cat > /opt/dbops-agent/config.yaml <<'EOF'\nagent_port: \"%d\"\nlog_level: \"info\"\nagent_token: \"%s\"\nEOF", port, shellEscape(token))
+	return fmt.Sprintf(
+		"cat > /opt/dbops-agent/config.yaml <<'EOF'\nagent_port: \"%d\"\nlog_level: \"info\"\nagent_token: \"%s\"\nEOF\nchmod 600 /opt/dbops-agent/config.yaml",
+		port, shellEscape(token))
 }
 
 func agentStartCommand(port int, token string) string {
