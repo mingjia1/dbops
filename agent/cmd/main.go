@@ -39,6 +39,8 @@ func main() {
 		toolInstaller = executor.NewToolInstaller()
 	}
 
+	haInstaller := executor.NewHAInstaller()
+
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -645,6 +647,62 @@ func main() {
 					return
 				}
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": results})
+			})
+		}
+
+		ha := agent.Group("/ha-install")
+		{
+			ha.POST("/replication", func(c *gin.Context) {
+				var req executor.HAInstallRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				result, err := haInstaller.InstallReplicationSetup(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+			ha.POST("/mha", func(c *gin.Context) {
+				var req executor.HAInstallRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				result, err := haInstaller.InstallMHA(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+			ha.POST("/mgr", func(c *gin.Context) {
+				var req executor.HAInstallRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				result, err := haInstaller.InstallMGR(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+			})
+			ha.POST("/pxc", func(c *gin.Context) {
+				var req executor.HAInstallRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+					return
+				}
+				result, err := haInstaller.InstallPXC(c.Request.Context(), req)
+				if err != nil {
+					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+					return
+				}
+				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
 		}
 	}
