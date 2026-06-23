@@ -347,7 +347,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	switch action {
 	case "install", "add", "update":
 		if err := s.uploadAgentBinary(client); err != nil {
-			result.Message = err.Error()
+			result.Message = "upload agent binary failed: " + err.Error()
 			return result, nil
 		}
 		if out, err := runSSH(client, agentConfigCommand(port, s.agentToken)); err != nil {
@@ -355,10 +355,21 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			return result, nil
 		}
 		// Stop old agent, wait 2 seconds for process to fully die, then start new one
-		if out, err := runSSH(client, agentStopCommand()+"\nsleep 2\n"+agentStartCommand(port, s.agentToken)); err != nil {
+		startCmd := agentStopCommand() + "\nsleep 2\n" + agentStartCommand(port, s.agentToken)
+		out, err := runSSH(client, startCmd)
+		if err != nil {
 			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
 			return result, nil
 		}
+		// Verify agent binary exists and is executable
+		verifyOut, verifyErr := runSSH(client, "ls -la /opt/dbops-agent/agent && file /opt/dbops-agent/agent")
+		if verifyErr != nil {
+			result.Message = fmt.Sprintf("agent binary verification failed: %v\n%s", verifyErr, verifyOut)
+			return result, nil
+		}
+		// Try to read agent log for startup errors
+		logOut, _ := runSSH(client, "sleep 2; cat /opt/dbops-agent/agent.log 2>/dev/null | tail -20")
+		_ = logOut
 	case "restart", "modify":
 		if out, err := runSSH(client, agentConfigCommand(port, s.agentToken)); err != nil {
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
@@ -403,7 +414,13 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		result.Status = "success"
 		result.Message = msg
 	} else {
-		result.Message = "agent command executed, but health check failed: " + msg
+		// Read agent log to help diagnose startup failure
+		logOut, _ := runSSH(client, "cat /opt/dbops-agent/agent.log 2>/dev/null | tail -10")
+		logHint := ""
+		if strings.TrimSpace(logOut) != "" {
+			logHint = "\nagent log:\n" + strings.TrimSpace(logOut)
+		}
+		result.Message = "agent command executed, but health check failed: " + msg + logHint
 	}
 	return result, nil
 }
