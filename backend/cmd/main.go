@@ -40,7 +40,7 @@ func main() {
 	// Force use old database file
 	sqlitePath := cfg.SQLitePath
 	if sqlitePath == "" {
-		sqlitePath = "./data/dbops.db"
+		sqlitePath = "../db/dbops.db"
 	}
 	logInstance.Info("Forcing SQLite path: " + sqlitePath)
 
@@ -649,14 +649,14 @@ func main() {
 		}
 	}
 
-	if _, err := os.Stat("./web-console/dist"); err == nil {
-		r.Static("/assets", "./web-console/dist/assets")
+	if _, err := os.Stat("./frontend/dist"); err == nil {
+		r.Static("/assets", "./frontend/dist/assets")
 		r.NoRoute(func(c *gin.Context) {
-			c.File("./web-console/dist/index.html")
+			c.File("./frontend/dist/index.html")
 		})
-		logInstance.Info("Serving frontend SPA from ./web-console/dist")
+		logInstance.Info("Serving frontend SPA from ./frontend/dist")
 	} else {
-		logInstance.Info("Frontend SPA not found at ./web-console/dist, API-only mode")
+		logInstance.Info("Frontend SPA not found at ./frontend/dist, API-only mode")
 	}
 
 	logInstance.Info("Server starting on port " + cfg.ServerPort)

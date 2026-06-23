@@ -6,7 +6,7 @@
 # 依赖目录
 node_modules/
 # 前端构建产物
-web-console/dist/
+frontend/dist/
 # 缓存
 .npm/
 .yarn/
@@ -24,11 +24,11 @@ web-console/dist/
 *.so
 *.dylib
 # 平台/Agent 构建输出
-platform-backend/bin/
+backend/bin/
 agent/bin/
 # 旧的根目录二进制（历史构建残留）
-platform-backend/platform-backend
-platform-backend/agent
+backend/backend
+backend/agent
 agent/agent
 agent/agent_linux
 agent/mysql-ops-agent
@@ -44,7 +44,7 @@ coverage.html
 logs/
 *.log
 *.err
-!platform-backend/internal/services/*.go
+!backend/internal/services/*.go
 !agent/internal/**/*.go
 # 临时文件
 tmp/
@@ -109,8 +109,8 @@ Thumbs.db
 .github/
 .opencode/
 # 平台后端配置（含密钥的本地配置）
-platform-backend/config/config.yaml
-platform-backend/config/config.local.yaml
+backend/config/config.yaml
+backend/config/config.local.yaml
 # Agent 配置（含密钥的本地配置）
 agent/config/config.yaml
 agent/config/config.local.yaml
@@ -121,8 +121,8 @@ omo/
 .cache/
 .codeartsdoer/
 .sisyphus/
-web-console/node_modules/
-web-console/e2e/
+frontend/node_modules/
+frontend/e2e/
 
 # ---------- 敏感信息 ----------
 login.json
@@ -171,7 +171,7 @@ relay_download_packages.py
 # ---------- 编译产物（二进制） ----------
 agent/mysql-ops-agent-linux-amd64
 agent/agent-linux-amd64
-platform-backend/platform-backend-linux-amd64
+backend/backend-linux-amd64
 
 # ---------- 备份目录 ----------
 .git.backup/
@@ -194,27 +194,27 @@ agent/verify_decrypt.go
 agent/create_root_*.py
 agent/decode_password.go
 agent/internal/executor/change_password_fix.go
-platform-backend/internal/repositories/user_repository_test.go
-platform-backend/internal/repositories/host_repository_test.go
-platform-backend/internal/repositories/key_version_repository_test.go
-platform-backend/internal/repositories/license_repository_test.go
-platform-backend/internal/repositories/masking_repository_test.go
-platform-backend/internal/repositories/*_repository_test.go
-platform-backend/pkg/**/*_test.go
-platform-backend/internal/services/ai_service_test.go
-platform-backend/internal/services/audit_service_test.go
-platform-backend/internal/services/drill_service_test.go
-platform-backend/internal/services/fault_service_test.go
-platform-backend/internal/services/key_rotation_service_test.go
-platform-backend/internal/services/license_service_test.go
-platform-backend/internal/services/masking_service_test.go
-platform-backend/internal/services/parameter_template_service_test.go
-platform-backend/internal/services/user_service_test.go
+backend/internal/repositories/user_repository_test.go
+backend/internal/repositories/host_repository_test.go
+backend/internal/repositories/key_version_repository_test.go
+backend/internal/repositories/license_repository_test.go
+backend/internal/repositories/masking_repository_test.go
+backend/internal/repositories/*_repository_test.go
+backend/pkg/**/*_test.go
+backend/internal/services/ai_service_test.go
+backend/internal/services/audit_service_test.go
+backend/internal/services/drill_service_test.go
+backend/internal/services/fault_service_test.go
+backend/internal/services/key_rotation_service_test.go
+backend/internal/services/license_service_test.go
+backend/internal/services/masking_service_test.go
+backend/internal/services/parameter_template_service_test.go
+backend/internal/services/user_service_test.go
 
 # ---------- Auto-generated cleanup patterns ----------
 agent/agent-new
 agent/agent-old
-platform-backend/mysql-ops-platform
+backend/mysql-ops-platform
 deploy_all.py
 mgr_*.py
 fix_*.py

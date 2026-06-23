@@ -10,7 +10,7 @@ test:
 
 clean:
 	rm -rf bin
-	rm -f platform-backend
+	rm -f backend
 
 docker-build:
-	docker build -t platform-backend:latest -f Dockerfile .
+	docker build -t backend:latest -f Dockerfile .

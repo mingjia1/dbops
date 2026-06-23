@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("redis_password", "")
 	viper.SetDefault("redis_db", 0)
 	viper.SetDefault("clickhouse_url", "clickhouse://default@localhost:9000/default")
-	viper.SetDefault("data_dir", "./data")
+	viper.SetDefault("data_dir", "../db")
 	// 存储模式: auto = 先试 MySQL 再回退 SQLite; mysql = 强制 MySQL (连不上 fail);
 	// sqlite = 强制 SQLite. 默认 auto, 显式声明避免静默降级.
 	viper.SetDefault("storage_mode", "auto")

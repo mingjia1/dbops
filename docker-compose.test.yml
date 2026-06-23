@@ -69,9 +69,9 @@ services:
       mysql-test-target:
         condition: service_healthy
 
-  platform-backend-test:
+  backend-test:
     build:
-      context: ./platform-backend
+      context: ./backend
       dockerfile: Dockerfile.test
     container_name: mysql-ops-backend-test
     environment:
@@ -108,14 +108,14 @@ services:
       dockerfile: Dockerfile.test
     container_name: mysql-ops-agent-test
     environment:
-      DBOPS_PLATFORM_URL: http://platform-backend-test:8080
+      DBOPS_PLATFORM_URL: http://backend-test:8080
       DBOPS_AGENT_TOKEN: "test_agent_token_must_be_at_least_16_chars"
       AGENT_ID: test-agent-001
       LOG_LEVEL: debug
     ports:
       - "9091:9090"
     depends_on:
-      platform-backend-test:
+      backend-test:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/health"]

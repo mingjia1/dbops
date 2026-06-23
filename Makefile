@@ -3,40 +3,40 @@
 all: install-backend install-agent install-web
 
 install-backend:
-	cd platform-backend && go mod download && go mod tidy
+	cd backend && go mod download && go mod tidy
 
 install-agent:
 	cd agent && go mod download && go mod tidy
 
 install-web:
-	cd web-console && npm install
+	cd frontend && npm install
 
 build: build-backend build-agent build-web
 
 build-backend:
-	make -C platform-backend build
+	make -C backend build
 
 build-agent:
 	make -C agent build
 
 build-web:
-	make -C web-console build
+	make -C frontend build
 
 run: run-backend run-agent run-web
 
 run-backend:
-	cd platform-backend && go run ./cmd/main.go
+	cd backend && go run ./cmd/main.go
 
 run-agent:
 	cd agent && go run ./cmd/main.go
 
 run-web:
-	cd web-console && npm run dev
+	cd frontend && npm run dev
 
 test: test-backend test-agent
 
 test-backend:
-	make -C platform-backend test
+	make -C backend test
 
 test-agent:
 	make -C agent test
@@ -51,29 +51,29 @@ docker-logs:
 	docker-compose -f docker-compose.dev.yml logs -f
 
 clean:
-	make -C platform-backend clean
+	make -C backend clean
 	make -C agent clean
-	make -C web-console clean
+	make -C frontend clean
 
 fmt:
-	cd platform-backend && go fmt ./...
+	cd backend && go fmt ./...
 	cd agent && go fmt ./...
 
 lint:
-	cd platform-backend && golangci-lint run
+	cd backend && golangci-lint run
 	cd agent && golangci-lint run
 
 db-migrate:
-	cd platform-backend && go run ./cmd/main.go migrate
+	cd backend && go run ./cmd/main.go migrate
 
 dist: build-backend build-agent build-web
 	rm -rf dist && mkdir -p dist/bin dist/config dist/scripts
-	cp platform-backend/build/dbops-backend dist/bin/
+	cp backend/build/dbops-backend dist/bin/
 	cp agent/build/dbops-agent dist/bin/
-	cp -r platform-backend/config/*.yaml dist/config/ 2>/dev/null || true
+	cp -r backend/config/*.yaml dist/config/ 2>/dev/null || true
 	cp scripts/upgrade-platform.sh scripts/start.sh scripts/stop.sh dist/scripts/
 	cp docker-compose.dev.yml dist/
-	cp web-console/build dist/web -r 2>/dev/null || cp -r web-console/dist dist/web 2>/dev/null || true
+	cp frontend/build dist/web -r 2>/dev/null || cp -r frontend/dist dist/web 2>/dev/null || true
 	tar -czf dbops-offline-$(shell date +%Y%m%d).tar.gz dist/
 	@echo "Offline package: dbops-offline-$(shell date +%Y%m%d).tar.gz"
 
@@ -82,10 +82,10 @@ upgrade: build-backend build-agent
 	@echo "Stopping services..."
 	scripts/stop.sh || true
 	@echo "Installing new binaries..."
-	cp platform-backend/build/dbops-backend /usr/local/bin/dbops-backend 2>/dev/null || true
+	cp backend/build/dbops-backend /usr/local/bin/dbops-backend 2>/dev/null || true
 	cp agent/build/dbops-agent /usr/local/bin/dbops-agent 2>/dev/null || true
 	@echo "Running DB migrations..."
-	cd platform-backend && go run ./cmd/main.go migrate 2>/dev/null || true
+	cd backend && go run ./cmd/main.go migrate 2>/dev/null || true
 	@echo "Starting services..."
 	scripts/start.sh || true
 	@echo "=== Upgrade complete ==="
