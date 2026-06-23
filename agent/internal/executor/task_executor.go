@@ -709,11 +709,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// Clean up mysqlx socket and group replication ports that may block new instances
 	os.Remove("/tmp/mysqlx.sock")
 	os.Remove(socketPath)
-	// Kill any process on MGR group communication port (default 33061 + port offset)
-	mgrPort := 33060 + (port - 33000)
-	if mgrPort > 33060 && mgrPort < 33200 {
+	// Kill any process on common MGR group communication ports (33061-33070)
+	for _, mp := range []int{33061, 33062, 33063, 33064, 33065} {
 		killMGR := exec.CommandContext(ctx, "sh", "-c",
-			fmt.Sprintf("fuser -k %d/tcp 2>/dev/null || true", mgrPort))
+			fmt.Sprintf("fuser -k %d/tcp 2>/dev/null || true", mp))
 		killMGR.Run()
 	}
 
