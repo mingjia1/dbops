@@ -73,9 +73,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("allowed_origins", "http://localhost:3000,http://127.0.0.1:3000")
 	// 集群部署默认凭据 (生产应通过 secret 管理覆盖).
 	viper.SetDefault("cluster_defaults.replication_user", "repl")
-	viper.SetDefault("cluster_defaults.replication_pass", "Repl#2024!ChangeMe")
+	viper.SetDefault("cluster_defaults.replication_pass", "")
 	viper.SetDefault("cluster_defaults.sst_user", "sstuser")
-	viper.SetDefault("cluster_defaults.sst_pass", "Sst#2024!ChangeMe")
+	viper.SetDefault("cluster_defaults.sst_pass", "")
 	// P1-6: 集群部署默认 SSH 账号. 留空让 service 层 fallback 到 "root"
 	// (因为旧部署可能确实就是 root, 不强推非 root).
 	viper.SetDefault("cluster_defaults.ssh_user", "root")

@@ -360,7 +360,7 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 Invoke-RestMethod -Uri "http://localhost:8080/api/v1/hosts" `
   -Method Post -Headers @{Authorization="Bearer <jwt>"} `
   -ContentType "application/json" `
-  -Body '{"host":"10.1.81.21","port":22,"user":"root","password":"hcfc!2017","agent_port":9090}'
+  -Body '{"host":"10.1.81.21","port":22,"user":"root","password":"example_password","agent_port":9090}'
 
 # 验证主机连通性 (agent 健康检查)
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/health-check" `
@@ -373,7 +373,7 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/health-check" `
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"deploy-01","config":{"deploy_mode":"single","host":"10.1.81.21","port":3307,"mysql_pass":"Test@123456","mysql_version":"5.7.44"}}'
+  -Body '{"task_id":"deploy-01","config":{"deploy_mode":"single","host":"10.1.81.21","port":3307,"mysql_pass":"example_password","mysql_version":"5.7.44"}}'
 ```
 
 ### 5.4 版本检测
@@ -382,7 +382,7 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/deploy" `
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/version-detect" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ver-01","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"Test@123456"}}'
+  -Body '{"task_id":"ver-01","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 ```
 
 ### 5.5 HA 主从复制
@@ -392,13 +392,13 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/version-detect" `
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ha-master","config":{"deploy_mode":"ha-master","host":"10.1.81.21","port":3307,"mysql_pass":"Test@123456","replicate_user":"repl","replicate_pass":"Repl@123456"}}'
+  -Body '{"task_id":"ha-master","config":{"deploy_mode":"ha-master","host":"10.1.81.21","port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password"}}'
 
 # Step 2: 部署 replica (需显式指定 server_id，否则从 slave 读取现有值)
 Invoke-RestMethod -Uri "http://10.1.81.22:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ha-replica","config":{"deploy_mode":"ha-replica","master_host":"10.1.81.21","master_port":3307,"slave_host":"10.1.81.22","slave_port":3307,"mysql_pass":"Test@123456","replicate_user":"repl","replicate_pass":"Repl@123456","server_id":2}}'
+  -Body '{"task_id":"ha-replica","config":{"deploy_mode":"ha-replica","master_host":"10.1.81.21","master_port":3307,"slave_host":"10.1.81.22","slave_port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password","server_id":2}}'
 ```
 
 ### 5.6 实例管理 (用户/授权)
@@ -408,19 +408,19 @@ Invoke-RestMethod -Uri "http://10.1.81.22:9090/agent/tasks/deploy" `
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"create-user","config":{"action":"create_user","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"Test@123456","username":"app_user","password":"App@2024"}}'
+  -Body '{"task_id":"create-user","config":{"action":"create_user","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","password":"example_password"}}'
 
 # 用户列表
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"list-users","config":{"action":"list_users","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"Test@123456"}}'
+  -Body '{"task_id":"list-users","config":{"action":"list_users","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 
 # 授权
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"grant","config":{"action":"grant_privileges","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"Test@123456","username":"app_user","privileges":"SELECT,INSERT,UPDATE,DELETE","scope":"*.*"}}'
+  -Body '{"task_id":"grant","config":{"action":"grant_privileges","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","privileges":"SELECT,INSERT,UPDATE,DELETE","scope":"*.*"}}'
 ```
 
 ### 5.7 备份恢复
@@ -430,7 +430,7 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/backup" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"backup-01","config":{"mysql_host":"10.1.81.21","mysql_port":3307,"mysql_user":"root","mysql_pass":"Test@123456"}}'
+  -Body '{"task_id":"backup-01","config":{"mysql_host":"10.1.81.21","mysql_port":3307,"mysql_user":"root","mysql_pass":"example_password"}}'
 
 # 恢复 (自动检测备份类型: .sql→mysqldump, 含 xtrabackup_checkpoints→xtrabackup)
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/restore" `
@@ -594,10 +594,10 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/health-check" `
 # 检查 Agent 路由
 Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/version-detect" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
-  -Body '{"task_id":"debug","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"Test@123456"}}'
+  -Body '{"task_id":"debug","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 
 # 检查 MySQL 连通性
-mysql -h 10.1.81.21 -P 3307 -u root -pTest@123456 -e "SELECT @@version, @@server_id"
+mysql -h 10.1.81.21 -P 3307 -u root -pexample_password -e "SELECT @@version, @@server_id"
 ```
 
 ### 8.4 已知限制
@@ -681,5 +681,5 @@ auth:
 | tvy-dbtest-07 | 10.1.81.32 | Slave / Agent | 3307 | 9090 |
 | tvy-dbtest-08 | 10.1.81.41 | Platform DB | 3306 | - |
 
-**统一密码:** `hcfc!2017` (SSH), `Test@123456` (MySQL root)  
+**统一密码:** `example_password` (SSH), `example_password` (MySQL root)  
 **Agent Token:** `dbops-agent-token-16`

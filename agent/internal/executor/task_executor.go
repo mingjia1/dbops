@@ -1053,7 +1053,7 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 		SlaveHost:     "localhost",
 		SlavePort:     3307,
 		ReplicateUser: "repl",
-		ReplicatePass: "repl123",
+		ReplicatePass: "",
 		MySQLUser:     "root",
 		ServerID:      1,
 		DeployMode:    "async",
@@ -4141,7 +4141,10 @@ func adminFailed(taskID, msg string) *TaskResult {
 }
 
 func escapeSQL(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "'", "''")
+	s = strings.ReplaceAll(s, "\x00", "")
+	return s
 }
 
 func configPath(config map[string]interface{}) string {

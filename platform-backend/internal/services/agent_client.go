@@ -214,9 +214,9 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 			lastErr = fmt.Errorf("agent request failed (attempt %d/%d) after timeout=%s: %w", attempt+1, maxRetries+1, client.Timeout, err)
 			continue
 		}
-		defer resp.Body.Close()
 
 		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+		resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
 			continue

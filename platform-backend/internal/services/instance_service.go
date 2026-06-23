@@ -911,7 +911,12 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		var lastErr error
 		for _, candidate := range candidates {
 			original := conn.PasswordEncrypted
-			conn.PasswordEncrypted, _ = utils.Encrypt(candidate, s.encKey)
+			encrypted, encErr := utils.Encrypt(candidate, s.encKey)
+			if encErr != nil {
+				conn.PasswordEncrypted = original
+				continue
+			}
+			conn.PasswordEncrypted = encrypted
 			result, adminErr := s.adminActionWithConnection(ctx, instance, conn, req)
 			conn.PasswordEncrypted = original
 			if adminErr == nil && result.Status == "completed" {
@@ -1051,7 +1056,12 @@ func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPass
 		var actionResult *InstanceAdminResult
 		for _, candidate := range candidates {
 			original := conn.PasswordEncrypted
-			conn.PasswordEncrypted, _ = utils.Encrypt(candidate, s.encKey)
+			encrypted, encErr := utils.Encrypt(candidate, s.encKey)
+			if encErr != nil {
+				conn.PasswordEncrypted = original
+				continue
+			}
+			conn.PasswordEncrypted = encrypted
 			actionResult, lastErr = s.adminActionWithConnection(ctx, &instance, conn, InstanceAdminRequest{
 				Action:               "change_password",
 				Username:             req.Username,
@@ -1281,7 +1291,12 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 	var lastErr error
 	for _, candidate := range candidates {
 		original := conn.PasswordEncrypted
-		conn.PasswordEncrypted, _ = utils.Encrypt(candidate, s.encKey)
+		encrypted, encErr := utils.Encrypt(candidate, s.encKey)
+		if encErr != nil {
+			conn.PasswordEncrypted = original
+			continue
+		}
+		conn.PasswordEncrypted = encrypted
 		lastResult, lastErr = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
 			Action:               "change_password",
 			Username:             req.Username,
@@ -1383,7 +1398,10 @@ func runSSHCommand(client *ssh.Client, command string) (string, error) {
 }
 
 func escapeSQLValue(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "'", "''")
+	s = strings.ReplaceAll(s, "\x00", "")
+	return s
 }
 
 func shellQuote(s string) string {

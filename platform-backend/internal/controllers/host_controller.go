@@ -172,7 +172,10 @@ func (c *HostController) ScanInstances(ctx *gin.Context) {
 	id := ctx.Param("id")
 
 	var req services.ScanInstancesRequest
-	_ = ctx.ShouldBindJSON(&req)
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
 
 	result, err := c.service.StartScanInstances(ctx.Request.Context(), id, req)
 	if err != nil {
