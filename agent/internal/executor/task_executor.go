@@ -654,9 +654,33 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 
 	// Version-agnostic path: download + extract the requested tarball.
-	// Falls back to "whatever is on PATH" if package_url is absent (legacy).
+	// Priority: 1) relay_url  2) package_url  3) PATH
 	var mysqld string
-	if packageURL != "" {
+	relayURL, _ := req.Config["relay_url"].(string)
+	if relayURL != "" {
+		downloader := NewRelayDownloader()
+		flavor := "mysql"
+		mysqldVersion := mysqlVersion
+		relayCfg := RelayDownloadConfig{
+			RelayURL: relayURL,
+			Branch:   flavor,
+			Version:  mysqldVersion,
+			Basedir:  basedir,
+			OSUser:   osUser,
+			Checksum: checksum,
+		}
+		var relayErr error
+		mysqld, relayErr = downloader.DownloadFromRelay(ctx, relayCfg)
+		if relayErr != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("install from relay failed: %v", relayErr),
+				Timestamp: time.Now(),
+			}, nil
+		}
+	} else if packageURL != "" {
 		var installErr error
 		mysqld, installErr = InstallFromURL(ctx, packageURL, checksum, basedir, osUser)
 		if installErr != nil {

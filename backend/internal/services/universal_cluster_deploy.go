@@ -1082,6 +1082,10 @@ func mergeCommonDeployConfig(config map[string]interface{}, req UniversalCluster
 	if ss, ok := stringCustom(req.Custom, "semi_sync_enabled"); ok && req.ClusterType == ClusterTypeHA {
 		config["semi_sync_enabled"] = ss
 	}
+	// Relay server URL for package download
+	if relayURL, ok := stringCustom(req.Custom, "relay_url"); ok && relayURL != "" {
+		config["relay_url"] = relayURL
+	}
 }
 
 // nodeIntCustomRaw extracts an int value from a node's custom map without the
