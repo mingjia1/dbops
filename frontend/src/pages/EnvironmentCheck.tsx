@@ -193,10 +193,20 @@ const EnvironmentCheck: React.FC = () => {
       <Card
         title={<Space><SettingOutlined /><span>环境检查</span></Space>}
         extra={
-          <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)} optionType="button" buttonStyle="solid">
-            <Radio.Button value="from-hosts"><DesktopOutlined /> 从主机列表</Radio.Button>
-            <Radio.Button value="manual">手动输入</Radio.Button>
-          </Radio.Group>
+          <Space>
+            {mode === 'from-hosts' && hosts.length > 0 && (
+              <>
+                <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
+                <Button type="primary" icon={<PlayCircleOutlined />} onClick={onFinish} loading={submitting} disabled={selectedHosts.length === 0}>
+                  启动环境检查
+                </Button>
+              </>
+            )}
+            <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)} optionType="button" buttonStyle="solid">
+              <Radio.Button value="from-hosts"><DesktopOutlined /> 从主机列表</Radio.Button>
+              <Radio.Button value="manual">手动输入</Radio.Button>
+            </Radio.Group>
+          </Space>
         }
       >
         {mode === 'from-hosts' ? (
@@ -206,11 +216,7 @@ const EnvironmentCheck: React.FC = () => {
             ) : (
               <>
                 <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <Button icon={<ReloadOutlined />} onClick={fetchHosts}>刷新</Button>
-                  <Button type="primary" icon={<PlayCircleOutlined />} onClick={onFinish} loading={submitting} disabled={selectedHosts.length === 0}>
-                    启动环境检查
-                  </Button>
-                  <span style={{ color: '#8c8c8c', marginLeft: 'auto' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
+                  <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
                 </div>
                 <Table
                   rowKey="id"

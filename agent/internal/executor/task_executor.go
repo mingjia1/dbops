@@ -3605,6 +3605,8 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			req.Config["datadir"] = fmt.Sprintf("/data/mysql/%d", port)
 		}
 		output, err = decommissionInstance(ctx, req.Config)
+	case "query_variables":
+		output, err = queryMySQLVariables(ctx, req.Config)
 	default:
 		return adminFailed(req.TaskID, "unsupported action: "+action), nil
 	}
@@ -3659,6 +3661,85 @@ func adminTarget(config map[string]interface{}) (string, int, string, string) {
 	return host, port, user, pass
 }
 
+func queryMySQLVariables(ctx context.Context, config map[string]interface{}) (string, error) {
+	host, port, user, pass := adminTarget(config)
+	varsRaw, _ := config["variables"].(string)
+	if strings.TrimSpace(varsRaw) == "" {
+		varsRaw = "datadir,basedir"
+	}
+	varNames := strings.Split(varsRaw, ",")
+	var selects []string
+	for _, v := range varNames {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			selects = append(selects, fmt.Sprintf("@@%s", v))
+		}
+	}
+	if len(selects) == 0 {
+		return "", fmt.Errorf("no variables requested")
+	}
+	query := "SELECT " + strings.Join(selects, ", ")
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass, query)
+	if err != nil {
+		return "", fmt.Errorf("query variables failed: %w (output: %s)", err, out)
+	}
+	// MySQL returns values tab-separated on one line; map back to var names
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	var lines []string
+	for i, v := range varNames {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		val := ""
+		if i < len(parts) {
+			val = strings.TrimSpace(parts[i])
+		}
+		lines = append(lines, v+"="+val)
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func findDatadirByPort(port int) string {
+	if port <= 0 {
+		return ""
+	}
+	portFlag := fmt.Sprintf("--port=%d", port)
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil {
+			continue
+		}
+		cmd := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		if !strings.Contains(cmd, "mysqld") {
+			continue
+		}
+		if !strings.Contains(cmd, portFlag) {
+			continue
+		}
+		for _, part := range strings.Fields(cmd) {
+			if strings.HasPrefix(part, "--datadir=") {
+				return strings.TrimPrefix(part, "--datadir=")
+			}
+		}
+		if cwd, readErr := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); readErr == nil && cwd != "" {
+			return cwd
+		}
+	}
+	return ""
+}
+
 func validateServiceControlConfig(config map[string]interface{}) error {
 	verb, _ := config["verb"].(string)
 	verb = strings.ToLower(strings.TrimSpace(verb))
@@ -3666,6 +3747,16 @@ func validateServiceControlConfig(config map[string]interface{}) error {
 		verb = "status"
 	}
 	datadir, _ := config["datadir"].(string)
+	if strings.TrimSpace(datadir) == "" {
+		port := configInt(config, "target_port")
+		if port <= 0 {
+			port = 3306
+		}
+		if discovered := findDatadirByPort(port); discovered != "" {
+			config["datadir"] = discovered
+			datadir = discovered
+		}
+	}
 	if strings.TrimSpace(datadir) == "" {
 		return fmt.Errorf("service control requires instance datadir metadata")
 	}

@@ -882,6 +882,15 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err := validateInstanceAdminMetadata(conn, req); err != nil {
 		return failedInstanceAdminResult(err.Error()), nil
 	}
+	// MVP: auto-discover datadir/basedir/os_user from running MySQL when missing.
+	// Without these, the agent cannot locate the PID file or my.cnf for service control.
+	if req.Action == "service_control" && strings.TrimSpace(conn.Datadir) == "" {
+		if metaErr := s.discoverInstanceMetadata(ctx, id, instance, conn); metaErr != nil {
+			return failedInstanceAdminResult(fmt.Sprintf(
+				"service control requires datadir metadata but auto-discovery failed: %v. "+
+					"Please edit the instance and set datadir/basedir manually.", metaErr)), nil
+		}
+	}
 	if req.Action == "change_password" {
 		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
 			return failedInstanceAdminResult(err.Error()), nil
@@ -1151,6 +1160,78 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+// discoverInstanceMetadata queries the running MySQL instance via the agent to
+// populate datadir/basedir/os_user when they are missing from the connection record.
+// This enables service control (start/stop/status) for instances that were registered
+// without install metadata (e.g. imported from host scanning).
+func (s *InstanceService) discoverInstanceMetadata(ctx context.Context, id string, instance *models.Instance, conn *models.InstanceConnection) error {
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return fmt.Errorf("decrypt password: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return fmt.Errorf("resolve agent: %w", err)
+	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id":     "meta-discover-" + uuid.New().String(),
+		"instance_id": id,
+		"config": map[string]interface{}{
+			"action":      "query_variables",
+			"target_host": targetHost,
+			"target_port": conn.Port,
+			"target_user": conn.Username,
+			"target_pass": password,
+			"variables":   "datadir,basedir",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("agent call: %w", err)
+	}
+	if result == nil || isFailedTaskStatus(result.Status) {
+		msg := "unknown agent error"
+		if result != nil {
+			msg = result.Message
+		}
+		return fmt.Errorf("agent returned failure: %s", msg)
+	}
+	// Parse the result message: "datadir=/var/lib/mysql\nbasedir=/usr/local/mysql"
+	discovered := parseVariableResult(result.Message)
+	datadir := strings.TrimSpace(discovered["datadir"])
+	basedir := strings.TrimSpace(discovered["basedir"])
+	if datadir == "" {
+		return fmt.Errorf("agent could not determine datadir (is MySQL running?)")
+	}
+	conn.Datadir = datadir
+	if basedir != "" && strings.TrimSpace(conn.Basedir) == "" {
+		conn.Basedir = basedir
+	}
+	if err := s.repo.UpdateConnection(ctx, conn); err != nil {
+		log.Printf("WARN: discovered datadir=%s but failed to persist: %v", datadir, err)
+	}
+	return nil
+}
+
+func parseVariableResult(message string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(message), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if idx := strings.Index(line, "="); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			val := strings.TrimSpace(line[idx+1:])
+			result[key] = val
+		}
+	}
+	return result
 }
 
 // UpdateInstanceStatusRequest 用于更新实例的角色、运行状态和复制状态。
