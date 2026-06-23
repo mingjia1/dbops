@@ -178,6 +178,20 @@ func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort 
 	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, path, payload, agentDefaultTimeout)
 }
 
+func (c *AgentClient) CallAgentRaw(ctx context.Context, hostAddr string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error) {
+	result, err := c.callAgent(ctx, hostAddr, agentPort, path, payload)
+	if err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(result)
+	var out map[string]interface{}
+	_ = json.Unmarshal(data, &out)
+	if out == nil {
+		out = make(map[string]interface{})
+	}
+	return out, nil
+}
+
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := c.buildURL(hostAddr, agentPort, path)
 

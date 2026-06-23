@@ -64,7 +64,7 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
   useEffect(() => {
     if (!enabled || !taskID) return
 
-    const url = `${baseURL}/tasks/${taskID}/stream`
+    const url = `${baseURL}/tasks/stream/${taskID}`
     const source = new EventSource(url)
     sourceRef.current = source
 

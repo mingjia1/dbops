@@ -24,7 +24,7 @@ func (c *EnvironmentCheckController) Execute(ctx *gin.Context) {
 
 	result, err := c.service.Execute(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute environment check", err)
+		utils.BadRequestResponse(ctx, err.Error())
 		return
 	}
 

@@ -849,4 +849,9 @@ export const topologyApi = {
   getInstance: (instanceId: string) => api.get(`/topology/instances/${encodeURIComponent(instanceId)}`),
 }
 
+export const pluginApi = {
+  list: (type?: string) => api.get(`/plugins${type ? `?type=${type}` : ''}`),
+  get: (name: string) => api.get(`/plugins/${encodeURIComponent(name)}`),
+}
+
 export default api

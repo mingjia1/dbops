@@ -4,7 +4,7 @@ import {
   AlertOutlined, ApartmentOutlined, AuditOutlined, BarChartOutlined, BulbFilled, BulbOutlined,
   CloudOutlined, ClusterOutlined, DashboardOutlined, DatabaseOutlined, DesktopOutlined,
   FileTextOutlined, HddOutlined, HeartOutlined, LogoutOutlined, PartitionOutlined,
-  RetweetOutlined, SafetyOutlined, SettingOutlined, SwapOutlined, UserOutlined,
+  AppstoreOutlined, RetweetOutlined, SafetyOutlined, SettingOutlined, SwapOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getStoredThemeMode, type ThemeMode } from '../appTheme'
@@ -102,6 +102,7 @@ const Dashboard: React.FC = () => {
       children: [
         { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
         { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: 'Agent 管理' },
+        { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
         { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
         { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
       ],

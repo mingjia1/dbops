@@ -8,8 +8,8 @@ import (
 )
 
 type WSController struct {
-	hub         *services.WSHub
-	messageBus  *services.MessageBus
+	hub        *services.WSHub
+	messageBus *services.MessageBus
 }
 
 func NewWSController(hub *services.WSHub, bus *services.MessageBus) *WSController {
@@ -29,9 +29,19 @@ func (c *WSController) HandleTaskStream(ctx *gin.Context) {
 	ch := c.messageBus.Subscribe(taskID)
 	defer c.messageBus.Unsubscribe(taskID, ch)
 
+	go func() {
+		for event := range ch {
+			msg := services.WSMessage{
+				Type: event.EventType,
+				Data: event,
+			}
+			c.hub.Broadcast(taskID, msg)
+		}
+	}()
+
 	c.hub.HandleSSE(ctx)
 }
 
 func (c *WSController) RegisterRoutes(r *gin.RouterGroup) {
-	r.GET("/tasks/:taskID/stream", c.HandleTaskStream)
+	r.GET("/tasks/stream/:taskID", c.HandleTaskStream)
 }

@@ -14,6 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/controllers"
+	"github.com/jackcode/mysql-ops-platform/internal/plugins"
+	pluginArch "github.com/jackcode/mysql-ops-platform/internal/plugins/arch"
+	pluginMiddleware "github.com/jackcode/mysql-ops-platform/internal/plugins/middleware"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
@@ -118,6 +121,21 @@ func main() {
 	instanceRepo.AttachStore(jsonStore)
 	hostRepo.AttachStore(jsonStore)
 	agentClient := services.NewAgentClient(cfg.AgentToken)
+
+	pluginRegistry := plugins.NewRegistry()
+	agentCaller := func(ctx context.Context, host string, port int, path string, payload map[string]interface{}) (map[string]interface{}, error) {
+		result, err := agentClient.CallAgentRaw(ctx, host, port, path, payload)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	_ = pluginRegistry.Register(pluginArch.NewReplicaAddonPlugin(agentCaller))
+	_ = pluginRegistry.Register(pluginArch.NewMHAAddonPlugin(agentCaller))
+	_ = pluginRegistry.Register(pluginArch.NewMGRAddonPlugin(agentCaller))
+	_ = pluginRegistry.Register(pluginArch.NewPXCGaleraAddonPlugin(agentCaller))
+	_ = pluginRegistry.Register(pluginMiddleware.NewKeepalivedAddonPlugin(agentCaller))
+	_ = pluginRegistry.Register(pluginMiddleware.NewProxySQLAddonPlugin(agentCaller))
 	// P0: 提前建 auditService, 让 instanceService/hostService 等可注入.
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
@@ -243,6 +261,14 @@ func main() {
 	// B8: 长任务进度查询.
 	taskController := controllers.NewTaskController(taskRepo)
 	auditController := controllers.NewAuditController(auditService)
+
+	// SSE task stream (MessageBus → WSHub bridge).
+	wsHub := services.NewWSHub()
+	messageBus := services.NewMessageBus()
+	wsController := controllers.NewWSController(wsHub, messageBus)
+
+	// Plugin management API.
+	pluginController := controllers.NewPluginController(pluginRegistry)
 
 	dataMigrationController := controllers.NewDataMigrationController(cfg, db)
 
@@ -608,6 +634,16 @@ func main() {
 			{
 				tasks.GET("/:id", taskController.GetByID)
 				tasks.GET("", taskController.ListByInstance)
+			}
+
+			// SSE task progress stream.
+			wsController.RegisterRoutes(protected)
+
+			// Plugin management API.
+			pluginRoutes := protected.Group("/plugins")
+			{
+				pluginRoutes.GET("", pluginController.List)
+				pluginRoutes.GET("/:name", pluginController.Get)
 			}
 
 			auditLogs := protected.Group("/audit-logs")
