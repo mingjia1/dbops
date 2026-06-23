@@ -672,6 +672,134 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	}, nil
 }
 
+func (s *InstanceService) ReplicationStatus(ctx context.Context, id string) (map[string]interface{}, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return nil, err
+	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	clusterType := ""
+	if instance.Topology.ClusterID != "" {
+		// Try to determine cluster type from deployments
+		if dep, depErr := s.getClusterType(ctx, instance.Topology.ClusterID); depErr == nil {
+			clusterType = dep
+		}
+	}
+	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id":     "repl-status-" + id,
+		"instance_id": id,
+		"config": map[string]interface{}{
+			"action":        "show_replication_status",
+			"target_host":   targetHost,
+			"target_port":   conn.Port,
+			"target_user":   conn.Username,
+			"target_pass":   password,
+			"cluster_type":  clusterType,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agent call failed: %w", err)
+	}
+	if result == nil || isFailedTaskStatus(result.Status) {
+		msg := "unknown error"
+		if result != nil {
+			msg = result.Message
+		}
+		return nil, fmt.Errorf("replication status query failed: %s", msg)
+	}
+	return parseReplicationStatusMessage(result.Message), nil
+}
+
+func (s *InstanceService) getClusterType(ctx context.Context, clusterID string) (string, error) {
+	repo := s.repo
+	_ = repo
+	// Check the deployments table for cluster_type
+	type deployRow struct{ ClusterType string }
+	// Simplified: try to infer from cluster_id prefix
+	lower := strings.ToLower(clusterID)
+	if strings.Contains(lower, "pxc") {
+		return "pxc", nil
+	}
+	if strings.Contains(lower, "mgr") {
+		return "mgr", nil
+	}
+	if strings.Contains(lower, "mha") {
+		return "mha", nil
+	}
+	return "ha", nil
+}
+
+func parseReplicationStatusMessage(message string) map[string]interface{} {
+	result := make(map[string]interface{})
+	lines := strings.Split(strings.TrimSpace(message), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "***") {
+			continue
+		}
+		// Support both key=value (agent formatted) and Key: Value (\G format)
+		var key, val string
+		if idx := strings.Index(line, "="); idx > 0 && !strings.Contains(line[:idx], ":") {
+			key = strings.TrimSpace(line[:idx])
+			val = strings.TrimSpace(line[idx+1:])
+		} else if idx := strings.Index(line, ":"); idx > 0 {
+			key = strings.TrimSpace(line[:idx])
+			val = strings.TrimSpace(line[idx+1:])
+		} else {
+			continue
+		}
+		if key == "" {
+			continue
+		}
+		if key == "seconds_behind_master" || key == "Seconds_Behind_Master" || key == "master_port" || key == "Master_Port" || key == "relay_log_space" || key == "Relay_Log_Space" ||
+			key == "exec_master_log_pos" || key == "Exec_Master_Log_Pos" || key == "read_master_log_pos" || key == "Read_Master_Log_Pos" ||
+			key == "group_size" || key == "online_members" ||
+			key == "wsrep_cluster_size" || key == "wsrep_local_recv_queue" || key == "wsrep_cluster_conf_id" {
+			var intVal int
+			if _, err := fmt.Sscanf(val, "%d", &intVal); err == nil {
+				result[key] = intVal
+				continue
+			}
+		}
+		if val == "Yes" || val == "YES" || val == "yes" {
+			result[key] = true
+			continue
+		}
+		if val == "No" || val == "NO" || val == "no" {
+			result[key] = false
+			continue
+		}
+		if val == "ON" {
+			result[key] = true
+			continue
+		}
+		if val == "OFF" {
+			result[key] = false
+			continue
+		}
+		if val == "NULL" {
+			continue
+		}
+		result[key] = val
+	}
+	return result
+}
+
 func (s *InstanceService) updateInstanceHealthStatus(ctx context.Context, instanceID, health string) error {
 	status := &models.InstanceStatus{
 		InstanceID:          instanceID,

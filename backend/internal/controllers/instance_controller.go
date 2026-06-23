@@ -168,6 +168,18 @@ func isFailedInstanceTaskStatus(status string) bool {
 	}
 }
 
+func (c *InstanceController) GetReplicationStatus(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	result, err := c.service.ReplicationStatus(ctx.Request.Context(), id)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to get replication status", err)
+		return
+	}
+
+	utils.SuccessResponse(ctx, result)
+}
+
 func (c *InstanceController) AdminAction(ctx *gin.Context) {
 	id := ctx.Param("id")
 

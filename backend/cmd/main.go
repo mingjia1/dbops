@@ -404,6 +404,7 @@ func main() {
 				instances.POST("/:id/force-reset-password", middleware.RequirePermission("admin"), instanceController.ForceResetPassword)
 				instances.PUT("/:id/status", middleware.RequirePermission("admin"), instanceController.UpdateStatus)
 				instances.GET("/:id/credentials", middleware.RequirePermission("admin"), instanceController.GetCredentials)
+				instances.GET("/:id/replication-status", middleware.RequirePermission("admin"), instanceController.GetReplicationStatus)
 			}
 
 			hosts := protected.Group("/hosts")

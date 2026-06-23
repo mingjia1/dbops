@@ -228,6 +228,9 @@ export const instanceApi = {
   healthCheck: (id: string) =>
     api.post(`/instances/${id}/health-check`, {}, { timeout: 30000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
+  getReplicationStatus: (id: string) =>
+    api.get(`/instances/${id}/replication-status`),
+
   adminAction: (id: string, data: {
     action: string
     username?: string

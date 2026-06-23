@@ -3549,8 +3549,7 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
 			fmt.Sprintf("SHOW GLOBAL VARIABLES LIKE '%s'", escapeSQL(pattern)))
 	case "show_replication_status":
-		out, runErr := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
-		output, err = string(out), runErr
+		output, err = queryReplicationStatus(ctx, req.Config)
 	case "set_variable":
 		name, _ := req.Config["name"].(string)
 		value, _ := req.Config["value"].(string)
@@ -3696,6 +3695,187 @@ func queryMySQLVariables(ctx context.Context, config map[string]interface{}) (st
 			val = strings.TrimSpace(parts[i])
 		}
 		lines = append(lines, v+"="+val)
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func queryReplicationStatus(ctx context.Context, config map[string]interface{}) (string, error) {
+	host, port, user, pass := adminTarget(config)
+	clusterType, _ := config["cluster_type"].(string)
+	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
+
+	// Auto-detect architecture if not specified
+	if clusterType == "" || clusterType == "auto" {
+		clusterType = detectClusterType(ctx, host, port, user, pass)
+	}
+
+	switch clusterType {
+	case "mgr":
+		return queryMGRStatus(ctx, host, port, user, pass)
+	case "pxc":
+		return queryPXCStatus(ctx, host, port, user, pass)
+	default:
+		return queryHAReplicationStatus(ctx, host, port, user, pass)
+	}
+}
+
+func detectClusterType(ctx context.Context, host string, port int, user, pass string) string {
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT COUNT(*) FROM performance_schema.replication_group_members")
+	if err == nil && strings.TrimSpace(out) != "0" {
+		return "mgr"
+	}
+	out, err = runMySQLExecSafe(ctx, host, port, user, pass,
+		"SHOW STATUS LIKE 'wsrep_cluster_status'")
+	if err == nil && strings.Contains(out, "wsrep_cluster_status") {
+		return "pxc"
+	}
+	return "ha"
+}
+
+func queryHAReplicationStatus(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW SLAVE STATUS")
+	if err != nil {
+		return "", fmt.Errorf("SHOW SLAVE STATUS failed: %w", err)
+	}
+	if strings.TrimSpace(out) == "" {
+		return "cluster_type=ha\nrole=master\nslave_io_running=\nslave_sql_running=\nseconds_behind_master=-1\nmaster_host=\nmaster_port=0\nlast_error=\nrelay_log_space=0", nil
+	}
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	colNames := []string{
+		"slave_io_running", "slave_sql_running", "seconds_behind_master",
+		"master_host", "master_port", "last_error", "relay_log_space",
+	}
+	// SHOW SLAVE STATUS -N -B returns tab-separated values; column order depends on MySQL version.
+	// Use SHOW SLAVE STATUS with column headers for reliable parsing.
+	headerOut, _ := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G")
+	if headerOut != "" {
+		return parseSlaveStatusG(headerOut), nil
+	}
+	// Fallback: positional parsing
+	var lines []string
+	lines = append(lines, "cluster_type=ha")
+	lines = append(lines, "role=slave")
+	if len(parts) > 0 {
+		lines = append(lines, "slave_io_running="+strings.TrimSpace(parts[0]))
+	}
+	if len(parts) > 1 {
+		lines = append(lines, "slave_sql_running="+strings.TrimSpace(parts[1]))
+	}
+	if len(parts) > 10 {
+		lines = append(lines, "seconds_behind_master="+strings.TrimSpace(parts[10]))
+	}
+	if len(parts) > 1 {
+		lines = append(lines, "master_host="+strings.TrimSpace(parts[1]))
+	}
+	if len(parts) > 2 {
+		lines = append(lines, "master_port="+strings.TrimSpace(parts[2]))
+	}
+	if len(parts) > 19 {
+		lines = append(lines, "last_error="+strings.TrimSpace(parts[19]))
+	}
+	if len(parts) > 26 {
+		lines = append(lines, "relay_log_space="+strings.TrimSpace(parts[26]))
+	}
+	_ = colNames
+	return strings.Join(lines, "\n"), nil
+}
+
+func parseSlaveStatusG(output string) string {
+	lines := []string{"cluster_type=ha", "role=slave"}
+	keyMap := map[string]string{
+		"Slave_IO_Running":      "slave_io_running",
+		"Slave_SQL_Running":     "slave_sql_running",
+		"Seconds_Behind_Master": "seconds_behind_master",
+		"Master_Host":           "master_host",
+		"Master_Port":           "master_port",
+		"Last_Error":            "last_error",
+		"Relay_Log_Space":       "relay_log_space",
+		"Exec_Master_Log_Pos":   "exec_master_log_pos",
+		"Read_Master_Log_Pos":   "read_master_log_pos",
+		"Retrieved_Gtid_Set":    "retrieved_gtid_set",
+		"Executed_Gtid_Set":     "executed_gtid_set",
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, ":"); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			val := strings.TrimSpace(line[idx+1:])
+			if mapped, ok := keyMap[key]; ok {
+				lines = append(lines, mapped+"="+val)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func queryMGRStatus(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	membersOut, err := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT MEMBER_ID, MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members")
+	if err != nil {
+		return "", fmt.Errorf("query group members failed: %w", err)
+	}
+	statsOut, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT COUNT_TRANSACTIONS_APPLIED FROM performance_schema.replication_group_member_stats WHERE MEMBER_ID = @@server_uuid")
+
+	var lines []string
+	lines = append(lines, "cluster_type=mgr")
+	total := 0
+	online := 0
+	var primaryMember string
+	for _, row := range strings.Split(strings.TrimSpace(membersOut), "\n") {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		cols := strings.Split(row, "\t")
+		if len(cols) >= 5 {
+			total++
+			state := strings.TrimSpace(cols[3])
+			role := strings.TrimSpace(cols[4])
+			if state == "ONLINE" {
+				online++
+			}
+			if role == "PRIMARY" {
+				primaryMember = strings.TrimSpace(cols[1]) + ":" + strings.TrimSpace(cols[2])
+			}
+			lines = append(lines, fmt.Sprintf("member_%d=%s:%s:%s:%s", total,
+				strings.TrimSpace(cols[1]), strings.TrimSpace(cols[2]), state, role))
+		}
+	}
+	lines = append(lines, fmt.Sprintf("group_size=%d", total))
+	lines = append(lines, fmt.Sprintf("online_members=%d", online))
+	lines = append(lines, "primary_member="+primaryMember)
+	if statsOut != "" {
+		lines = append(lines, "transactions_applied="+strings.TrimSpace(statsOut))
+	}
+	if online == total {
+		lines = append(lines, "member_state=ONLINE")
+		lines = append(lines, "member_role=OK")
+	} else {
+		lines = append(lines, "member_state=DEGRADED")
+		lines = append(lines, "member_role=DEGRADED")
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func queryPXCStatus(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SHOW STATUS WHERE Variable_name IN ('wsrep_cluster_status','wsrep_cluster_size','wsrep_local_state','wsrep_ready','wsrep_flow_control_paused','wsrep_local_recv_queue','wsrep_local_state_comment','wsrep_cluster_conf_id')")
+	if err != nil {
+		return "", fmt.Errorf("query wsrep status failed: %w", err)
+	}
+	var lines []string
+	lines = append(lines, "cluster_type=pxc")
+	for _, row := range strings.Split(strings.TrimSpace(out), "\n") {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		cols := strings.SplitN(row, "\t", 2)
+		if len(cols) == 2 {
+			lines = append(lines, strings.TrimSpace(cols[0])+"="+strings.TrimSpace(cols[1]))
+		}
 	}
 	return strings.Join(lines, "\n"), nil
 }
