@@ -1055,6 +1055,7 @@ func parseMasterSlaveConfig(config map[string]interface{}) MasterSlaveConfig {
 		ReplicateUser: "repl",
 		ReplicatePass: "repl123",
 		MySQLUser:     "root",
+		ServerID:      1,
 		DeployMode:    "async",
 	}
 
