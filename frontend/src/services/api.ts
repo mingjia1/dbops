@@ -346,8 +346,8 @@ export const hostApi = {
     api.post(`/hosts/${id}/test`),
 
   agentAction: (id: string, action: string, agentPort?: number) =>
-    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort }, {
-      timeout: longRunningAgentActions.includes(action) ? agentSubmitTimeoutMs : 240000,
+    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort, sync: true }, {
+      timeout: longRunningAgentActions.includes(action) ? 240000 : 30000,
     }),
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
