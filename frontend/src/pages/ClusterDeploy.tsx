@@ -110,7 +110,7 @@ const ClusterDeploy: React.FC = () => {
   const [deployments, setDeployments] = useState<DeployResult[]>([])
   const [statusFilter, setStatusFilter] = useState<string[]>(['success'])
   const [archFilter, setArchFilter] = useState<ArchType | 'all'>('all')
-  const [showHistory, setShowHistory] = useState(false)
+  const [showHistory, setShowHistory] = useState(true)
   const [precheckResults, setPrecheckResults] = useState<any[] | null>(null)
   const [precheckLoading, setPrecheckLoading] = useState(false)
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
@@ -121,7 +121,13 @@ const ClusterDeploy: React.FC = () => {
     mysql_password: string
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
-  const [credential, setCredential] = useState<{ username: string; password: string }>({ username: 'root', password: '' })
+  const [credential, setCredential] = useState<{ username: string; password: string }>(() => {
+    try {
+      const stored = localStorage.getItem('dbops_default_mysql_credential')
+      if (stored) return JSON.parse(stored)
+    } catch { /* ignore */ }
+    return { username: 'root', password: '' }
+  })
   const [credentialModalOpen, setCredentialModalOpen] = useState(false)
   const [showDefaultCredential, setShowDefaultCredential] = useState(false)
   const [oneTimeCredential, setOneTimeCredential] = useState<{ username: string; password: string } | null>(null)
@@ -260,6 +266,7 @@ const ClusterDeploy: React.FC = () => {
         setOneTimeCredential(next)
         setShowDefaultCredential(false)
         localStorage.setItem(DEFAULT_CREDENTIAL_ACK_KEY, '1')
+        localStorage.setItem('dbops_default_mysql_credential', JSON.stringify(next))
         setCredentialModalOpen(false)
         message.success('默认 MySQL 实例凭据已更新')
       },

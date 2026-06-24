@@ -91,6 +91,16 @@ const SecuritySettings: React.FC = () => {
               ),
             },
             {
+              key: 'mysql-credential',
+              label: <Space><DatabaseOutlined />MySQL 账号</Space>,
+              children: <MySQLCredentialConfig />,
+            },
+            {
+              key: 'password-policy',
+              label: <Space><LockOutlined />密码策略</Space>,
+              children: <PasswordPolicyConfig />,
+            },
+            {
               key: 'relay',
               label: <Space><CloudOutlined />中继服务器</Space>,
               children: <RelayServerConfig />,
@@ -358,6 +368,107 @@ const MetricsConfig: React.FC = () => {
         </Form.Item>
         <Form.Item>
           <Button type="primary" onClick={handleSave}>保存阈值</Button>
+        </Form.Item>
+      </Form>
+    </Card>
+  )
+}
+
+// --- 默认 MySQL 账号配置 ---
+const CREDENTIAL_STORAGE_KEY = 'dbops_default_mysql_credential'
+
+const MySQLCredentialConfig: React.FC = () => {
+  const [form] = Form.useForm()
+
+  useEffect(() => {
+    const stored = localStorage.getItem(CREDENTIAL_STORAGE_KEY)
+    if (stored) {
+      try {
+        const cred = JSON.parse(stored)
+        form.setFieldsValue({ mysql_user: cred.username || 'root', mysql_password: cred.password || '' })
+      } catch { /* ignore */ }
+    }
+  }, [form])
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    const cred = { username: values.mysql_user, password: values.mysql_password }
+    localStorage.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(cred))
+    message.success('默认 MySQL 账号已保存')
+  }
+
+  return (
+    <Card type="inner" title="集群部署默认 MySQL 账号">
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+        集群部署时使用的默认 MySQL root 账号和密码。此设置会同步到集群部署页面。
+      </Text>
+      <Form form={form} layout="vertical" style={{ maxWidth: 400 }} initialValues={{ mysql_user: 'root' }}>
+        <Form.Item name="mysql_user" label="用户名" rules={[{ required: true }]}>
+          <Input placeholder="root" />
+        </Form.Item>
+        <Form.Item name="mysql_password" label="密码" rules={[{ required: true, min: 8, message: '密码至少 8 位' }]}>
+          <Input.Password placeholder="MySQL root 密码" autoComplete="new-password" />
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" onClick={handleSave}>保存账号</Button>
+        </Form.Item>
+      </Form>
+    </Card>
+  )
+}
+
+// --- 密码策略配置 ---
+const POLICY_STORAGE_KEY = 'dbops_password_policy'
+
+const defaultPolicy = {
+  min_length: 8,
+  require_uppercase: true,
+  require_lowercase: true,
+  require_digit: true,
+  require_special: true,
+}
+
+const PasswordPolicyConfig: React.FC = () => {
+  const [form] = Form.useForm()
+
+  useEffect(() => {
+    const stored = localStorage.getItem(POLICY_STORAGE_KEY)
+    if (stored) {
+      try { form.setFieldsValue(JSON.parse(stored)) } catch { form.setFieldsValue(defaultPolicy) }
+    } else {
+      form.setFieldsValue(defaultPolicy)
+    }
+  }, [form])
+
+  const handleSave = () => {
+    const values = form.getFieldsValue()
+    localStorage.setItem(POLICY_STORAGE_KEY, JSON.stringify(values))
+    message.success('密码策略已保存')
+  }
+
+  return (
+    <Card type="inner" title="全平台密码复杂度要求">
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+        设置平台上所有密码（实例密码、复制密码、用户密码）的最低要求。
+      </Text>
+      <Form form={form} layout="horizontal" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} style={{ maxWidth: 450 }}>
+        <Form.Item name="min_length" label="最小长度">
+          <InputNumber min={4} max={32} style={{ width: '100%' }} />
+        </Form.Item>
+        <Form.Item name="require_uppercase" label="需要大写字母" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item name="require_lowercase" label="需要小写字母" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item name="require_digit" label="需要数字" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item name="require_special" label="需要特殊字符" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" onClick={handleSave}>保存策略</Button>
         </Form.Item>
       </Form>
     </Card>

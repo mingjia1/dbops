@@ -1703,10 +1703,32 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 		return fmt.Errorf("instance admin call failed: %w", lastErr)
 	}
 	if lastResult == nil || lastResult.Status != "completed" {
-		if lastResult != nil && strings.TrimSpace(lastResult.Message) != "" {
-			return fmt.Errorf("failed to change password online: %s", lastResult.Message)
+		// Socket fallback: try with empty password (agent will use Unix socket auth)
+		original := conn.PasswordEncrypted
+		conn.PasswordEncrypted = ""
+		// First create user if not exists (handles root@% not existing)
+		_, _ = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+			Action:   "create_user",
+			Username: req.Username,
+			UserHost: req.UserHost,
+			Password: req.NewPassword,
+		})
+		// Then change password
+		socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+			Action:               "change_password",
+			Username:             req.Username,
+			UserHost:             req.UserHost,
+			Password:             req.NewPassword,
+			UpdateStoredPassword: false,
+		})
+		conn.PasswordEncrypted = original
+		if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
+			lastResult = socketResult
+			lastErr = nil
 		}
-		return fmt.Errorf("failed to connect to MySQL with any known password")
+	}
+	if lastErr != nil || lastResult == nil || lastResult.Status != "completed" {
+		return fmt.Errorf("failed to change password: agent could not connect to MySQL or execute ALTER USER")
 	}
 	if req.Username == conn.Username {
 		enc, encErr := utils.Encrypt(req.NewPassword, s.encKey)
