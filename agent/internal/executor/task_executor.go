@@ -950,29 +950,29 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
-	// 1. Create replication user and configure recovery channel
-	var replicationSQL string
+	// 1. Create replication user
 	if strings.HasPrefix(mysqlVersion, "5.") {
-		replicationSQL = fmt.Sprintf(`
-		SET SQL_LOG_BIN=0;
-		CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s';
-		GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%';
-		FLUSH PRIVILEGES;
-		SET SQL_LOG_BIN=1;
-		CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
-	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
+		createUserSQL := fmt.Sprintf(`SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;`,
+			escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
+		if _, err := execSocket(createUserSQL); err != nil {
+			return fmt.Errorf("create replication user failed: %v", err)
+		}
+		chMasterSQL := fmt.Sprintf("CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
+			escapeSQL(replicateUser), escapeSQL(replicatePass))
+		if _, err := execSocket(chMasterSQL); err != nil {
+			return fmt.Errorf("configure recovery channel failed: %v", err)
+		}
 	} else {
-		replicationSQL = fmt.Sprintf(`
-		SET SQL_LOG_BIN=0;
-		CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s';
-		GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%';
-		FLUSH PRIVILEGES;
-		SET SQL_LOG_BIN=1;
-		CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';
-	`, escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser), escapeSQL(replicateUser), escapeSQL(replicatePass))
-	}
-	if _, err := execSocket(replicationSQL); err != nil {
-		return fmt.Errorf("create replication user failed: %v", err)
+		createUserSQL := fmt.Sprintf(`SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;`,
+			escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
+		if _, err := execSocket(createUserSQL); err != nil {
+			return fmt.Errorf("create replication user failed: %v", err)
+		}
+		chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
+			escapeSQL(replicateUser), escapeSQL(replicatePass))
+		if _, err := execSocket(chSourceSQL); err != nil {
+			return fmt.Errorf("configure recovery channel failed: %v", err)
+		}
 	}
 
 	// 2. Start Group Replication
