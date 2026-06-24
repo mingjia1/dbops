@@ -770,6 +770,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			"--group_replication_group_name="+groupName,
 			"--group_replication_local_address="+localAddress,
 			"--group_replication_bootstrap_group=OFF",
+			"--report-host="+host,
 			"--disabled_storage_engines=MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY",
 		)
 
