@@ -530,7 +530,11 @@ const ClusterDeploy: React.FC = () => {
       const relayCfg = localStorage.getItem('dbops_relay_server')
       if (relayCfg) {
         const parsed = JSON.parse(relayCfg)
-        if (parsed.relay_url) custom.relay_url = parsed.relay_url
+        let relayUrl = parsed.relay_url || ''
+        if (relayUrl && parsed.relay_path) {
+          relayUrl = relayUrl.replace(/\/+$/, '') + '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
+        }
+        if (relayUrl) custom.relay_url = relayUrl
       }
     } catch { /* ignore */ }
     if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Card, Divider, Form, Input, InputNumber, message, Space, Switch, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Divider, Form, Input, InputNumber, message, Select, Space, Switch, Tabs, Tag, Typography } from 'antd'
 import { CloudOutlined, DatabaseOutlined, LockOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -127,8 +127,9 @@ const RELAY_STORAGE_KEY = 'dbops_relay_server'
 
 const RelayServerConfig: React.FC = () => {
   const [form] = Form.useForm()
-  const [packages, setPackages] = useState<Array<{ name: string; size: string }>>([])
+  const [packages, setPackages] = useState<Array<{ name: string; size: string; path: string }>>([])
   const [loading, setLoading] = useState(false)
+  const [scanPath, setScanPath] = useState('')
 
   useEffect(() => {
     const stored = localStorage.getItem(RELAY_STORAGE_KEY)
@@ -140,21 +141,31 @@ const RelayServerConfig: React.FC = () => {
     }
   }, [form])
 
+  const buildBaseUrl = () => {
+    const values = form.getFieldsValue()
+    let url = (values.relay_url || '').replace(/\/+$/, '')
+    if (values.relay_path) {
+      url += '/' + values.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
+    }
+    return url
+  }
+
   const handleSave = async () => {
     const values = await form.validateFields()
     localStorage.setItem(RELAY_STORAGE_KEY, JSON.stringify(values))
+    // Also save to cluster deploy default credential sync
     message.success('中继服务器配置已保存')
   }
 
   const handleTest = async () => {
-    const values = await form.validateFields()
-    if (!values.relay_url) {
+    const url = buildBaseUrl()
+    if (!url) {
       message.warning('请先填写中继服务器地址')
       return
     }
     setLoading(true)
     try {
-      const res = await fetch(values.relay_url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
       if (res.ok) {
         message.success('中继服务器连接正常')
       } else {
@@ -167,29 +178,46 @@ const RelayServerConfig: React.FC = () => {
     }
   }
 
-  const handleScanPackages = async () => {
-    const values = form.getFieldsValue()
-    if (!values.relay_url) {
+  const handleScanPackages = async (subPath?: string) => {
+    const url = buildBaseUrl()
+    if (!url) {
       message.warning('请先填写中继服务器地址')
       return
     }
+    const scanUrl = subPath ? `${url}/${subPath}` : url
+    setScanPath(scanUrl)
     setLoading(true)
     try {
-      const res = await fetch(values.relay_url)
+      const res = await fetch(scanUrl)
       const text = await res.text()
-      const items: Array<{ name: string; size: string }> = []
-      const regex = /href="([^"]+\.(?:tar\.gz|tar\.xz|tgz))"[^>]*<\/a>\s+(\S+)/g
+      const items: Array<{ name: string; size: string; path: string }> = []
+      // Parse HTML directory listing
+      const regex = /href="([^"]+)"[^>]*>.*?<\/a>\s+(\S+)/g
       let match
       while ((match = regex.exec(text)) !== null) {
-        items.push({ name: match[1], size: match[2] || '-' })
+        const href = match[1]
+        const sizeOrDate = match[2] || '-'
+        if (href === '../' || href.startsWith('?')) continue
+        const isDir = href.endsWith('/')
+        const name = href.replace(/\/$/, '')
+        items.push({
+          name: isDir ? `📁 ${name}` : name,
+          size: isDir ? '-' : sizeOrDate,
+          path: subPath ? `${subPath}/${name}` : name,
+        })
       }
       if (items.length === 0) {
-        // Try to find any file links
         const allLinks = text.match(/href="([^"]+)"/g) || []
-        const fileLinks = allLinks.filter((l: string) => !l.includes('?') && !l.endsWith('/"'))
-        fileLinks.forEach((l: string) => {
-          const name = l.replace('href="', '').replace('"', '')
-          if (name && !name.startsWith('..')) items.push({ name, size: '-' })
+        allLinks.forEach((l: string) => {
+          const href = l.replace('href="', '').replace('"', '')
+          if (href && !href.startsWith('?') && href !== '../') {
+            const isDir = !href.includes('.')
+            items.push({
+              name: isDir ? `📁 ${href.replace(/\/$/, '')}` : href,
+              size: '-',
+              path: subPath ? `${subPath}/${href}` : href,
+            })
+          }
         })
       }
       setPackages(items)
@@ -203,32 +231,70 @@ const RelayServerConfig: React.FC = () => {
     }
   }
 
+  const handleNavigate = (path: string) => {
+    handleScanPackages(path)
+  }
+
+  const handleBack = () => {
+    const parts = scanPath.split('/')
+    parts.pop()
+    const parentPath = parts.length > 0 ? parts.join('/').replace(buildBaseUrl(), '').replace(/^\//, '') : ''
+    handleScanPackages(parentPath || undefined)
+  }
+
   return (
     <Card type="inner" title="中继服务器配置">
       <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-        中继服务器用于分发 MySQL 安装包。集群部署时 agent 会从中继服务器下载安装包。
-        地址格式示例：http://10.3.67.52:8888
+        中继服务器用于分发 MySQL 安装包。集群部署时 agent 会优先从中继服务器下载安装包。
+        包的路径格式为：{`{relay_url}/{path}/mysql/{version}/mysql-{version}-linux-glibc2.17-x86_64.tar.xz`}
       </Text>
       <Form form={form} layout="vertical" style={{ maxWidth: 500 }}>
         <Form.Item name="relay_url" label="中继服务器地址" rules={[{ required: true, message: '请输入中继服务器 URL' }]}>
           <Input placeholder="http://10.3.67.52:8888" />
         </Form.Item>
+        <Form.Item name="relay_path" label="包存储路径（可选）" extra="相对于中继服务器根目录的子路径，如 'packages' 或 'downloads/mysql'">
+          <Input placeholder="留空表示根目录" />
+        </Form.Item>
+        <Form.Item name="download_source" label="下载源优先级" extra="选择安装包的获取优先顺序">
+          <Select
+            defaultValue="relay_first"
+            options={[
+              { value: 'relay_first', label: '中继服务器优先 → 官方源' },
+              { value: 'relay_only', label: '仅中继服务器' },
+              { value: 'official_only', label: '仅官方源' },
+            ]}
+          />
+        </Form.Item>
         <Form.Item>
           <Space>
             <Button type="primary" onClick={handleSave}>保存配置</Button>
             <Button onClick={handleTest} loading={loading}>测试连接</Button>
-            <Button onClick={handleScanPackages} loading={loading}>扫描安装包</Button>
+            <Button onClick={() => handleScanPackages()} loading={loading}>扫描根目录</Button>
           </Space>
         </Form.Item>
       </Form>
-      {packages.length > 0 && (
+      {scanPath && (
         <div style={{ marginTop: 16 }}>
-          <strong>发现 {packages.length} 个安装包：</strong>
-          <div style={{ marginTop: 8, maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace', fontSize: 12 }}>
-            {packages.map((p, i) => (
-              <div key={i}>{p.name} <span style={{ color: '#888' }}>{p.size}</span></div>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <strong>目录: {scanPath}</strong>
+            <Button size="small" onClick={handleBack}>← 返回上级</Button>
           </div>
+          {packages.length > 0 ? (
+            <div style={{ maxHeight: 300, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace', fontSize: 12 }}>
+              {packages.map((p, i) => (
+                <div key={i} style={{ cursor: p.name.startsWith('📁') ? 'pointer' : 'default', padding: '2px 0' }}
+                  onClick={() => p.name.startsWith('📁') && handleNavigate(p.path)}>
+                  {p.name.startsWith('📁') ? (
+                    <span style={{ color: '#1677ff' }}>{p.name}</span>
+                  ) : (
+                    <span>{p.name} <span style={{ color: '#888' }}>{p.size}</span></span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Text type="secondary">空目录或无文件</Text>
+          )}
         </div>
       )}
     </Card>

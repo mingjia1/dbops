@@ -683,7 +683,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 
 	// Version-agnostic path: download + extract the requested tarball.
-	// Priority: 1) relay_url  2) package_url  3) PATH
+	// Priority: 1) relay_url  2) package_url  3) yum/apt system install  4) PATH
 	var mysqld string
 	relayURL, _ := req.Config["relay_url"].(string)
 	if relayURL != "" {
@@ -698,35 +698,30 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			OSUser:   osUser,
 			Checksum: checksum,
 		}
-		var relayErr error
-		mysqld, relayErr = downloader.DownloadFromRelay(ctx, relayCfg)
-		if relayErr != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  0,
-				Message:   fmt.Sprintf("install from relay failed: %v", relayErr),
-				Timestamp: time.Now(),
-			}, nil
-		}
-	} else if packageURL != "" {
-		var installErr error
-		mysqld, installErr = InstallFromURL(ctx, packageURL, checksum, basedir, osUser)
-		if installErr != nil {
-			return &TaskResult{
-				TaskID:    req.TaskID,
-				Status:    "failed",
-				Progress:  0,
-				Message:   fmt.Sprintf("install from URL failed: %v", installErr),
-				Timestamp: time.Now(),
-			}, nil
-		}
-	} else {
-		// Legacy: rely on PATH
+		mysqld, _ = downloader.DownloadFromRelay(ctx, relayCfg)
+	}
+	if mysqld == "" && packageURL != "" {
+		mysqld, _ = InstallFromURL(ctx, packageURL, checksum, basedir, osUser)
+	}
+	if mysqld == "" {
+		// Fallback: try system package manager (yum/apt)
+		mysqld = trySystemPackageInstall(ctx, mysqlVersion, basedir)
+	}
+	if mysqld == "" {
+		// Last resort: rely on PATH
 		mysqld = resolveBinaryPath("mysqld")
 		if basedir != "" {
 			mysqld = filepath.Join(basedir, "bin", "mysqld")
 		}
+	}
+	if mysqld == "" || !fileExists(mysqld) {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   "could not find or install mysqld: relay download failed, URL download failed, and system package install failed",
+			Timestamp: time.Now(),
+		}, nil
 	}
 
 	// Kill any mysqld process using the target port
@@ -4453,6 +4448,33 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 		lastOut = out
 	}
 	return fmt.Errorf("%v %s", lastErr, strings.TrimSpace(string(lastOut)))
+}
+
+// trySystemPackageInstall attempts to install MySQL via system package manager.
+// Returns the path to mysqld if successful, empty string otherwise.
+func trySystemPackageInstall(ctx context.Context, version, basedir string) string {
+	// Try yum first (RHEL/CentOS)
+	yumCmds := []string{
+		"yum install -y mysql-server mysql 2>/dev/null",
+		"yum install -y mysql-community-server mysql-community-client 2>/dev/null",
+	}
+	for _, cmd := range yumCmds {
+		exec.CommandContext(ctx, "sh", "-c", cmd).Run()
+		if mysqld := resolveBinaryPath("mysqld"); mysqld != "mysqld" && fileExists(mysqld) {
+			return mysqld
+		}
+	}
+	// Try apt (Debian/Ubuntu)
+	aptCmds := []string{
+		"apt-get update -qq 2>/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server mysql-client 2>/dev/null",
+	}
+	for _, cmd := range aptCmds {
+		exec.CommandContext(ctx, "sh", "-c", cmd).Run()
+		if mysqld := resolveBinaryPath("mysqld"); mysqld != "mysqld" && fileExists(mysqld) {
+			return mysqld
+		}
+	}
+	return ""
 }
 
 func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
