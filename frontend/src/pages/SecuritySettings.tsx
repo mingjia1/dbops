@@ -1,198 +1,312 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Card, Col, Divider, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Col, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 import { hostApi } from '../services/api'
 import { usePlatformSettings } from '../services/useSettings'
 
 const { Text } = Typography
-const STORAGE_KEY = 'dbops_credential_password'
+const token = () => localStorage.getItem('token') || ''
 
-const SecuritySettings: React.FC = () => {
+// ─── 安全设置 ─────────────────────────────────────────────────────────────
+
+const SecurityTab: React.FC = () => {
   const [enabled, setEnabled] = useState(false)
   const [form] = Form.useForm()
   const { settings, save } = usePlatformSettings()
-
+  const CRED_KEY = 'dbops_credential_password'
   useEffect(() => {
-    const stored = settings.credential_password || localStorage.getItem(STORAGE_KEY)
-    if (stored) { setEnabled(true); form.setFieldsValue({ password: stored, confirm_password: stored }) }
+    const s = settings.credential_password || localStorage.getItem(CRED_KEY)
+    if (s) { setEnabled(true); form.setFieldsValue({ password: s, confirm_password: s }) }
   }, [settings])
-
   const handleSave = async () => {
-    const values = await form.validateFields()
-    if (values.password !== values.confirm_password) { message.error('两次输入的密码不一致'); return }
-    localStorage.setItem(STORAGE_KEY, values.password)
-    await save('credential_password', values.password)
+    const v = await form.validateFields()
+    if (v.password !== v.confirm_password) { message.error('两次密码不一致'); return }
+    localStorage.setItem(CRED_KEY, v.password)
+    await save('credential_password', v.password)
     setEnabled(true); message.success('二级密码已设置')
   }
   const handleDisable = () => {
-    localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem('dbops_credential_verified')
-    save('credential_password', ''); setEnabled(false); form.resetFields(); message.success('二级密码已关闭')
+    localStorage.removeItem(CRED_KEY); sessionStorage.removeItem('dbops_credential_verified')
+    save('credential_password', ''); setEnabled(false); form.resetFields(); message.success('已关闭')
   }
-
   return (
-    <div style={{ padding: 24 }}>
-      <Card title={<Space><SettingOutlined /><span>系统设置</span></Space>}>
-        <Tabs defaultActiveKey="packages" items={[
-          { key: 'packages', label: <Space><CloudOutlined />安装包管理</Space>, children: <PackageManager /> },
-          { key: 'security', label: <Space><LockOutlined />安全设置</Space>, children: (
-            <Card type="inner" title="实例密码查看保护">
-              <div style={{ marginBottom: 16 }}>
-                <Space align="center">
-                  <Switch checked={enabled} onChange={(c) => {
-                    if (c) { handleSave().catch(() => { message.warning('请先填写并确认二级密码'); setEnabled(false) }) }
-                    else { handleDisable() }
-                  }} />
-                  <Text>{enabled ? '已开启' : '未开启'}</Text>
-                  {enabled && <Tag color="success">保护中</Tag>}
-                </Space>
-                <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-                  开启后在实例管理页面查看密码时需输入二级密码验证，浏览器会话内有效。
-                </Text>
-              </div>
-              <Form form={form} layout="vertical" style={{ maxWidth: 400 }}>
-                <Form.Item name="password" label="二级密码" rules={[{ required: true }]}>
-                  <Input.Password placeholder="设置二级密码" autoComplete="new-password" />
-                </Form.Item>
-                <Form.Item name="confirm_password" label="确认二级密码" rules={[{ required: true }]}>
-                  <Input.Password placeholder="再次输入" autoComplete="new-password" />
-                </Form.Item>
-                <Form.Item>
-                  <Space>
-                    <Button type="primary" icon={<LockOutlined />} onClick={handleSave}>{enabled ? '更新密码' : '保存密码'}</Button>
-                    {enabled && <Button danger onClick={handleDisable}>关闭保护</Button>}
-                  </Space>
-                </Form.Item>
-              </Form>
-            </Card>
-          )},
-          { key: 'mysql-credential', label: <Space><DatabaseOutlined />MySQL 账号</Space>, children: <MySQLCredentialConfig /> },
-          { key: 'password-policy', label: <Space><LockOutlined />密码策略</Space>, children: <PasswordPolicyConfig /> },
-          { key: 'params', label: <Space><ToolOutlined />平台参数</Space>, children: <PlatformParams /> },
-          { key: 'metrics', label: <Space><DatabaseOutlined />监控指标</Space>, children: <MetricsConfig /> },
-        ]} />
-      </Card>
-    </div>
+    <Row gutter={16}>
+      <Col span={12}>
+        <Card type="inner" title="查看密码保护" size="small">
+          <Space align="center" style={{ marginBottom: 8 }}>
+            <Switch checked={enabled} onChange={(c) => {
+              if (c) { handleSave().catch(() => { message.warning('请先填写密码'); setEnabled(false) }) }
+              else { handleDisable() }
+            }} />
+            <Tag color={enabled ? 'success' : 'default'}>{enabled ? '已开启' : '未开启'}</Tag>
+          </Space>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>开启后查看实例密码需输入二级密码验证（浏览器会话内有效）。</Text>
+          <Form form={form} layout="vertical" size="small">
+            <Form.Item name="password" label="二级密码" rules={[{ required: true }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Form.Item name="confirm_password" label="确认" rules={[{ required: true }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Form.Item>
+              <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleSave}>{enabled ? '更新' : '保存'}</Button>
+              {enabled && <Button size="small" danger style={{ marginLeft: 8 }} onClick={handleDisable}>关闭</Button>}
+            </Form.Item>
+          </Form>
+        </Card>
+      </Col>
+      <Col span={12}>
+        <Card type="inner" title="密码策略" size="small"><PasswordPolicyForm /></Card>
+      </Col>
+    </Row>
   )
 }
 
-// ─── 安装包管理 ───────────────────────────────────────────────────────
+const POLICY_KEY = 'dbops_password_policy'
+const defaultPolicy = { min_length: 8, require_uppercase: true, require_lowercase: true, require_digit: true, require_special: true, max_age_days: 90, history_count: 5 }
 
-const PACKAGE_CATALOG = [
-  // MySQL Linux
-  { os: 'Linux', product: 'MySQL', version: '8.4.0', branch: 'MySQL-8.4', filename: 'mysql-8.4.0-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', glibc: '2.28', note: 'LTS, RHEL 8+/Ubuntu 20+' },
-  { os: 'Linux', product: 'MySQL', version: '8.0.36', branch: 'MySQL-8.0', filename: 'mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz', arch: 'x86_64', glibc: '2.17', note: 'CentOS 7' },
-  { os: 'Linux', product: 'MySQL', version: '8.0.37', branch: 'MySQL-8.0', filename: 'mysql-8.0.37-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', glibc: '2.28', note: 'RHEL 8+/Ubuntu 20+' },
-  { os: 'Linux', product: 'MySQL', version: '5.7.44', branch: 'MySQL-5.7', filename: 'mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz', arch: 'x86_64', glibc: '2.12', note: '旧系统' },
-  // MySQL Windows
-  { os: 'Windows', product: 'MySQL', version: '8.4.0', branch: 'MySQL-8.4', filename: 'mysql-8.4.0-winx64.zip', arch: 'x64', glibc: '-', note: 'Windows x64' },
-  { os: 'Windows', product: 'MySQL', version: '8.0.36', branch: 'MySQL-8.0', filename: 'mysql-8.0.36-winx64.zip', arch: 'x64', glibc: '-', note: 'Windows x64' },
-  { os: 'Windows', product: 'MySQL', version: '5.7.44', branch: 'MySQL-5.7', filename: 'mysql-5.7.44-winx64.zip', arch: 'x64', glibc: '-', note: 'Windows x64' },
-  // Percona Linux
-  { os: 'Linux', product: 'Percona', version: '8.0.36-28', branch: 'Percona-Server-8.0', filename: 'Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz', arch: 'x86_64', glibc: '2.28', note: 'MySQL 兼容' },
-  { os: 'Linux', product: 'Percona', version: '5.7.44-48', branch: 'Percona-Server-5.7', filename: 'Percona-Server-5.7.44-48-Linux.x86_64.glibc2.17.tar.gz', arch: 'x86_64', glibc: '2.17', note: '旧系统' },
-  // MariaDB Linux
-  { os: 'Linux', product: 'MariaDB', version: '11.4.2', branch: 'mariadb-11.4.2', filename: 'mariadb-11.4.2-linux-systemd-x86_64.tar.gz', arch: 'x86_64', glibc: '-', note: '最新 LTS' },
-  { os: 'Linux', product: 'MariaDB', version: '10.11.4', branch: 'mariadb-10.11.4', filename: 'mariadb-10.11.4-linux-systemd-x86_64.tar.gz', arch: 'x86_64', glibc: '-', note: 'LTS' },
-  { os: 'Linux', product: 'MariaDB', version: '10.6.16', branch: 'mariadb-10.6.16', filename: 'mariadb-10.6.16-linux-systemd-x86_64.tar.gz', arch: 'x86_64', glibc: '-', note: '' },
-  // MariaDB Windows
-  { os: 'Windows', product: 'MariaDB', version: '10.11.4', branch: 'mariadb-10.11.4', filename: 'mariadb-10.11.4-winx64.zip', arch: 'x64', glibc: '-', note: 'Windows x64' },
-]
-
-const MIRROR_URLS: Record<string, string> = {
-  MySQL: 'https://mirrors.tuna.tsinghua.edu.cn/mysql',
-  Percona: 'https://mirrors.tuna.tsinghua.edu.cn/percona',
-  MariaDB: 'https://mirrors.tuna.tsinghua.edu.cn/mariadb',
+const PasswordPolicyForm: React.FC = () => {
+  const [form] = Form.useForm()
+  const { settings, save } = usePlatformSettings()
+  useEffect(() => {
+    const raw = settings.password_policy || localStorage.getItem(POLICY_KEY)
+    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultPolicy) }
+  }, [settings.password_policy])
+  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(POLICY_KEY, j); save('password_policy', j); message.success('密码策略已保存') }
+  return (
+    <Form form={form} layout="vertical" size="small">
+      <Row gutter={8}>
+        <Col span={8}><Form.Item name="min_length" label="最小长度"><InputNumber min={4} max={32} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={8}><Form.Item name="max_age_days" label="有效期(天)"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={8}><Form.Item name="history_count" label="历史密码数"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+      </Row>
+      <Space wrap style={{ marginBottom: 8 }}>
+        <Form.Item name="require_uppercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 大写</Form.Item>
+        <Form.Item name="require_lowercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 小写</Form.Item>
+        <Form.Item name="require_digit" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 数字</Form.Item>
+        <Form.Item name="require_special" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 特殊字符</Form.Item>
+      </Space>
+      <Button size="small" type="primary" onClick={handleSave}>保存策略</Button>
+    </Form>
+  )
 }
 
-const PackageManager: React.FC = () => {
-  const [hosts, setHosts] = useState<Array<{ id: string; name: string; address: string }>>([])
+// ─── 监控指标 ─────────────────────────────────────────────────────────────
+
+const METRICS_KEY = 'dbops_metrics_thresholds'
+const CRED_KEY2 = 'dbops_default_mysql_credential'
+const defaultMetrics = {
+  connection_warn: 80, connection_critical: 95, qps_warn: 5000, qps_critical: 10000,
+  slow_query_warn: 5, slow_query_critical: 20, repl_lag_warn: 10, repl_lag_critical: 60,
+  buffer_pool_warn: 85, deadlock_warn_per_hour: 3, tmp_table_warn: 1024, thread_running_warn: 100,
+  disk_warn: 80, disk_critical: 90, mem_warn: 85, cpu_warn: 80,
+}
+
+const MetricsTab: React.FC = () => {
+  const [form] = Form.useForm()
+  const [credForm] = Form.useForm()
+  const { settings, save } = usePlatformSettings()
+  useEffect(() => {
+    const raw = settings.metrics_thresholds || localStorage.getItem(METRICS_KEY)
+    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultMetrics) }
+    const rawC = settings.mysql_credential || localStorage.getItem(CRED_KEY2)
+    if (rawC) { try { const c = typeof rawC === 'string' ? JSON.parse(rawC) : rawC; credForm.setFieldsValue({ mysql_user: c.username || 'root', mysql_password: c.password || '' }) } catch {} }
+  }, [settings])
+  const saveMetrics = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(METRICS_KEY, j); save('metrics_thresholds', j); message.success('监控阈值已保存') }
+  const saveCred = async () => { const v = await credForm.validateFields(); const j = JSON.stringify({ username: v.mysql_user, password: v.mysql_password }); localStorage.setItem(CRED_KEY2, j); save('mysql_credential', j); message.success('MySQL 账号已保存') }
+  const F = ({ name, label }: { name: string; label: string }) => (
+    <Col span={6}><Form.Item name={name} label={label} style={{ marginBottom: 8 }}><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+  )
+  return (
+    <Row gutter={16}>
+      <Col span={5}>
+        <Card type="inner" title="MySQL 账号" size="small">
+          <Form form={credForm} layout="vertical" size="small" initialValues={{ mysql_user: 'root' }}>
+            <Form.Item name="mysql_user" label="用户名" rules={[{ required: true }]}><Input size="small" /></Form.Item>
+            <Form.Item name="mysql_password" label="密码" rules={[{ required: true, min: 8 }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Button size="small" type="primary" onClick={saveCred}>保存</Button>
+          </Form>
+        </Card>
+      </Col>
+      <Col span={19}>
+        <Card type="inner" title="监控指标阈值" size="small">
+          <Form form={form} layout="horizontal" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }} size="small">
+            <Text strong style={{ fontSize: 12 }}>通用</Text>
+            <Row gutter={8} style={{ marginBottom: 4 }}>
+              <F name="connection_warn" label="连接数警告%" /><F name="qps_warn" label="QPS警告" /><F name="slow_query_warn" label="慢查询/秒" /><F name="repl_lag_warn" label="延迟警告(秒)" />
+            </Row>
+            <Row gutter={8} style={{ marginBottom: 12 }}>
+              <F name="connection_critical" label="连接数严重%" /><F name="qps_critical" label="QPS严重" /><F name="slow_query_critical" label="慢查询严重" /><F name="repl_lag_critical" label="延迟严重(秒)" />
+            </Row>
+            <Text strong style={{ fontSize: 12 }}>MySQL 8.0+</Text>
+            <Row gutter={8} style={{ marginBottom: 12 }}>
+              <F name="buffer_pool_warn" label="BufferPool%" /><F name="deadlock_warn_per_hour" label="死锁/小时" /><F name="tmp_table_warn" label="临时表(MB)" /><F name="thread_running_warn" label="活跃线程" />
+            </Row>
+            <Text strong style={{ fontSize: 12 }}>资源</Text>
+            <Row gutter={8} style={{ marginBottom: 12 }}>
+              <F name="disk_warn" label="磁盘警告%" /><F name="disk_critical" label="磁盘严重%" /><F name="mem_warn" label="内存警告%" /><F name="cpu_warn" label="CPU警告%" />
+            </Row>
+            <Button size="small" type="primary" onClick={saveMetrics}>保存阈值</Button>
+          </Form>
+        </Card>
+      </Col>
+    </Row>
+  )
+}
+
+// ─── 平台参数 ─────────────────────────────────────────────────────────────
+
+const PARAMS_KEY = 'dbops_platform_params'
+const defaultParams = {
+  agent_port: 9090, default_mysql_port: 3306, default_os_user: 'mysql',
+  datadir_prefix: '/data/mysql', basedir_prefix: '/opt/mysql',
+  health_check_interval_sec: 30, deploy_timeout_min: 30,
+  backup_retention_days: 7, backup_schedule: '0 2 * * *',
+  slow_query_threshold_sec: 1, max_connections_default: 500,
+  innodb_buffer_pool_ratio: 0.7, relay_timeout_sec: 300,
+}
+
+const PlatformTab: React.FC = () => {
+  const [form] = Form.useForm()
+  const { settings, save } = usePlatformSettings()
+  useEffect(() => {
+    const raw = settings.platform_params || localStorage.getItem(PARAMS_KEY)
+    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultParams) }
+  }, [settings.platform_params])
+  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(PARAMS_KEY, j); save('platform_params', j); message.success('平台参数已保存') }
+  return (
+    <Form form={form} layout="horizontal" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} size="small">
+      <Row gutter={16}>
+        <Col span={12}>
+          <Card type="inner" title="连接与部署" size="small">
+            <Form.Item name="agent_port" label="Agent 端口"><InputNumber min={1} max={65535} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="default_mysql_port" label="MySQL 端口"><InputNumber min={1} max={65535} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="default_os_user" label="OS 用户"><Input size="small" placeholder="mysql" /></Form.Item>
+            <Form.Item name="datadir_prefix" label="数据目录前缀"><Input size="small" placeholder="/data/mysql" /></Form.Item>
+            <Form.Item name="basedir_prefix" label="安装目录前缀"><Input size="small" placeholder="/opt/mysql" /></Form.Item>
+            <Form.Item name="deploy_timeout_min" label="部署超时(分钟)"><InputNumber min={5} max={120} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="relay_timeout_sec" label="中继下载超时(秒)"><InputNumber min={30} size="small" style={{ width: '100%' }} /></Form.Item>
+          </Card>
+        </Col>
+        <Col span={12}>
+          <Card type="inner" title="监控与备份" size="small">
+            <Form.Item name="health_check_interval_sec" label="健康检查(秒)"><InputNumber min={10} max={3600} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="backup_retention_days" label="备份保留(天)"><InputNumber min={1} max={365} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="backup_schedule" label="备份计划(cron)"><Input size="small" placeholder="0 2 * * *" /></Form.Item>
+            <Form.Item name="slow_query_threshold_sec" label="慢查询阈值(秒)"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="max_connections_default" label="默认最大连接数"><InputNumber min={10} size="small" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="innodb_buffer_pool_ratio" label="BufferPool比例"><InputNumber min={0.1} max={0.9} step={0.1} size="small" style={{ width: '100%' }} /></Form.Item>
+          </Card>
+        </Col>
+      </Row>
+      <Form.Item style={{ marginTop: 12 }}><Button size="small" type="primary" onClick={handleSave}>保存参数</Button></Form.Item>
+    </Form>
+  )
+}
+
+// ─── 安装包管理 ───────────────────────────────────────────────────────────
+
+// 每个大版本(x.x)至少一条，覆盖 MySQL 5.7~8.4 + Percona + MariaDB + Windows
+const CATALOG = [
+  { os: 'Linux', p: 'MySQL',   v: '8.4.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.xz', fn: 'mysql-8.4.0-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', n: 'LTS glibc2.28' },
+  { os: 'Win',   p: 'MySQL',   v: '8.4.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.0-winx64.zip', fn: 'mysql-8.4.0-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'MySQL',   v: '8.3.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.3/mysql-8.3.0-linux-glibc2.28-x86_64.tar.xz', fn: 'mysql-8.3.0-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', n: 'glibc2.28' },
+  { os: 'Win',   p: 'MySQL',   v: '8.3.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.3/mysql-8.3.0-winx64.zip', fn: 'mysql-8.3.0-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'MySQL',   v: '8.2.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.2/mysql-8.2.0-linux-glibc2.28-x86_64.tar.xz', fn: 'mysql-8.2.0-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', n: 'glibc2.28' },
+  { os: 'Win',   p: 'MySQL',   v: '8.2.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.2/mysql-8.2.0-winx64.zip', fn: 'mysql-8.2.0-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'MySQL',   v: '8.1.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.1/mysql-8.1.0-linux-glibc2.28-x86_64.tar.xz', fn: 'mysql-8.1.0-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', n: 'glibc2.28' },
+  { os: 'Win',   p: 'MySQL',   v: '8.1.0', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.1/mysql-8.1.0-winx64.zip', fn: 'mysql-8.1.0-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'MySQL',   v: '8.0.36', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz', fn: 'mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz', arch: 'x86_64', n: 'glibc2.17' },
+  { os: 'Linux', p: 'MySQL',   v: '8.0.37', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.37-linux-glibc2.28-x86_64.tar.xz', fn: 'mysql-8.0.37-linux-glibc2.28-x86_64.tar.xz', arch: 'x86_64', n: 'glibc2.28' },
+  { os: 'Win',   p: 'MySQL',   v: '8.0.36', url: 'https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.36-winx64.zip', fn: 'mysql-8.0.36-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'MySQL',   v: '5.7.44', url: 'https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz', fn: 'mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz', arch: 'x86_64', n: 'glibc2.12' },
+  { os: 'Win',   p: 'MySQL',   v: '5.7.44', url: 'https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.44-winx64.zip', fn: 'mysql-5.7.44-winx64.zip', arch: 'x64', n: 'Windows' },
+  { os: 'Linux', p: 'Percona', v: '8.0.36-28', url: 'https://downloads.percona.com/downloads/Percona-Server-8.0/Percona-Server-8.0.36-28/binary/tarball/Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz', fn: 'Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz', arch: 'x86_64', n: 'MySQL兼容' },
+  { os: 'Linux', p: 'Percona', v: '5.7.44-48', url: 'https://downloads.percona.com/downloads/Percona-Server-5.7/Percona-Server-5.7.44-48/binary/tarball/Percona-Server-5.7.44-48-Linux.x86_64.glibc2.17.tar.gz', fn: 'Percona-Server-5.7.44-48-Linux.x86_64.glibc2.17.tar.gz', arch: 'x86_64', n: '旧系统' },
+  { os: 'Linux', p: 'MariaDB', v: '11.4.2', url: 'https://archive.mariadb.org/mariadb-11.4.2/bintar-linux-systemd-x86_64/mariadb-11.4.2-linux-systemd-x86_64.tar.gz', fn: 'mariadb-11.4.2-linux-systemd-x86_64.tar.gz', arch: 'x86_64', n: 'LTS' },
+  { os: 'Linux', p: 'MariaDB', v: '10.11.4', url: 'https://archive.mariadb.org/mariadb-10.11.4/bintar-linux-systemd-x86_64/mariadb-10.11.4-linux-systemd-x86_64.tar.gz', fn: 'mariadb-10.11.4-linux-systemd-x86_64.tar.gz', arch: 'x86_64', n: 'LTS' },
+  { os: 'Win',   p: 'MariaDB', v: '10.11.4', url: 'https://archive.mariadb.org/mariadb-10.11.4/bintar-linux-systemd-x86_64/mariadb-10.11.4-winx64.zip', fn: 'mariadb-10.11.4-winx64.zip', arch: 'x64', n: 'Windows' },
+]
+
+const REPO_SOURCES = [
+  { id: 'mysql80-yum', label: 'MySQL 8.0 (yum/RHEL7)', type: 'yum', content: '[mysql80-server]\nname=MySQL 8.0\nbaseurl=https://mirrors.tuna.tsinghua.edu.cn/mysql/yum/mysql80-community/el/7/x86_64/\ngpgcheck=0\nenabled=1' },
+  { id: 'mysql84-yum', label: 'MySQL 8.4 LTS (yum/RHEL9)', type: 'yum', content: '[mysql84-server]\nname=MySQL 8.4 LTS\nbaseurl=https://mirrors.tuna.tsinghua.edu.cn/mysql/yum/mysql84-community/el/9/x86_64/\ngpgcheck=0\nenabled=1' },
+  { id: 'mysql80-apt', label: 'MySQL 8.0 (apt/Ubuntu22.04)', type: 'apt', content: 'deb https://mirrors.tuna.tsinghua.edu.cn/mysql/apt/ubuntu jammy mysql-8.0' },
+  { id: 'mysql84-apt', label: 'MySQL 8.4 LTS (apt/Ubuntu24.04)', type: 'apt', content: 'deb https://mirrors.tuna.tsinghua.edu.cn/mysql/apt/ubuntu noble mysql-8.4-lts' },
+  { id: 'percona-yum', label: 'Percona (yum)', type: 'yum', content: '[percona]\nname=Percona\nbaseurl=https://mirrors.tuna.tsinghua.edu.cn/percona/yum/release/8/RPMS/x86_64/\ngpgcheck=0\nenabled=1' },
+  { id: 'percona-apt', label: 'Percona (apt)', type: 'apt', content: 'deb https://mirrors.tuna.tsinghua.edu.cn/percona/apt jammy main' },
+  { id: 'mariadb-apt', label: 'MariaDB 10.11 (apt)', type: 'apt', content: 'deb https://mirrors.tuna.tsinghua.edu.cn/mariadb/repo/10.11/ubuntu jammy main' },
+]
+
+const PackageTab: React.FC = () => {
+  const [hosts, setHosts] = useState<Array<{id: string; name: string; address: string}>>([])
   const [relayHostId, setRelayHostId] = useState('')
   const [relayPath, setRelayPath] = useState('/opt')
-  const [relayFiles, setRelayFiles] = useState<Map<string, string>>(new Map()) // filename -> fullpath
-  const [remoteFiles, setRemoteFiles] = useState<Array<{ name: string; size: string; path: string }>>([])
+  const [relayFiles, setRelayFiles] = useState<Map<string, {size: string; path: string}>>(new Map())
+  const [remoteFiles, setRemoteFiles] = useState<Map<string, {size: string; path: string}>>(new Map())
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [progress, setProgress] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [osFilter, setOsFilter] = useState('all')
   const [productFilter, setProductFilter] = useState('all')
-  const { settings, save: saveSetting } = usePlatformSettings()
-  const token = () => localStorage.getItem('token') || ''
+  const [showRepo, setShowRepo] = useState(false)
+  const { settings, save } = usePlatformSettings()
 
   useEffect(() => {
     hostApi.list(100, 0).then((r: any) => setHosts(r?.data || [])).catch(() => {})
     const raw = settings.relay_config
     if (raw) {
-      try {
-        const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
-        if (cfg.relay_host_id) setRelayHostId(cfg.relay_host_id)
-        if (cfg.relay_path) setRelayPath(cfg.relay_path)
-      } catch {}
+      try { const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw; if (cfg.relay_host_id) setRelayHostId(cfg.relay_host_id); if (cfg.relay_path) setRelayPath(cfg.relay_path) } catch {}
     }
-    handleScanLocal()
+    handleScanRelay()
   }, [])
 
-  const saveRelayCfg = () => {
-    saveSetting('relay_config', JSON.stringify({ relay_host_id: relayHostId, relay_path: relayPath }))
-  }
+  const saveCfg = () => save('relay_config', JSON.stringify({ relay_host_id: relayHostId, relay_path: relayPath }))
 
-  const handleScanLocal = async () => {
+  const handleScanRelay = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ path: '' }),
-      })
+      const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ path: '' }) })
       const json = await res.json()
-      const m = new Map<string, string>()
-      for (const p of (json?.data?.packages || [])) m.set(p.name, p.path || p.name)
+      const m = new Map<string, {size: string; path: string}>()
+      for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
       setRelayFiles(m)
-    } catch {}
-    finally { setLoading(false) }
+    } catch {} finally { setLoading(false) }
   }
 
   const handleScanRemote = async () => {
-    if (!relayHostId) { message.warning('请先选择中继服务器主机'); return }
+    if (!relayHostId) { message.warning('请先选择中继主机'); return }
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote-ssh', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ host_id: relayHostId, path: relayPath }),
-      })
+      const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
       const json = await res.json()
-      setRemoteFiles(json?.data?.packages || [])
-      message.success(`扫描完成，发现 ${(json?.data?.packages || []).length} 个包`)
-    } catch (e: any) { message.error(`扫描失败: ${e?.message}`) }
-    finally { setLoading(false) }
+      const m = new Map<string, {size: string; path: string}>()
+      for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
+      setRemoteFiles(m)
+      message.success(`远程扫描完成，${(json?.data?.packages || []).length} 个包`)
+    } catch (e: any) { message.error(`扫描失败: ${e?.message}`) } finally { setLoading(false) }
   }
 
-  const handlePullToRelay = async (pkg: { name: string; path: string }) => {
-    if (!relayHostId) { message.warning('请先选择中继服务器主机'); return }
-    setDownloading(pkg.name)
-    try {
-      const res = await fetch('/api/v1/relay/pull-from-relay', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ host_id: relayHostId, file_path: pkg.path }),
-      })
-      const json = await res.json()
-      if (json?.code === 200) { message.success(`${pkg.name} 已保存到中继服务器`); handleScanLocal() }
-      else message.error(`拉取失败: ${json?.message}`)
-    } catch (e: any) { message.error(`拉取失败: ${e?.message}`) }
-    finally { setDownloading(null) }
-  }
-
-  const handleDownload = async (pkg: typeof PACKAGE_CATALOG[0]) => {
-    const base = MIRROR_URLS[pkg.product] || 'https://mirrors.tuna.tsinghua.edu.cn/mysql'
-    const url = `${base.replace(/\/+$/, '')}/${pkg.branch}/${pkg.filename}`
-    setDownloading(pkg.filename)
-    try {
-      const res = await fetch('/api/v1/relay/download-to-relay', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ url, filename: pkg.filename, target_path: `${pkg.product.toLowerCase()}/${pkg.version}` }),
-      })
-      const json = await res.json()
-      if (json?.code === 200) { message.success(`${pkg.filename} 下载完成`); handleScanLocal() }
-      else message.error(`下载失败: ${json?.message}`)
-    } catch (e: any) { message.error(`下载失败: ${e?.message}`) }
-    finally { setDownloading(null) }
+  // 统一"补充"操作：存在则从远程拉取，不存在则从镜像下载
+  const handleSupply = async (c: typeof CATALOG[0]) => {
+    const remoteInfo = remoteFiles.get(c.fn)
+    if (remoteInfo && relayHostId) {
+      // 从远程主机拉取到中继服务器
+      setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '拉取中...' }))
+      try {
+        const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
+        const json = await res.json()
+        if (json?.code === 200) { message.success(`${c.fn} 已拉取`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
+        else { message.error(`拉取失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      } catch (e: any) { message.error(`拉取失败: ${e?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      finally { setDownloading(null) }
+    } else {
+      // 从镜像下载
+      setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '下载中...' }))
+      try {
+        const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
+        const json = await res.json()
+        if (json?.code === 200) { message.success(`${c.fn} 下载完成`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
+        else { message.error(`下载失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      } catch (e: any) { message.error(`下载失败: ${e?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      finally { setDownloading(null) }
+    }
   }
 
   const handleUpload = async (file: File) => {
@@ -200,321 +314,104 @@ const PackageManager: React.FC = () => {
     try {
       const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd })
       const json = await res.json()
-      if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanLocal() }
-      else message.error(`上传失败: ${json?.message}`)
+      if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanRelay() } else message.error(`上传失败: ${json?.message}`)
     } catch (e: any) { message.error(`上传失败: ${e?.message}`) }
   }
 
-  const handleDelete = async (filename: string) => {
+  const handleDelete = async (fn: string) => {
     try {
-      const res = await fetch('/api/v1/relay/delete-package', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ path: filename }),
-      })
+      const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ path: fn }) })
       const json = await res.json()
-      if (json?.code === 200) { message.success('已删除'); handleScanLocal() }
-      else message.error(`删除失败: ${json?.message}`)
+      if (json?.code === 200) { message.success('已删除'); handleScanRelay() } else message.error(`删除失败: ${json?.message}`)
     } catch (e: any) { message.error(`删除失败: ${e?.message}`) }
   }
 
-  const filtered = PACKAGE_CATALOG.filter(p =>
-    (osFilter === 'all' || p.os === osFilter) && (productFilter === 'all' || p.product === productFilter)
-  )
-  const missingCount = filtered.filter(p => !relayFiles.has(p.filename)).length
+  const filtered = CATALOG.filter(c => (osFilter === 'all' || c.os === osFilter) && (productFilter === 'all' || c.p === productFilter))
+  const missing = filtered.filter(c => !relayFiles.has(c.fn)).length
 
   return (
     <div>
-      {/* 中继服务器配置 */}
-      <Card type="inner" title="中继服务器" size="small" style={{ marginBottom: 12 }}>
-        <Row gutter={12} align="middle">
-          <Col span={6}>
-            <Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveRelayCfg() }}
-              placeholder="选择中继主机"
-              options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} />
-          </Col>
-          <Col span={4}>
-            <Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={saveRelayCfg} placeholder="/opt" addonBefore="路径" />
-          </Col>
+      <Card type="inner" size="small" style={{ marginBottom: 12 }}>
+        <Row gutter={8} align="middle">
+          <Col span={5}><Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveCfg() }} placeholder="中继主机" options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} /></Col>
+          <Col span={3}><Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={saveCfg} placeholder="/opt" addonBefore="路径" /></Col>
+          <Col span={2}><Button size="small" icon={<ReloadOutlined />} onClick={handleScanRelay} loading={loading}>刷新</Button></Col>
+          <Col span={3}><Button size="small" icon={<DownloadOutlined />} onClick={handleScanRemote} loading={loading} disabled={!relayHostId}>扫描远程</Button></Col>
           <Col span={3}>
-            <Button size="small" icon={<ReloadOutlined />} onClick={handleScanLocal} loading={loading}>刷新中继</Button>
+            <input type="file" id="pkg-upload" style={{ display: 'none' }} accept=".tar.gz,.tar.xz,.tgz,.tar.bz2,.rpm,.deb,.zip" onChange={(e) => { if (e.target.files?.[0]) handleUpload(e.target.files[0]); e.target.value = '' }} />
+            <Button size="small" onClick={() => document.getElementById('pkg-upload')?.click()}>上传包</Button>
           </Col>
-          <Col span={4}>
-            <Button size="small" icon={<DownloadOutlined />} onClick={handleScanRemote} loading={loading} disabled={!relayHostId}>扫描远程主机</Button>
-          </Col>
-          <Col span={7} style={{ textAlign: 'right' }}>
+          <Col span={8} style={{ textAlign: 'right' }}>
             <Space>
-              <Tag>中继已有: {relayFiles.size}</Tag>
-              {missingCount > 0 ? <Tag color="warning">缺失 {missingCount}</Tag> : <Tag color="success" icon={<CheckCircleOutlined />}>齐全</Tag>}
+              <Tag>中继: {relayFiles.size}</Tag>
+              {missing > 0 ? <Tag color="warning">缺 {missing}</Tag> : <Tag color="success" icon={<CheckCircleOutlined />}>齐全</Tag>}
             </Space>
           </Col>
         </Row>
       </Card>
 
-      {/* 安装包目录 */}
       <Card type="inner" title="安装包目录" size="small"
-        extra={
-          <Space size={8}>
-            <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 80 }}
-              options={[{ value: 'all', label: 'OS' }, { value: 'Linux', label: 'Linux' }, { value: 'Windows', label: 'Win' }]} />
-            <Select size="small" value={productFilter} onChange={setProductFilter} style={{ width: 90 }}
-              options={[{ value: 'all', label: '产品' }, { value: 'MySQL', label: 'MySQL' }, { value: 'Percona', label: 'Percona' }, { value: 'MariaDB', label: 'MariaDB' }]} />
-            <input type="file" id="pkg-upload" style={{ display: 'none' }} accept=".tar.gz,.tar.xz,.tgz,.tar.bz2,.rpm,.deb,.zip"
-              onChange={(e) => { if (e.target.files?.[0]) handleUpload(e.target.files[0]); e.target.value = '' }} />
-            <Button size="small" onClick={() => document.getElementById('pkg-upload')?.click()}>上传</Button>
-          </Space>
-        }
-      >
+        extra={<Space size={8}>
+          <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 70 }} options={[{ value: 'all', label: 'OS' }, { value: 'Linux', label: 'Linux' }, { value: 'Win', label: 'Win' }]} />
+          <Select size="small" value={productFilter} onChange={setProductFilter} style={{ width: 80 }} options={[{ value: 'all', label: '产品' }, { value: 'MySQL', label: 'MySQL' }, { value: 'Percona', label: 'Percona' }, { value: 'MariaDB', label: 'MariaDB' }]} />
+        </Space>}>
         <Table size="small" pagination={false} scroll={{ y: 400 }}
-          dataSource={filtered.map((p, i) => ({ ...p, key: i, hasIt: relayFiles.has(p.filename) }))}
+          dataSource={filtered.map((c, i) => ({ ...c, key: i, hasIt: relayFiles.has(c.fn), remoteIt: remoteFiles.has(c.fn) }))}
           rowClassName={(r: any) => r.hasIt ? '' : 'ant-table-row-warning'}
           columns={[
-            { title: 'OS', dataIndex: 'os', key: 'os', width: 55, render: (v: string) => <Tag>{v}</Tag> },
-            { title: '产品', dataIndex: 'product', key: 'product', width: 70, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : 'orange'}>{v}</Tag> },
-            { title: '版本', dataIndex: 'version', key: 'version', width: 85 },
-            { title: 'arch', dataIndex: 'arch', key: 'arch', width: 55 },
-            { title: '说明', dataIndex: 'note', key: 'note', width: 100, ellipsis: true },
-            { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
-            { title: '中继', dataIndex: 'hasIt', key: 'status', width: 45, render: (v: boolean) => v ? <Tag color="success">✓</Tag> : <Tag color="warning">缺</Tag> },
-            { title: '', key: 'act', width: 70, render: (_: any, r: any) => r.hasIt
-                ? <Button size="small" danger onClick={() => handleDelete(r.filename)}>×</Button>
-                : <Button size="small" type="primary" loading={downloading === r.filename} disabled={!!downloading} onClick={() => handleDownload(r)}>下载</Button> },
+            { title: 'OS', dataIndex: 'os', key: 'os', width: 45, render: (v: string) => <Tag style={{ fontSize: 10 }}>{v}</Tag> },
+            { title: '产品', dataIndex: 'p', key: 'p', width: 65, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : 'orange'}>{v}</Tag> },
+            { title: '版本', dataIndex: 'v', key: 'v', width: 80 },
+            { title: 'arch', dataIndex: 'arch', key: 'arch', width: 50 },
+            { title: '说明', dataIndex: 'n', key: 'n', width: 80, ellipsis: true },
+            { title: '文件名', dataIndex: 'fn', key: 'fn', ellipsis: true },
+            { title: '状态', dataIndex: 'hasIt', key: 'st', width: 70,
+              render: (v: boolean, r: any) => v
+                ? <Tag color="success" style={{ fontSize: 10 }}>已有</Tag>
+                : r.remoteIt
+                  ? <Tag color="processing" style={{ fontSize: 10 }}>远程有</Tag>
+                  : <Tag color="warning" style={{ fontSize: 10 }}>缺失</Tag> },
+            { title: '', key: 'act', width: 90, render: (_: any, r: any) => {
+              if (r.hasIt) return <Button size="small" danger onClick={() => handleDelete(r.fn)}>删除</Button>
+              return <Button size="small" type="primary" loading={downloading === r.fn} disabled={!!downloading}
+                onClick={() => handleSupply(r)}>{progress[r.fn] || (r.remoteIt && relayHostId ? '拉取' : '下载')}</Button>
+            }},
           ]}
         />
       </Card>
 
-      {/* 远程主机上的包 */}
-      {remoteFiles.length > 0 && (
-        <Card type="inner" title={`远程主机包 (${remoteFiles.length})`} size="small" style={{ marginTop: 12 }}>
-          <Table size="small" pagination={false} scroll={{ y: 200 }}
-            dataSource={remoteFiles.map((p, i) => ({ ...p, key: i }))}
+      <Card type="inner" title="Yum/Apt 源配置" size="small" style={{ marginTop: 12 }}
+        extra={<Button size="small" onClick={() => setShowRepo(!showRepo)}>{showRepo ? '收起' : '展开'}</Button>}>
+        {showRepo && (
+          <Table size="small" pagination={false}
+            dataSource={REPO_SOURCES.map((r, i) => ({ ...r, key: i }))}
             columns={[
-              { title: '文件名', dataIndex: 'name', key: 'name', ellipsis: true },
-              { title: '大小', dataIndex: 'size', key: 'size', width: 80 },
-              { title: '路径', dataIndex: 'path', key: 'path', ellipsis: true, render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code> },
-              { title: '', key: 'act', width: 80, render: (_: any, r: any) => <Button size="small" type="primary" loading={downloading === r.name} onClick={() => handlePullToRelay(r)}>拉取</Button> },
+              { title: '标签', dataIndex: 'label', key: 'label', width: 200 },
+              { title: '类型', dataIndex: 'type', key: 'type', width: 50 },
+              { title: '源内容', dataIndex: 'content', key: 'content', ellipsis: true, render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code> },
             ]}
           />
-        </Card>
-      )}
-
-      <RepoSourceManager />
+        )}
+        {!showRepo && <Text type="secondary">{REPO_SOURCES.length} 个预置源</Text>}
+      </Card>
     </div>
   )
 }
 
-// ─── Repo/Apt 源管理 ─────────────────────────────────────────────────
-interface RepoSource { id: string; label: string; os: 'Linux' | 'Windows'; type: 'yum' | 'apt' | 'zypper'; content: string; enabled: boolean }
+// ─── 主组件 ───────────────────────────────────────────────────────────────
 
-const DEFAULT_REPO_SOURCES: RepoSource[] = [
-  { id: 'mysql80-yum', label: 'MySQL 8.0 (yum/RHEL 7)', os: 'Linux', type: 'yum', enabled: true, content: `[mysql80-server]
-name=MySQL 8.0 Server
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/mysql/yum/mysql80-community/el/7/x86_64/
-gpgcheck=0
-enabled=1` },
-  { id: 'mysql84-yum', label: 'MySQL 8.4 LTS (yum/RHEL 9)', os: 'Linux', type: 'yum', enabled: true, content: `[mysql84-server]
-name=MySQL 8.4 LTS
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/mysql/yum/mysql84-community/el/9/x86_64/
-gpgcheck=0
-enabled=1` },
-  { id: 'mysql80-apt', label: 'MySQL 8.0 (apt/Ubuntu 22.04)', os: 'Linux', type: 'apt', enabled: true, content: `deb https://mirrors.tuna.tsinghua.edu.cn/mysql/apt/ubuntu jammy mysql-8.0` },
-  { id: 'mysql84-apt', label: 'MySQL 8.4 LTS (apt/Ubuntu 24.04)', os: 'Linux', type: 'apt', enabled: true, content: `deb https://mirrors.tuna.tsinghua.edu.cn/mysql/apt/ubuntu noble mysql-8.4-lts` },
-  { id: 'percona-yum', label: 'Percona (yum)', os: 'Linux', type: 'yum', enabled: false, content: `[percona]
-name=Percona
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/percona/yum/release/8/RPMS/x86_64/
-gpgcheck=0
-enabled=1` },
-  { id: 'percona-apt', label: 'Percona (apt)', os: 'Linux', type: 'apt', enabled: false, content: `deb https://mirrors.tuna.tsinghua.edu.cn/percona/apt jammy main` },
-  { id: 'mariadb-apt', label: 'MariaDB 10.11 (apt)', os: 'Linux', type: 'apt', enabled: false, content: `deb https://mirrors.tuna.tsinghua.edu.cn/mariadb/repo/10.11/ubuntu jammy main` },
-]
-
-const RepoSourceManager: React.FC = () => {
-  const [sources, setSources] = useState<RepoSource[]>(DEFAULT_REPO_SOURCES)
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editContent, setEditContent] = useState('')
-  const [pushLoading, setPushLoading] = useState<string | null>(null)
-  const { settings, save: saveSetting } = usePlatformSettings()
-  const token = () => localStorage.getItem('token') || ''
-
-  useEffect(() => {
-    const raw = settings.repo_sources
-    if (raw) {
-      try { const saved: RepoSource[] = typeof raw === 'string' ? JSON.parse(raw) : raw; if (saved.length > 0) setSources(saved) } catch { /* ignore */ }
-    }
-  }, [])
-
-  const handleSave = () => { saveSetting('repo_sources', JSON.stringify(sources)); message.success('源配置已保存') }
-
-  const handlePush = async (src: RepoSource) => {
-    setPushLoading(src.id)
-    try {
-      const res = await fetch('/api/v1/relay/push-repo-source', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ label: src.label, type: src.type, content: src.content }),
-      })
-      const json = await res.json()
-      if (json?.code === 200) message.success(`${src.label}: 推送成功`)
-      else message.error(`推送失败: ${json?.message}`)
-    } catch (e: any) { message.error(`推送失败: ${e?.message}`) }
-    finally { setPushLoading(null) }
-  }
-
-  const addSource = () => {
-    const newId = `custom-${Date.now()}`
-    setSources([...sources, { id: newId, label: '自定义源', os: 'Linux', type: 'yum', enabled: true, content: '' }])
-    setEditId(newId); setEditContent('')
-  }
-  const updateSource = (id: string, field: keyof RepoSource, val: any) => { setSources(sources.map(s => s.id === id ? { ...s, [field]: val } : s)) }
-  const removeSource = (id: string) => { setSources(sources.filter(s => s.id !== id)) }
-
+const SecuritySettings: React.FC = () => {
   return (
-    <Card type="inner" title="Yum/Apt 源配置" size="small" style={{ marginTop: 12 }}
-      extra={<Space>
-        <Button size="small" onClick={addSource}>添加源</Button>
-        <Button size="small" type="primary" onClick={handleSave}>保存配置</Button>
-      </Space>}>
-      <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-        配置 yum/apt 源，部署时自动推送到远程主机。支持 RHEL/CentOS (yum) 和 Ubuntu/Debian (apt)。
-      </Text>
-      {sources.map((src) => (
-        <div key={src.id} style={{ marginBottom: 6, padding: 6, border: '1px solid #f0f0f0', borderRadius: 4, background: src.enabled ? '#fafafa' : '#f5f5f5' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Switch size="small" checked={src.enabled} onChange={(v) => updateSource(src.id, 'enabled', v)} />
-            <Input size="small" value={src.label} onChange={(e) => updateSource(src.id, 'label', e.target.value)} style={{ width: 180 }} />
-            <Select size="small" value={src.type} onChange={(v) => updateSource(src.id, 'type', v)} style={{ width: 80 }}
-              options={[{ value: 'yum', label: 'yum' }, { value: 'apt', label: 'apt' }, { value: 'zypper', label: 'zypper' }]} />
-            <Select size="small" value={src.os} onChange={(v) => updateSource(src.id, 'os', v)} style={{ width: 90 }}
-              options={[{ value: 'Linux', label: 'Linux' }, { value: 'Windows', label: 'Windows' }]} />
-            <Button size="small" onClick={() => { setEditId(editId === src.id ? null : src.id); setEditContent(src.content) }}>
-              {editId === src.id ? '收起' : '编辑'}
-            </Button>
-            <Button size="small" type="primary" onClick={() => handlePush(src)} loading={pushLoading === src.id} disabled={!src.enabled}>
-              推送到主机
-            </Button>
-            <Button size="small" danger onClick={() => removeSource(src.id)}>×</Button>
-          </div>
-          {editId === src.id && (
-            <Input.TextArea value={editContent} onChange={(e) => { setEditContent(e.target.value); updateSource(src.id, 'content', e.target.value) }}
-              rows={4} style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 12 }} />
-          )}
-        </div>
-      ))}
-    </Card>
-  )
-}
-
-// ─── MySQL 账号配置 ──────────────────────────────────────────────────
-const CREDENTIAL_STORAGE_KEY = 'dbops_default_mysql_credential'
-
-const MySQLCredentialConfig: React.FC = () => {
-  const [form] = Form.useForm()
-  const { settings, save: saveSetting } = usePlatformSettings()
-  useEffect(() => {
-    const raw = settings.mysql_credential || localStorage.getItem(CREDENTIAL_STORAGE_KEY)
-    if (raw) { try { const c = typeof raw === 'string' ? JSON.parse(raw) : raw; form.setFieldsValue({ mysql_user: c.username || 'root', mysql_password: c.password || '' }) } catch {} }
-  }, [settings.mysql_credential])
-  const handleSave = async () => {
-    const values = await form.validateFields()
-    const json = JSON.stringify({ username: values.mysql_user, password: values.mysql_password })
-    localStorage.setItem(CREDENTIAL_STORAGE_KEY, json); saveSetting('mysql_credential', json); message.success('默认 MySQL 账号已保存')
-  }
-  return (
-    <Card type="inner" title="集群部署默认 MySQL 账号">
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>集群部署时使用的默认 MySQL root 账号和密码。此设置会同步到集群部署页面。</Text>
-      <Form form={form} layout="vertical" style={{ maxWidth: 400 }} initialValues={{ mysql_user: 'root' }}>
-        <Form.Item name="mysql_user" label="用户名" rules={[{ required: true }]}><Input placeholder="root" /></Form.Item>
-        <Form.Item name="mysql_password" label="密码" rules={[{ required: true, min: 8 }]}><Input.Password placeholder="MySQL root 密码" autoComplete="new-password" /></Form.Item>
-        <Form.Item><Button type="primary" onClick={handleSave}>保存账号</Button></Form.Item>
-      </Form>
-    </Card>
-  )
-}
-
-// ─── 密码策略配置 ────────────────────────────────────────────────────
-const POLICY_STORAGE_KEY = 'dbops_password_policy'
-const defaultPolicy = { min_length: 8, require_uppercase: true, require_lowercase: true, require_digit: true, require_special: true }
-
-const PasswordPolicyConfig: React.FC = () => {
-  const [form] = Form.useForm()
-  const { settings, save: saveSetting } = usePlatformSettings()
-  useEffect(() => {
-    const raw = settings.password_policy || localStorage.getItem(POLICY_STORAGE_KEY)
-    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultPolicy) }
-  }, [settings.password_policy])
-  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(POLICY_STORAGE_KEY, j); saveSetting('password_policy', j); message.success('密码策略已保存') }
-  return (
-    <Card type="inner" title="全平台密码复杂度要求">
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>设置平台上所有密码的最低要求。</Text>
-      <Form form={form} layout="horizontal" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} style={{ maxWidth: 450 }}>
-        <Form.Item name="min_length" label="最小长度"><InputNumber min={4} max={32} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="require_uppercase" label="需要大写字母" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item name="require_lowercase" label="需要小写字母" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item name="require_digit" label="需要数字" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item name="require_special" label="需要特殊字符" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item><Button type="primary" onClick={handleSave}>保存策略</Button></Form.Item>
-      </Form>
-    </Card>
-  )
-}
-
-// ─── 平台参数配置 ────────────────────────────────────────────────────
-const PARAMS_STORAGE_KEY = 'dbops_platform_params'
-const defaultParams = { agent_port: 9090, default_mysql_port: 3306, default_os_user: 'mysql', default_datadir_prefix: '/data/mysql', health_check_interval_sec: 30, deploy_timeout_min: 30, backup_retention_days: 7 }
-
-const PlatformParams: React.FC = () => {
-  const [form] = Form.useForm()
-  const { settings, save: saveSetting } = usePlatformSettings()
-  useEffect(() => {
-    const raw = settings.platform_params || localStorage.getItem(PARAMS_STORAGE_KEY)
-    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultParams) }
-  }, [settings.platform_params])
-  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(PARAMS_STORAGE_KEY, j); saveSetting('platform_params', j); message.success('平台参数已保存') }
-  return (
-    <Card type="inner" title="平台默认参数">
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>这些参数在创建实例和集群部署时作为默认值使用。</Text>
-      <Form form={form} layout="horizontal" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} style={{ maxWidth: 500 }}>
-        <Form.Item name="agent_port" label="Agent 端口"><InputNumber min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="default_mysql_port" label="默认 MySQL 端口"><InputNumber min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="default_os_user" label="默认 OS 用户"><Input placeholder="mysql" /></Form.Item>
-        <Form.Item name="default_datadir_prefix" label="数据目录前缀"><Input placeholder="/data/mysql" /></Form.Item>
-        <Form.Item name="health_check_interval_sec" label="健康检查间隔(秒)"><InputNumber min={10} max={3600} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="deploy_timeout_min" label="部署超时(分钟)"><InputNumber min={5} max={120} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="backup_retention_days" label="备份保留天数"><InputNumber min={1} max={365} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item><Button type="primary" onClick={handleSave}>保存参数</Button></Form.Item>
-      </Form>
-    </Card>
-  )
-}
-
-// ─── 监控指标阈值配置 ────────────────────────────────────────────────
-const METRICS_STORAGE_KEY = 'dbops_metrics_thresholds'
-const defaultMetrics = { replication_lag_warn_sec: 10, replication_lag_critical_sec: 60, connection_usage_warn_pct: 80, connection_usage_critical_pct: 95, disk_usage_warn_pct: 80, disk_usage_critical_pct: 90, memory_usage_warn_pct: 85, qps_threshold: 10000 }
-
-const MetricsConfig: React.FC = () => {
-  const [form] = Form.useForm()
-  const { settings, save: saveSetting } = usePlatformSettings()
-  useEffect(() => {
-    const raw = settings.metrics_thresholds || localStorage.getItem(METRICS_STORAGE_KEY)
-    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultMetrics) }
-  }, [settings.metrics_thresholds])
-  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(METRICS_STORAGE_KEY, j); saveSetting('metrics_thresholds', j); message.success('监控阈值已保存') }
-  return (
-    <Card type="inner" title="监控指标阈值">
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>设置告警阈值，当指标超过阈值时在监控仪表盘中显示警告。</Text>
-      <Form form={form} layout="horizontal" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }} style={{ maxWidth: 520 }}>
-        <Divider plain>复制延迟</Divider>
-        <Form.Item name="replication_lag_warn_sec" label="警告阈值(秒)"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="replication_lag_critical_sec" label="严重阈值(秒)"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-        <Divider plain>连接数</Divider>
-        <Form.Item name="connection_usage_warn_pct" label="警告阈值(%)"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="connection_usage_critical_pct" label="严重阈值(%)"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
-        <Divider plain>资源使用</Divider>
-        <Form.Item name="disk_usage_warn_pct" label="磁盘警告(%)"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="disk_usage_critical_pct" label="磁盘严重(%)"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="memory_usage_warn_pct" label="内存警告(%)"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item name="qps_threshold" label="QPS 阈值"><InputNumber min={100} style={{ width: '100%' }} /></Form.Item>
-        <Form.Item><Button type="primary" onClick={handleSave}>保存阈值</Button></Form.Item>
-      </Form>
-    </Card>
+    <div style={{ padding: 24 }}>
+      <Card title={<Space><SettingOutlined /><span>系统设置</span></Space>}>
+        <Tabs defaultActiveKey="packages" items={[
+          { key: 'packages', label: <Space><CloudOutlined />安装包管理</Space>, children: <PackageTab /> },
+          { key: 'security', label: <Space><LockOutlined />安全设置</Space>, children: <SecurityTab /> },
+          { key: 'metrics', label: <Space><DatabaseOutlined />监控指标</Space>, children: <MetricsTab /> },
+          { key: 'params', label: <Space><ToolOutlined />平台参数</Space>, children: <PlatformTab /> },
+        ]} />
+      </Card>
+    </div>
   )
 }
 
