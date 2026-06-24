@@ -636,6 +636,13 @@ const ClusterDeploy: React.FC = () => {
       <Form.Item name="mysql_port" initialValue={3306} hidden>
         <InputNumber />
       </Form.Item>
+      <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]}>
+        <Select placeholder="选择版本" options={[
+          { value: '8.0', label: 'MySQL 8.0' },
+          { value: '5.7', label: 'MySQL 5.7' },
+          { value: '8.4', label: 'MySQL 8.4 LTS' },
+        ]} />
+      </Form.Item>
       <Row gutter={16}>
         <Col span={12}>
           <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>

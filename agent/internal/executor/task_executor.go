@@ -1593,26 +1593,20 @@ func (e *TaskExecutor) selectBackupMethod(ctx context.Context, config BackupConf
 
 func estimateMySQLDataSize(ctx context.Context, config BackupConfig) (int64, error) {
 	query := "SELECT COALESCE(SUM(data_length + index_length),0) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')"
-	var lastErr error
-	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
-		cmd := exec.CommandContext(ctx, "mysql", "-N", "-B", "-h", host, "-P", fmt.Sprintf("%d", config.MySQLPort), "-u", defaultString(config.MySQLUser, "root"), "-e", query)
-		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			lastErr = fmt.Errorf("host=%s: %v %s", host, err, strings.TrimSpace(string(out)))
-			continue
-		}
-		size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-		if err != nil {
-			lastErr = fmt.Errorf("host=%s: parse size %q: %w", host, strings.TrimSpace(string(out)), err)
-			continue
-		}
-		return size, nil
+	user := defaultString(config.MySQLUser, "root")
+	port := config.MySQLPort
+
+	// Use mysqlExecWithSocketFallback which handles TCP → socket fallback,
+	// missing shared libs → system mysql fallback, and auth_socket plugin.
+	out, err := mysqlExecWithSocketFallback(ctx, config.MySQLHost, port, user, config.MySQLPass, query)
+	if err != nil {
+		return 0, fmt.Errorf("host=%s: %w (output: %s)", config.MySQLHost, err, strings.TrimSpace(string(out)))
 	}
-	if lastErr != nil {
-		return 0, lastErr
+	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("host=%s: parse size %q: %w", config.MySQLHost, strings.TrimSpace(string(out)), err)
 	}
-	return 0, fmt.Errorf("no MySQL host candidates available")
+	return size, nil
 }
 
 func parseBackupConfig(config map[string]interface{}) BackupConfig {

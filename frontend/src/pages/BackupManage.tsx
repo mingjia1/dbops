@@ -366,10 +366,12 @@ const BackupManage: React.FC = () => {
     },
     { title: '大小', dataIndex: 'size', key: 'size' },
     {
-      title: '路径',
+      title: '文件',
       dataIndex: 'file_path',
       key: 'file_path',
-      render: (path) => path ? <Tooltip title={path}><span style={{ fontFamily: 'monospace' }}>{path}</span></Tooltip> : '-',
+      width: 180,
+      ellipsis: true,
+      render: (path) => path ? <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path.split('/').pop() || path}</span></Tooltip> : '-',
     },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v) => v ? new Date(v).toLocaleString() : '-' },
     {
@@ -425,7 +427,7 @@ const BackupManage: React.FC = () => {
       ),
     },
     { title: '保留天数', dataIndex: 'retention_days', key: 'retention_days' },
-    { title: '存储路径', dataIndex: 'storage_path', key: 'storage_path' },
+    { title: '存储路径', dataIndex: 'storage_path', key: 'storage_path', width: 180, ellipsis: true, render: (v: string) => v ? <Tooltip title={v}><span style={{ fontSize: 12 }}>{v.split('/').pop() || v}</span></Tooltip> : '-' },
     { title: '状态', dataIndex: 'enabled', key: 'enabled', render: (enabled) => <Tag color={enabled ? 'success' : 'default'}>{enabled ? '启用' : '禁用'}</Tag> },
   ]
 
@@ -579,7 +581,7 @@ const BackupManage: React.FC = () => {
             { title: '文件', dataIndex: 'file_name', key: 'file_name', width: 180, ellipsis: true, render: (name) => <Tag color="blue">{name}</Tag> },
             { title: '类型', dataIndex: 'backup_type', key: 'backup_type', width: 100, render: (type) => <BackupTypeTag type={type} /> },
             { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', width: 110, render: formatSize },
-            { title: '路径', dataIndex: 'file_path', key: 'file_path', width: 420, ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', display: 'inline-block', maxWidth: 390, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'bottom' }}>{path}</span></Tooltip> },
+            { title: '文件', dataIndex: 'file_path', key: 'file_path', width: 180, ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path?.split('/').pop() || path || '-'}</span></Tooltip> },
             { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', width: 120, render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
           ]}
         />

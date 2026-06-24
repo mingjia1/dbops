@@ -103,6 +103,20 @@ const EnvironmentCheck: React.FC = () => {
       const res: any = await envCheckApi.execute(payload)
       const data = res?.data || null
       setResult(data)
+      // Update host status from check results
+      if (data?.results) {
+        const hostStatus: Record<string, string> = {}
+        for (const item of data.results) {
+          if (item.host) {
+            if (!hostStatus[item.host]) hostStatus[item.host] = 'success'
+            if (!item.passed) hostStatus[item.host] = 'failed'
+          }
+        }
+        setHosts(prev => prev.map(h => {
+          const status = hostStatus[h.address]
+          return status ? { ...h, status } : h
+        }))
+      }
       const results = data?.results || []
       const failedItems = results.filter((item: CheckItem) => !item.passed)
       if (failedItems.length > 0) {
@@ -164,9 +178,6 @@ const EnvironmentCheck: React.FC = () => {
     acc[host].push(item)
     return acc
   }, {}) || {}
-  const failedHosts = Object.entries(groupedResults)
-    .filter(([, items]) => items.some((item) => !item.passed))
-    .map(([host]) => host)
   const hostPanels = Object.entries(groupedResults).map(([host, items]) => {
     const abnormalCount = items.filter((item) => !item.passed).length
     return {
