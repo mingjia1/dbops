@@ -1016,21 +1016,19 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		}
 	}
 
-	// 3. Wait for MGR to start
-	time.Sleep(3 * time.Second)
-
-	// 4. Verify MGR status
-	out, err := execSocket("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
-	if err != nil {
-		return fmt.Errorf("check MGR status failed: %v", err)
+	// 3. Wait for MGR to reach ONLINE state (may take time for data recovery)
+	maxWait := 60
+	for wait := 0; wait < maxWait; wait += 5 {
+		time.Sleep(5 * time.Second)
+		out, _ := execSocket("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
+		if strings.Contains(string(out), "ONLINE") {
+			return nil
+		}
+		if strings.Contains(string(out), "ERROR") || strings.Contains(string(out), "OFFLINE") {
+			return fmt.Errorf("MGR member entered error state: %s", strings.TrimSpace(string(out)))
+		}
 	}
-
-	state := strings.TrimSpace(string(out))
-	if !strings.Contains(state, "ONLINE") {
-		return fmt.Errorf("MGR member state is '%s', expected 'ONLINE'", state)
-	}
-
-	return nil
+	return fmt.Errorf("MGR member did not reach ONLINE within %ds", maxWait)
 }
 func (e *TaskExecutor) deployMasterSlave(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMasterSlaveConfig(req.Config)
