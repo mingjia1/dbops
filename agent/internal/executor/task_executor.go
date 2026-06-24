@@ -838,7 +838,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		retrySQL := fmt.Sprintf(
 			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 				"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+				"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 				"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser), escapeSQL(mysqlPass),
 			escapeSQL(mysqlUser),
@@ -922,11 +924,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}, nil
 }
 
-// initializeMGR initializes MySQL Group Replication
-// Uses mysqlExecWithSocketFallback which tries TCP first, then falls back to
-// Unix socket authentication. This resolves the ERROR 1130 issue where
-// MySQL 8.0 creates only root@localhost (no root@%), so TCP auth fails
-// but socket auth works.
+// initializeMGR initializes MySQL Group Replication.
+// deploySingleInstance already set root@localhost to mysql_native_password,
+// so mysqlExecWithSocketFallback (TCP → socket-no-pass → socket-with-pass) works.
 func initializeMGR(ctx context.Context, host string, port int, user, pass string, isPrimary bool, groupName, replicateUser, replicatePass, mysqlVersion string) error {
 	if replicateUser == "" {
 		replicateUser = "repl"
@@ -935,112 +935,59 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		replicatePass = "repl"
 	}
 
-	// Use socket connection for MGR initialization SQL.
-	// After --initialize-insecure, root uses auth_socket which allows
-	// passwordless socket connections but rejects TCP with password.
-	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
-	execSocket := func(sql string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
-		return cmd.CombinedOutput()
+	execSQL := func(sql string) ([]byte, error) {
+		return mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
 	}
 
-	// 0. Disable super_read_only so we can create users
-	if _, err := execSocket("SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
+	// 0. Disable super_read_only
+	if _, err := execSQL("SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
 		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
-	// Keep socket executor for all SQL. auth_socket allows passwordless socket
-	// connections which is needed after --initialize-insecure.
-	// For TCP-required operations, create a separate executor.
-	var execTCP func(string) ([]byte, error)
-	if pass != "" {
-		execTCP = func(sql string) ([]byte, error) {
-			return mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
-		}
-	} else {
-		execTCP = execSocket
-	}
-
-	// 1. Create replication user (needs socket to bypass auth_socket restriction)
+	// 1. Create replication user
 	createUserSQL := fmt.Sprintf(
 		"SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%'; "+
 			"FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;",
 		escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
-	if _, err := execSocket(createUserSQL); err != nil {
+	if _, err := execSQL(createUserSQL); err != nil {
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. Configure recovery channel.
-	// Problem: auth_socket ignores passwords, but CHANGE REPLICATION SOURCE TO
-	// needs password-authenticated context to persist SOURCE_USER correctly.
-	// Solution: temporarily switch root@localhost to mysql_native_password,
-	// set the channel credentials, then switch back to auth_socket.
+	// 2. Configure recovery channel
 	chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 		escapeSQL(replicateUser), escapeSQL(replicatePass))
-	if pass != "" {
-		// 2a. Temporarily switch root@localhost to mysql_native_password
-		switchToNative := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; FLUSH PRIVILEGES;",
-			escapeSQL(user), escapeSQL(pass))
-		if _, switchErr := execSocket(switchToNative); switchErr != nil {
-			fmt.Fprintf(os.Stderr, "WARN: switch to mysql_native_password failed: %v\n", switchErr)
-		}
-		// 2b. Execute CHANGE REPLICATION SOURCE TO with password via socket
-		chCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", chSourceSQL)
-		chCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
-		chOut, chErr := chCmd.CombinedOutput()
-		// 2c. Switch root@localhost back to auth_socket
-		switchToSocket := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH auth_socket; FLUSH PRIVILEGES;",
-			escapeSQL(user))
-		if _, restoreErr := execSocket(switchToSocket); restoreErr != nil {
-			fmt.Fprintf(os.Stderr, "WARN: restore auth_socket failed: %v\n", restoreErr)
-		}
-		if chErr != nil {
-			return fmt.Errorf("configure recovery channel failed: %v (output: %s)", chErr, string(chOut))
-		}
-	} else {
-		if out, err := execSocket(chSourceSQL); err != nil {
-			return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
-		}
+	if out, err := execSQL(chSourceSQL); err != nil {
+		return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
 	}
 
-	_ = execTCP // available for future TCP-required operations
-
-	// 2. Start Group Replication
+	// 3. Start Group Replication
 	if isPrimary {
-		bootstrapSQL := `
-			SET GLOBAL group_replication_bootstrap_group=ON;
-			START GROUP_REPLICATION;
-			SET GLOBAL group_replication_bootstrap_group=OFF;
-		`
-		if _, err := execSocket(bootstrapSQL); err != nil {
+		if _, err := execSQL("SET GLOBAL group_replication_bootstrap_group=ON; START GROUP_REPLICATION; SET GLOBAL group_replication_bootstrap_group=OFF;"); err != nil {
 			return fmt.Errorf("bootstrap MGR failed: %v", err)
 		}
 	} else {
-		out, startErr := execSocket("START GROUP_REPLICATION;")
-		if startErr != nil {
-			if strings.Contains(string(out), "already running") {
-				fmt.Fprintf(os.Stderr, "MGR already running on secondary, continuing\n")
-			} else {
-				return fmt.Errorf("start MGR failed: %v", startErr)
-			}
+		out, startErr := execSQL("START GROUP_REPLICATION;")
+		if startErr != nil && !strings.Contains(string(out), "already running") {
+			return fmt.Errorf("start MGR failed: %v", startErr)
 		}
 	}
 
-	// 3. Wait for MGR to reach ONLINE state (may take time for data recovery)
-	maxWait := 60
-	for wait := 0; wait < maxWait; wait += 5 {
+	// 4. Wait for ONLINE
+	maxWait := 90
+	for waited := 0; waited < maxWait; waited += 5 {
 		time.Sleep(5 * time.Second)
-		out, _ := execSocket("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
+		out, _ := execSQL("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
 		if strings.Contains(string(out), "ONLINE") {
 			return nil
 		}
-		if strings.Contains(string(out), "ERROR") || strings.Contains(string(out), "OFFLINE") {
-			return fmt.Errorf("MGR member entered error state: %s", strings.TrimSpace(string(out)))
+		if strings.Contains(string(out), "OFFLINE") && !strings.Contains(string(out), "RECOVERING") {
+			return fmt.Errorf("MGR member went OFFLINE: %s", strings.TrimSpace(string(out)))
 		}
 	}
 	return fmt.Errorf("MGR member did not reach ONLINE within %ds", maxWait)
 }
+
 func (e *TaskExecutor) deployMasterSlave(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseMasterSlaveConfig(req.Config)
 
