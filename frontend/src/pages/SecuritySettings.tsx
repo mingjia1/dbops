@@ -140,10 +140,8 @@ const PRESET_SOURCES: RelaySource[] = [
   { url: 'http://${platform_ip}:8888', label: '本平台中继', enabled: true },
   { url: 'https://mirrors.tuna.tsinghua.edu.cn/mysql', label: '清华镜像', enabled: false },
   { url: 'https://mirrors.aliyun.com/mysql', label: '阿里云镜像', enabled: false },
-  { url: 'https://mirrors.huaweicloud.com/mysql', label: '华为云镜像', enabled: false },
-  { url: 'https://mirrors.ustc.edu.cn/mysql-ftp', label: '中科大镜像', enabled: false },
-  { url: 'https://dev.mysql.com/get/Downloads', label: 'MySQL 官方', enabled: false },
   { url: 'https://archive.mariadb.org', label: 'MariaDB 官方', enabled: false },
+  { url: 'https://dev.mysql.com/downloads/mysql/', label: 'MySQL 官方', enabled: false },
 ]
 
 const resolveSourceUrl = (src: RelaySource, version: string, platformIp: string) => {
@@ -235,15 +233,34 @@ const RelayServerConfig: React.FC = () => {
     return url
   }
 
+  const testSourceViaBackend = async (url: string): Promise<{ ok: boolean; status?: number; error?: string }> => {
+    const token = localStorage.getItem('token')
+    try {
+      const res = await fetch('/api/v1/relay/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url }),
+      })
+      const json = await res.json()
+      return json?.data || { ok: false, error: 'no response' }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'request failed' }
+    }
+  }
+
   const handleTest = async (source: RelaySource) => {
     if (!source.url) { message.warning('请先填写地址'); return }
     const resolvedUrl = buildBaseUrl(source)
     setLoading(true)
     try {
-      const res = await fetch(resolvedUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-      message[res.ok ? 'success' : 'warning'](`${source.label}: ${res.ok ? '连接正常' : 'HTTP ' + res.status}`)
+      const result = await testSourceViaBackend(resolvedUrl)
+      if (result.ok) {
+        message.success(`${source.label}: 连接正常 (HTTP ${result.status})`)
+      } else {
+        message.warning(`${source.label}: ${result.error || 'HTTP ' + result.status}`)
+      }
     } catch {
-      message.error(`${source.label}: 无法连接`)
+      message.error(`${source.label}: 测试失败`)
     } finally {
       setLoading(false)
     }
@@ -252,11 +269,11 @@ const RelayServerConfig: React.FC = () => {
   const handleTestAll = async () => {
     setLoading(true)
     for (const src of sources.filter(s => s.enabled && s.url)) {
-      try {
-        const res = await fetch(buildBaseUrl(src), { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-        message[res.ok ? 'success' : 'warning'](`${src.label}: ${res.ok ? '✓' : 'HTTP ' + res.status}`)
-      } catch {
-        message.error(`${src.label}: 无法连接`)
+      const result = await testSourceViaBackend(buildBaseUrl(src))
+      if (result.ok) {
+        message.success(`${src.label}: ✓ HTTP ${result.status}`)
+      } else {
+        message.warning(`${src.label}: ${result.error || 'HTTP ' + result.status}`)
       }
     }
     setLoading(false)

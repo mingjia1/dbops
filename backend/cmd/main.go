@@ -550,6 +550,37 @@ func main() {
 
 			relay := protected.Group("/relay")
 			{
+				// Proxy HEAD request to test source connectivity (avoids browser CORS)
+				relay.POST("/test-source", func(c *gin.Context) {
+					var body struct {
+						URL string `json:"url"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.URL == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
+						return
+					}
+					client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+						if len(via) >= 3 { return fmt.Errorf("too many redirects") }
+						return nil
+					}}
+					method := "HEAD"
+					// MySQL official returns 404 for HEAD, use GET instead
+					if strings.Contains(body.URL, "dev.mysql.com") {
+						method = "GET"
+					}
+					req, err := http.NewRequestWithContext(c.Request.Context(), method, body.URL, nil)
+					if err != nil {
+						c.JSON(200, gin.H{"code": 200, "data": gin.H{"ok": false, "error": err.Error()}})
+						return
+					}
+					resp, err := client.Do(req)
+					if err != nil {
+						c.JSON(200, gin.H{"code": 200, "data": gin.H{"ok": false, "error": err.Error()}})
+						return
+					}
+					resp.Body.Close()
+					c.JSON(200, gin.H{"code": 200, "data": gin.H{"ok": resp.StatusCode >= 200 && resp.StatusCode < 400, "status": resp.StatusCode}})
+				})
 				relay.POST("/upload", func(c *gin.Context) {
 					file, header, err := c.Request.FormFile("file")
 					if err != nil {
