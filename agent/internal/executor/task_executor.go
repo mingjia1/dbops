@@ -1021,6 +1021,26 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		time.Sleep(5 * time.Second)
 		out, _ := execSQL("SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid;")
 		if strings.Contains(string(out), "ONLINE") {
+			// 5. Re-confirm root password after MGR init
+			// initializeMGR runs via socket which may change auth state.
+			// Re-apply password via socket to ensure TCP password auth works.
+			if pass != "" {
+				socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+				ensurePassSQL := fmt.Sprintf(
+					"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+						"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+						"GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+					escapeSQL(user), escapeSQL(pass),
+					escapeSQL(user), escapeSQL(pass),
+					escapeSQL(user))
+				ensureCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-e", ensurePassSQL)
+				if ensureOut, ensureErr := ensureCmd.CombinedOutput(); ensureErr != nil {
+					// Fallback to system mysql client
+					sysCmd := exec.CommandContext(ctx, "/usr/bin/mysql", "-S", socketPath, "-u", user, "-e", ensurePassSQL)
+					sysCmd.CombinedOutput()
+					_ = ensureOut
+				}
+			}
 			return nil
 		}
 		if strings.Contains(string(out), "OFFLINE") && !strings.Contains(string(out), "RECOVERING") {
@@ -3631,11 +3651,18 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output, err = runMySQLExecSafe(ctx, host, port, user, pass,
 			fmt.Sprintf("SET GLOBAL %s = %s", name, formatVariableValue(value)))
 	case "read_config":
-		path, tried := resolveConfigPath(req.Config)
+		path, _ := resolveConfigPath(req.Config)
 		if path == "" {
-			return adminFailed(req.TaskID, "config file not found; tried: "+strings.Join(tried, ", ")), nil
+			// Config file not found on disk — generate from MySQL runtime variables
+			output, err = generateRuntimeConfig(ctx, host, port, user, pass)
+			break
 		}
 		data, readErr := os.ReadFile(path)
+		if readErr != nil && os.IsNotExist(readErr) {
+			// File path was resolved but doesn't exist — generate from MySQL runtime
+			output, err = generateRuntimeConfig(ctx, host, port, user, pass)
+			break
+		}
 		output, err = string(data), readErr
 		req.Config["resolved_path"] = path
 	case "write_config":
@@ -3769,6 +3796,36 @@ func queryMySQLVariables(ctx context.Context, config map[string]interface{}) (st
 		lines = append(lines, v+"="+val)
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// generateRuntimeConfig queries MySQL for key configuration variables and returns
+// them in my.cnf format. Used when no physical config file exists (e.g. --no-defaults).
+func generateRuntimeConfig(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW GLOBAL VARIABLES")
+	if err != nil {
+		return "", fmt.Errorf("query variables for config: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("# Runtime configuration generated from SHOW GLOBAL VARIABLES\n")
+	b.WriteString("# Note: This instance was started with --no-defaults (no physical config file)\n\n")
+	b.WriteString("[mysqld]\n")
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if val == "" || val == "0" || val == "OFF" || val == "NULL" || val == "(GMT)" {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("%s = %s\n", name, val))
+	}
+	return b.String(), nil
 }
 
 func queryReplicationStatus(ctx context.Context, config map[string]interface{}) (string, error) {

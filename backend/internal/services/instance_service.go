@@ -902,6 +902,11 @@ func (s *InstanceService) updateInstanceHealthStatus(ctx context.Context, instan
 		status = existing
 		status.HealthStatus = health
 	}
+	if health == "stopped" {
+		status.RunStatus = "stopped"
+	} else if health == "healthy" {
+		status.RunStatus = "running"
+	}
 	return s.repo.UpsertStatus(ctx, instanceID, status)
 }
 
@@ -1108,6 +1113,13 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 					"Please edit the instance and set datadir/basedir manually.", metaErr)), nil
 		}
 	}
+	// When MySQL password may be incorrect (e.g. MGR instances deployed with socket-only auth),
+	// attempt to re-apply the stored password via agent socket before trying MySQL operations.
+	if req.Action != "service_control" && req.Action != "decommission" && req.Action != "change_password" {
+		if password, decErr := utils.Decrypt(conn.PasswordEncrypted, s.encKey); decErr == nil && password != "" {
+			s.ensurePasswordViaAgent(ctx, instance, conn, password)
+		}
+	}
 	if req.Action == "change_password" {
 		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
 			return failedInstanceAdminResult(err.Error()), nil
@@ -1207,6 +1219,15 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			}
 		}
 	}
+	// Update instance health/run status after service_control
+	if req.Action == "service_control" && result.Status == "completed" {
+		verb := strings.ToLower(strings.TrimSpace(req.Verb))
+		if verb == "stop" {
+			_ = s.updateInstanceHealthStatus(ctx, id, "stopped")
+		} else if verb == "start" || verb == "restart" {
+			_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
+		}
+	}
 	return &InstanceAdminResult{
 		TaskID:   result.TaskID,
 		Status:   result.Status,
@@ -1214,6 +1235,51 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+// ensurePasswordViaAgent asks the agent to re-apply the stored password via socket.
+// This fixes instances where deploy used --initialize-insecure + socket-only auth
+// and the password didn't get properly applied for TCP connections.
+func (s *InstanceService) ensurePasswordViaAgent(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, password string) {
+	if s.agentClient == nil || conn.Datadir == "" {
+		return
+	}
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return
+	}
+	// Use service_control verb=status to test connection first.
+	// If it works, password is fine. If not, try change_password via socket.
+	testResult, testErr := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id": "pw-test-" + uuid.New().String(),
+		"config": map[string]interface{}{
+			"action":      "service_control",
+			"verb":        "status",
+			"target_host": conn.Host,
+			"target_port": conn.Port,
+			"target_user": conn.Username,
+			"target_pass": password,
+			"datadir":     conn.Datadir,
+			"basedir":     conn.Basedir,
+		},
+	})
+	if testErr == nil && testResult != nil && testResult.Status == "completed" {
+		return // password works
+	}
+	// Try change_password to re-apply the stored password
+	_, _ = s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id": "pw-fix-" + uuid.New().String(),
+		"config": map[string]interface{}{
+			"action":      "change_password",
+			"target_host": conn.Host,
+			"target_port": conn.Port,
+			"target_user": conn.Username,
+			"target_pass": password,
+			"username":    conn.Username,
+			"user_host":   "localhost",
+			"password":    password,
+		},
+	})
 }
 
 func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string) string {
