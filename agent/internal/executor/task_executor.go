@@ -1004,8 +1004,15 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 			return fmt.Errorf("bootstrap MGR failed: %v", err)
 		}
 	} else {
-		if _, err := execSocket("START GROUP_REPLICATION;"); err != nil {
-			return fmt.Errorf("start MGR failed: %v", err)
+		out, startErr := execSocket("START GROUP_REPLICATION;")
+		if startErr != nil {
+			// "group is already running" is not a real error — the SQL executed
+			// via an earlier fallback but the overall command returned error.
+			if strings.Contains(string(out), "already running") {
+				fmt.Fprintf(os.Stderr, "MGR already running on secondary, continuing\n")
+			} else {
+				return fmt.Errorf("start MGR failed: %v", startErr)
+			}
 		}
 	}
 
