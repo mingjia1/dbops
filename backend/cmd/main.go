@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -609,6 +610,192 @@ func main() {
 						return
 					}
 					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"path": destPath, "size": header.Size}})
+				})
+
+				// Download a package from a mirror URL to the relay server directory
+				relay.POST("/download-to-relay", func(c *gin.Context) {
+					var body struct {
+						URL        string `json:"url"`
+						Filename   string `json:"filename"`
+						TargetPath string `json:"target_path"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.URL == "" || body.Filename == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "url and filename are required"})
+						return
+					}
+					destDir := filepath.Join(cfg.DataDir, "packages")
+					if body.TargetPath != "" {
+						destDir = filepath.Join(destDir, body.TargetPath)
+					}
+					if err := os.MkdirAll(destDir, 0o755); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
+						return
+					}
+					destPath := filepath.Join(destDir, body.Filename)
+					// Check if already exists
+					if _, err := os.Stat(destPath); err == nil {
+						info, _ := os.Stat(destPath)
+						c.JSON(200, gin.H{"code": 200, "message": "already exists", "data": gin.H{"path": destPath, "size": info.Size()}})
+						return
+					}
+					// Download
+					client := &http.Client{Timeout: 30 * time.Minute}
+					req, err := http.NewRequestWithContext(c.Request.Context(), "GET", body.URL, nil)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "create request failed: " + err.Error()})
+						return
+					}
+					resp, err := client.Do(req)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "download failed: " + err.Error()})
+						return
+					}
+					defer resp.Body.Close()
+					if resp.StatusCode != 200 {
+						c.JSON(500, gin.H{"code": 500, "message": fmt.Sprintf("HTTP %d from %s", resp.StatusCode, body.URL)})
+						return
+					}
+					out, err := os.Create(destPath)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "create file failed: " + err.Error()})
+						return
+					}
+					written, err := io.Copy(out, resp.Body)
+					out.Close()
+					if err != nil {
+						os.Remove(destPath)
+						c.JSON(500, gin.H{"code": 500, "message": "write failed: " + err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"path": destPath, "size": written}})
+				})
+
+				// Scan local packages directory with multiple extensions
+				relay.POST("/scan-remote", func(c *gin.Context) {
+					var body struct {
+						Path       string   `json:"path"`
+						Extensions []string `json:"extensions"`
+					}
+					c.ShouldBindJSON(&body)
+					scanDir := filepath.Join(cfg.DataDir, "packages")
+					if body.Path != "" {
+						scanDir = filepath.Join(scanDir, body.Path)
+					}
+					exts := body.Extensions
+					if len(exts) == 0 {
+						exts = []string{".tar.gz", ".tar.xz", ".tgz", ".tar.bz2", ".rpm", ".deb"}
+					}
+					packages := []gin.H{}
+					filepath.Walk(scanDir, func(path string, info os.FileInfo, err error) error {
+						if err != nil || info.IsDir() {
+							return nil
+						}
+						name := strings.ToLower(info.Name())
+						for _, ext := range exts {
+							if strings.HasSuffix(name, ext) {
+								rel, _ := filepath.Rel(scanDir, path)
+								packages = append(packages, gin.H{"name": info.Name(), "size": fmt.Sprintf("%.1fMB", float64(info.Size())/(1024*1024)), "path": rel})
+								break
+							}
+						}
+						return nil
+					})
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"packages": packages}})
+				})
+
+				// Scan a remote URL for packages (proxied to avoid CORS)
+				relay.POST("/scan-url", func(c *gin.Context) {
+					var body struct {
+						URL        string   `json:"url"`
+						Path       string   `json:"path"`
+						Extensions []string `json:"extensions"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.URL == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
+						return
+					}
+					scanURL := strings.TrimRight(body.URL, "/")
+					if body.Path != "" {
+						scanURL += "/" + strings.TrimLeft(body.Path, "/")
+					}
+					exts := body.Extensions
+					if len(exts) == 0 {
+						exts = []string{".tar.gz", ".tar.xz", ".tgz", ".tar.bz2", ".rpm", ".deb"}
+					}
+					client := &http.Client{Timeout: 15 * time.Second}
+					packages := []gin.H{}
+					var scanDir func(url string, relPrefix string)
+					scanDir = func(url string, relPrefix string) {
+						req, err := http.NewRequestWithContext(c.Request.Context(), "GET", url, nil)
+						if err != nil {
+							return
+						}
+						resp, err := client.Do(req)
+						if err != nil || resp.StatusCode != 200 {
+							if resp != nil {
+								resp.Body.Close()
+							}
+							return
+						}
+						bodyBytes, _ := io.ReadAll(resp.Body)
+						resp.Body.Close()
+						html := string(bodyBytes)
+						// Extract links
+						linkRe := regexp.MustCompile(`href="([^"]+)"`)
+						matches := linkRe.FindAllStringSubmatch(html, -1)
+						dirs := []string{}
+						for _, m := range matches {
+							if len(m) < 2 {
+								continue
+							}
+							href := m[1]
+							if href == "../" || href == ".." || strings.HasPrefix(href, "?") {
+								continue
+							}
+							if strings.HasSuffix(href, "/") {
+								dirs = append(dirs, href)
+								continue
+							}
+							lower := strings.ToLower(href)
+							for _, ext := range exts {
+								if strings.HasSuffix(lower, ext) {
+									relPath := relPrefix + href
+									packages = append(packages, gin.H{"name": href, "size": "-", "path": relPath})
+									break
+								}
+							}
+						}
+						// Recurse into subdirectories (1 level)
+						for _, dir := range dirs {
+							dirName := strings.TrimSuffix(dir, "/")
+							scanDir(url+"/"+dir, relPrefix+dirName+"/")
+						}
+					}
+					scanDir(scanURL, "")
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"packages": packages}})
+				})
+
+				// Delete a package from relay server
+				relay.POST("/delete-package", func(c *gin.Context) {
+					var body struct {
+						Path string `json:"path"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.Path == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "path is required"})
+						return
+					}
+					// Prevent path traversal
+					clean := filepath.Clean(body.Path)
+					if strings.Contains(clean, "..") {
+						c.JSON(400, gin.H{"code": 400, "message": "invalid path"})
+						return
+					}
+					fullPath := filepath.Join(cfg.DataDir, "packages", clean)
+					if err := os.Remove(fullPath); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "delete failed: " + err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"code": 200, "message": "success"})
 				})
 			}
 
