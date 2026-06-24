@@ -50,6 +50,22 @@ func (c *ClusterDeployController) ValidateClusterDeploy(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, response)
 }
 
+func (c *ClusterDeployController) PreCheck(ctx *gin.Context) {
+	var req struct {
+		HostIDs []string `json:"host_ids" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "host_ids is required")
+		return
+	}
+	results, err := c.service.PreCheck(ctx.Request.Context(), req.HostIDs)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Pre-check failed", err)
+		return
+	}
+	utils.SuccessResponse(ctx, results)
+}
+
 func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 	var req services.DeployMHARequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

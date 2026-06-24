@@ -192,6 +192,44 @@ func (c *AgentClient) CallAgentRaw(ctx context.Context, hostAddr string, agentPo
 	return out, nil
 }
 
+// CheckEnvironmentDirect calls the agent's /agent/tasks/check-environment endpoint
+// and returns the raw data map (not wrapped in AgentTaskResult).
+func (c *AgentClient) CheckEnvironmentDirect(ctx context.Context, hostAddr string, agentPort int) (map[string]interface{}, error) {
+	url := c.buildURL(hostAddr, agentPort, "/agent/tasks/check-environment")
+	payload := map[string]interface{}{
+		"check_tools":     true,
+		"check_resources": true,
+		"check_network":   false,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.agentToken)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		Code    int                    `json:"code"`
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Data, nil
+}
+
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := c.buildURL(hostAddr, agentPort, path)
 

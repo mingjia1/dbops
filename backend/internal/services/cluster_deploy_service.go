@@ -535,6 +535,115 @@ func isMySQLDeployRole(clusterType, role string) bool {
 	}
 }
 
+type PreCheckResult struct {
+	HostID  string `json:"host_id"`
+	Host    string `json:"host"`
+	Status  string `json:"status"` // pass, warn, fail
+	Message string `json:"message"`
+	Details []PreCheckItem `json:"details"`
+}
+
+type PreCheckItem struct {
+	Name    string `json:"name"`
+	Passed  bool   `json:"passed"`
+	Value   string `json:"value,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) ([]PreCheckResult, error) {
+	if s.hostRepo == nil {
+		return nil, fmt.Errorf("host repository not configured")
+	}
+	results := make([]PreCheckResult, 0, len(hostIDs))
+	for _, hostID := range hostIDs {
+		host, err := s.hostRepo.GetByID(ctx, hostID)
+		if err != nil {
+			results = append(results, PreCheckResult{HostID: hostID, Status: "fail", Message: fmt.Sprintf("host not found: %v", err)})
+			continue
+		}
+		agentPort := host.AgentPort
+		if agentPort == 0 {
+			agentPort = 9090
+		}
+		r := PreCheckResult{HostID: hostID, Host: host.Address, Status: "pass", Details: []PreCheckItem{}}
+
+		// 1. Agent connectivity
+		if s.agentClient == nil {
+			r.Status = "fail"
+			r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: false, Message: "agent client not configured"})
+			results = append(results, r)
+			continue
+		}
+		healthResult, err := s.agentClient.ExecuteHealthCheck(ctx, host.Address, agentPort, "")
+		if err != nil {
+			r.Status = "fail"
+			r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: false, Message: fmt.Sprintf("agent unreachable: %v", err)})
+			results = append(results, r)
+			continue
+		}
+		r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: true, Value: healthResult.Status})
+
+		// 2. Check mysql client availability via agent environment check
+		envData, envErr := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, agentPort)
+		if envErr == nil && envData != nil {
+			if tools, ok := envData["tools"].(map[string]interface{}); ok {
+				mysqlOK, _ := tools["mysql"].(map[string]interface{})
+				if mysqlOK != nil {
+					avail, _ := mysqlOK["available"].(bool)
+					ver, _ := mysqlOK["version"].(string)
+					r.Details = append(r.Details, PreCheckItem{Name: "MySQL Client", Passed: avail, Value: ver})
+					if !avail {
+						r.Status = "fail"
+						r.Details[len(r.Details)-1].Message = "mysql client not available or missing shared libraries (e.g. libncurses.so.5)"
+					}
+				}
+				mysqldOK, _ := tools["mysqld"].(map[string]interface{})
+				if mysqldOK != nil {
+					avail, _ := mysqldOK["available"].(bool)
+					ver, _ := mysqldOK["version"].(string)
+					r.Details = append(r.Details, PreCheckItem{Name: "mysqld", Passed: avail, Value: ver})
+					if !avail {
+						r.Status = "fail"
+						r.Details[len(r.Details)-1].Message = "mysqld binary not found or not executable"
+					}
+				}
+			}
+			if resources, ok := envData["resources"].(map[string]interface{}); ok {
+				diskGB, _ := resources["disk_space_gb"].(float64)
+				memMB, _ := resources["memory_mb"].(float64)
+				sufficient, _ := resources["sufficient"].(bool)
+				r.Details = append(r.Details, PreCheckItem{
+					Name:    "Resources",
+					Passed:  sufficient,
+					Value:   fmt.Sprintf("disk=%dGB mem=%dMB", int(diskGB), int(memMB)),
+					Message: func() string { if !sufficient { return "insufficient disk or memory" }; return "" }(),
+				})
+				if !sufficient {
+					r.Status = "warn"
+				}
+			}
+		} else {
+			r.Details = append(r.Details, PreCheckItem{Name: "Environment", Passed: false, Message: "could not check environment via agent"})
+			r.Status = "warn"
+		}
+
+		// Summary message
+		failCount := 0
+		for _, d := range r.Details {
+			if !d.Passed {
+				failCount++
+			}
+		}
+		if failCount > 0 {
+			r.Message = fmt.Sprintf("%d check(s) failed", failCount)
+		} else {
+			r.Message = "all checks passed"
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 // Helper: find a PlanNode in a slice by ID
 func findPlanNode(nodes []PlanNode, id string) *PlanNode {
 	for i := range nodes {

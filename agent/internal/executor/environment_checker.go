@@ -202,14 +202,18 @@ func (e *EnvironmentChecker) checkTool(tool string) ToolStatus {
 		return status
 	}
 
+	// Verify the binary is actually executable (not blocked by missing shared libs)
+	version := e.getToolVersion(tool, path)
+	if version == "" {
+		// Binary exists but can't run — report it as found but broken
+		status.Path = path
+		status.Available = false
+		return status
+	}
+
 	status.Available = true
 	status.Path = path
-
-	// 获取版本信息
-	version := e.getToolVersion(tool, path)
-	if version != "" {
-		status.Version = version
-	}
+	status.Version = version
 
 	return status
 }

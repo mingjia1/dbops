@@ -111,6 +111,8 @@ const ClusterDeploy: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string[]>(['success'])
   const [archFilter, setArchFilter] = useState<ArchType | 'all'>('all')
   const [showHistory, setShowHistory] = useState(false)
+  const [precheckResults, setPrecheckResults] = useState<any[] | null>(null)
+  const [precheckLoading, setPrecheckLoading] = useState(false)
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
   const [credentialModalResult, setCredentialModalResult] = useState<{
@@ -342,6 +344,34 @@ const ClusterDeploy: React.FC = () => {
   const runDeploy = (arch: ArchType, values: any) => {
     // Show plan preview before deployment
     doPreview(arch, values)
+  }
+
+  const runPrecheck = async (values: any) => {
+    const hostIDs: string[] = []
+    if (values.master_host_id) hostIDs.push(values.master_host_id)
+    if (values.replica_host_ids) hostIDs.push(...values.replica_host_ids)
+    if (values.replica_host_id) hostIDs.push(values.replica_host_id)
+    if (values.manager_host_id) hostIDs.push(values.manager_host_id)
+    if (hostIDs.length === 0) {
+      message.warning('请先选择部署节点主机')
+      return
+    }
+    setPrecheckLoading(true)
+    setPrecheckResults(null)
+    try {
+      const res: any = await clusterDeployApi.precheck(hostIDs)
+      setPrecheckResults(res?.data || [])
+      const failed = (res?.data || []).filter((r: any) => r.status === 'fail')
+      if (failed.length > 0) {
+        message.error(`${failed.length} 台主机环境检查不通过，请先修复后再部署`)
+      } else {
+        message.success('所有节点环境检查通过')
+      }
+    } catch (err: any) {
+      message.error(`环境预检失败: ${err?.response?.data?.message || err?.message}`)
+    } finally {
+      setPrecheckLoading(false)
+    }
   }
 
   const viewDeployPlan = async (record: DeployResult) => {
@@ -681,8 +711,53 @@ const ClusterDeploy: React.FC = () => {
           <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then((values: any) => doPreview(arch, values)).catch(() => {})}>
             预览计划
           </Button>
+          <Button icon={<ReloadOutlined />} loading={precheckLoading} onClick={() => form.validateFields().then((values: any) => runPrecheck(values)).catch(() => {})}>
+            环境预检
+          </Button>
         </Space>
       </Form.Item>
+      {precheckResults && (
+        <div style={{ marginTop: 16 }}>
+          <strong>环境预检结果</strong>
+          <Table
+            size="small"
+            pagination={false}
+            style={{ marginTop: 8 }}
+            dataSource={precheckResults}
+            rowKey="host_id"
+            columns={[
+              { title: '主机', dataIndex: 'host', key: 'host' },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                key: 'status',
+                render: (s: string) => (
+                  <Tag color={s === 'pass' ? 'success' : s === 'warn' ? 'warning' : 'error'}>
+                    {s === 'pass' ? '通过' : s === 'warn' ? '警告' : '失败'}
+                  </Tag>
+                ),
+              },
+              { title: '消息', dataIndex: 'message', key: 'message' },
+              {
+                title: '详情',
+                dataIndex: 'details',
+                key: 'details',
+                render: (details: any[]) => (
+                  <Space direction="vertical" size={2}>
+                    {(details || []).map((d, i) => (
+                      <span key={i} style={{ fontSize: 12 }}>
+                        <Tag color={d.passed ? 'success' : 'error'} style={{ fontSize: 10 }}>{d.name}</Tag>
+                        {d.value && <span style={{ color: '#888' }}>{d.value} </span>}
+                        {d.message && <span style={{ color: '#ff4d4f' }}>{d.message}</span>}
+                      </span>
+                    ))}
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </div>
+      )}
     </Form>
   )
 

@@ -357,6 +357,9 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
 			return result, nil
 		}
+		// Install missing dependencies (ncurses for MySQL client) before starting agent
+		depCmd := "yum install -y ncurses-compat-libs ncurses-libs 2>/dev/null || apt-get install -y libncurses5 libncursesw5 2>/dev/null || true"
+		runSSH(client, depCmd)
 		// Stop old agent, wait 2 seconds for process to fully die, then start new one
 		startCmd := agentStopCommand() + "\nsleep 2\n" + agentStartCommand(port, s.agentToken)
 		out, err := runSSH(client, startCmd)

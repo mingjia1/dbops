@@ -825,6 +825,7 @@ export const clusterDeployApi = {
   list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
+  precheck: (host_ids: string[]) => api.post('/deployments/precheck', { host_ids }),
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),

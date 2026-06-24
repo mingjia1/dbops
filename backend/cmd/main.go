@@ -470,6 +470,7 @@ func main() {
 				// B2: 集群部署是高危操作, 必须 admin.
 				deployments.POST("", middleware.RequirePermission("admin"), clusterDeployController.DeployCluster)
 				deployments.POST("/validate", middleware.RequirePermission("admin"), clusterDeployController.ValidateClusterDeploy)
+				deployments.POST("/precheck", middleware.RequirePermission("admin"), clusterDeployController.PreCheck)
 				deployments.POST("/mha", middleware.RequirePermission("admin"), clusterDeployController.DeployMHA)
 				deployments.POST("/mgr", middleware.RequirePermission("admin"), clusterDeployController.DeployMGR)
 				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)

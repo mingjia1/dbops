@@ -51,35 +51,37 @@ func resolveBinaryPath(name string) string {
 			return p
 		}
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			if verifyErr := exec.Command(candidate, "--version").Run(); verifyErr == nil {
+			// Verify the binary is actually executable by running --version
+			// and checking both exit code AND output (some broken binaries exit 0)
+			cmd := exec.Command(candidate, "--version")
+			out, verifyErr := cmd.CombinedOutput()
+			if verifyErr == nil && !strings.Contains(string(out), "error while loading shared libraries") {
 				return candidate
 			}
-			// Binary exists but can't run (missing shared libs).
-			// Try installing common missing dependencies once.
-			if resolved := tryFixMissingDeps(candidate); resolved != "" {
-				return resolved
-			}
+			// Binary exists but can't run (missing shared libs). Skip it.
+			continue
 		}
 	}
 	return name
 }
 
-var depsFixed bool
+var depsFixedFor = make(map[string]bool)
 
 func tryFixMissingDeps(binary string) string {
-	if depsFixed {
+	if depsFixedFor[binary] {
 		return ""
 	}
-	depsFixed = true
-	// Try installing ncurses-compat-libs (RHEL/CentOS) or libncurses5 (Debian/Ubuntu)
+	depsFixedFor[binary] = true
 	for _, cmd := range []string{
 		"yum install -y ncurses-compat-libs 2>/dev/null",
-		"apt-get install -y libncurses5 2>/dev/null",
+		"yum install -y ncurses-libs 2>/dev/null",
+		"apt-get update -qq 2>/dev/null && apt-get install -y libncurses5 2>/dev/null",
+		"apt-get install -y libncursesw5 2>/dev/null",
 	} {
 		_ = exec.Command("sh", "-c", cmd).Run()
-	}
-	if err := exec.Command(binary, "--version").Run(); err == nil {
-		return binary
+		if err := exec.Command(binary, "--version").Run(); err == nil {
+			return binary
+		}
 	}
 	return ""
 }
@@ -873,6 +875,10 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		)
 		retryCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", mysqlUser, "-e", retrySQL)
 		retryOut, retryErr := retryCmd.CombinedOutput()
+		if retryErr != nil && strings.Contains(string(retryOut), "error while loading shared libraries") {
+			retryCmd = exec.CommandContext(ctx, "/usr/bin/mysql", "-S", socketPath, "-u", mysqlUser, "-e", retrySQL)
+			retryOut, retryErr = retryCmd.CombinedOutput()
+		}
 		if retryErr != nil {
 			fmt.Fprintf(os.Stderr, "Password setup via socket failed: %v, output: %s\n", retryErr, string(retryOut))
 		}
@@ -962,7 +968,15 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	}
 
 	execSQL := func(sql string) ([]byte, error) {
-		return mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
+		out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
+		if err != nil && strings.Contains(err.Error(), "error while loading shared libraries") {
+			out2, err2 := runSystemMySQLFallback(ctx, host, port, user, pass, sql)
+			if err2 == nil {
+				return out2, nil
+			}
+			return out2, err2
+		}
+		return out, err
 	}
 
 	// 0. Disable super_read_only
@@ -1340,10 +1354,17 @@ func mysqlExecWithSocketFallback(ctx context.Context, host string, port int, use
 	}
 
 	// All failed, return original out with detailed diagnostic error
-	return noPassOut, fmt.Errorf("%s; socket(no-pass): %v - %s; socket(with-pass): %v - %s",
+	lastErr := fmt.Errorf("%s; socket(no-pass): %v - %s; socket(with-pass): %v - %s",
 		tcpErr,
 		noPassErr, strings.TrimSpace(string(noPassOut)),
 		withPassErr, strings.TrimSpace(string(withPassOut)))
+	// If all failures are due to missing shared libraries, try system mysql client
+	if strings.Contains(lastErr.Error(), "error while loading shared libraries") {
+		if sysOut, sysErr := runSystemMySQLFallback(ctx, host, port, user, pass, sql); sysErr == nil {
+			return sysOut, nil
+		}
+	}
+	return noPassOut, lastErr
 }
 func setServerID(ctx context.Context, host string, port int, user, pass string, serverID int) ([]byte, error) {
 	return mysqlExecWithSocketFallback(ctx, host, port, user, pass,
@@ -4272,6 +4293,53 @@ func mysqlExecCommand(ctx context.Context, host string, port int, user string, p
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
 	}
 	return cmd
+}
+
+// runSystemMySQLFallback tries to execute SQL using the system mysql client
+// (e.g. /usr/bin/mysql from MariaDB or system MySQL) when the preferred
+// /opt/mysql/bin/mysql has missing shared libraries.
+func runSystemMySQLFallback(ctx context.Context, host string, port int, user, pass, sql string) ([]byte, error) {
+	systemClients := []string{"/usr/bin/mysql", "/usr/local/bin/mysql"}
+	if isLocalHost(host) {
+		host = "127.0.0.1"
+	}
+	// Try multiple socket paths
+	socketPaths := []string{
+		filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock"),
+		filepath.Join("/var/run/mysqld", "mysqld.sock"),
+		filepath.Join("/tmp", fmt.Sprintf("mysql_%d.sock", port)),
+		"/var/lib/mysql/mysql.sock",
+	}
+	for _, mysqlPath := range systemClients {
+		if _, err := os.Stat(mysqlPath); err != nil {
+			continue
+		}
+		// Try TCP first
+		cmd := exec.CommandContext(ctx, mysqlPath, "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-N", "-B", "-e", sql)
+		if pass != "" {
+			cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+		}
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return out, nil
+		}
+		// Try each socket path
+		for _, socketPath := range socketPaths {
+			// Without password
+			cmd2 := exec.CommandContext(ctx, mysqlPath, "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+			if out2, err2 := cmd2.CombinedOutput(); err2 == nil {
+				return out2, nil
+			}
+			// With password
+			if pass != "" {
+				cmd3 := exec.CommandContext(ctx, mysqlPath, "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
+				cmd3.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+				if out3, err3 := cmd3.CombinedOutput(); err3 == nil {
+					return out3, nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("no working mysql client found")
 }
 
 func normalizeLocalMySQLHost(host string) string {
