@@ -518,6 +518,14 @@ const ClusterDeploy: React.FC = () => {
     }
 
     const custom: Record<string, any> = {}
+    // Auto-inject relay_url from system settings if configured
+    try {
+      const relayCfg = localStorage.getItem('dbops_relay_server')
+      if (relayCfg) {
+        const parsed = JSON.parse(relayCfg)
+        if (parsed.relay_url) custom.relay_url = parsed.relay_url
+      }
+    } catch { /* ignore */ }
     if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled
     if (arch === 'mha') {
       if (values.vip) custom.vip = values.vip

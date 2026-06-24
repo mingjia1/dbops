@@ -105,7 +105,7 @@ const Dashboard: React.FC = () => {
         { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
         { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
         { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
-        { key: '/dashboard/security-settings', icon: <SafetyOutlined />, label: '安全设置' },
+        { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '系统设置' },
       ],
     },
   ]
