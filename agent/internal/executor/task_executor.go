@@ -971,12 +971,21 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. Configure recovery channel — must use socket to persist credentials.
-	// Use individual statements to avoid multi-statement parsing issues.
+	// 2. Configure recovery channel — use socket WITH password to ensure
+	// SOURCE_USER/SOURCE_PASSWORD are persisted to mysql.slave_master_info.
+	// Pure socket without password fails to persist these credentials in MySQL 8.0.
 	chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 		escapeSQL(replicateUser), escapeSQL(replicatePass))
-	if out, err := execSocket(chSourceSQL); err != nil {
-		return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
+	if pass != "" {
+		chCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", chSourceSQL)
+		chCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+		if chOut, chErr := chCmd.CombinedOutput(); chErr != nil {
+			return fmt.Errorf("configure recovery channel failed: %v (output: %s)", chErr, string(chOut))
+		}
+	} else {
+		if out, err := execSocket(chSourceSQL); err != nil {
+			return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
+		}
 	}
 
 	_ = execTCP // available for future TCP-required operations
