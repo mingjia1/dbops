@@ -37,7 +37,6 @@ func NewTaskExecutor() *TaskExecutor {
 }
 
 func resolveBinaryPath(name string) string {
-	// Prefer platform-installed MySQL over system MySQL to avoid version mismatch.
 	for _, candidate := range []string{
 		filepath.Join("/opt/mysql/bin", name),
 		filepath.Join("/opt/dbops-pxc/usr/sbin", name),
@@ -52,7 +51,10 @@ func resolveBinaryPath(name string) string {
 			return p
 		}
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
+			// Verify the binary is actually executable (not blocked by missing shared libs)
+			if verifyErr := exec.Command(candidate, "--version").Run(); verifyErr == nil {
+				return candidate
+			}
 		}
 	}
 	return name
