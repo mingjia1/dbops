@@ -27,6 +27,7 @@ import (
 	"github.com/jackcode/mysql-ops-platform/pkg/logger"
 	"github.com/jackcode/mysql-ops-platform/pkg/middleware"
 	"github.com/jackcode/mysql-ops-platform/pkg/storage"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
 func main() {
@@ -796,6 +797,105 @@ func main() {
 						return
 					}
 					c.JSON(200, gin.H{"code": 200, "message": "success"})
+				})
+
+				// Scan remote host packages via SSH (for relay servers)
+				relay.POST("/scan-remote-ssh", func(c *gin.Context) {
+					var body struct {
+						HostID     string   `json:"host_id"`
+						Path       string   `json:"path"`
+						Extensions []string `json:"extensions"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.HostID == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "host_id is required"})
+						return
+					}
+					host, err := hostRepo.GetByID(c.Request.Context(), body.HostID)
+					if err != nil {
+						c.JSON(404, gin.H{"code": 404, "message": "host not found"})
+						return
+					}
+					password, _ := utils.Decrypt(host.SSHCredential, cfg.EncryptionKey)
+					if password == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "host has no SSH password configured"})
+						return
+					}
+					sshClient, err := services.NewSSHClient(host.Address, host.SSHPort, host.SSHUser, password)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "SSH connect failed: " + err.Error()})
+						return
+					}
+					defer sshClient.Close()
+					scanPath := body.Path
+					if scanPath == "" {
+						scanPath = "/opt"
+					}
+					findCmd := fmt.Sprintf("find %s -maxdepth 3 -type f \\( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.tgz' -o -name '*.tar.bz2' -o -name '*.rpm' -o -name '*.deb' -o -name '*.zip' \\) -printf '%%s\\t%%p\\n' 2>/dev/null", scanPath)
+					out, _ := services.RunSSH(sshClient, findCmd)
+					if strings.TrimSpace(out) == "" {
+						simpleCmd := fmt.Sprintf("find %s -maxdepth 3 -type f \\( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.tgz' -o -name '*.rpm' -o -name '*.deb' -o -name '*.zip' \\) -ls 2>/dev/null", scanPath)
+						out, _ = services.RunSSH(sshClient, simpleCmd)
+					}
+					packages := []gin.H{}
+					for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+						line = strings.TrimSpace(line)
+						if line == "" {
+							continue
+						}
+						parts := strings.Fields(line)
+						if len(parts) >= 2 {
+							sizeStr := parts[0]
+							filePath := parts[len(parts)-1]
+							name := filepath.Base(filePath)
+							var sizeBytes int64
+							fmt.Sscanf(sizeStr, "%d", &sizeBytes)
+							packages = append(packages, gin.H{"name": name, "size": fmt.Sprintf("%.1fMB", float64(sizeBytes)/(1024*1024)), "path": filePath})
+						}
+					}
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"packages": packages}})
+				})
+
+				// Download package from relay host to platform via SSH+SCP
+				relay.POST("/pull-from-relay", func(c *gin.Context) {
+					var body struct {
+						HostID    string `json:"host_id"`
+						FilePath  string `json:"file_path"`
+						LocalPath string `json:"local_path"`
+					}
+					if err := c.ShouldBindJSON(&body); err != nil || body.HostID == "" || body.FilePath == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "host_id and file_path are required"})
+						return
+					}
+					host, err := hostRepo.GetByID(c.Request.Context(), body.HostID)
+					if err != nil {
+						c.JSON(404, gin.H{"code": 404, "message": "host not found"})
+						return
+					}
+					password, _ := utils.Decrypt(host.SSHCredential, cfg.EncryptionKey)
+					if password == "" {
+						c.JSON(400, gin.H{"code": 400, "message": "host has no SSH password configured"})
+						return
+					}
+					sshClient, err := services.NewSSHClient(host.Address, host.SSHPort, host.SSHUser, password)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "SSH connect failed: " + err.Error()})
+						return
+					}
+					defer sshClient.Close()
+					localPath := body.LocalPath
+					if localPath == "" {
+						localPath = filepath.Join(cfg.DataDir, "packages", filepath.Base(body.FilePath))
+					}
+					if err := services.SCPDownload(sshClient, body.FilePath, localPath); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "SCP download failed: " + err.Error()})
+						return
+					}
+					info, _ := os.Stat(localPath)
+					size := int64(0)
+					if info != nil {
+						size = info.Size()
+					}
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"path": localPath, "size": size}})
 				})
 			}
 

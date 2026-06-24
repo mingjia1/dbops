@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Button, Card, Col, Divider, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
-import { CloudOutlined, DatabaseOutlined, LockOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
+import { hostApi } from '../services/api'
 import { usePlatformSettings } from '../services/useSettings'
 
 const { Text } = Typography
@@ -104,33 +105,36 @@ const MIRROR_URLS: Record<string, string> = {
 }
 
 const PackageManager: React.FC = () => {
-  const [relayDir, setRelayDir] = useState('')
-  const [relayUrl, setRelayUrl] = useState('')
-  const [relayFiles, setRelayFiles] = useState<Set<string>>(new Set())
+  const [hosts, setHosts] = useState<Array<{ id: string; name: string; address: string }>>([])
+  const [relayHostId, setRelayHostId] = useState('')
+  const [relayPath, setRelayPath] = useState('/opt')
+  const [relayFiles, setRelayFiles] = useState<Map<string, string>>(new Map()) // filename -> fullpath
+  const [remoteFiles, setRemoteFiles] = useState<Array<{ name: string; size: string; path: string }>>([])
   const [downloading, setDownloading] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [customUrl, setCustomUrl] = useState('')
-  const [customFilename, setCustomFilename] = useState('')
   const [osFilter, setOsFilter] = useState('all')
   const [productFilter, setProductFilter] = useState('all')
   const { settings, save: saveSetting } = usePlatformSettings()
   const token = () => localStorage.getItem('token') || ''
 
   useEffect(() => {
+    hostApi.list(100, 0).then((r: any) => setHosts(r?.data || [])).catch(() => {})
     const raw = settings.relay_config
     if (raw) {
       try {
         const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
-        setRelayDir(cfg.scan_path || '')
-        setRelayUrl(cfg.relay_url || 'http://10.3.67.52:8888')
-      } catch { /* ignore */ }
+        if (cfg.relay_host_id) setRelayHostId(cfg.relay_host_id)
+        if (cfg.relay_path) setRelayPath(cfg.relay_path)
+      } catch {}
     }
-    handleRefresh()
+    handleScanLocal()
   }, [])
 
-  const saveRelayCfg = () => { saveSetting('relay_config', JSON.stringify({ relay_url: relayUrl, scan_path: relayDir })) }
+  const saveRelayCfg = () => {
+    saveSetting('relay_config', JSON.stringify({ relay_host_id: relayHostId, relay_path: relayPath }))
+  }
 
-  const handleRefresh = async () => {
+  const handleScanLocal = async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/v1/relay/scan-remote', {
@@ -138,9 +142,41 @@ const PackageManager: React.FC = () => {
         body: JSON.stringify({ path: '' }),
       })
       const json = await res.json()
-      setRelayFiles(new Set<string>((json?.data?.packages || []).map((p: any) => p.name)))
-    } catch { /* ignore */ }
+      const m = new Map<string, string>()
+      for (const p of (json?.data?.packages || [])) m.set(p.name, p.path || p.name)
+      setRelayFiles(m)
+    } catch {}
     finally { setLoading(false) }
+  }
+
+  const handleScanRemote = async () => {
+    if (!relayHostId) { message.warning('请先选择中继服务器主机'); return }
+    setLoading(true)
+    try {
+      const res = await fetch('/api/v1/relay/scan-remote-ssh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ host_id: relayHostId, path: relayPath }),
+      })
+      const json = await res.json()
+      setRemoteFiles(json?.data?.packages || [])
+      message.success(`扫描完成，发现 ${(json?.data?.packages || []).length} 个包`)
+    } catch (e: any) { message.error(`扫描失败: ${e?.message}`) }
+    finally { setLoading(false) }
+  }
+
+  const handlePullToRelay = async (pkg: { name: string; path: string }) => {
+    if (!relayHostId) { message.warning('请先选择中继服务器主机'); return }
+    setDownloading(pkg.name)
+    try {
+      const res = await fetch('/api/v1/relay/pull-from-relay', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ host_id: relayHostId, file_path: pkg.path }),
+      })
+      const json = await res.json()
+      if (json?.code === 200) { message.success(`${pkg.name} 已保存到中继服务器`); handleScanLocal() }
+      else message.error(`拉取失败: ${json?.message}`)
+    } catch (e: any) { message.error(`拉取失败: ${e?.message}`) }
+    finally { setDownloading(null) }
   }
 
   const handleDownload = async (pkg: typeof PACKAGE_CATALOG[0]) => {
@@ -153,34 +189,18 @@ const PackageManager: React.FC = () => {
         body: JSON.stringify({ url, filename: pkg.filename, target_path: `${pkg.product.toLowerCase()}/${pkg.version}` }),
       })
       const json = await res.json()
-      if (json?.code === 200) { message.success(`${pkg.filename} 下载完成`); setRelayFiles(prev => new Set(prev).add(pkg.filename)) }
-      else message.error(`下载失败: ${json?.message}`)
-    } catch (e: any) { message.error(`下载失败: ${e?.message}`) }
-    finally { setDownloading(null) }
-  }
-
-  const handleDownloadCustom = async () => {
-    if (!customUrl) { message.warning('请输入下载 URL'); return }
-    const filename = customFilename || customUrl.split('/').pop() || 'package'
-    setDownloading(filename)
-    try {
-      const res = await fetch('/api/v1/relay/download-to-relay', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ url: customUrl, filename, target_path: relayDir }),
-      })
-      const json = await res.json()
-      if (json?.code === 200) { message.success(`${filename} 下载完成`); setRelayFiles(prev => new Set(prev).add(filename)) }
+      if (json?.code === 200) { message.success(`${pkg.filename} 下载完成`); handleScanLocal() }
       else message.error(`下载失败: ${json?.message}`)
     } catch (e: any) { message.error(`下载失败: ${e?.message}`) }
     finally { setDownloading(null) }
   }
 
   const handleUpload = async (file: File) => {
-    const fd = new FormData(); fd.append('file', file); fd.append('path', relayDir)
+    const fd = new FormData(); fd.append('file', file)
     try {
       const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd })
       const json = await res.json()
-      if (json?.code === 200) { message.success(`${file.name} 上传成功`); setRelayFiles(prev => new Set(prev).add(file.name)) }
+      if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanLocal() }
       else message.error(`上传失败: ${json?.message}`)
     } catch (e: any) { message.error(`上传失败: ${e?.message}`) }
   }
@@ -192,7 +212,7 @@ const PackageManager: React.FC = () => {
         body: JSON.stringify({ path: filename }),
       })
       const json = await res.json()
-      if (json?.code === 200) { message.success('已删除'); setRelayFiles(prev => { const n = new Set(prev); n.delete(filename); return n }) }
+      if (json?.code === 200) { message.success('已删除'); handleScanLocal() }
       else message.error(`删除失败: ${json?.message}`)
     } catch (e: any) { message.error(`删除失败: ${e?.message}`) }
   }
@@ -205,70 +225,78 @@ const PackageManager: React.FC = () => {
   return (
     <div>
       {/* 中继服务器配置 */}
-      <Card type="inner" title="中继服务器配置" size="small" style={{ marginBottom: 12 }}>
+      <Card type="inner" title="中继服务器" size="small" style={{ marginBottom: 12 }}>
         <Row gutter={12} align="middle">
-          <Col span={8}>
-            <Input size="small" value={relayUrl} onChange={(e) => setRelayUrl(e.target.value)}
-              onBlur={saveRelayCfg} placeholder="http://10.3.67.52:8888" addonBefore="中继 URL" />
-          </Col>
           <Col span={6}>
-            <Input size="small" value={relayDir} onChange={(e) => setRelayDir(e.target.value)}
-              onBlur={saveRelayCfg} placeholder="子路径（可选）" addonBefore="存储路径" />
+            <Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveRelayCfg() }}
+              placeholder="选择中继主机"
+              options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} />
           </Col>
           <Col span={4}>
-            <Button size="small" onClick={handleRefresh} loading={loading}>扫描中继</Button>
+            <Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={saveRelayCfg} placeholder="/opt" addonBefore="路径" />
           </Col>
-          <Col span={6} style={{ textAlign: 'right' }}>
-            {missingCount > 0
-              ? <Tag color="warning">{missingCount} 个包缺失</Tag>
-              : <Tag color="success">所有包已就绪</Tag>}
+          <Col span={3}>
+            <Button size="small" icon={<ReloadOutlined />} onClick={handleScanLocal} loading={loading}>刷新中继</Button>
+          </Col>
+          <Col span={4}>
+            <Button size="small" icon={<DownloadOutlined />} onClick={handleScanRemote} loading={loading} disabled={!relayHostId}>扫描远程主机</Button>
+          </Col>
+          <Col span={7} style={{ textAlign: 'right' }}>
+            <Space>
+              <Tag>中继已有: {relayFiles.size}</Tag>
+              {missingCount > 0 ? <Tag color="warning">缺失 {missingCount}</Tag> : <Tag color="success" icon={<CheckCircleOutlined />}>齐全</Tag>}
+            </Space>
           </Col>
         </Row>
       </Card>
 
-      {/* 包目录表格 */}
+      {/* 安装包目录 */}
       <Card type="inner" title="安装包目录" size="small"
         extra={
-          <Space>
-            <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 90 }}
-              options={[{ value: 'all', label: '全部OS' }, { value: 'Linux', label: 'Linux' }, { value: 'Windows', label: 'Windows' }]} />
-            <Select size="small" value={productFilter} onChange={setProductFilter} style={{ width: 100 }}
-              options={[{ value: 'all', label: '全部产品' }, { value: 'MySQL', label: 'MySQL' }, { value: 'Percona', label: 'Percona' }, { value: 'MariaDB', label: 'MariaDB' }]} />
+          <Space size={8}>
+            <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 80 }}
+              options={[{ value: 'all', label: 'OS' }, { value: 'Linux', label: 'Linux' }, { value: 'Windows', label: 'Win' }]} />
+            <Select size="small" value={productFilter} onChange={setProductFilter} style={{ width: 90 }}
+              options={[{ value: 'all', label: '产品' }, { value: 'MySQL', label: 'MySQL' }, { value: 'Percona', label: 'Percona' }, { value: 'MariaDB', label: 'MariaDB' }]} />
             <input type="file" id="pkg-upload" style={{ display: 'none' }} accept=".tar.gz,.tar.xz,.tgz,.tar.bz2,.rpm,.deb,.zip"
               onChange={(e) => { if (e.target.files?.[0]) handleUpload(e.target.files[0]); e.target.value = '' }} />
             <Button size="small" onClick={() => document.getElementById('pkg-upload')?.click()}>上传</Button>
-            <Button size="small" onClick={handleRefresh} loading={loading}>刷新</Button>
           </Space>
         }
       >
         <Table size="small" pagination={false} scroll={{ y: 400 }}
           dataSource={filtered.map((p, i) => ({ ...p, key: i, hasIt: relayFiles.has(p.filename) }))}
+          rowClassName={(r: any) => r.hasIt ? '' : 'ant-table-row-warning'}
           columns={[
-            { title: 'OS', dataIndex: 'os', key: 'os', width: 65, render: (v: string) => <Tag>{v}</Tag> },
-            { title: '产品', dataIndex: 'product', key: 'product', width: 80, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : 'orange'}>{v}</Tag> },
-            { title: '版本', dataIndex: 'version', key: 'version', width: 95 },
-            { title: 'arch', dataIndex: 'arch', key: 'arch', width: 60 },
-            { title: 'glibc', dataIndex: 'glibc', key: 'glibc', width: 50 },
-            { title: '说明', dataIndex: 'note', key: 'note', width: 120, ellipsis: true },
+            { title: 'OS', dataIndex: 'os', key: 'os', width: 55, render: (v: string) => <Tag>{v}</Tag> },
+            { title: '产品', dataIndex: 'product', key: 'product', width: 70, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : 'orange'}>{v}</Tag> },
+            { title: '版本', dataIndex: 'version', key: 'version', width: 85 },
+            { title: 'arch', dataIndex: 'arch', key: 'arch', width: 55 },
+            { title: '说明', dataIndex: 'note', key: 'note', width: 100, ellipsis: true },
             { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
-            { title: '中继', dataIndex: 'hasIt', key: 'status', width: 50, render: (v: boolean) => v ? <Tag color="success">✓</Tag> : <Tag color="warning">缺</Tag> },
-            { title: '', key: 'act', width: 80, render: (_: any, r: any) => r.hasIt
-                ? <Button size="small" danger onClick={() => handleDelete(r.filename)}>删除</Button>
+            { title: '中继', dataIndex: 'hasIt', key: 'status', width: 45, render: (v: boolean) => v ? <Tag color="success">✓</Tag> : <Tag color="warning">缺</Tag> },
+            { title: '', key: 'act', width: 70, render: (_: any, r: any) => r.hasIt
+                ? <Button size="small" danger onClick={() => handleDelete(r.filename)}>×</Button>
                 : <Button size="small" type="primary" loading={downloading === r.filename} disabled={!!downloading} onClick={() => handleDownload(r)}>下载</Button> },
           ]}
         />
       </Card>
 
-      {/* 自定义下载 */}
-      <Card type="inner" title="自定义下载" size="small" style={{ marginTop: 12 }}>
-        <Space.Compact style={{ width: '100%' }}>
-          <Input size="small" value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} placeholder="https://..." style={{ flex: 1 }} />
-          <Input size="small" value={customFilename} onChange={(e) => setCustomFilename(e.target.value)} placeholder="文件名" style={{ width: 200 }} />
-          <Button size="small" type="primary" onClick={handleDownloadCustom} loading={!!downloading}>下载</Button>
-        </Space.Compact>
-      </Card>
+      {/* 远程主机上的包 */}
+      {remoteFiles.length > 0 && (
+        <Card type="inner" title={`远程主机包 (${remoteFiles.length})`} size="small" style={{ marginTop: 12 }}>
+          <Table size="small" pagination={false} scroll={{ y: 200 }}
+            dataSource={remoteFiles.map((p, i) => ({ ...p, key: i }))}
+            columns={[
+              { title: '文件名', dataIndex: 'name', key: 'name', ellipsis: true },
+              { title: '大小', dataIndex: 'size', key: 'size', width: 80 },
+              { title: '路径', dataIndex: 'path', key: 'path', ellipsis: true, render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code> },
+              { title: '', key: 'act', width: 80, render: (_: any, r: any) => <Button size="small" type="primary" loading={downloading === r.name} onClick={() => handlePullToRelay(r)}>拉取</Button> },
+            ]}
+          />
+        </Card>
+      )}
 
-      {/* Repo/Apt 源管理 */}
       <RepoSourceManager />
     </div>
   )
