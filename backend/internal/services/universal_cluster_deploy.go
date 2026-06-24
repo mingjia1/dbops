@@ -546,10 +546,10 @@ func buildUniversalPlanSteps(clusterType string, nodes []PlanNode, req Universal
 // buildGenericPlanSteps is a fallback for unknown cluster types.
 func buildGenericPlanSteps(nodes []PlanNode, clusterType string) []PlanStep {
 	steps := []PlanStep{
-		{ID: "validate_input", Name: "Validate deployment input", Type: "validate"},
-		{ID: "resolve_hosts", Name: "Resolve hosts", Type: "validate", DependsOn: []string{"validate_input"}},
-		{ID: "check_conflicts", Name: "Check port and path conflicts", Type: "validate", DependsOn: []string{"resolve_hosts"}},
-		{ID: "prepare_credentials", Name: "Prepare credentials", Type: "configure", DependsOn: []string{"check_conflicts"}},
+		{ID: "validate_input", Name: "校验部署参数", Type: "validate"},
+		{ID: "resolve_hosts", Name: "解析主机信息", Type: "validate", DependsOn: []string{"validate_input"}},
+		{ID: "check_conflicts", Name: "检查端口和路径冲突", Type: "validate", DependsOn: []string{"resolve_hosts"}},
+		{ID: "prepare_credentials", Name: "准备凭据", Type: "configure", DependsOn: []string{"check_conflicts"}},
 	}
 	last := "prepare_credentials"
 	for _, node := range nodes {
@@ -570,9 +570,9 @@ func buildGenericPlanSteps(nodes []PlanNode, clusterType string) []PlanStep {
 		last = id
 	}
 	steps = append(steps,
-		PlanStep{ID: "verify_cluster", Name: "Verify cluster", Type: "verify", DependsOn: []string{last}},
-		PlanStep{ID: "sync_metadata", Name: "Sync metadata", Type: "sync", DependsOn: []string{"verify_cluster"}},
-		PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{"sync_metadata"}},
+		PlanStep{ID: "verify_cluster", Name: "验证集群", Type: "verify", DependsOn: []string{last}},
+		PlanStep{ID: "sync_metadata", Name: "同步元数据", Type: "sync", DependsOn: []string{"verify_cluster"}},
+		PlanStep{ID: "write_audit", Name: "写入审计日志", Type: "sync", DependsOn: []string{"sync_metadata"}},
 	)
 	return steps
 }
@@ -614,7 +614,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		mergeCommonDeployConfig(masterConfig, req)
 		id := fmt.Sprintf("bootstrap_%s", masterNode.ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Deploy master %s", masterNode.Host),
+			ID: id, Name: fmt.Sprintf("部署主节点 %s", masterNode.Host),
 			Type: "bootstrap", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: masterConfig,
 		})
@@ -646,7 +646,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		mergeCommonDeployConfig(initConfig, req)
 		initID := fmt.Sprintf("init_%s", replicaNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: initID, Name: fmt.Sprintf("Install replica MySQL %s", replicaNodes[i].Host),
+			ID: initID, Name: fmt.Sprintf("安装从库 MySQL %s", replicaNodes[i].Host),
 			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: initConfig,
 		})
@@ -674,7 +674,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		mergeCommonDeployConfig(replicaConfig, req)
 		joinID := fmt.Sprintf("join_%s", replicaNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: joinID, Name: fmt.Sprintf("Configure replica replication %s", replicaNodes[i].Host),
+			ID: joinID, Name: fmt.Sprintf("配置从库复制 %s", replicaNodes[i].Host),
 			Type: "configure", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{initID}, Config: replicaConfig,
 		})
@@ -722,7 +722,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		mergeCommonDeployConfig(masterConfig, req)
 		id := fmt.Sprintf("bootstrap_%s", masterNode.ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Install MHA master MySQL %s", masterNode.Host),
+			ID: id, Name: fmt.Sprintf("安装 MHA 主库 MySQL %s", masterNode.Host),
 			Type: "bootstrap", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: masterConfig,
 		})
@@ -748,7 +748,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		mergeCommonDeployConfig(masterHAConfig, req)
 		id = fmt.Sprintf("configure_master_%s", masterNode.ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Configure MHA master replication %s", masterNode.Host),
+			ID: id, Name: fmt.Sprintf("配置 MHA 主库复制 %s", masterNode.Host),
 			Type: "configure", TargetNode: masterNode.ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: masterHAConfig,
 		})
@@ -776,7 +776,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		mergeCommonDeployConfig(replicaConfig, req)
 		installID := fmt.Sprintf("join_%s", replicaNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: installID, Name: fmt.Sprintf("Install MHA replica MySQL %s", replicaNodes[i].Host),
+			ID: installID, Name: fmt.Sprintf("安装 MHA 从库 MySQL %s", replicaNodes[i].Host),
 			Type: "join", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: replicaConfig,
 		})
@@ -805,7 +805,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			mergeCommonDeployConfig(replicaHAConfig, req)
 			configureID := fmt.Sprintf("configure_replica_%s", replicaNodes[i].ID)
 			steps = append(steps, PlanStep{
-				ID: configureID, Name: fmt.Sprintf("Configure MHA replica replication %s", replicaNodes[i].Host),
+				ID: configureID, Name: fmt.Sprintf("配置 MHA 从库复制 %s", replicaNodes[i].Host),
 				Type: "configure", TargetNode: replicaNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 				DependsOn: []string{last}, Config: replicaHAConfig,
 			})
@@ -869,7 +869,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 
 		id := fmt.Sprintf("deploy_mha_%s", managerNode.ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Deploy MHA manager %s", managerNode.Host),
+			ID: id, Name: fmt.Sprintf("部署 MHA Manager %s", managerNode.Host),
 			Type: "deploy", TargetNode: managerNode.ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: managerConfig,
 		})
@@ -955,7 +955,7 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		}
 		id := fmt.Sprintf("deploy_mgr_%s", nodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Deploy MGR node %s (%s)", nodes[i].Host, nodes[i].Role),
+			ID: id, Name: fmt.Sprintf("部署 MGR 节点 %s (%s)", nodes[i].Host, nodes[i].Role),
 			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: nodeConfig,
 		})
@@ -1036,7 +1036,7 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		}
 		id := fmt.Sprintf("%s_%s", stepType, nodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("Deploy PXC node %s (%s)", nodes[i].Host, nodes[i].Role),
+			ID: id, Name: fmt.Sprintf("部署 PXC 节点 %s (%s)", nodes[i].Host, nodes[i].Role),
 			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: nodeConfig,
 		})
@@ -1049,18 +1049,18 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 // preamblePlanSteps returns the common validation & preparation steps.
 func preamblePlanSteps() []PlanStep {
 	return []PlanStep{
-		{ID: "validate_input", Name: "Validate deployment input", Type: "validate"},
-		{ID: "resolve_hosts", Name: "Resolve hosts", Type: "validate", DependsOn: []string{"validate_input"}},
-		{ID: "check_conflicts", Name: "Check port and path conflicts", Type: "validate", DependsOn: []string{"resolve_hosts"}},
-		{ID: "prepare_credentials", Name: "Prepare credentials", Type: "configure", DependsOn: []string{"check_conflicts"}},
+		{ID: "validate_input", Name: "校验部署参数", Type: "validate"},
+		{ID: "resolve_hosts", Name: "解析主机信息", Type: "validate", DependsOn: []string{"validate_input"}},
+		{ID: "check_conflicts", Name: "检查端口和路径冲突", Type: "validate", DependsOn: []string{"resolve_hosts"}},
+		{ID: "prepare_credentials", Name: "准备凭据", Type: "configure", DependsOn: []string{"check_conflicts"}},
 	}
 }
 
 // appendPostambleSteps appends the common verification, sync, and audit steps.
 func appendPostambleSteps(steps []PlanStep, lastDep string) []PlanStep {
 	return append(steps,
-		PlanStep{ID: "verify_cluster", Name: "Verify cluster", Type: "verify", DependsOn: []string{lastDep}},
-		PlanStep{ID: "sync_metadata", Name: "Sync metadata", Type: "sync", DependsOn: []string{"verify_cluster"}},
+		PlanStep{ID: "verify_cluster", Name: "验证集群", Type: "verify", DependsOn: []string{lastDep}},
+		PlanStep{ID: "sync_metadata", Name: "同步元数据", Type: "sync", DependsOn: []string{"verify_cluster"}},
 		PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{"sync_metadata"}},
 	)
 }

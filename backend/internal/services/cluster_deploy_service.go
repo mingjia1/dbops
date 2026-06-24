@@ -365,11 +365,11 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		switch step.Type {
 		case "validate", "sync":
 			// Backend-side steps: mark completed directly
-			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
+			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s 已完成", step.Name))
 
 		case "bootstrap", "join", "deploy", "configure":
 			if step.TargetNode == "" {
-				s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s completed", step.Name))
+				s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s 已完成", step.Name))
 				continue
 			}
 			// Find the target node for this step
@@ -399,7 +399,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					"config":      step.Config,
 				}
 
-				nodeMsg := fmt.Sprintf("Deploying %s on %s:%d", targetNode.Role, targetNode.Host, targetNode.AgentPort)
+				nodeMsg := fmt.Sprintf("正在部署 %s 于 %s:%d", targetNode.Role, targetNode.Host, targetNode.AgentPort)
 				s.updateProgress(clusterID, step.Name, nodeMsg, progressPct)
 
 				result, err := s.agentClient.DeployCluster(ctx, targetNode.Host, targetNode.AgentPort, agentPayload)
@@ -426,16 +426,16 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 				}
 
-				nodeReadyMsg := fmt.Sprintf("Node %s (%s) deployed successfully", targetNode.Host, targetNode.Role)
+				nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
 				s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
 			} else {
 				// Pseudo mode: mark as completed without calling agent
-				nodeMsg := fmt.Sprintf("Node %s (%s) step completed (pseudo)", targetNode.Host, targetNode.Role)
+				nodeMsg := fmt.Sprintf("节点 %s (%s) 步骤完成（演练模式）", targetNode.Host, targetNode.Role)
 				s.updateStepStatus(clusterID, step.Name, "completed", nodeMsg)
 			}
 
 		case "verify":
-			s.updateStepStatus(clusterID, step.Name, "completed", "Verification completed")
+			s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
 
 		default:
 			s.updateStepStatus(clusterID, step.Name, "completed", "Step completed")
@@ -444,7 +444,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Sync cluster management metadata (register instances, topology, etc.)
 	if err := s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, plan.Nodes, req); err != nil {
-		errMsg := fmt.Sprintf("management sync failed: %v", err)
+		errMsg := fmt.Sprintf("元数据同步失败: %v", err)
 		s.repo.UpdateStatus(ctx, clusterID, "partial")
 		finish := time.Now()
 		partialResp := &DeployResponse{
@@ -467,7 +467,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
 	if s.nodeRepo != nil {
-		_ = s.nodeRepo.UpdateStatusByDeploymentID(ctx, clusterID, "completed", "deployment completed successfully")
+		_ = s.nodeRepo.UpdateStatusByDeploymentID(ctx, clusterID, "completed", "部署完成")
 	}
 	s.updateProgress(clusterID, "集群验证", "集群部署完成", 100)
 	finish := time.Now()
@@ -488,7 +488,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		ClusterType:   clusterType,
 		Name:          name,
 		Status:        "success",
-		Message:       "Cluster deployed successfully via plan execution",
+		Message:       "集群部署成功",
 		MySQLUser:     req.MySQL.User,
 		MySQLPassword: req.MySQL.Password,
 		StartedAt:     dep.StartedAt,
