@@ -661,6 +661,13 @@ var InitialSchema = []string{
 		INDEX idx_deploy_nodes_deployment (deployment_id),
 		FOREIGN KEY (deployment_id) REFERENCES cluster_deployments(id) ON DELETE CASCADE
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// Platform settings: generic key-value store for system configuration.
+	`CREATE TABLE IF NOT EXISTS platform_settings (
+		` + "`key`" + ` VARCHAR(128) PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT '',
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -1315,6 +1322,13 @@ var schemaSQLite = []string{
 			error_message TEXT DEFAULT ''
 		)`,
 	`CREATE INDEX IF NOT EXISTS idx_deploy_nodes_deployment ON cluster_deploy_nodes(deployment_id)`,
+
+	// Platform settings: generic key-value store for system configuration.
+	`CREATE TABLE IF NOT EXISTS platform_settings (
+		key VARCHAR(128) PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT '',
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

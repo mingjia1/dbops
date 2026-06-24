@@ -184,6 +184,9 @@ func main() {
 	clusterDeployService.SetEncryptionKey(cfg.EncryptionKey)
 	clusterDeployService.SetBackupService(backupService)
 	clusterDeployService.SetHostService(hostService)
+
+	settingsRepo := repositories.NewPlatformSettingsRepository(db)
+	settingsController := controllers.NewSettingsController(settingsRepo)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
 	topologyController := controllers.NewTopologyController(topologyService)
@@ -535,6 +538,14 @@ func main() {
 				versions.GET("", versionController.List)
 				versions.POST("/validate-path", versionController.ValidatePath)
 				versions.GET("/:id", versionController.GetOne)
+			}
+
+			settings := protected.Group("/settings")
+			{
+				settings.GET("", settingsController.GetAll)
+				settings.GET("/:key", settingsController.Get)
+				settings.PUT("/:key", middleware.RequirePermission("admin"), settingsController.Set)
+				settings.DELETE("/:key", middleware.RequirePermission("admin"), settingsController.Delete)
 			}
 
 			relay := protected.Group("/relay")

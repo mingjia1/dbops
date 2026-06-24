@@ -530,13 +530,25 @@ const ClusterDeploy: React.FC = () => {
       const relayCfg = localStorage.getItem('dbops_relay_server')
       if (relayCfg) {
         const parsed = JSON.parse(relayCfg)
+        const platformIp = window.location.hostname || '10.3.67.52'
+        const defaultVersion = parsed.default_version || values.mysql_version || '8.0.36'
+        const resolveVars = (url: string) => {
+          const parts = defaultVersion.split('.')
+          const majorMinor = parts.length >= 2 ? `${parts[0]}.${parts[1]}` : defaultVersion
+          return url
+            .replace(/\$\{platform_ip\}/g, platformIp)
+            .replace(/\$\{version\}/g, defaultVersion)
+            .replace(/\$\{major_minor\}/g, majorMinor)
+            .replace(/\$\{major\}/g, parts[0] || defaultVersion)
+            .replace(/\$\{minor\}/g, parts[1] || '')
+        }
         // Build relay_url from sources (new format) or legacy relay_url (old format)
         let relayUrl = ''
         if (parsed.sources && parsed.sources.length > 0) {
           const firstEnabled = parsed.sources.find((s: any) => s.enabled && s.url)
-          if (firstEnabled) relayUrl = firstEnabled.url.replace(/\/+$/, '')
+          if (firstEnabled) relayUrl = resolveVars(firstEnabled.url).replace(/\/+$/, '')
         } else if (parsed.relay_url) {
-          relayUrl = parsed.relay_url.replace(/\/+$/, '')
+          relayUrl = resolveVars(parsed.relay_url).replace(/\/+$/, '')
         }
         if (relayUrl && parsed.relay_path) {
           relayUrl += '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
