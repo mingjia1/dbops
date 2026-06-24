@@ -4399,10 +4399,15 @@ func applyInitialMySQLPassword(ctx context.Context, port int, user, pass string)
 }
 
 func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
-	args := []string{"-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-N", "-B", "-e", sql}
+	args := []string{"-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "--get-server-public-key", "-N", "-B", "-e", sql}
 	cmd := exec.CommandContext(ctx, getMySQLBinary(), args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	out, err := cmd.CombinedOutput()
+	if err != nil && strings.Contains(string(out), "error while loading shared libraries") {
+		if sysOut, sysErr := runSystemMySQLFallback(ctx, host, port, user, pass, sql); sysErr == nil {
+			return string(sysOut), nil
+		}
+	}
 	return string(out), err
 }
 

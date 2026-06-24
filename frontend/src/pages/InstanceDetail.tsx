@@ -751,8 +751,29 @@ const ReplTag: React.FC<{ value: boolean | string | undefined; trueLabel?: strin
 
 const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ status }) => {
   const clusterType = (status.cluster_type || 'ha').toLowerCase()
+  const queryFailed = status.query_failed === true
 
   const getField = (snake: string, camel: string) => status[snake] ?? status[camel]
+
+  if (queryFailed) {
+    return (
+      <div>
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col span={6}>
+            <Card size="small">
+              <Statistic title="集群架构" value={clusterType.toUpperCase()} valueStyle={{ color: '#1677ff' }} />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small">
+              <Statistic title="连接状态" value="失败" valueStyle={{ color: '#ff4d4f' }} />
+            </Card>
+          </Col>
+        </Row>
+        <Alert type="warning" message="无法查询 MySQL 同步状态" description={status.message || '可能原因：实例密码不正确或 MySQL 服务未运行。请在实例管理中编辑实例并更新正确的密码。'} showIcon />
+      </div>
+    )
+  }
 
   if (clusterType === 'ha' || clusterType === 'mha') {
     const ioRunning = getField('slave_io_running', 'Slave_IO_Running')

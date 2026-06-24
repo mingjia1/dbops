@@ -695,34 +695,123 @@ func (s *InstanceService) ReplicationStatus(ctx context.Context, id string) (map
 	}
 	clusterType := ""
 	if instance.Topology.ClusterID != "" {
-		// Try to determine cluster type from deployments
 		if dep, depErr := s.getClusterType(ctx, instance.Topology.ClusterID); depErr == nil {
 			clusterType = dep
 		}
 	}
+
+	cfg := map[string]interface{}{
+		"action":      "show_replication_status",
+		"target_host": targetHost,
+		"target_port": conn.Port,
+		"target_user": conn.Username,
+		"target_pass": password,
+		"cluster_type": clusterType,
+	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id":     "repl-status-" + id,
 		"instance_id": id,
-		"config": map[string]interface{}{
-			"action":        "show_replication_status",
-			"target_host":   targetHost,
-			"target_port":   conn.Port,
-			"target_user":   conn.Username,
-			"target_pass":   password,
-			"cluster_type":  clusterType,
-		},
+		"config":      cfg,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("agent call failed: %w", err)
+	if err == nil && result != nil && !isFailedTaskStatus(result.Status) && result.Message != "" {
+		return parseReplicationStatusMessage(result.Message), nil
 	}
-	if result == nil || isFailedTaskStatus(result.Status) {
-		msg := "unknown error"
-		if result != nil {
-			msg = result.Message
+
+	// Fallback: use show_variables (works on all agent versions) to detect cluster type and status
+	varsResult, varsErr := s.discoverReplicationViaVariables(ctx, agentHost, agentPort, targetHost, conn, clusterType)
+	if varsErr == nil && len(varsResult) > 0 {
+		// If we got meaningful data (not just cluster_type), return it
+		if len(varsResult) > 1 {
+			return varsResult, nil
 		}
-		return nil, fmt.Errorf("replication status query failed: %s", msg)
 	}
-	return parseReplicationStatusMessage(result.Message), nil
+	// Final fallback: return topology-derived cluster_type even if we can't query MySQL
+	result2 := make(map[string]interface{})
+	result2["cluster_type"] = clusterType
+	if clusterType == "" {
+		result2["cluster_type"] = "ha"
+	}
+	result2["query_failed"] = true
+	result2["message"] = "could not query MySQL (connection may be refused). Verify instance password is correct."
+	return result2, nil
+}
+
+func (s *InstanceService) discoverReplicationViaVariables(ctx context.Context, agentHost string, agentPort int, targetHost string, conn *models.InstanceConnection, clusterType string) (map[string]interface{}, error) {
+	password, _ := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	result := make(map[string]interface{})
+	result["cluster_type"] = clusterType
+
+	// Detect MGR via group_replication variables
+	if clusterType == "mgr" || clusterType == "" {
+		mgrResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+			"task_id": "repl-mgr-" + uuid.New().String(),
+			"config": map[string]interface{}{
+				"action": "show_variables", "target_host": targetHost,
+				"target_port": conn.Port, "target_user": conn.Username, "target_pass": password,
+				"pattern": "group_replication_member_state",
+			},
+		})
+		if mgrResult != nil && !isFailedTaskStatus(mgrResult.Status) {
+			vars := parseShowVariablesOutput(mgrResult.Message)
+			if memberState, ok := vars["group_replication_member_state"]; ok {
+				result["cluster_type"] = "mgr"
+				result["member_state"] = memberState
+				// Get group size
+				sizeResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+					"task_id": "repl-mgr-size-" + uuid.New().String(),
+					"config": map[string]interface{}{
+						"action": "show_variables", "target_host": targetHost,
+						"target_port": conn.Port, "target_user": conn.Username, "target_pass": password,
+						"pattern": "group_replication_group_size",
+					},
+				})
+				if sizeResult != nil && !isFailedTaskStatus(sizeResult.Status) {
+					for k, v := range parseShowVariablesOutput(sizeResult.Message) {
+						result[k] = v
+					}
+				}
+				return result, nil
+			}
+		}
+	}
+
+	// Detect PXC via wsrep variables
+	if clusterType == "pxc" || clusterType == "" {
+		pxcResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+			"task_id": "repl-pxc-" + uuid.New().String(),
+			"config": map[string]interface{}{
+				"action": "show_variables", "target_host": targetHost,
+				"target_port": conn.Port, "target_user": conn.Username, "target_pass": password,
+				"pattern": "wsrep_cluster_status",
+			},
+		})
+		if pxcResult != nil && !isFailedTaskStatus(pxcResult.Status) {
+			vars := parseShowVariablesOutput(pxcResult.Message)
+			if clusterStatus, ok := vars["wsrep_cluster_status"]; ok {
+				result["cluster_type"] = "pxc"
+				result["wsrep_cluster_status"] = clusterStatus
+				return result, nil
+			}
+		}
+	}
+
+	result["cluster_type"] = "ha"
+	return result, nil
+}
+
+func parseShowVariablesOutput(message string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(message), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 {
+			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return result
 }
 
 func (s *InstanceService) getClusterType(ctx context.Context, clusterID string) (string, error) {
