@@ -951,9 +951,10 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("disable read-only failed: %v", err)
 	}
 
-	// 0b. Switch root to mysql_native_password so subsequent SQL can use TCP.
-	// Socket auth works without password, but CHANGE REPLICATION SOURCE TO
-	// needs TCP-compatible auth to persist channel credentials correctly.
+	// 0b. Create a separate TCP executor for SQL that needs password auth.
+	// Keep the original socket executor for channel config which must go
+	// through the local socket to persist correctly.
+	var execTCP func(string) ([]byte, error)
 	if pass != "" {
 		switchAuthSQL := fmt.Sprintf(
 			"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
@@ -962,19 +963,21 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		if _, switchErr := execSocket(switchAuthSQL); switchErr != nil {
 			fmt.Fprintf(os.Stderr, "WARN: switch to mysql_native_password failed: %v\n", switchErr)
 		}
-		// Use TCP for all subsequent SQL (with --get-server-public-key for safety)
-		execSocket = func(sql string) ([]byte, error) {
+		execTCP = func(sql string) ([]byte, error) {
 			return mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
 		}
+	} else {
+		execTCP = execSocket
 	}
 
-	// 1. Create replication user
+	// 1. Create replication user (via TCP/socket for password compatibility)
 	if strings.HasPrefix(mysqlVersion, "5.") {
 		createUserSQL := fmt.Sprintf(`SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;`,
 			escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
-		if _, err := execSocket(createUserSQL); err != nil {
+		if _, err := execTCP(createUserSQL); err != nil {
 			return fmt.Errorf("create replication user failed: %v", err)
 		}
+		// Use pure socket for channel config to ensure persistence
 		chMasterSQL := fmt.Sprintf("CHANGE MASTER TO MASTER_USER='%s', MASTER_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 			escapeSQL(replicateUser), escapeSQL(replicatePass))
 		if _, err := execSocket(chMasterSQL); err != nil {
@@ -983,9 +986,10 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	} else {
 		createUserSQL := fmt.Sprintf(`SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%'; FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;`,
 			escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
-		if _, err := execSocket(createUserSQL); err != nil {
+		if _, err := execTCP(createUserSQL); err != nil {
 			return fmt.Errorf("create replication user failed: %v", err)
 		}
+		// Use pure socket for channel config to ensure persistence
 		chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 			escapeSQL(replicateUser), escapeSQL(replicatePass))
 		if _, err := execSocket(chSourceSQL); err != nil {
@@ -1006,8 +1010,6 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	} else {
 		out, startErr := execSocket("START GROUP_REPLICATION;")
 		if startErr != nil {
-			// "group is already running" is not a real error — the SQL executed
-			// via an earlier fallback but the overall command returned error.
 			if strings.Contains(string(out), "already running") {
 				fmt.Fprintf(os.Stderr, "MGR already running on secondary, continuing\n")
 			} else {
