@@ -971,15 +971,31 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. Configure recovery channel — use socket WITH password to ensure
-	// SOURCE_USER/SOURCE_PASSWORD are persisted to mysql.slave_master_info.
-	// Pure socket without password fails to persist these credentials in MySQL 8.0.
+	// 2. Configure recovery channel.
+	// Problem: auth_socket ignores passwords, but CHANGE REPLICATION SOURCE TO
+	// needs password-authenticated context to persist SOURCE_USER correctly.
+	// Solution: temporarily switch root@localhost to mysql_native_password,
+	// set the channel credentials, then switch back to auth_socket.
 	chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 		escapeSQL(replicateUser), escapeSQL(replicatePass))
 	if pass != "" {
+		// 2a. Temporarily switch root@localhost to mysql_native_password
+		switchToNative := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; FLUSH PRIVILEGES;",
+			escapeSQL(user), escapeSQL(pass))
+		if _, switchErr := execSocket(switchToNative); switchErr != nil {
+			fmt.Fprintf(os.Stderr, "WARN: switch to mysql_native_password failed: %v\n", switchErr)
+		}
+		// 2b. Execute CHANGE REPLICATION SOURCE TO with password via socket
 		chCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", chSourceSQL)
 		chCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
-		if chOut, chErr := chCmd.CombinedOutput(); chErr != nil {
+		chOut, chErr := chCmd.CombinedOutput()
+		// 2c. Switch root@localhost back to auth_socket
+		switchToSocket := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED WITH auth_socket; FLUSH PRIVILEGES;",
+			escapeSQL(user))
+		if _, restoreErr := execSocket(switchToSocket); restoreErr != nil {
+			fmt.Fprintf(os.Stderr, "WARN: restore auth_socket failed: %v\n", restoreErr)
+		}
+		if chErr != nil {
 			return fmt.Errorf("configure recovery channel failed: %v (output: %s)", chErr, string(chOut))
 		}
 	} else {
