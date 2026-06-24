@@ -1019,7 +1019,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	}
 
 	state := strings.TrimSpace(string(out))
-	if state != "ONLINE" {
+	if !strings.Contains(state, "ONLINE") {
 		return fmt.Errorf("MGR member state is '%s', expected 'ONLINE'", state)
 	}
 
