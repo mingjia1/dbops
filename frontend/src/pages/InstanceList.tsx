@@ -78,6 +78,9 @@ const InstanceList: React.FC = () => {
   const [resetInstanceName, setResetInstanceName] = useState('')
   const [resetForm] = Form.useForm()
   const [resetSubmitting, setResetSubmitting] = useState(false)
+  const [secondaryAuthOpen, setSecondaryAuthOpen] = useState(false)
+  const [secondaryAuthForm] = Form.useForm()
+  const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null)
 
   const fetchInstances = async () => {
     setLoading(true)
@@ -245,12 +248,42 @@ const InstanceList: React.FC = () => {
     }
   }
 
+  const isSecondaryPasswordEnabled = () => !!localStorage.getItem('dbops_credential_password')
+
+  const verifySecondaryPassword = (input: string) => {
+    const stored = localStorage.getItem('dbops_credential_password')
+    if (!stored) return true // not enabled
+    return input === stored
+  }
+
   const togglePasswordVisible = async (instanceId: string) => {
     if (visiblePasswords.has(instanceId)) {
       setVisiblePasswords((prev) => { const next = new Set(prev); next.delete(instanceId); return next })
     } else {
+      // Check if secondary password is enabled and not yet verified in this session
+      if (isSecondaryPasswordEnabled() && !sessionStorage.getItem('dbops_credential_verified')) {
+        setPendingCredentialId(instanceId)
+        secondaryAuthForm.resetFields()
+        setSecondaryAuthOpen(true)
+        return
+      }
       await fetchCredential(instanceId)
       setVisiblePasswords((prev) => new Set(prev).add(instanceId))
+    }
+  }
+
+  const handleSecondaryAuth = async () => {
+    const values = await secondaryAuthForm.validateFields()
+    if (!verifySecondaryPassword(values.secondary_password)) {
+      message.error('二级密码错误')
+      return
+    }
+    sessionStorage.setItem('dbops_credential_verified', '1')
+    setSecondaryAuthOpen(false)
+    if (pendingCredentialId) {
+      await fetchCredential(pendingCredentialId)
+      setVisiblePasswords((prev) => new Set(prev).add(pendingCredentialId))
+      setPendingCredentialId(null)
     }
   }
 
@@ -439,6 +472,14 @@ const InstanceList: React.FC = () => {
             rules={[{ required: true, message: '请输入实例清单' }]}
           >
             <Input.TextArea rows={10} placeholder={'mysql-3306,10.1.81.41,3306,root,123456,host-id,cluster-a\n备用格式也可粘贴 JSON 数组'} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal title="安全验证" open={secondaryAuthOpen} onCancel={() => { setSecondaryAuthOpen(false); setPendingCredentialId(null) }} onOk={handleSecondaryAuth} okText="验证" cancelText="取消" destroyOnClose>
+        <p>查看密码需要输入二级密码验证。</p>
+        <Form form={secondaryAuthForm} layout="vertical">
+          <Form.Item name="secondary_password" label="二级密码" rules={[{ required: true, message: '请输入二级密码' }]}>
+            <Input.Password placeholder="请输入二级密码" autoComplete="off" />
           </Form.Item>
         </Form>
       </Modal>
