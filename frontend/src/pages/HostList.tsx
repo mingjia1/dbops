@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Button, Card, Dropdown, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Card, Dropdown, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
 import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'
@@ -14,26 +14,6 @@ const isFailedAgentStatus = (status?: string) => {
 
 const summarizeAgentRows = (rows: any[]) =>
   rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
-
-const parseBatchHosts = (text: string) => {
-  const trimmed = text.trim()
-  if (!trimmed) return []
-  if (trimmed.startsWith('[')) return JSON.parse(trimmed)
-  return trimmed.split(/\r?\n/).map((line, index) => {
-    const [name, address, sshPort, sshUser, credential, agentPort, tags] = line.split(',').map((v) => v?.trim())
-    return {
-      name: name || `host-${index + 1}`,
-      address,
-      ssh_port: sshPort ? Number(sshPort) : 22,
-      ssh_user: sshUser || 'root',
-      ssh_auth_method: 'password',
-      ssh_credential: credential || '',
-      agent_port: agentPort ? Number(agentPort) : 9090,
-      os_type: 'linux',
-      tags,
-    }
-  }).filter((item) => item.address)
-}
 
 const HostList: React.FC = () => {
   const navigate = useNavigate()
@@ -179,11 +159,19 @@ const HostList: React.FC = () => {
   }
   const submitBatchCreate = async () => {
     const values = await batchForm.validateFields()
-    const parsed = parseBatchHosts(values.hosts)
-    if (parsed.length === 0) {
-      message.warning('没有可添加的主机')
+    const hosts = (values.hosts || []).filter((h: any) => h.address && h.address.trim())
+    if (hosts.length === 0) {
+      message.warning('请至少填写一台主机的地址')
       return
     }
+    const parsed = hosts.map((h: any) => ({
+      name: h.name || h.address,
+      address: h.address,
+      ssh_port: h.ssh_port || 22,
+      ssh_user: h.ssh_user || 'root',
+      ssh_password: h.ssh_password || '',
+      agent_port: h.agent_port || 9090,
+    }))
     setBatchSubmitting(true)
     try {
       const res: any = await hostApi.batchCreate(parsed)
@@ -386,20 +374,30 @@ const HostList: React.FC = () => {
         confirmLoading={batchSubmitting}
         okText="批量添加"
         cancelText="取消"
-        width={760}
+        width={900}
       >
         <Form form={batchForm} layout="vertical">
-          <Form.Item
-            name="hosts"
-            label="主机清单"
-            extra="支持 CSV：name,address,ssh_port,ssh_user,ssh_password,agent_port,tags；也支持 JSON 数组。"
-            rules={[{ required: true, message: '请输入主机清单' }]}
-          >
-            <Input.TextArea
-              rows={10}
-              placeholder={'db-host-01,10.1.81.41,22,root,ssh-password,9090,test\n备用格式也可粘贴 JSON 数组'}
-            />
-          </Form.Item>
+          <Form.List name="hosts" initialValue={[{ name: '', address: '', ssh_port: 22, ssh_user: 'root', ssh_password: '', agent_port: 9090 }]}>
+            {(fields, { add, remove }) => (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 60px 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
+                  <span>主机名</span><span>地址</span><span>端口</span><span>用户</span><span>密码</span><span>Agent</span><span></span>
+                </div>
+                {fields.map(({ key, name }) => (
+                  <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 60px 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
+                    <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="db-host-01" /></Form.Item>
+                    <Form.Item name={[name, 'address']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
+                    <Form.Item name={[name, 'ssh_port']} style={{ margin: 0 }} initialValue={22}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
+                    <Form.Item name={[name, 'ssh_user']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
+                    <Form.Item name={[name, 'ssh_password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="SSH密码" autoComplete="new-password" /></Form.Item>
+                    <Form.Item name={[name, 'agent_port']} style={{ margin: 0 }} initialValue={9090}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
+                    <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
+                  </div>
+                ))}
+                <Button size="small" type="dashed" onClick={() => add({ name: '', address: '', ssh_port: 22, ssh_user: 'root', ssh_password: '', agent_port: 9090 })} style={{ marginTop: 4 }}>+ 添加一行</Button>
+              </>
+            )}
+          </Form.List>
         </Form>
       </Modal>
     </div>

@@ -5,24 +5,6 @@ import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeIn
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
-const parseBatchInstances = (text: string) => {
-  const trimmed = text.trim()
-  if (!trimmed) return []
-  if (trimmed.startsWith('[')) return JSON.parse(trimmed)
-  return trimmed.split(/\r?\n/).map((line, index) => {
-    const [name, host, port, username, password, hostId, clusterId] = line.split(',').map((v) => v?.trim())
-    return {
-      name: name || `mysql-${index + 1}`,
-      host,
-      port: port ? Number(port) : 3306,
-      username: username || 'root',
-      password: password || '',
-      host_id: hostId || undefined,
-      cluster_id: clusterId || undefined,
-    }
-  }).filter((item) => item.host && item.port)
-}
-
 const isFailedTaskStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(normalized)
@@ -144,11 +126,20 @@ const InstanceList: React.FC = () => {
 
   const submitBatchCreate = async () => {
     const values = await batchForm.validateFields()
-    const parsed = parseBatchInstances(values.instances)
-    if (parsed.length === 0) {
-      message.warning('没有可添加的实例')
+    const instances = (values.instances || []).filter((i: any) => i.host && i.host.trim())
+    if (instances.length === 0) {
+      message.warning('请至少填写一个实例的连接地址')
       return
     }
+    const parsed = instances.map((i: any) => ({
+      name: i.name || `${i.host}-${i.port || 3306}`,
+      host: i.host,
+      port: i.port || 3306,
+      username: i.username || 'root',
+      password: i.password || '',
+      host_id: i.host_id || undefined,
+      cluster_id: i.cluster_id || undefined,
+    }))
     setBatchSubmitting(true)
     try {
       const res: any = await instanceApi.batchCreate(parsed)
@@ -432,16 +423,28 @@ const InstanceList: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width={760}>
+      <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width={900}>
         <Form form={batchForm} layout="vertical">
-          <Form.Item
-            name="instances"
-            label="实例清单"
-            extra="支持 CSV：name,host,port,username,password,host_id,cluster_id；也支持 JSON 数组。host_id 可从主机列表复制，留空也可先按连接地址纳管。"
-            rules={[{ required: true, message: '请输入实例清单' }]}
-          >
-            <Input.TextArea rows={10} placeholder={'mysql-3306,10.1.81.41,3306,root,123456,host-id,cluster-a\n备用格式也可粘贴 JSON 数组'} />
-          </Form.Item>
+          <Form.List name="instances" initialValue={[{ name: '', host: '', port: 3306, username: 'root', password: '' }]}>
+            {(fields, { add, remove }) => (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
+                  <span>实例名</span><span>地址</span><span>端口</span><span>用户</span><span>密码</span><span></span>
+                </div>
+                {fields.map(({ key, name }) => (
+                  <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
+                    <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
+                    <Form.Item name={[name, 'host']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
+                    <Form.Item name={[name, 'port']} style={{ margin: 0 }} initialValue={3306}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
+                    <Form.Item name={[name, 'username']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
+                    <Form.Item name={[name, 'password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="MySQL密码" autoComplete="new-password" /></Form.Item>
+                    <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
+                  </div>
+                ))}
+                <Button size="small" type="dashed" onClick={() => add({ name: '', host: '', port: 3306, username: 'root', password: '' })} style={{ marginTop: 4 }}>+ 添加一行</Button>
+              </>
+            )}
+          </Form.List>
         </Form>
       </Modal>
       <Modal title="安全验证" open={secondaryAuthOpen} onCancel={() => { setSecondaryAuthOpen(false); setPendingCredentialId(null) }} onOk={handleSecondaryAuth} okText="验证" cancelText="取消" destroyOnClose>
