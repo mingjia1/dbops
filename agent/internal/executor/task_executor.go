@@ -956,22 +956,11 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. Configure recovery channel via direct TCP (not socket fallback).
-	// CHANGE REPLICATION SOURCE TO must run in a TCP-authenticated context
-	// to correctly persist SOURCE_USER to mysql.slave_master_info.
-	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+	// 2. Configure recovery channel
 	chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 		escapeSQL(replicateUser), escapeSQL(replicatePass))
-	chCmd := mysqlExecCommand(ctx, host, port, user, pass, chSourceSQL)
-	if chOut, chErr := chCmd.CombinedOutput(); chErr != nil {
-		// Fallback: try socket with password
-		chCmd2 := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", chSourceSQL)
-		if pass != "" {
-			chCmd2.Env = append(os.Environ(), "MYSQL_PWD="+pass)
-		}
-		if chOut2, chErr2 := chCmd2.CombinedOutput(); chErr2 != nil {
-			return fmt.Errorf("configure recovery channel failed: tcp=%v socket=%v (output: %s %s)", chErr, chErr2, string(chOut), string(chOut2))
-		}
+	if out, err := execSQL(chSourceSQL); err != nil {
+		return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
 	}
 
 	// 3. Start Group Replication
