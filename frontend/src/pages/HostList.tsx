@@ -318,9 +318,9 @@ const HostList: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => {
-        const colorMap: Record<string, string> = { success: 'success', failed: 'error', unknown: 'default', pending: 'processing' }
-        const textMap: Record<string, string> = { success: '可用', failed: '不可用', unknown: '未检测', pending: '检测中' }
-        return <Tag color={colorMap[status] || 'default'}>{textMap[status] || status}</Tag>
+        const colorMap: Record<string, string> = { success: 'success', active: 'success', failed: 'error', unhealthy: 'error', unknown: 'default', pending: 'processing' }
+        const textMap: Record<string, string> = { success: '可用', active: '可用', failed: '不可用', unhealthy: '不可用', unknown: '未检测', pending: '检测中' }
+        return <Tag color={colorMap[status] || 'default'}>{textMap[status] || '未知'}</Tag>
       },
     },
     { title: '最后检测', dataIndex: 'last_check_at', key: 'last_check_at', render: (t) => (t ? new Date(t).toLocaleString() : '-') },

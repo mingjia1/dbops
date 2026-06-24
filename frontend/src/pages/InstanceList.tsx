@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
-import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, KeyOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
@@ -73,11 +73,6 @@ const InstanceList: React.FC = () => {
   const [batchForm] = Form.useForm()
   const [credentialsCache, setCredentialsCache] = useState<Record<string, { username: string; password: string }>>({})
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
-  const [resetModalOpen, setResetModalOpen] = useState(false)
-  const [resetInstanceId, setResetInstanceId] = useState('')
-  const [resetInstanceName, setResetInstanceName] = useState('')
-  const [resetForm] = Form.useForm()
-  const [resetSubmitting, setResetSubmitting] = useState(false)
   const [secondaryAuthOpen, setSecondaryAuthOpen] = useState(false)
   const [secondaryAuthForm] = Form.useForm()
   const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null)
@@ -291,31 +286,6 @@ const InstanceList: React.FC = () => {
     navigator.clipboard.writeText(text).then(() => message.success('已复制'))
   }
 
-  const openResetPassword = (instanceId: string, instanceName: string) => {
-    setResetInstanceId(instanceId)
-    setResetInstanceName(instanceName)
-    resetForm.resetFields()
-    setResetModalOpen(true)
-  }
-
-  const handleResetPassword = async () => {
-    try {
-      const values = await resetForm.validateFields()
-      setResetSubmitting(true)
-      await instanceApi.forceResetPassword(resetInstanceId, {
-        username: values.username || 'root',
-        new_password: values.new_password,
-      })
-      message.success(`实例 ${resetInstanceName} 密码修改成功`)
-      setCredentialsCache((prev) => { const next = { ...prev }; delete next[resetInstanceId]; return next })
-      setResetModalOpen(false)
-    } catch {
-      // interceptor shows error
-    } finally {
-      setResetSubmitting(false)
-    }
-  }
-
   const columns: ColumnsType<Instance> = [
     { title: '实例名称', dataIndex: 'name', key: 'name' },
     { title: '所属主机', dataIndex: 'host_id', key: 'host_id', render: (id) => hostNameById(id) },
@@ -354,11 +324,11 @@ const InstanceList: React.FC = () => {
         const role = r.status?.role
         const health = r.status?.health_status
         const run = r.status?.run_status
-        if (health === 'healthy' || health === 'ok') return <Tag color="success">健康{role ? ` (${role})` : ''}</Tag>
+        if (run === 'stopped') return <Tag color="error">已停止</Tag>
+        if (health === 'healthy' || health === 'ok') return <Tag color="success">运行中{role ? ` (${role})` : ''}</Tag>
         if (health === 'unhealthy' || health === 'failed') return <Tag color="error">异常</Tag>
-        if (run === 'running') return <Tag color="processing">运行中{role ? ` (${role})` : ''}</Tag>
-        if (run === 'stopped') return <Tag>已停止</Tag>
-        return <Tag>未检测</Tag>
+        if (run === 'running') return <Tag color="success">运行中{role ? ` (${role})` : ''}</Tag>
+        return <Tag color="default">未检测</Tag>
       },
     },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (t) => (t ? new Date(t).toLocaleString() : '-') },
@@ -368,7 +338,6 @@ const InstanceList: React.FC = () => {
       render: (_, r) => (
         <Space>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>详情</Button>
-          <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => openResetPassword(r.id, r.name)}>改密</Button>
           <Popconfirm title="确定删除该实例？" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
             <Button type="link" size="small" danger>删除</Button>
           </Popconfirm>
@@ -480,17 +449,6 @@ const InstanceList: React.FC = () => {
         <Form form={secondaryAuthForm} layout="vertical">
           <Form.Item name="secondary_password" label="二级密码" rules={[{ required: true, message: '请输入二级密码' }]}>
             <Input.Password placeholder="请输入二级密码" autoComplete="off" />
-          </Form.Item>
-        </Form>
-      </Modal>
-      <Modal title={`修改密码 - ${resetInstanceName}`} open={resetModalOpen} onCancel={() => setResetModalOpen(false)} onOk={handleResetPassword} confirmLoading={resetSubmitting} okText="确认修改" cancelText="取消" destroyOnClose>
-        <p style={{ color: '#888', marginBottom: 12 }}>修改后新密码只显示一次，请确认已保存。修改会通过 Agent 在远程主机上执行。</p>
-        <Form form={resetForm} layout="vertical">
-          <Form.Item name="username" label="用户名" initialValue="root" rules={[{ required: true }]}>
-            <Input placeholder="root" />
-          </Form.Item>
-          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8, message: '至少 8 位' }]}>
-            <Input.Password placeholder="新密码" autoComplete="new-password" />
           </Form.Item>
         </Form>
       </Modal>
