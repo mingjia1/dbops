@@ -37,15 +37,16 @@ func NewTaskExecutor() *TaskExecutor {
 }
 
 func resolveBinaryPath(name string) string {
+	// Prefer platform-installed MySQL over system MySQL to avoid version mismatch.
 	for _, candidate := range []string{
-		name,
+		filepath.Join("/opt/mysql/bin", name),
 		filepath.Join("/opt/dbops-pxc/usr/sbin", name),
 		filepath.Join("/opt/dbops-pxc/usr/bin", name),
-		filepath.Join("/opt/mysql/bin", name),
+		filepath.Join("/usr/local/mysql/bin", name),
 		filepath.Join("/usr/local/bin", name),
 		filepath.Join("/usr/sbin", name),
 		filepath.Join("/usr/bin", name),
-		filepath.Join("/usr/local/mysql/bin", name),
+		name,
 	} {
 		if p, err := exec.LookPath(candidate); err == nil {
 			return p
