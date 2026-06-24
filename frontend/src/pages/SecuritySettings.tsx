@@ -125,9 +125,16 @@ const SecuritySettings: React.FC = () => {
 // --- 中继服务器配置 ---
 const RELAY_STORAGE_KEY = 'dbops_relay_server'
 
+interface RelaySource {
+  url: string
+  label: string
+  enabled: boolean
+}
+
 const RelayServerConfig: React.FC = () => {
   const [form] = Form.useForm()
-  const [packages, setPackages] = useState<Array<{ name: string; version: string; arch: string; flavor: string; path: string }>>([])
+  const [sources, setSources] = useState<RelaySource[]>([])
+  const [packages, setPackages] = useState<Array<{ name: string; version: string; arch: string; flavor: string; path: string; source: string }>>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -135,197 +142,215 @@ const RelayServerConfig: React.FC = () => {
     if (stored) {
       try {
         const cfg = JSON.parse(stored)
-        form.setFieldsValue(cfg)
+        form.setFieldsValue({ relay_path: cfg.relay_path || '', download_priority: cfg.download_priority || 'relay_first' })
+        if (cfg.sources && cfg.sources.length > 0) {
+          setSources(cfg.sources)
+        } else if (cfg.relay_url) {
+          setSources([{ url: cfg.relay_url, label: '主中继服务器', enabled: true }])
+        }
       } catch { /* ignore */ }
     }
-  }, [form])
+    if (sources.length === 0) {
+      setSources([{ url: '', label: '主中继服务器', enabled: true }])
+    }
+  }, [])
 
-  const buildBaseUrl = () => {
+  const addSource = () => {
+    setSources([...sources, { url: '', label: `备用源 ${sources.length}`, enabled: true }])
+  }
+
+  const removeSource = (index: number) => {
+    setSources(sources.filter((_, i) => i !== index))
+  }
+
+  const updateSource = (index: number, field: keyof RelaySource, value: any) => {
+    const next = [...sources]
+    next[index] = { ...next[index], [field]: value }
+    setSources(next)
+  }
+
+  const moveSource = (index: number, direction: 'up' | 'down') => {
+    const next = [...sources]
+    const target = direction === 'up' ? index - 1 : index + 1
+    if (target < 0 || target >= next.length) return
+    ;[next[index], next[target]] = [next[target], next[index]]
+    setSources(next)
+  }
+
+  const handleSave = () => {
     const values = form.getFieldsValue()
-    let url = (values.relay_url || '').replace(/\/+$/, '')
-    if (values.relay_path) {
-      url += '/' + values.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
+    const cfg = {
+      relay_url: sources.find(s => s.enabled && s.url)?.url || '',
+      relay_path: values.relay_path || '',
+      download_priority: values.download_priority || 'relay_first',
+      sources,
+    }
+    localStorage.setItem(RELAY_STORAGE_KEY, JSON.stringify(cfg))
+    message.success('中继服务器配置已保存')
+  }
+
+  const buildBaseUrl = (source: RelaySource) => {
+    let url = (source.url || '').replace(/\/+$/, '')
+    const path = form.getFieldValue('relay_path') || ''
+    if (path) {
+      url += '/' + path.replace(/^\/+/, '').replace(/\/+$/, '')
     }
     return url
   }
 
-  const handleSave = async () => {
-    const values = await form.validateFields()
-    localStorage.setItem(RELAY_STORAGE_KEY, JSON.stringify(values))
-    // Also save to cluster deploy default credential sync
-    message.success('中继服务器配置已保存')
-  }
-
-  const handleTest = async () => {
-    const url = buildBaseUrl()
-    if (!url) {
-      message.warning('请先填写中继服务器地址')
-      return
-    }
+  const handleTest = async (source: RelaySource) => {
+    if (!source.url) { message.warning('请先填写地址'); return }
     setLoading(true)
     try {
-      const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-      if (res.ok) {
-        message.success('中继服务器连接正常')
-      } else {
-        message.warning(`中继服务器响应: HTTP ${res.status}`)
-      }
+      const res = await fetch(buildBaseUrl(source), { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      message[res.ok ? 'success' : 'warning'](`${source.label}: ${res.ok ? '连接正常' : 'HTTP ' + res.status}`)
     } catch {
-      message.error('无法连接到中继服务器')
+      message.error(`${source.label}: 无法连接`)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleScanPackages = async () => {
-    const url = buildBaseUrl()
-    if (!url) {
-      message.warning('请先填写中继服务器地址')
-      return
-    }
-    const scanUrl = url
+  const handleTestAll = async () => {
     setLoading(true)
-    try {
-      const res = await fetch(scanUrl)
-      const text = await res.text()
-      // Collect directories and package files
-      const dirs: string[] = []
-      const fileLinks: string[] = []
-      const regex = /href="([^"]+)"/g
-      let match
-      while ((match = regex.exec(text)) !== null) {
-        const href = match[1]
-        if (href === '../' || href.startsWith('?')) continue
-        if (href.endsWith('/')) {
-          dirs.push(href.replace(/\/$/, ''))
-        } else if (/\.(tar\.gz|tar\.xz|tgz|tar\.bz2)$/i.test(href)) {
-          fileLinks.push(href)
-        }
+    for (const src of sources.filter(s => s.enabled && s.url)) {
+      try {
+        const res = await fetch(buildBaseUrl(src), { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+        message[res.ok ? 'success' : 'warning'](`${src.label}: ${res.ok ? '✓' : 'HTTP ' + res.status}`)
+      } catch {
+        message.error(`${src.label}: 无法连接`)
       }
+    }
+    setLoading(false)
+  }
 
-      // Recursively scan directories to find all package files
-      const allPackages: Array<{ name: string; version: string; arch: string; flavor: string; path: string; size: string }> = []
+  const handleScanAll = async () => {
+    setLoading(true)
+    const allPkgs: typeof packages = []
+    for (const src of sources.filter(s => s.enabled && s.url)) {
+      const url = buildBaseUrl(src)
+      try {
+        const res = await fetch(url)
+        const text = await res.text()
+        await scanHtml(text, url, src.label, allPkgs)
+      } catch { /* skip */ }
+    }
+    setPackages(allPkgs)
+    message[allPkgs.length > 0 ? 'success' : 'info'](allPkgs.length > 0 ? `发现 ${allPkgs.length} 个安装包` : '未发现安装包')
+    setLoading(false)
+  }
 
-      const scanDir = async (dirPath: string) => {
-        const dirUrl = `${url}/${dirPath}`
-        try {
-          const dirRes = await fetch(dirUrl)
-          const dirText = await dirRes.text()
-          const dirRegex = /href="([^"]+)"/g
-          let m
-          while ((m = dirRegex.exec(dirText)) !== null) {
-            const h = m[1]
-            if (h === '../' || h.startsWith('?')) continue
-            const fullPath = dirPath ? `${dirPath}/${h}` : h
-            if (h.endsWith('/')) {
-              await scanDir(fullPath.replace(/\/$/, ''))
-            } else if (/\.(tar\.gz|tar\.xz|tgz|tar\.bz2)$/i.test(h)) {
-              fileLinks.push(fullPath)
-            }
-          }
-        } catch { /* skip inaccessible dirs */ }
+  const scanHtml = async (html: string, baseUrl: string, sourceLabel: string, result: typeof packages) => {
+    const dirs: string[] = []
+    const regex = /href="([^"]+)"/g
+    let m
+    while ((m = regex.exec(html)) !== null) {
+      const href = m[1]
+      if (href === '../' || href.startsWith('?')) continue
+      if (href.endsWith('/')) dirs.push(href.replace(/\/$/, ''))
+      else if (/\.(tar\.gz|tar\.xz|tgz|tar\.bz2)$/i.test(href)) {
+        const parsed = parsePackageName(href)
+        result.push({ ...parsed, path: href, source: sourceLabel })
       }
-
-      // Scan all discovered directories
-      for (const dir of dirs) {
-        await scanDir(dir)
-      }
-
-      // Parse package files into structured info
-      for (const filePath of fileLinks) {
-        const fileName = filePath.split('/').pop() || filePath
-        const parsed = parsePackageName(fileName)
-        allPackages.push({ ...parsed, path: filePath, size: '-' })
-      }
-
-      // Deduplicate by path
-      const seen = new Set<string>()
-      const unique = allPackages.filter((p) => {
-        if (seen.has(p.path)) return false
-        seen.add(p.path)
-        return true
-      })
-
-      setPackages(unique as any)
-      if (unique.length === 0) {
-        message.info('未在中继服务器上发现安装包')
-      } else {
-        message.success(`扫描完成，发现 ${unique.length} 个安装包`)
-      }
-    } catch {
-      message.error('扫描中继服务器失败')
-    } finally {
-      setLoading(false)
+    }
+    for (const dir of dirs) {
+      try {
+        const dirRes = await fetch(`${baseUrl}/${dir}`)
+        const dirText = await dirRes.text()
+        await scanHtml(dirText, `${baseUrl}/${dir}`, sourceLabel, result)
+      } catch { /* skip */ }
     }
   }
 
   const parsePackageName = (fileName: string) => {
     const lower = fileName.toLowerCase()
-    let flavor = 'MySQL'
-    let version = '-'
-    let arch = '通用'
-
-    // MySQL: mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz
     const mysqlMatch = lower.match(/^mysql-([\d.]+)-linux/)
     if (mysqlMatch) {
-      flavor = 'MySQL'
-      version = mysqlMatch[1]
-      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
-      return { name: fileName, version, arch, flavor }
+      return { name: fileName, version: mysqlMatch[1], arch: lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用', flavor: 'MySQL' }
     }
-
-    // Percona: Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz
     const perconaMatch = lower.match(/^percona-server-([\d.]+-\d+)-linux/)
     if (perconaMatch) {
-      flavor = 'Percona'
-      version = perconaMatch[1]
-      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
-      return { name: fileName, version, arch, flavor }
+      return { name: fileName, version: perconaMatch[1], arch: lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用', flavor: 'Percona' }
     }
-
-    // MariaDB: mariadb-10.11.4-linux-x86_64.tar.gz
     const mariadbMatch = lower.match(/^mariadb-([\d.]+)-linux/)
     if (mariadbMatch) {
-      flavor = 'MariaDB'
-      version = mariadbMatch[1]
-      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
-      return { name: fileName, version, arch, flavor }
+      return { name: fileName, version: mariadbMatch[1], arch: lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用', flavor: 'MariaDB' }
     }
-
     return { name: fileName, version: '-', arch: '通用', flavor: '未知' }
   }
 
+  const enabledSources = sources.filter(s => s.enabled && s.url)
+
   return (
-    <Card type="inner" title="中继服务器配置">
+    <Card type="inner" title="中继服务器与下载源">
       <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-        中继服务器用于分发 MySQL 安装包。集群部署时 agent 会优先从中继服务器下载安装包。
-        包的路径格式为：{`{relay_url}/{path}/mysql/{version}/mysql-{version}-linux-glibc2.17-x86_64.tar.xz`}
+        配置安装包下载源。Agent 部署时按优先级依次尝试：中继服务器 → 其他备用源 → 官方源。
+        安装成功后自动上传一份到主中继服务器供后续使用。
       </Text>
-      <Form form={form} layout="vertical" style={{ maxWidth: 500 }}>
-        <Form.Item name="relay_url" label="中继服务器地址" rules={[{ required: true, message: '请输入中继服务器 URL' }]}>
-          <Input placeholder="http://10.3.67.52:8888" />
-        </Form.Item>
-        <Form.Item name="relay_path" label="包存储路径（可选）" extra="相对于中继服务器根目录的子路径，如 'packages' 或 'downloads/mysql'">
+
+      {/* 下载源列表 */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <strong>下载源列表（按优先级排序）</strong>
+          <Space>
+            <Button size="small" onClick={addSource}>添加源</Button>
+            <Button size="small" onClick={handleTestAll} loading={loading} disabled={enabledSources.length === 0}>测试全部</Button>
+          </Space>
+        </div>
+        {sources.map((src, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 12px', background: src.enabled ? '#f9f9f9' : '#f0f0f0', borderRadius: 4, border: i === 0 ? '1px solid #1677ff' : '1px solid #e8e8e8' }}>
+            <span style={{ fontSize: 12, color: '#888', minWidth: 20 }}>{i + 1}</span>
+            <Switch size="small" checked={src.enabled} onChange={(v) => updateSource(i, 'enabled', v)} />
+            <Input size="small" value={src.url} onChange={(e) => updateSource(i, 'url', e.target.value)} placeholder="http://10.3.67.52:8888" style={{ flex: 1 }} />
+            <Input size="small" value={src.label} onChange={(e) => updateSource(i, 'label', e.target.value)} placeholder="标签" style={{ width: 120 }} />
+            {i === 0 && <Tag color="blue">主</Tag>}
+            <Button size="small" disabled={i === 0} onClick={() => moveSource(i, 'up')}>↑</Button>
+            <Button size="small" disabled={i === sources.length - 1} onClick={() => moveSource(i, 'down')}>↓</Button>
+            <Button size="small" onClick={() => handleTest(src)} loading={loading}>测试</Button>
+            <Button size="small" danger onClick={() => removeSource(i)} disabled={sources.length <= 1}>×</Button>
+          </div>
+        ))}
+      </div>
+
+      <Form form={form} layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }} style={{ maxWidth: 550 }}>
+        <Form.Item name="relay_path" label="包子路径" extra="相对于源地址的子路径，如 'packages'">
           <Input placeholder="留空表示根目录" />
         </Form.Item>
-        <Form.Item name="download_source" label="下载源优先级" extra="选择安装包的获取优先顺序">
+        <Form.Item name="download_priority" label="下载策略">
           <Select
             defaultValue="relay_first"
             options={[
-              { value: 'relay_first', label: '中继服务器优先 → 官方源' },
+              { value: 'relay_first', label: '中继优先 → 备用源 → 官方源' },
               { value: 'relay_only', label: '仅中继服务器' },
-              { value: 'official_only', label: '仅官方源' },
+              { value: 'official_only', label: '仅官方源（dev.mysql.com）' },
             ]}
           />
         </Form.Item>
         <Form.Item>
           <Space>
             <Button type="primary" onClick={handleSave}>保存配置</Button>
-            <Button onClick={handleTest} loading={loading}>测试连接</Button>
-            <Button onClick={() => handleScanPackages()} loading={loading}>扫描</Button>
+            <Button onClick={handleScanAll} loading={loading} disabled={enabledSources.length === 0}>扫描全部源</Button>
           </Space>
         </Form.Item>
       </Form>
+
+      {/* 当前活跃源摘要 */}
+      {enabledSources.length > 0 && (
+        <div style={{ marginTop: 16, padding: 12, background: '#f0f7ff', borderRadius: 4, border: '1px solid #d0e3ff' }}>
+          <strong style={{ fontSize: 13 }}>当前活跃下载源：</strong>
+          <div style={{ marginTop: 8 }}>
+            {enabledSources.map((src, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <Tag color={i === 0 ? 'blue' : 'default'}>{i === 0 ? '优先' : `备用 ${i}`}</Tag>
+                <code style={{ fontSize: 12 }}>{buildBaseUrl(src)}</code>
+                <span style={{ color: '#888', fontSize: 12 }}>({src.label})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 扫描结果 */}
       {packages.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <strong>发现 {packages.length} 个安装包</strong>
@@ -335,11 +360,11 @@ const RelayServerConfig: React.FC = () => {
             pagination={packages.length > 10 ? { pageSize: 10 } : false}
             dataSource={packages.map((p, i) => ({ ...p, key: i }))}
             columns={[
+              { title: '来源', dataIndex: 'source', key: 'source', width: 120, render: (v: string) => <Tag>{v}</Tag> },
               { title: '产品', dataIndex: 'flavor', key: 'flavor', width: 90, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : v === 'MariaDB' ? 'orange' : 'default'}>{v}</Tag> },
               { title: '版本', dataIndex: 'version', key: 'version', width: 100 },
               { title: '架构', dataIndex: 'arch', key: 'arch', width: 80, render: (v: string) => <Tag color={v === '通用' ? 'default' : 'blue'}>{v}</Tag> },
               { title: '文件名', dataIndex: 'name', key: 'name', ellipsis: true },
-              { title: '路径', dataIndex: 'path', key: 'path', ellipsis: true, render: (v: string) => <span style={{ fontSize: 11, color: '#888' }}>{v}</span> },
             ]}
           />
         </div>

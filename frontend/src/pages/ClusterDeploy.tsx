@@ -530,12 +530,18 @@ const ClusterDeploy: React.FC = () => {
       const relayCfg = localStorage.getItem('dbops_relay_server')
       if (relayCfg) {
         const parsed = JSON.parse(relayCfg)
-        let relayUrl = parsed.relay_url || ''
+        // Build relay_url from sources (new format) or legacy relay_url (old format)
+        let relayUrl = ''
+        if (parsed.sources && parsed.sources.length > 0) {
+          const firstEnabled = parsed.sources.find((s: any) => s.enabled && s.url)
+          if (firstEnabled) relayUrl = firstEnabled.url.replace(/\/+$/, '')
+        } else if (parsed.relay_url) {
+          relayUrl = parsed.relay_url.replace(/\/+$/, '')
+        }
         if (relayUrl && parsed.relay_path) {
-          relayUrl = relayUrl.replace(/\/+$/, '') + '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
+          relayUrl += '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
         }
         if (relayUrl) custom.relay_url = relayUrl
-        // Auto-inject relay upload URL (backend endpoint for agent to upload packages)
         custom.relay_upload_url = window.location.origin + '/api/v1/relay/upload'
       }
     } catch { /* ignore */ }
