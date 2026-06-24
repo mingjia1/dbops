@@ -51,13 +51,37 @@ func resolveBinaryPath(name string) string {
 			return p
 		}
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			// Verify the binary is actually executable (not blocked by missing shared libs)
 			if verifyErr := exec.Command(candidate, "--version").Run(); verifyErr == nil {
 				return candidate
+			}
+			// Binary exists but can't run (missing shared libs).
+			// Try installing common missing dependencies once.
+			if resolved := tryFixMissingDeps(candidate); resolved != "" {
+				return resolved
 			}
 		}
 	}
 	return name
+}
+
+var depsFixed bool
+
+func tryFixMissingDeps(binary string) string {
+	if depsFixed {
+		return ""
+	}
+	depsFixed = true
+	// Try installing ncurses-compat-libs (RHEL/CentOS) or libncurses5 (Debian/Ubuntu)
+	for _, cmd := range []string{
+		"yum install -y ncurses-compat-libs 2>/dev/null",
+		"apt-get install -y libncurses5 2>/dev/null",
+	} {
+		_ = exec.Command("sh", "-c", cmd).Run()
+	}
+	if err := exec.Command(binary, "--version").Run(); err == nil {
+		return binary
+	}
+	return ""
 }
 
 func (e *TaskExecutor) SetRelayConfig(relayHost string, relayPort int, relayToken string) {
