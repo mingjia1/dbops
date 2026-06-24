@@ -3945,7 +3945,7 @@ func queryMGRStatus(ctx context.Context, host string, port int, user, pass strin
 		return "", fmt.Errorf("query group members failed: %w", err)
 	}
 	statsOut, _ := runMySQLExecSafe(ctx, host, port, user, pass,
-		"SELECT COUNT_TRANSACTIONS_APPLIED FROM performance_schema.replication_group_member_stats WHERE MEMBER_ID = @@server_uuid")
+		"SELECT COUNT_TRANSACTIONS_IN_QUEUE FROM performance_schema.replication_group_member_stats WHERE MEMBER_ID = @@server_uuid")
 
 	var lines []string
 	lines = append(lines, "cluster_type=mgr")

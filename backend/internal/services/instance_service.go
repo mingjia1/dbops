@@ -1159,6 +1159,19 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			lastResult = result
 			lastErr = adminErr
 		}
+		// If all TCP candidates failed, try once more with agent socket-only approach.
+		// The agent's changeMySQLUserPassword has mysqlExecWithSocketFallback which
+		// can execute ALTER USER via Unix socket without password (auth_socket plugin).
+		if lastResult == nil || lastResult.Status != "completed" {
+			original := conn.PasswordEncrypted
+			conn.PasswordEncrypted = ""
+			socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, req)
+			conn.PasswordEncrypted = original
+			if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
+				lastResult = socketResult
+				lastErr = nil
+			}
+		}
 		if lastErr != nil {
 			return failedInstanceAdminResult("instance admin call failed: " + lastErr.Error()), nil
 		}
