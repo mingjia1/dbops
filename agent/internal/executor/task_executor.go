@@ -700,8 +700,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		}
 		mysqld, _ = downloader.DownloadFromRelay(ctx, relayCfg)
 	}
+	relayUploadURL, _ := req.Config["relay_upload_url"].(string)
 	if mysqld == "" && packageURL != "" {
-		mysqld, _ = InstallFromURL(ctx, packageURL, checksum, basedir, osUser)
+		mysqld, _ = InstallFromURLWithRelay(ctx, packageURL, checksum, basedir, osUser, relayUploadURL)
 	}
 	if mysqld == "" {
 		// Fallback: try system package manager (yum/apt)

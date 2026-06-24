@@ -110,8 +110,9 @@ var allowedDeployConfigKeys = map[string]bool{
 	"migration_type":                 true,
 	// Blank host init fields
 	"blank_host_init":                true,
-	// Relay server download
+	// Relay server download/upload
 	"relay_url":                      true,
+	"relay_upload_url":               true,
 }
 
 // Allowed deploy_mode values.

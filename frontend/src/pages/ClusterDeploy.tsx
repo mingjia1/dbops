@@ -535,6 +535,8 @@ const ClusterDeploy: React.FC = () => {
           relayUrl = relayUrl.replace(/\/+$/, '') + '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
         }
         if (relayUrl) custom.relay_url = relayUrl
+        // Auto-inject relay upload URL (backend endpoint for agent to upload packages)
+        custom.relay_upload_url = window.location.origin + '/api/v1/relay/upload'
       }
     } catch { /* ignore */ }
     if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled

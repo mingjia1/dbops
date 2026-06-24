@@ -1103,6 +1103,11 @@ func mergeCommonDeployConfig(config map[string]interface{}, req UniversalCluster
 			config["package_url"] = fmt.Sprintf("%s/mysql/%s/%s", relayBase, version, tarball)
 		}
 	}
+	// Relay upload URL: agent will upload downloaded packages back to this endpoint
+	// so other hosts can find them on the relay server next time.
+	if relayUploadURL, ok := stringCustom(req.Custom, "relay_upload_url"); ok && relayUploadURL != "" {
+		config["relay_upload_url"] = relayUploadURL
+	}
 }
 
 // nodeIntCustomRaw extracts an int value from a node's custom map without the

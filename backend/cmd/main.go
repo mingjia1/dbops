@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -533,6 +535,39 @@ func main() {
 				versions.GET("", versionController.List)
 				versions.POST("/validate-path", versionController.ValidatePath)
 				versions.GET("/:id", versionController.GetOne)
+			}
+
+			relay := protected.Group("/relay")
+			{
+				relay.POST("/upload", func(c *gin.Context) {
+					file, header, err := c.Request.FormFile("file")
+					if err != nil {
+						c.JSON(400, gin.H{"code": 400, "message": "file is required"})
+						return
+					}
+					defer file.Close()
+					subPath := c.PostForm("path")
+					destDir := filepath.Join(cfg.DataDir, "packages")
+					if subPath != "" {
+						destDir = filepath.Join(destDir, subPath)
+					}
+					if err := os.MkdirAll(destDir, 0o755); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
+						return
+					}
+					destPath := filepath.Join(destDir, header.Filename)
+					out, err := os.Create(destPath)
+					if err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "create file failed: " + err.Error()})
+						return
+					}
+					defer out.Close()
+					if _, err := io.Copy(out, file); err != nil {
+						c.JSON(500, gin.H{"code": 500, "message": "write file failed: " + err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"code": 200, "message": "success", "data": gin.H{"path": destPath, "size": header.Size}})
+				})
 			}
 
 			migrations := protected.Group("/migrations")

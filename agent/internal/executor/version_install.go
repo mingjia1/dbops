@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,6 +32,10 @@ import (
 //
 // Returns the absolute path to the mysqld binary inside basedir.
 func InstallFromURL(ctx context.Context, packageURL, expectedSHA256, basedir, osUser string) (string, error) {
+	return InstallFromURLWithRelay(ctx, packageURL, expectedSHA256, basedir, osUser, "")
+}
+
+func InstallFromURLWithRelay(ctx context.Context, packageURL, expectedSHA256, basedir, osUser, relayUploadURL string) (string, error) {
 	if packageURL == "" {
 		return "", fmt.Errorf("package_url is required for version-agnostic install")
 	}
@@ -52,6 +57,12 @@ func InstallFromURL(ctx context.Context, packageURL, expectedSHA256, basedir, os
 		return "", fmt.Errorf("download: %w", err)
 	}
 	defer os.Remove(tarballPath)
+
+	// 2b. upload to relay server if relay upload URL is provided
+	// This caches the package on the relay for other hosts to use.
+	if relayUploadURL != "" {
+		go uploadToRelay(relayUploadURL, tarballPath)
+	}
 
 	// 3. extract to basedir
 	if err := extractTarball(ctx, tarballPath, basedir); err != nil {
@@ -222,4 +233,70 @@ func findMysqldBinary(dest string) string {
 		return nil
 	})
 	return candidate
+}
+
+// uploadToRelay uploads a tarball file to the backend relay upload endpoint.
+// Runs in a goroutine; errors are logged but don't block the install.
+func uploadToRelay(uploadURL, filePath string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay upload: open %s failed: %v\n", filePath, err)
+		return
+	}
+	defer file.Close()
+
+	body := &strings.Builder{}
+	writer := multipart.NewWriter(body)
+
+	// Determine sub-path from file name (e.g. mysql/8.0.36/)
+	fileName := filepath.Base(filePath)
+	subPath := ""
+	if strings.HasPrefix(strings.ToLower(fileName), "mysql-") {
+		// Extract version: mysql-8.0.36-linux-... -> 8.0.36
+		parts := strings.SplitN(fileName, "-", 4)
+		if len(parts) >= 3 {
+			subPath = "mysql/" + parts[2]
+		}
+	} else if strings.HasPrefix(strings.ToLower(fileName), "mariadb-") {
+		parts := strings.SplitN(fileName, "-", 3)
+		if len(parts) >= 2 {
+			subPath = "mariadb/" + parts[1]
+		}
+	}
+
+	if subPath != "" {
+		writer.WriteField("path", subPath)
+	}
+
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay upload: create form file failed: %v\n", err)
+		return
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		fmt.Fprintf(os.Stderr, "relay upload: copy failed: %v\n", err)
+		return
+	}
+	writer.Close()
+
+	req, err := http.NewRequest("POST", uploadURL, strings.NewReader(body.String()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay upload: create request failed: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 30 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay upload: POST %s failed: %v\n", uploadURL, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "relay upload: POST %s returned %d: %s\n", uploadURL, resp.StatusCode, string(respBody))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "relay upload: %s uploaded to %s\n", fileName, uploadURL)
 }
