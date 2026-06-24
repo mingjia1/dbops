@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Card, Divider, Form, Input, InputNumber, message, Select, Space, Switch, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Divider, Form, Input, InputNumber, message, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { CloudOutlined, DatabaseOutlined, LockOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -127,9 +127,8 @@ const RELAY_STORAGE_KEY = 'dbops_relay_server'
 
 const RelayServerConfig: React.FC = () => {
   const [form] = Form.useForm()
-  const [packages, setPackages] = useState<Array<{ name: string; size: string; path: string }>>([])
+  const [packages, setPackages] = useState<Array<{ name: string; version: string; arch: string; flavor: string; path: string }>>([])
   const [loading, setLoading] = useState(false)
-  const [scanPath, setScanPath] = useState('')
 
   useEffect(() => {
     const stored = localStorage.getItem(RELAY_STORAGE_KEY)
@@ -178,51 +177,80 @@ const RelayServerConfig: React.FC = () => {
     }
   }
 
-  const handleScanPackages = async (subPath?: string) => {
+  const handleScanPackages = async () => {
     const url = buildBaseUrl()
     if (!url) {
       message.warning('请先填写中继服务器地址')
       return
     }
-    const scanUrl = subPath ? `${url}/${subPath}` : url
-    setScanPath(scanUrl)
+    const scanUrl = url
     setLoading(true)
     try {
       const res = await fetch(scanUrl)
       const text = await res.text()
-      const items: Array<{ name: string; size: string; path: string }> = []
-      // Parse HTML directory listing
-      const regex = /href="([^"]+)"[^>]*>.*?<\/a>\s+(\S+)/g
+      // Collect directories and package files
+      const dirs: string[] = []
+      const fileLinks: string[] = []
+      const regex = /href="([^"]+)"/g
       let match
       while ((match = regex.exec(text)) !== null) {
         const href = match[1]
-        const sizeOrDate = match[2] || '-'
         if (href === '../' || href.startsWith('?')) continue
-        const isDir = href.endsWith('/')
-        const name = href.replace(/\/$/, '')
-        items.push({
-          name: isDir ? `📁 ${name}` : name,
-          size: isDir ? '-' : sizeOrDate,
-          path: subPath ? `${subPath}/${name}` : name,
-        })
+        if (href.endsWith('/')) {
+          dirs.push(href.replace(/\/$/, ''))
+        } else if (/\.(tar\.gz|tar\.xz|tgz|tar\.bz2)$/i.test(href)) {
+          fileLinks.push(href)
+        }
       }
-      if (items.length === 0) {
-        const allLinks = text.match(/href="([^"]+)"/g) || []
-        allLinks.forEach((l: string) => {
-          const href = l.replace('href="', '').replace('"', '')
-          if (href && !href.startsWith('?') && href !== '../') {
-            const isDir = !href.includes('.')
-            items.push({
-              name: isDir ? `📁 ${href.replace(/\/$/, '')}` : href,
-              size: '-',
-              path: subPath ? `${subPath}/${href}` : href,
-            })
+
+      // Recursively scan directories to find all package files
+      const allPackages: Array<{ name: string; version: string; arch: string; flavor: string; path: string; size: string }> = []
+
+      const scanDir = async (dirPath: string) => {
+        const dirUrl = `${url}/${dirPath}`
+        try {
+          const dirRes = await fetch(dirUrl)
+          const dirText = await dirRes.text()
+          const dirRegex = /href="([^"]+)"/g
+          let m
+          while ((m = dirRegex.exec(dirText)) !== null) {
+            const h = m[1]
+            if (h === '../' || h.startsWith('?')) continue
+            const fullPath = dirPath ? `${dirPath}/${h}` : h
+            if (h.endsWith('/')) {
+              await scanDir(fullPath.replace(/\/$/, ''))
+            } else if (/\.(tar\.gz|tar\.xz|tgz|tar\.bz2)$/i.test(h)) {
+              fileLinks.push(fullPath)
+            }
           }
-        })
+        } catch { /* skip inaccessible dirs */ }
       }
-      setPackages(items)
-      if (items.length === 0) {
+
+      // Scan all discovered directories
+      for (const dir of dirs) {
+        await scanDir(dir)
+      }
+
+      // Parse package files into structured info
+      for (const filePath of fileLinks) {
+        const fileName = filePath.split('/').pop() || filePath
+        const parsed = parsePackageName(fileName)
+        allPackages.push({ ...parsed, path: filePath, size: '-' })
+      }
+
+      // Deduplicate by path
+      const seen = new Set<string>()
+      const unique = allPackages.filter((p) => {
+        if (seen.has(p.path)) return false
+        seen.add(p.path)
+        return true
+      })
+
+      setPackages(unique as any)
+      if (unique.length === 0) {
         message.info('未在中继服务器上发现安装包')
+      } else {
+        message.success(`扫描完成，发现 ${unique.length} 个安装包`)
       }
     } catch {
       message.error('扫描中继服务器失败')
@@ -231,15 +259,40 @@ const RelayServerConfig: React.FC = () => {
     }
   }
 
-  const handleNavigate = (path: string) => {
-    handleScanPackages(path)
-  }
+  const parsePackageName = (fileName: string) => {
+    const lower = fileName.toLowerCase()
+    let flavor = 'MySQL'
+    let version = '-'
+    let arch = '通用'
 
-  const handleBack = () => {
-    const parts = scanPath.split('/')
-    parts.pop()
-    const parentPath = parts.length > 0 ? parts.join('/').replace(buildBaseUrl(), '').replace(/^\//, '') : ''
-    handleScanPackages(parentPath || undefined)
+    // MySQL: mysql-8.0.36-linux-glibc2.17-x86_64.tar.xz
+    const mysqlMatch = lower.match(/^mysql-([\d.]+)-linux/)
+    if (mysqlMatch) {
+      flavor = 'MySQL'
+      version = mysqlMatch[1]
+      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
+      return { name: fileName, version, arch, flavor }
+    }
+
+    // Percona: Percona-Server-8.0.36-28-Linux.x86_64.glibc2.28.tar.gz
+    const perconaMatch = lower.match(/^percona-server-([\d.]+-\d+)-linux/)
+    if (perconaMatch) {
+      flavor = 'Percona'
+      version = perconaMatch[1]
+      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
+      return { name: fileName, version, arch, flavor }
+    }
+
+    // MariaDB: mariadb-10.11.4-linux-x86_64.tar.gz
+    const mariadbMatch = lower.match(/^mariadb-([\d.]+)-linux/)
+    if (mariadbMatch) {
+      flavor = 'MariaDB'
+      version = mariadbMatch[1]
+      arch = lower.includes('x86_64') ? 'x86_64' : lower.includes('aarch64') ? 'aarch64' : '通用'
+      return { name: fileName, version, arch, flavor }
+    }
+
+    return { name: fileName, version: '-', arch: '通用', flavor: '未知' }
   }
 
   return (
@@ -269,32 +322,26 @@ const RelayServerConfig: React.FC = () => {
           <Space>
             <Button type="primary" onClick={handleSave}>保存配置</Button>
             <Button onClick={handleTest} loading={loading}>测试连接</Button>
-            <Button onClick={() => handleScanPackages()} loading={loading}>扫描根目录</Button>
+            <Button onClick={() => handleScanPackages()} loading={loading}>扫描</Button>
           </Space>
         </Form.Item>
       </Form>
-      {scanPath && (
+      {packages.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <strong>目录: {scanPath}</strong>
-            <Button size="small" onClick={handleBack}>← 返回上级</Button>
-          </div>
-          {packages.length > 0 ? (
-            <div style={{ maxHeight: 300, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace', fontSize: 12 }}>
-              {packages.map((p, i) => (
-                <div key={i} style={{ cursor: p.name.startsWith('📁') ? 'pointer' : 'default', padding: '2px 0' }}
-                  onClick={() => p.name.startsWith('📁') && handleNavigate(p.path)}>
-                  {p.name.startsWith('📁') ? (
-                    <span style={{ color: '#1677ff' }}>{p.name}</span>
-                  ) : (
-                    <span>{p.name} <span style={{ color: '#888' }}>{p.size}</span></span>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Text type="secondary">空目录或无文件</Text>
-          )}
+          <strong>发现 {packages.length} 个安装包</strong>
+          <Table
+            size="small"
+            style={{ marginTop: 8 }}
+            pagination={packages.length > 10 ? { pageSize: 10 } : false}
+            dataSource={packages.map((p, i) => ({ ...p, key: i }))}
+            columns={[
+              { title: '产品', dataIndex: 'flavor', key: 'flavor', width: 90, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : v === 'MariaDB' ? 'orange' : 'default'}>{v}</Tag> },
+              { title: '版本', dataIndex: 'version', key: 'version', width: 100 },
+              { title: '架构', dataIndex: 'arch', key: 'arch', width: 80, render: (v: string) => <Tag color={v === '通用' ? 'default' : 'blue'}>{v}</Tag> },
+              { title: '文件名', dataIndex: 'name', key: 'name', ellipsis: true },
+              { title: '路径', dataIndex: 'path', key: 'path', ellipsis: true, render: (v: string) => <span style={{ fontSize: 11, color: '#888' }}>{v}</span> },
+            ]}
+          />
         </div>
       )}
     </Card>
