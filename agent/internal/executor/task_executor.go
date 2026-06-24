@@ -945,8 +945,10 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	}
 
 	// 1. Create replication user
+	// Use mysql_native_password for repl user to avoid caching_sha2_password
+	// SSL requirement during MGR recovery.
 	createUserSQL := fmt.Sprintf(
-		"SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH caching_sha2_password BY '%s'; "+
+		"SET SQL_LOG_BIN=0; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 			"GRANT REPLICATION SLAVE, CONNECTION_ADMIN, BACKUP_ADMIN, GROUP_REPLICATION_STREAM ON *.* TO '%s'@'%%'; "+
 			"FLUSH PRIVILEGES; SET SQL_LOG_BIN=1;",
 		escapeSQL(replicateUser), escapeSQL(replicatePass), escapeSQL(replicateUser))
@@ -954,11 +956,22 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		return fmt.Errorf("create replication user failed: %v", err)
 	}
 
-	// 2. Configure recovery channel
+	// 2. Configure recovery channel via direct TCP (not socket fallback).
+	// CHANGE REPLICATION SOURCE TO must run in a TCP-authenticated context
+	// to correctly persist SOURCE_USER to mysql.slave_master_info.
+	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
 	chSourceSQL := fmt.Sprintf("CHANGE REPLICATION SOURCE TO SOURCE_USER='%s', SOURCE_PASSWORD='%s' FOR CHANNEL 'group_replication_recovery';",
 		escapeSQL(replicateUser), escapeSQL(replicatePass))
-	if out, err := execSQL(chSourceSQL); err != nil {
-		return fmt.Errorf("configure recovery channel failed: %v (output: %s)", err, string(out))
+	chCmd := mysqlExecCommand(ctx, host, port, user, pass, chSourceSQL)
+	if chOut, chErr := chCmd.CombinedOutput(); chErr != nil {
+		// Fallback: try socket with password
+		chCmd2 := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", chSourceSQL)
+		if pass != "" {
+			chCmd2.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+		}
+		if chOut2, chErr2 := chCmd2.CombinedOutput(); chErr2 != nil {
+			return fmt.Errorf("configure recovery channel failed: tcp=%v socket=%v (output: %s %s)", chErr, chErr2, string(chOut), string(chOut2))
+		}
 	}
 
 	// 3. Start Group Replication
