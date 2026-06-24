@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd'
-import { CheckCircleOutlined, DatabaseOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
+import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, KeyOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
@@ -71,6 +71,13 @@ const InstanceList: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [form] = Form.useForm()
   const [batchForm] = Form.useForm()
+  const [credentialsCache, setCredentialsCache] = useState<Record<string, { username: string; password: string }>>({})
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
+  const [resetModalOpen, setResetModalOpen] = useState(false)
+  const [resetInstanceId, setResetInstanceId] = useState('')
+  const [resetInstanceName, setResetInstanceName] = useState('')
+  const [resetForm] = Form.useForm()
+  const [resetSubmitting, setResetSubmitting] = useState(false)
 
   const fetchInstances = async () => {
     setLoading(true)
@@ -226,10 +233,86 @@ const InstanceList: React.FC = () => {
     }
   }
 
+  const fetchCredential = async (instanceId: string) => {
+    if (credentialsCache[instanceId]) return credentialsCache[instanceId]
+    try {
+      const res: any = await instanceApi.getCredentials(instanceId)
+      const cred = { username: res?.data?.username || 'root', password: res?.data?.password || '' }
+      setCredentialsCache((prev) => ({ ...prev, [instanceId]: cred }))
+      return cred
+    } catch {
+      return { username: 'root', password: '(获取失败)' }
+    }
+  }
+
+  const togglePasswordVisible = async (instanceId: string) => {
+    if (visiblePasswords.has(instanceId)) {
+      setVisiblePasswords((prev) => { const next = new Set(prev); next.delete(instanceId); return next })
+    } else {
+      await fetchCredential(instanceId)
+      setVisiblePasswords((prev) => new Set(prev).add(instanceId))
+    }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => message.success('已复制'))
+  }
+
+  const openResetPassword = (instanceId: string, instanceName: string) => {
+    setResetInstanceId(instanceId)
+    setResetInstanceName(instanceName)
+    resetForm.resetFields()
+    setResetModalOpen(true)
+  }
+
+  const handleResetPassword = async () => {
+    try {
+      const values = await resetForm.validateFields()
+      setResetSubmitting(true)
+      await instanceApi.forceResetPassword(resetInstanceId, {
+        username: values.username || 'root',
+        new_password: values.new_password,
+      })
+      message.success(`实例 ${resetInstanceName} 密码修改成功`)
+      setCredentialsCache((prev) => { const next = { ...prev }; delete next[resetInstanceId]; return next })
+      setResetModalOpen(false)
+    } catch {
+      // interceptor shows error
+    } finally {
+      setResetSubmitting(false)
+    }
+  }
+
   const columns: ColumnsType<Instance> = [
     { title: '实例名称', dataIndex: 'name', key: 'name' },
     { title: '所属主机', dataIndex: 'host_id', key: 'host_id', render: (id) => hostNameById(id) },
     { title: '连接地址', key: 'endpoint', render: (_, r) => `${r.connection?.host || r.host || '-'}:${r.connection?.port || r.port || '-'}` },
+    { title: '用户名', key: 'username', render: (_, r) => r.connection?.username || 'root' },
+    {
+      title: '密码',
+      key: 'password',
+      width: 180,
+      render: (_, r) => {
+        const visible = visiblePasswords.has(r.id)
+        const cred = credentialsCache[r.id]
+        const pw = visible ? (cred?.password || '...') : '••••••••'
+        return (
+          <Space size={4}>
+            <span style={{ fontFamily: 'monospace', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {pw}
+            </span>
+            <Tooltip title={visible ? '隐藏' : '查看密码'}>
+              <Button type="text" size="small" icon={visible ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => togglePasswordVisible(r.id)} />
+            </Tooltip>
+            {visible && cred?.password && (
+              <Tooltip title="复制密码">
+                <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyToClipboard(cred.password)} />
+              </Tooltip>
+            )}
+          </Space>
+        )
+      },
+    },
     { title: '集群 ID', dataIndex: 'cluster_id', key: 'cluster_id', render: (v) => v || '-' },
     {
       title: '状态',
@@ -252,6 +335,7 @@ const InstanceList: React.FC = () => {
       render: (_, r) => (
         <Space>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances/${r.id}`)}>详情</Button>
+          <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => openResetPassword(r.id, r.name)}>改密</Button>
           <Popconfirm title="确定删除该实例？" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
             <Button type="link" size="small" danger>删除</Button>
           </Popconfirm>
@@ -355,6 +439,17 @@ const InstanceList: React.FC = () => {
             rules={[{ required: true, message: '请输入实例清单' }]}
           >
             <Input.TextArea rows={10} placeholder={'mysql-3306,10.1.81.41,3306,root,123456,host-id,cluster-a\n备用格式也可粘贴 JSON 数组'} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal title={`修改密码 - ${resetInstanceName}`} open={resetModalOpen} onCancel={() => setResetModalOpen(false)} onOk={handleResetPassword} confirmLoading={resetSubmitting} okText="确认修改" cancelText="取消" destroyOnClose>
+        <p style={{ color: '#888', marginBottom: 12 }}>修改后新密码只显示一次，请确认已保存。修改会通过 Agent 在远程主机上执行。</p>
+        <Form form={resetForm} layout="vertical">
+          <Form.Item name="username" label="用户名" initialValue="root" rules={[{ required: true }]}>
+            <Input placeholder="root" />
+          </Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8, message: '至少 8 位' }]}>
+            <Input.Password placeholder="新密码" autoComplete="new-password" />
           </Form.Item>
         </Form>
       </Modal>
