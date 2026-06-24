@@ -937,10 +937,9 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 		replicatePass = "repl"
 	}
 
-	// Use socket connection for all MGR initialization SQL.
+	// Use socket connection for MGR initialization SQL.
 	// After --initialize-insecure, root uses auth_socket which allows
 	// passwordless socket connections but rejects TCP with password.
-	// All SQL runs through the Unix socket to avoid auth issues.
 	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
 	execSocket := func(sql string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
@@ -950,6 +949,23 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 	// 0. Disable super_read_only so we can create users
 	if _, err := execSocket("SET GLOBAL super_read_only=0; SET GLOBAL read_only=0;"); err != nil {
 		return fmt.Errorf("disable read-only failed: %v", err)
+	}
+
+	// 0b. Switch root to mysql_native_password so subsequent SQL can use TCP.
+	// Socket auth works without password, but CHANGE REPLICATION SOURCE TO
+	// needs TCP-compatible auth to persist channel credentials correctly.
+	if pass != "" {
+		switchAuthSQL := fmt.Sprintf(
+			"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
+				"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; FLUSH PRIVILEGES;",
+			escapeSQL(user), escapeSQL(pass), escapeSQL(user), escapeSQL(pass))
+		if _, switchErr := execSocket(switchAuthSQL); switchErr != nil {
+			fmt.Fprintf(os.Stderr, "WARN: switch to mysql_native_password failed: %v\n", switchErr)
+		}
+		// Use TCP for all subsequent SQL (with --get-server-public-key for safety)
+		execSocket = func(sql string) ([]byte, error) {
+			return mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
+		}
 	}
 
 	// 1. Create replication user
