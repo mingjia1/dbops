@@ -50,7 +50,7 @@ func main() {
 	}
 	rows.Close()
 
-	password := "Admin2026!"
+	password := "admin123"
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("Failed to hash password: %v", err)

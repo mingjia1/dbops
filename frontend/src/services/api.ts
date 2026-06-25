@@ -226,7 +226,7 @@ export const instanceApi = {
     api.post(`/instances/${id}/deploy`),
 
   healthCheck: (id: string) =>
-    api.post(`/instances/${id}/health-check`, {}, { timeout: 30000 }).then(rejectBusinessError).then(rejectFailedTaskData),
+    api.post(`/instances/${id}/health-check`, {}, { timeout: 120000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   getReplicationStatus: (id: string) =>
     api.get(`/instances/${id}/replication-status`),
@@ -362,7 +362,7 @@ export const hostApi = {
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),
 
-  scanInstances: (id: string, data?: { ports?: number[]; port_range?: string; probe_mysql?: boolean }) =>
+  scanInstances: (id: string, data?: { ports?: number[]; port_range?: string; probe_mysql?: boolean; discover_process?: boolean }) =>
     api.post(`/hosts/${id}/scan-instances`, data || {}),
 
   getScanResult: (hostId: string, taskId: string) =>
@@ -391,6 +391,7 @@ export interface ScannedInstance {
   recommended_name?: string
   already_managed?: boolean
   managed_instance_id?: string
+  source?: string
 }
 
 export interface HostScanResult {

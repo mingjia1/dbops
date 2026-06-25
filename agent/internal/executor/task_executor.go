@@ -476,6 +476,22 @@ func mysqlHasGetServerPublicKey(mysqlVersion string) bool {
 	return !strings.HasPrefix(mysqlVersion, "5.")
 }
 
+func findMySQLSocket(port int) string {
+	candidates := []string{
+		filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock"),
+		filepath.Join("/var/run/mysqld", "mysqld.sock"),
+		filepath.Join("/tmp", fmt.Sprintf("mysql_%d.sock", port)),
+		"/var/lib/mysql/mysql.sock",
+		filepath.Join("/var/lib/mysql", fmt.Sprintf("%d", port), "mysql.sock"),
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func (e *TaskExecutor) deployBlankHostInit(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	ti := NewToolInstaller()
 	initReq := BlankHostInitRequest{
@@ -2526,6 +2542,27 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 	}
 
 	if err := cmd.Run(); err != nil {
+		socketPath := findMySQLSocket(port)
+		if socketPath != "" {
+			socketArgs := []string{"mysqladmin", "ping", "-S", socketPath, "-u", user}
+			if mysqlHasGetServerPublicKey(mysqlVersion) {
+				socketArgs = append(socketArgs, "--get-server-public-key")
+			}
+			socketCmd := exec.CommandContext(ctx, socketArgs[0], socketArgs[1:]...)
+			if pass != "" {
+				socketCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+			}
+			if socketErr := socketCmd.Run(); socketErr == nil {
+				return &TaskResult{
+					TaskID:    fmt.Sprintf("health-%s", instanceID),
+					Status:    "healthy",
+					Progress:  100,
+					Message:   "Instance is healthy (via socket)",
+					Timestamp: time.Now(),
+					Data:      data,
+				}, nil
+			}
+		}
 		return &TaskResult{
 			TaskID:    fmt.Sprintf("health-%s", instanceID),
 			Status:    "unhealthy",
@@ -3591,6 +3628,18 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 			return adminFailed(req.TaskID, "invalid username"), nil
 		}
 		output, err = changeMySQLUserPassword(ctx, host, port, user, pass, username, userHost, password)
+	case "reset_password_skip_grant":
+		username, _ := req.Config["username"].(string)
+		userHost, _ := req.Config["user_host"].(string)
+		password, _ := req.Config["password"].(string)
+		datadir, _ := req.Config["datadir"].(string)
+		if userHost == "" {
+			userHost = "%"
+		}
+		if !validSQLName(username) {
+			return adminFailed(req.TaskID, "invalid username"), nil
+		}
+		output, err = resetPasswordViaSkipGrantTables(ctx, host, port, username, userHost, password, datadir)
 	case "grant_privileges":
 		username, _ := req.Config["username"].(string)
 		userHost, _ := req.Config["user_host"].(string)
@@ -4556,6 +4605,72 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 	}
 
 	return output, err
+}
+
+func resetPasswordViaSkipGrantTables(ctx context.Context, host string, port int, username, userHost, password, datadir string) (string, error) {
+	if datadir == "" {
+		datadir = fmt.Sprintf("/data/mysql_%d", port)
+	}
+	socketPath := filepath.Join(datadir, "mysql.sock")
+	pidFile := filepath.Join(datadir, "mysqld.pid")
+
+	if _, err := os.Stat(datadir); os.IsNotExist(err) {
+		return "", fmt.Errorf("datadir %s does not exist", datadir)
+	}
+
+	// Step 1: Stop MySQL
+	stopCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null || true; sleep 2", pidFile))
+	stopCmd.CombinedOutput()
+
+	// Step 2: Start MySQL with skip-grant-tables
+	startCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
+		"mysqld --skip-grant-tables --skip-networking --datadir=%s --socket=%s --pid-file=%s &",
+		datadir, socketPath, pidFile))
+	if err := startCmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start mysqld with skip-grant-tables: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Step 3: Reset password
+	resetSQL := fmt.Sprintf(
+		"FLUSH PRIVILEGES; ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;",
+		escapeSQL(username), escapeSQL(userHost), escapeSQL(password),
+		escapeSQL(username), escapeSQL(password))
+
+	resetCmd := exec.CommandContext(ctx, "mysql", "-S", socketPath, "-u", "root", "-e", resetSQL)
+	resetOut, resetErr := resetCmd.CombinedOutput()
+	if resetErr != nil {
+		// Try with mysql client from common paths
+		for _, mysqlBin := range []string{"/usr/bin/mysql", "/usr/local/bin/mysql"} {
+			if _, statErr := os.Stat(mysqlBin); statErr != nil {
+				continue
+			}
+			resetCmd = exec.CommandContext(ctx, mysqlBin, "-S", socketPath, "-u", "root", "-e", resetSQL)
+			resetOut, resetErr = resetCmd.CombinedOutput()
+			if resetErr == nil {
+				break
+			}
+		}
+	}
+
+	// Step 4: Stop MySQL with skip-grant-tables
+	stopCmd2 := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null || true; sleep 2", pidFile))
+	stopCmd2.CombinedOutput()
+
+	// Step 5: Start MySQL normally
+	startNormalCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
+		"mysqld --datadir=%s --socket=%s --pid-file=%s &",
+		datadir, socketPath, pidFile))
+	if err := startNormalCmd.Start(); err != nil {
+		return string(resetOut), fmt.Errorf("password reset succeeded but failed to restart MySQL normally: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	if resetErr != nil {
+		return string(resetOut), fmt.Errorf("failed to reset password: %w", resetErr)
+	}
+
+	return string(resetOut), nil
 }
 
 func parseReadOnlyState(output string) (bool, bool) {

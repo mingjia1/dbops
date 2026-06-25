@@ -641,7 +641,7 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+		password = ""
 	}
 	result, err := s.agentClient.ExecuteMySQLHealthCheck(ctx, agentHost, agentPort, id, map[string]interface{}{
 		"target_host": targetHost,
@@ -1044,6 +1044,7 @@ type InstanceAdminRequest struct {
 	Service              string `json:"service"`
 	Verb                 string `json:"verb"`
 	UpdateStoredPassword bool   `json:"update_stored_password"`
+	Datadir              string `json:"datadir"`
 }
 
 type BatchPasswordRequest struct {
@@ -1134,8 +1135,29 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		return failedInstanceAdminResult("agent client not configured"), nil
 	}
 
-	// For change_password, try multiple password candidates to handle stored/actual mismatch
+	// For change_password, try multiple approaches
 	if req.Action == "change_password" {
+		// Fast path: if stored password is empty, go directly to socket-based approach
+		storedPassword, _ := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+		if storedPassword == "" {
+			original := conn.PasswordEncrypted
+			conn.PasswordEncrypted = ""
+			// Try create_user + change_password via socket
+			s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+				Action: "create_user", Username: req.Username, UserHost: req.UserHost, Password: req.Password,
+			})
+			socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, req)
+			conn.PasswordEncrypted = original
+			if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
+				if req.Username == conn.Username {
+					if enc, encErr := utils.Encrypt(req.Password, s.encKey); encErr == nil {
+						_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
+					}
+				}
+				return socketResult, nil
+			}
+		}
+
 		candidates := s.passwordCandidates(conn, "")
 		var lastResult *InstanceAdminResult
 		var lastErr error
@@ -1781,9 +1803,73 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 		return fmt.Errorf("instance connection not found: %w", err)
 	}
 	log.Printf("ForceChangePassword [%s]: changing password online for %s@%s", id, req.Username, req.UserHost)
+
+	// Try socket-based approach first (no password needed for socket auth)
+	socketHosts := []string{"%", "localhost"}
+	var lastSocketResult *InstanceAdminResult
+	for _, uHost := range socketHosts {
+		original := conn.PasswordEncrypted
+		conn.PasswordEncrypted = ""
+		_, _ = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+			Action:   "create_user",
+			Username: req.Username,
+			UserHost: uHost,
+			Password: req.NewPassword,
+		})
+		socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+			Action:               "change_password",
+			Username:             req.Username,
+			UserHost:             uHost,
+			Password:             req.NewPassword,
+			UpdateStoredPassword: false,
+		})
+		conn.PasswordEncrypted = original
+		if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
+			lastSocketResult = socketResult
+			if req.Username == conn.Username && req.NewPassword != "" {
+				if enc, encErr := utils.Encrypt(req.NewPassword, s.encKey); encErr == nil {
+					_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
+				}
+			}
+			break
+		}
+		if socketResult != nil && socketResult.Message != "" {
+			log.Printf("ForceChangePassword [%s]: socket attempt for %s failed: %s", id, uHost, socketResult.Message)
+		}
+	}
+	if lastSocketResult != nil && lastSocketResult.Status == "completed" {
+		log.Printf("ForceChangePassword [%s]: completed successfully via socket", id)
+		return nil
+	}
+
+	// Try skip_grant_tables approach
+	log.Printf("ForceChangePassword [%s]: trying skip_grant_tables approach", id)
+	skipGrantResult, skipGrantErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+		Action:               "reset_password_skip_grant",
+		Username:             req.Username,
+		UserHost:             req.UserHost,
+		Password:             req.NewPassword,
+		UpdateStoredPassword: false,
+		Datadir:              conn.Datadir,
+	})
+	if skipGrantErr == nil && skipGrantResult != nil && skipGrantResult.Status == "completed" {
+		if req.Username == conn.Username && req.NewPassword != "" {
+			if enc, encErr := utils.Encrypt(req.NewPassword, s.encKey); encErr == nil {
+				_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
+			}
+		}
+		log.Printf("ForceChangePassword [%s]: completed successfully via skip_grant_tables", id)
+		return nil
+	}
+	if skipGrantResult != nil && skipGrantResult.Message != "" {
+		log.Printf("ForceChangePassword [%s]: skip_grant_tables failed: %s", id, skipGrantResult.Message)
+	}
+
+	// Fallback: try TCP with stored password candidates
 	candidates := s.passwordCandidates(conn, "")
 	var lastResult *InstanceAdminResult
 	var lastErr error
+	var lastAgentMsg string
 	for _, candidate := range candidates {
 		original := conn.PasswordEncrypted
 		encrypted, encErr := utils.Encrypt(candidate, s.encKey)
@@ -1803,43 +1889,19 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 		if lastErr == nil && lastResult != nil && lastResult.Status == "completed" {
 			break
 		}
+		if lastResult != nil && lastResult.Message != "" {
+			lastAgentMsg = lastResult.Message
+		}
 	}
 	if lastErr != nil {
 		return fmt.Errorf("instance admin call failed: %w", lastErr)
 	}
 	if lastResult == nil || lastResult.Status != "completed" {
-		// Socket fallback: try with empty password (agent will use Unix socket auth)
-		original := conn.PasswordEncrypted
-		conn.PasswordEncrypted = ""
-		// First create user if not exists (handles root@% not existing)
-		_, _ = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
-			Action:   "create_user",
-			Username: req.Username,
-			UserHost: req.UserHost,
-			Password: req.NewPassword,
-		})
-		// Then change password
-		socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
-			Action:               "change_password",
-			Username:             req.Username,
-			UserHost:             req.UserHost,
-			Password:             req.NewPassword,
-			UpdateStoredPassword: false,
-		})
-		conn.PasswordEncrypted = original
-		if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
-			lastResult = socketResult
-			lastErr = nil
-			// Socket fallback succeeded — save the new password to DB immediately
-			if req.Username == conn.Username && req.NewPassword != "" {
-				if enc, encErr := utils.Encrypt(req.NewPassword, s.encKey); encErr == nil {
-					_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
-				}
-			}
+		errMsg := "agent could not connect to MySQL or execute ALTER USER"
+		if lastAgentMsg != "" {
+			errMsg = lastAgentMsg
 		}
-	}
-	if lastErr != nil || lastResult == nil || lastResult.Status != "completed" {
-		return fmt.Errorf("failed to change password: agent could not connect to MySQL or execute ALTER USER")
+		return fmt.Errorf("failed to force reset password: %s", errMsg)
 	}
 	if req.Username == conn.Username {
 		enc, encErr := utils.Encrypt(req.NewPassword, s.encKey)

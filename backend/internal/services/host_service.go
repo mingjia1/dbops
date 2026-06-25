@@ -932,6 +932,7 @@ type ScannedInstance struct {
 	RecommendedName string `json:"recommended_name,omitempty"`
 	AlreadyManaged  bool   `json:"already_managed"`
 	ManagedID       string `json:"managed_instance_id,omitempty"`
+	Source          string `json:"source,omitempty"`
 }
 
 type HostScanResult struct {
@@ -945,11 +946,12 @@ type HostScanResult struct {
 }
 
 type ScanInstancesRequest struct {
-	Ports      []int  `json:"ports"`
-	PortRange  string `json:"port_range"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	ProbeMySQL bool   `json:"probe_mysql"`
+	Ports           []int  `json:"ports"`
+	PortRange       string `json:"port_range"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	ProbeMySQL      bool   `json:"probe_mysql"`
+	DiscoverProcess bool   `json:"discover_process"`
 }
 
 var defaultScanPorts = []int{3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306}
@@ -988,7 +990,7 @@ func (s *HostService) StartScanInstances(ctx context.Context, hostID string, req
 	s.scanResults[taskID] = initial
 	s.scanMu.Unlock()
 
-	go s.runScan(taskID, host, ports, probeMySQL, username, password)
+	go s.runScan(taskID, host, ports, probeMySQL, username, password, req.DiscoverProcess)
 
 	return initial, nil
 }
@@ -1005,7 +1007,7 @@ func (s *HostService) GetScanResult(taskID string) (*HostScanResult, error) {
 	return &copy, nil
 }
 
-func (s *HostService) runScan(taskID string, host *models.Host, ports []int, probeMySQL bool, username, password string) {
+func (s *HostService) runScan(taskID string, host *models.Host, ports []int, probeMySQL bool, username, password string, discoverProcess bool) {
 	result := &HostScanResult{
 		TaskID:  taskID,
 		HostID:  host.ID,
@@ -1035,6 +1037,7 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 				return
 			}
 			si.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), port)
+			si.Source = "tcp"
 			if mid, ok := managedPorts[port]; ok {
 				si.AlreadyManaged = true
 				si.ManagedID = mid
@@ -1045,6 +1048,37 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 		}(p)
 	}
 	wg.Wait()
+
+	if discoverProcess {
+		processInstances := s.discoverByProcess(host)
+		for _, pi := range processInstances {
+			pi.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), pi.Port)
+			pi.Source = "process"
+			if mid, ok := managedPorts[pi.Port]; ok {
+				pi.AlreadyManaged = true
+				pi.ManagedID = mid
+			}
+			found := false
+			for i := range scanned {
+				if scanned[i].Port == pi.Port {
+					scanned[i].PID = pi.PID
+					scanned[i].MemoryMB = pi.MemoryMB
+					scanned[i].Datadir = pi.Datadir
+					scanned[i].Socket = pi.Socket
+					scanned[i].ConfigPath = pi.ConfigPath
+					scanned[i].Source = "tcp+process"
+					if pi.DataSizeMB > 0 {
+						scanned[i].DataSizeMB = pi.DataSizeMB
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				scanned = append(scanned, pi)
+			}
+		}
+	}
 
 	sort.Slice(scanned, func(i, j int) bool { return scanned[i].Port < scanned[j].Port })
 
@@ -1160,6 +1194,182 @@ func sanitizeName(n string) string {
 	return n
 }
 
+func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
+	if host.SSHUser == "" || host.SSHCredential == "" {
+		return nil
+	}
+	credential, err := utils.Decrypt(host.SSHCredential, s.encKey)
+	if err != nil || strings.TrimSpace(credential) == "" {
+		log.Printf("scan: decrypt SSH credential for %s failed or empty: %v", host.Address, err)
+		return nil
+	}
+	client, err := s.sshClient(host, credential)
+	if err != nil {
+		log.Printf("scan: SSH connect to %s failed: %v", host.Address, err)
+		return nil
+	}
+	defer client.Close()
+
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld[_ ]|[m]ysqld$' | grep -v grep`)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	var instances []ScannedInstance
+	seen := map[int]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		rssKB, _ := strconv.Atoi(fields[2])
+		cmdline := strings.Join(fields[3:], " ")
+
+		port := extractMysqldPort(cmdline)
+		if port == 0 {
+			port = 3306
+		}
+		if seen[port] {
+			continue
+		}
+		seen[port] = true
+
+		datadir := extractMysqldArg(cmdline, "--datadir=")
+		socket := extractMysqldArg(cmdline, "--socket=")
+		configPath := extractMysqldArg(cmdline, "--defaults-file=")
+
+		if datadir == "" {
+			defPaths := []string{
+				fmt.Sprintf("/var/lib/mysql%s", func() string {
+					if port == 3306 {
+						return ""
+					}
+					return fmt.Sprintf("-%d", port)
+				}()),
+			}
+			for _, p := range defPaths {
+				check, _ := runSSHCommand(client, fmt.Sprintf("test -d %s && echo OK", shellQuotePath(p)))
+				if strings.TrimSpace(check) == "OK" {
+					datadir = p
+					break
+				}
+			}
+		}
+
+		if configPath == "" {
+			candidates := []string{
+				fmt.Sprintf("/etc/my.cnf.d/mysqld-%d.cnf", port),
+				fmt.Sprintf("/etc/mysql/mysql-%d.cnf", port),
+				fmt.Sprintf("/etc/my-%d.cnf", port),
+				"/etc/my.cnf",
+				"/etc/mysql/my.cnf",
+			}
+			for _, p := range candidates {
+				check, _ := runSSHCommand(client, fmt.Sprintf("test -f %s && echo OK", shellQuotePath(p)))
+				if strings.TrimSpace(check) == "OK" {
+					configPath = p
+					break
+				}
+			}
+		}
+
+		dataSizeMB := 0
+		if datadir != "" {
+			sizeOut, _ := runSSHCommand(client, fmt.Sprintf("du -sm %s 2>/dev/null | cut -f1", shellQuotePath(datadir)))
+			if s, err := strconv.Atoi(strings.TrimSpace(sizeOut)); err == nil {
+				dataSizeMB = s
+			}
+		}
+
+		si := ScannedInstance{
+			Port:       port,
+			Running:    true,
+			PID:        pid,
+			MemoryMB:   rssKB / 1024,
+			Datadir:    datadir,
+			Socket:     socket,
+			ConfigPath: configPath,
+			DataSizeMB: dataSizeMB,
+		}
+		instances = append(instances, si)
+	}
+
+	probePorts := make([]int, 0, len(instances))
+	for _, inst := range instances {
+		probePorts = append(probePorts, inst.Port)
+	}
+	for _, port := range probePorts {
+		addr := net.JoinHostPort(host.Address, strconv.Itoa(port))
+		conn, err := net.DialTimeout("tcp", addr, 1500*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		reader := bufio.NewReader(conn)
+		hdr, err := reader.Peek(5)
+		if err == nil && len(hdr) >= 5 && hdr[4] == 0 {
+			plen := int(uint32(hdr[0]) | uint32(hdr[1])<<8 | uint32(hdr[2])<<16)
+			if plen > 0 && plen <= 4096 {
+				greeting := make([]byte, 4+plen)
+				if _, err := reader.Read(greeting); err == nil && len(greeting) >= 6 && greeting[4] == 0x0a {
+					rest := greeting[5:]
+					if idx := indexByte(rest, 0); idx > 0 {
+						vFull := string(rest[:idx])
+						for i := range instances {
+							if instances[i].Port == port {
+								instances[i].VersionFull = vFull
+								instances[i].Version = normalizeVersionString(vFull)
+								if strings.Contains(strings.ToLower(vFull), "mariadb") {
+									instances[i].Flavor = "mariadb"
+								} else if strings.Contains(strings.ToLower(vFull), "tidb") {
+									instances[i].Flavor = "tidb"
+								} else {
+									instances[i].Flavor = "mysql"
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		_ = conn.Close()
+	}
+
+	return instances
+}
+
+func extractMysqldPort(cmdline string) int {
+	for _, part := range strings.Fields(cmdline) {
+		if strings.HasPrefix(part, "--port=") {
+			if p, err := strconv.Atoi(strings.TrimPrefix(part, "--port=")); err == nil && p > 0 && p <= 65535 {
+				return p
+			}
+		}
+	}
+	return 0
+}
+
+func extractMysqldArg(cmdline, prefix string) string {
+	for _, part := range strings.Fields(cmdline) {
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix)
+		}
+	}
+	return ""
+}
+
+func shellQuotePath(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func probePort(host string, port int, probeMySQL bool, username, password string) *ScannedInstance {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 1500*time.Millisecond)
@@ -1188,8 +1398,16 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		return si
 	}
 	plen := int(uint32(hdr[0]) | uint32(hdr[1])<<8 | uint32(hdr[2])<<16)
-	if hdr[4] != 0 {
+	if hdr[3] != 0 {
+		si.Flavor = "unknown"
+		return si
+	}
+	if hdr[4] != 0x0a && hdr[4] != 0xff {
 		si.Flavor = "non-mysql"
+		return si
+	}
+	if hdr[4] == 0xff {
+		si.Flavor = "mysql"
 		return si
 	}
 	if plen <= 0 || plen > 4096 {

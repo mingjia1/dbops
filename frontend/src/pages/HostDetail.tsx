@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm,
-  Tabs, Modal, Form, Input, Result, Statistic, Row, Col, Badge, Radio,
+  Tabs, Modal, Form, Input, Result, Statistic, Row, Col, Badge, Radio, Switch, Tooltip,
 } from 'antd'
 import {
   ArrowLeftOutlined, ThunderboltOutlined, DatabaseOutlined, PlusOutlined,
@@ -47,6 +47,7 @@ const HostDetail: React.FC = () => {
   const [scanMode, setScanMode] = useState<'default' | 'custom' | 'range'>('default')
   const [scanPorts, setScanPorts] = useState<number[]>([3306, 33060, 3307])
   const [scanRange, setScanRange] = useState<string>('3306-3310')
+  const [discoverProcess, setDiscoverProcess] = useState(true)
   const [scanForm] = Form.useForm()
 
   useEffect(() => {
@@ -158,9 +159,9 @@ const HostDetail: React.FC = () => {
 
   const submitScan = async () => {
     if (!id) return
-    let payload: { ports?: number[]; port_range?: string; probe_mysql?: boolean } = { probe_mysql: true }
+    let payload: { ports?: number[]; port_range?: string; probe_mysql?: boolean; discover_process?: boolean } = { probe_mysql: true, discover_process: discoverProcess }
     if (scanMode === 'default') {
-      payload = { probe_mysql: true }
+      payload = { probe_mysql: true, discover_process: discoverProcess, port_range: '3300-3400,33061,33060' }
     } else if (scanMode === 'custom') {
       const v = scanForm.getFieldValue('ports') as number[] | undefined
       if (!v || v.length === 0) {
@@ -331,6 +332,16 @@ const HostDetail: React.FC = () => {
       title: '端口', dataIndex: 'port', key: 'port',
       render: (p) => <Tag color="blue">{p}</Tag>,
     },
+    {
+      title: '类型', dataIndex: 'flavor', key: 'flavor',
+      render: (f: string) => {
+        if (f === 'mysql') return <Tag color="success">MySQL</Tag>
+        if (f === 'mariadb') return <Tag color="purple">MariaDB</Tag>
+        if (f === 'tidb') return <Tag color="cyan">TiDB</Tag>
+        if (f === 'unknown') return <Tag>未知</Tag>
+        return f || '-'
+      },
+    },
     { title: '版本', dataIndex: 'version', key: 'version', render: (v) => v || '-' },
     {
       title: '角色', dataIndex: 'role', key: 'role',
@@ -341,6 +352,29 @@ const HostDetail: React.FC = () => {
       render: (running: boolean) => running
         ? <Badge status="success" text="运行中" />
         : <Badge status="default" text="已停止" />,
+    },
+    {
+      title: '发现方式', dataIndex: 'source', key: 'source',
+      render: (s: string) => {
+        if (s === 'tcp+process') return <Tooltip title="TCP 探测 + 进程发现"><Tag color="cyan">TCP+进程</Tag></Tooltip>
+        if (s === 'process') return <Tooltip title="通过 ps 命令发现的 mysqld 进程"><Tag color="geekblue">进程</Tag></Tooltip>
+        if (s === 'tcp') return <Tooltip title="通过 TCP 端口探测发现"><Tag color="blue">TCP</Tag></Tooltip>
+        return s || '-'
+      },
+    },
+    {
+      title: 'PID', dataIndex: 'pid', key: 'pid',
+      render: (pid: number) => pid || '-',
+    },
+    {
+      title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb',
+      render: (mb: number) => mb ? `${mb}` : '-',
+    },
+    {
+      title: '数据目录', dataIndex: 'datadir', key: 'datadir',
+      ellipsis: true,
+      width: 160,
+      render: (d: string) => d || '-',
     },
     {
       title: '纳管', dataIndex: 'already_managed', key: 'already_managed',
@@ -710,7 +744,7 @@ const HostDetail: React.FC = () => {
           showIcon
           style={{ marginBottom: 12 }}
           message="扫描说明"
-          description="平台会并发 TCP 探测你指定的端口, 尝试读取 MySQL 握手包以获取版本/类型。无需 SSH 凭据。"
+          description="平台会并发 TCP 探测你指定的端口, 尝试读取 MySQL 握手包以获取版本/类型。开启进程发现后，还会通过 SSH 查询 mysqld 进程信息（需要主机已配置 SSH 凭据）。"
         />
         <Form form={scanForm} layout="vertical">
           <Form.Item label="扫描方式" name="mode">
@@ -726,7 +760,7 @@ const HostDetail: React.FC = () => {
 
           {scanMode === 'default' && (
             <div style={{ marginBottom: 12, padding: 8, background: '#f0f0f0', borderRadius: 4, fontSize: 13 }}>
-              将扫描 3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306 等常见 MySQL 端口
+              将扫描 3300-3400, 33060, 33061 等常见 MySQL 端口
             </div>
           )}
 
@@ -759,6 +793,10 @@ const HostDetail: React.FC = () => {
               />
             </Form.Item>
           )}
+
+          <Form.Item label="进程发现" extra="通过 SSH 查询主机上的 mysqld 进程, 可发现非标准端口的实例并获取 PID/内存/数据目录等信息">
+            <Switch checked={discoverProcess} onChange={setDiscoverProcess} checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
         </Form>
       </Modal>
 
