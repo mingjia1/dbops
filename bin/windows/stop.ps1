@@ -46,7 +46,7 @@ function Stop-ProcessSafely {
     $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $proc) {
         Write-Warn "[警告] $Name (PID: $ProcessId) 已不存在"
-        return $true
+        return $false
     }
     try {
         Write-Info "[信息] 正在停止 $Name (PID: $ProcessId)..."
@@ -184,7 +184,7 @@ try {
             }
         }
 
-    # ---------- 4. 校验端口已释放 ----------
+    # ---------- 4. 校验端口已释放 (兜底: 端口级强制杀进程) ----------
     Write-Step "4. 校验端口状态"
     foreach ($port in $BackendPort, $AgentPort, $WebPort) {
         $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
@@ -194,8 +194,22 @@ try {
             3000 { "前端" }
         }
         if ($conn) {
-            Write-Err "[错误] 端口 $port 仍被占用 (PID: $($conn.OwningProcess))"
-            $allOk = $false
+            $stalePid = $conn.OwningProcess
+            Write-Warn "[兜底] 端口 $port 仍被占用 (PID: $stalePid)，按端口强制清理..."
+            try {
+                Stop-Process -Id $stalePid -Force -ErrorAction Stop
+                Start-Sleep -Seconds 1
+                $conn2 = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+                if ($conn2) {
+                    Write-Err "[错误] 端口 $port 强制清理后仍被占用 (PID: $($conn2.OwningProcess))"
+                    $allOk = $false
+                } else {
+                    Write-Success "[成功] 端口 $port 已释放 ($name)"
+                }
+            } catch {
+                Write-Err "[错误] 端口 $port 强制清理失败: $_"
+                $allOk = $false
+            }
         } else {
             Write-Success "[成功] 端口 $port 已释放 ($name)"
         }
