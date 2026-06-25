@@ -1037,7 +1037,7 @@ func initializeMGR(ctx context.Context, host string, port int, user, pass string
 			// initializeMGR runs via socket which may change auth state.
 			// Re-apply password via socket to ensure TCP password auth works.
 			if pass != "" {
-				socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+				socketPath := findMySQLSocket(port)
 				ensurePassSQL := fmt.Sprintf(
 					"ALTER USER '%s'@'localhost' IDENTIFIED WITH mysql_native_password BY '%s'; "+
 						"ALTER USER '%s'@'%%' IDENTIFIED WITH mysql_native_password BY '%s'; "+
@@ -1366,7 +1366,7 @@ func mysqlExecWithSocketFallback(ctx context.Context, host string, port int, use
 	}
 	tcpErr := fmt.Sprintf("TCP: %v - %s", err, strings.TrimSpace(string(out)))
 
-	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+	socketPath := findMySQLSocket(port)
 
 	// Fallback 1: socket WITHOUT password (for auth_socket plugin in MySQL 8.0)
 	noPassCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-S", socketPath, "-u", user, "-N", "-B", "-e", sql)
