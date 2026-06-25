@@ -19,6 +19,7 @@ const createMgrGroupName = () => {
 }
 
 const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证']
+const STEP_TYPE_CN: Record<string, string> = { validate: '校验', sync: '同步', bootstrap: '引导', join: '加入', deploy: '部署', configure: '配置', verify: '验证' }
 
 const DEPLOY_SUBSTEPS: Record<string, string[]> = {
   '环境检查': ['检查主机连通性', '验证端口可用性', '检查磁盘空间', '检查系统依赖'],
@@ -979,9 +980,9 @@ const ClusterDeploy: React.FC = () => {
               items={(planPreviewData.steps || []).map((step: any, idx: number) => ({
                 title: (
                   <Space size={4}>
-                    <span>{step.name || step.id || `Step ${idx + 1}`}</span>
-                    {step.type && <Tag color="default" style={{ fontSize: 10 }}>{step.type}</Tag>}
-                    {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>@{step.target_node}</span>}
+                    <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
+                    {step.type && <Tag color="default" style={{ fontSize: 10 }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
+                    {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
                   </Space>
                 ),
                 description: step.depends_on?.length > 0 ? (
