@@ -368,9 +368,21 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			return result, nil
 		}
 		// Verify agent binary exists and is executable
+		localBinPath, _ := findAgentBinary()
+		localBinInfo, _ := os.Stat(localBinPath)
+		expectedSize := int64(0)
+		if localBinInfo != nil {
+			expectedSize = localBinInfo.Size()
+		}
 		verifyOut, verifyErr := runSSH(client, "ls -la /opt/dbops-agent/agent && file /opt/dbops-agent/agent")
 		if verifyErr != nil {
 			result.Message = fmt.Sprintf("agent binary verification failed: %v\n%s", verifyErr, verifyOut)
+			return result, nil
+		}
+		remoteSizeOut, _ := runSSH(client, "stat -c %s /opt/dbops-agent/agent 2>/dev/null || echo 0")
+		remoteSize := strings.TrimSpace(remoteSizeOut)
+		if remoteSize != fmt.Sprintf("%d", expectedSize) {
+			result.Message = fmt.Sprintf("agent binary size mismatch: expected %d bytes, remote has %s bytes. Upload may have failed.", expectedSize, remoteSize)
 			return result, nil
 		}
 		// Try to read agent log for startup errors
@@ -747,7 +759,17 @@ func agentConfigCommand(port int, token string) string {
 }
 
 func agentStartCommand(port int, token string) string {
-	return fmt.Sprintf("cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 0.2 && echo started", shellEscape(token))
+	// Start agent, verify it's listening, retry once if port conflict
+	return fmt.Sprintf(`cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 2
+if ! fuser %d/tcp >/dev/null 2>&1; then
+  echo "Agent not listening on %d, checking log..."
+  tail -5 /opt/dbops-agent/agent.log 2>/dev/null
+  # If port conflict, kill old process and retry
+  fuser -k %d/tcp 2>/dev/null || true
+  sleep 1
+  cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 2
+fi
+echo "agent started on port %d"`, shellEscape(token), port, port, port, shellEscape(token), port)
 }
 
 func agentStopCommand() string {
@@ -755,7 +777,8 @@ func agentStopCommand() string {
 	// Using fuser by port is safe — it only kills processes holding that specific TCP port.
 	// Avoid pkill -f which may match the SSH session itself.
 	return `if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi
-fuser -k 9090/tcp 2>/dev/null || true
+# Kill by common agent ports
+for p in 9090 9091 9092 9093; do fuser -k ${p}/tcp 2>/dev/null || true; done
 sleep 1`
 }
 
