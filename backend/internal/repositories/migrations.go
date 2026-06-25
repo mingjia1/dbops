@@ -193,7 +193,7 @@ var InitialSchema = []string{
 			duration_seconds INT DEFAULT 60,
 			severity VARCHAR(16) NOT NULL,
 			notification_channels TEXT,
-			expression TEXT DEFAULT '',
+			expression TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -205,10 +205,10 @@ var InitialSchema = []string{
 			metric VARCHAR(128) NOT NULL,
 			` + "`condition`" + ` VARCHAR(32) NOT NULL DEFAULT '',
 			threshold DECIMAL(10,2) DEFAULT 0,
-			expression TEXT DEFAULT '',
+			expression TEXT,
 			duration_seconds INT DEFAULT 60,
 			severity VARCHAR(16) NOT NULL,
-			message TEXT DEFAULT '',
+			message TEXT DEFAULT (''),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
@@ -402,7 +402,7 @@ var InitialSchema = []string{
 	`ALTER TABLE instances ADD COLUMN target_version_id VARCHAR(64) DEFAULT ''`,
 	`ALTER TABLE backup_records ADD COLUMN message TEXT`,
 	`ALTER TABLE backup_records ADD COLUMN task_id VARCHAR(128) DEFAULT ''`,
-	`ALTER TABLE alert_rules ADD COLUMN expression TEXT DEFAULT ''`,
+	`ALTER TABLE alert_rules ADD COLUMN expression TEXT`,
 	`CREATE TABLE IF NOT EXISTS escalation_rules (
 			id VARCHAR(64) PRIMARY KEY,
 			rule_id VARCHAR(64) NOT NULL,
@@ -418,8 +418,8 @@ var InitialSchema = []string{
 	`CREATE TABLE IF NOT EXISTS alert_silences (
 			id VARCHAR(64) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
-			rule_ids TEXT DEFAULT '',
-			match_expr TEXT DEFAULT '',
+			rule_ids TEXT DEFAULT (''),
+			match_expr TEXT DEFAULT (''),
 			start_at TIMESTAMP NOT NULL,
 			end_at TIMESTAMP NOT NULL,
 			enabled TINYINT(1) DEFAULT 1,
@@ -433,7 +433,7 @@ var InitialSchema = []string{
 			category VARCHAR(32) NOT NULL,
 			config TEXT,
 			schedule VARCHAR(128) DEFAULT '',
-			recipients TEXT DEFAULT '',
+			recipients TEXT DEFAULT (''),
 			enabled TINYINT(1) DEFAULT 1,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -444,7 +444,7 @@ var InitialSchema = []string{
 			template_id VARCHAR(64) NOT NULL,
 			instance_id VARCHAR(64) NOT NULL,
 			status VARCHAR(32) DEFAULT 'generating',
-			summary TEXT DEFAULT '',
+			summary TEXT DEFAULT (''),
 			details TEXT,
 			score INT DEFAULT 0,
 			generated_at TIMESTAMP NOT NULL,
@@ -458,7 +458,7 @@ var InitialSchema = []string{
 			id VARCHAR(64) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
 			category VARCHAR(32) NOT NULL,
-			description TEXT DEFAULT '',
+			description TEXT DEFAULT (''),
 			fault_type VARCHAR(64) NOT NULL,
 			params TEXT,
 			duration_sec INT DEFAULT 30,
@@ -488,7 +488,7 @@ var InitialSchema = []string{
 	`CREATE TABLE IF NOT EXISTS ha_drills (
 			id VARCHAR(64) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
-			description TEXT DEFAULT '',
+			description TEXT DEFAULT (''),
 			plan TEXT,
 			status VARCHAR(32) DEFAULT 'draft',
 			result TEXT,
@@ -502,7 +502,7 @@ var InitialSchema = []string{
 	`CREATE TABLE IF NOT EXISTS ha_drill_reports (
 			id VARCHAR(64) PRIMARY KEY,
 			drill_id VARCHAR(64) UNIQUE NOT NULL,
-			summary TEXT DEFAULT '',
+			summary TEXT DEFAULT (''),
 			timeline TEXT,
 			findings TEXT,
 			score INT DEFAULT 0,
@@ -515,7 +515,7 @@ var InitialSchema = []string{
 			id VARCHAR(64) PRIMARY KEY,
 			instance_id VARCHAR(64) NOT NULL,
 			status VARCHAR(32) DEFAULT 'completed',
-			summary TEXT DEFAULT '',
+			summary TEXT DEFAULT (''),
 			details TEXT,
 			score INT DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -524,7 +524,7 @@ var InitialSchema = []string{
 	`CREATE TABLE IF NOT EXISTS sql_advices (
 			id VARCHAR(64) PRIMARY KEY,
 			sql_text TEXT NOT NULL,
-			` + "`explain`" + ` TEXT DEFAULT '',
+			` + "`explain`" + ` TEXT DEFAULT (''),
 			advice TEXT,
 			score INT DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -582,12 +582,12 @@ var InitialSchema = []string{
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
 	// Phase 4: Extend cluster_deployments with full request/plan/status payload.
-	`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ''`,
-	`ALTER TABLE cluster_deployments ADD COLUMN plan_json TEXT DEFAULT ''`,
-	`ALTER TABLE cluster_deployments ADD COLUMN custom_json TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN plan_json TEXT DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN custom_json TEXT DEFAULT ('')`,
 	`ALTER TABLE cluster_deployments ADD COLUMN started_at TIMESTAMP NULL`,
 	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP NULL`,
-	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ('')`,
 
 	// Phase 5: Credential vault for cluster-level account management.
 	`CREATE TABLE IF NOT EXISTS cluster_credentials (
@@ -608,7 +608,7 @@ var InitialSchema = []string{
 		cluster_id VARCHAR(64) NOT NULL,
 		workflow_type VARCHAR(32) NOT NULL,
 		current_phase VARCHAR(64) NOT NULL DEFAULT '',
-		completed_phases TEXT DEFAULT '',
+		completed_phases TEXT DEFAULT (''),
 		status VARCHAR(32) DEFAULT 'running',
 		started_at TIMESTAMP NULL,
 		completed_at TIMESTAMP NULL,
@@ -639,7 +639,7 @@ var InitialSchema = []string{
 		old_master_id VARCHAR(64) DEFAULT '',
 		new_master_id VARCHAR(64) DEFAULT '',
 		node_id VARCHAR(64) DEFAULT '',
-		details TEXT DEFAULT '',
+		details TEXT DEFAULT (''),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		INDEX idx_topology_events_cluster (cluster_id, created_at)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -654,10 +654,10 @@ var InitialSchema = []string{
 		role VARCHAR(32) NOT NULL DEFAULT '',
 		status VARCHAR(32) DEFAULT 'pending',
 		current_step VARCHAR(128) DEFAULT '',
-		message TEXT DEFAULT '',
+		message TEXT DEFAULT (''),
 		started_at TIMESTAMP NULL,
 		finished_at TIMESTAMP NULL,
-		error_message TEXT DEFAULT '',
+		error_message TEXT DEFAULT (''),
 		INDEX idx_deploy_nodes_deployment (deployment_id),
 		FOREIGN KEY (deployment_id) REFERENCES cluster_deployments(id) ON DELETE CASCADE
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -665,7 +665,7 @@ var InitialSchema = []string{
 	// Platform settings: generic key-value store for system configuration.
 	`CREATE TABLE IF NOT EXISTS platform_settings (
 		` + "`key`" + ` VARCHAR(128) PRIMARY KEY,
-		value TEXT NOT NULL DEFAULT '',
+		value TEXT NOT NULL DEFAULT (''),
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 }
@@ -849,7 +849,7 @@ var schemaSQLite = []string{
 			duration_seconds INTEGER DEFAULT 60,
 			severity TEXT NOT NULL,
 			notification_channels TEXT,
-			expression TEXT DEFAULT '',
+			expression TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -861,7 +861,7 @@ var schemaSQLite = []string{
 			metric TEXT NOT NULL,
 			` + "`condition`" + ` TEXT NOT NULL DEFAULT '',
 			threshold REAL DEFAULT 0,
-			expression TEXT DEFAULT '',
+			expression TEXT,
 			duration_seconds INTEGER DEFAULT 60,
 			severity TEXT NOT NULL,
 			message TEXT DEFAULT '',

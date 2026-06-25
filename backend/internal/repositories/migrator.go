@@ -239,12 +239,12 @@ func (m *Migrator) getColumns(ctx context.Context, db *sql.DB, table string) ([]
 func (m *Migrator) buildUpsertSQL(table string, cols []string, dialect Dialect) string {
 	placeholders := strings.Repeat("?,", len(cols))
 	placeholders = placeholders[:len(placeholders)-1]
-	colList := strings.Join(cols, ",")
 	switch dialect {
 	case DialectMySQL:
-		// INSERT ... ON DUPLICATE KEY UPDATE id=id 让主键冲突静默, 等价"存在则忽略"
+		colList := quoteJoined(cols, dialect)
 		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE id=id", table, colList, placeholders)
 	default: // SQLite
+		colList := strings.Join(cols, ",")
 		return fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", table, colList, placeholders)
 	}
 }
@@ -270,27 +270,41 @@ func convertRowValues(in []interface{}, colTypes []*sql.ColumnType, dialect Dial
 	for i, v := range in {
 		switch x := v.(type) {
 		case []byte:
-			out[i] = string(x)
-		case bool:
-			if dialect == DialectMySQL {
-				if x {
-					out[i] = int64(1)
-				} else {
-					out[i] = int64(0)
-				}
+			s := string(x)
+			if dialect == DialectMySQL && isInvalidDatetime(s) {
+				out[i] = nil
 			} else {
-				if x {
-					out[i] = int64(1)
-				} else {
-					out[i] = int64(0)
-				}
+				out[i] = s
+			}
+		case string:
+			if dialect == DialectMySQL && isInvalidDatetime(x) {
+				out[i] = nil
+			} else {
+				out[i] = x
+			}
+		case bool:
+			if x {
+				out[i] = int64(1)
+			} else {
+				out[i] = int64(0)
 			}
 		default:
-			out[i] = x
+			if dialect == DialectMySQL {
+				if s, ok := v.(fmt.Stringer); ok {
+					if isInvalidDatetime(s.String()) {
+						out[i] = nil
+						continue
+					}
+				}
+			}
+			out[i] = v
 		}
-		_ = colTypes
 	}
 	return out
+}
+
+func isInvalidDatetime(s string) bool {
+	return strings.HasPrefix(s, "0000-00-00") || s == "0001-01-01 00:00:00 +0000 UTC"
 }
 
 func isDuplicateError(err error) bool {

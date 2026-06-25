@@ -92,6 +92,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("jwt_secret", "DBOPS_JWT_SECRET")
 	viper.BindEnv("encryption_key", "DBOPS_ENCRYPTION_KEY")
 	viper.BindEnv("agent_token", "DBOPS_AGENT_TOKEN")
+	viper.BindEnv("storage_mode", "DBOPS_STORAGE_MODE")
 	viper.BindEnv("ai_api_key", "DBOPS_AI_API_KEY")
 	viper.BindEnv("ai_base_url", "DBOPS_AI_BASE_URL")
 	// JWT / 加密密钥故意不设默认值, 必须从 config.yaml 显式注入, 启动时校验.
