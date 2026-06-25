@@ -1065,6 +1065,15 @@ type InstanceAdminResult struct {
 	Progress int         `json:"progress"`
 }
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func failedInstanceAdminResult(message string) *InstanceAdminResult {
 	return &InstanceAdminResult{
 		TaskID:   "instance-admin-" + uuid.New().String(),
@@ -1213,10 +1222,15 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 
 	password, err = utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+		if req.Action == "reset_password_skip_grant" || req.Action == "service_control" || req.Action == "decommission" {
+			password = ""
+			err = nil
+		} else {
+			return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+		}
 	}
 	// Verify stored password works; if not, try to fix via socket before proceeding
-	if password != "" && req.Action != "service_control" && req.Action != "decommission" {
+	if password != "" && req.Action != "service_control" && req.Action != "decommission" && req.Action != "reset_password_skip_grant" {
 		testResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 			"task_id": "pw-verify-" + uuid.New().String(),
 			"config": map[string]interface{}{
@@ -1254,7 +1268,7 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			"service":     req.Service,
 			"verb":        req.Verb,
 			"basedir":     conn.Basedir,
-			"datadir":     conn.Datadir,
+			"datadir":     firstNonEmpty(req.Datadir, conn.Datadir),
 			"os_user":     conn.OSUser,
 		},
 	})

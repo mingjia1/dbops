@@ -4609,27 +4609,46 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 
 func resetPasswordViaSkipGrantTables(ctx context.Context, host string, port int, username, userHost, password, datadir string) (string, error) {
 	if datadir == "" {
-		datadir = fmt.Sprintf("/data/mysql_%d", port)
+		datadir = detectMySQLDatadir(port)
 	}
-	socketPath := filepath.Join(datadir, "mysql.sock")
+	if datadir == "" {
+		return "", fmt.Errorf("could not detect datadir for port %d; please set datadir manually", port)
+	}
 	pidFile := filepath.Join(datadir, "mysqld.pid")
+	// Use a deterministic socket path for skip-grant-tables mode
+	resetSocket := fmt.Sprintf("/tmp/mysql_%d_reset.sock", port)
 
-	if _, err := os.Stat(datadir); os.IsNotExist(err) {
-		return "", fmt.Errorf("datadir %s does not exist", datadir)
-	}
-
-	// Step 1: Stop MySQL
-	stopCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null || true; sleep 2", pidFile))
+	// Step 1: Stop MySQL (kill by pidfile and by port)
+	stopCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
+		"kill $(cat %s 2>/dev/null) 2>/dev/null || true; "+
+			"pkill -f 'mysqld.*--port=%d' 2>/dev/null || true; "+
+			"sleep 3; rm -f %s", pidFile, port, resetSocket))
 	stopCmd.CombinedOutput()
 
-	// Step 2: Start MySQL with skip-grant-tables
+	// Step 2: Start MySQL with skip-grant-tables using our own socket
+	// Find mysqld binary - try basedir, common paths, then PATH
+	mysqldBin := findMysqldForReset(datadir)
+	logFile := fmt.Sprintf("/tmp/mysql_skip_grant_%d.log", port)
 	startCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
-		"mysqld --skip-grant-tables --skip-networking --datadir=%s --socket=%s --pid-file=%s &",
-		datadir, socketPath, pidFile))
+		"%s --skip-grant-tables --skip-networking --user=root --datadir=%s --socket=%s --pid-file=%s --port=%d 2>%s &",
+		mysqldBin, datadir, resetSocket, pidFile, port, logFile))
 	if err := startCmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start mysqld with skip-grant-tables: %w", err)
+		return "", fmt.Errorf("failed to start mysqld with skip-grant-tables (bin=%s): %w", mysqldBin, err)
 	}
-	time.Sleep(3 * time.Second)
+	// Wait for socket to appear (up to 30 seconds)
+	socketFound := false
+	for i := 0; i < 30; i++ {
+		time.Sleep(1 * time.Second)
+		if _, err := os.Stat(resetSocket); err == nil {
+			socketFound = true
+			break
+		}
+	}
+	if !socketFound {
+		// Read log for debugging
+		logContent, _ := os.ReadFile(logFile)
+		return "", fmt.Errorf("mysqld skip-grant-tables did not create socket %s within 30s; log: %s", resetSocket, string(logContent))
+	}
 
 	// Step 3: Reset password
 	resetSQL := fmt.Sprintf(
@@ -4637,15 +4656,14 @@ func resetPasswordViaSkipGrantTables(ctx context.Context, host string, port int,
 		escapeSQL(username), escapeSQL(userHost), escapeSQL(password),
 		escapeSQL(username), escapeSQL(password))
 
-	resetCmd := exec.CommandContext(ctx, "mysql", "-S", socketPath, "-u", "root", "-e", resetSQL)
+	resetCmd := exec.CommandContext(ctx, "mysql", "-S", resetSocket, "-u", "root", "--skip-password", "-e", resetSQL)
 	resetOut, resetErr := resetCmd.CombinedOutput()
 	if resetErr != nil {
-		// Try with mysql client from common paths
 		for _, mysqlBin := range []string{"/usr/bin/mysql", "/usr/local/bin/mysql"} {
 			if _, statErr := os.Stat(mysqlBin); statErr != nil {
 				continue
 			}
-			resetCmd = exec.CommandContext(ctx, mysqlBin, "-S", socketPath, "-u", "root", "-e", resetSQL)
+			resetCmd = exec.CommandContext(ctx, mysqlBin, "-S", resetSocket, "-u", "root", "--skip-password", "-e", resetSQL)
 			resetOut, resetErr = resetCmd.CombinedOutput()
 			if resetErr == nil {
 				break
@@ -4654,13 +4672,16 @@ func resetPasswordViaSkipGrantTables(ctx context.Context, host string, port int,
 	}
 
 	// Step 4: Stop MySQL with skip-grant-tables
-	stopCmd2 := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf("kill $(cat %s 2>/dev/null) 2>/dev/null || true; sleep 2", pidFile))
+	stopCmd2 := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
+		"kill $(cat %s 2>/dev/null) 2>/dev/null || true; "+
+			"pkill -f 'mysqld.*--skip-grant-tables.*--port=%d' 2>/dev/null || true; "+
+			"sleep 3", pidFile, port))
 	stopCmd2.CombinedOutput()
 
-	// Step 5: Start MySQL normally
+	// Step 5: Start MySQL normally (let MySQL use its default config for socket)
 	startNormalCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(
-		"mysqld --datadir=%s --socket=%s --pid-file=%s &",
-		datadir, socketPath, pidFile))
+		"%s --datadir=%s --pid-file=%s &",
+		mysqldBin, datadir, pidFile))
 	if err := startNormalCmd.Start(); err != nil {
 		return string(resetOut), fmt.Errorf("password reset succeeded but failed to restart MySQL normally: %w", err)
 	}
@@ -4671,6 +4692,134 @@ func resetPasswordViaSkipGrantTables(ctx context.Context, host string, port int,
 	}
 
 	return string(resetOut), nil
+}
+
+func findMysqldForReset(datadir string) string {
+	// Method 1: From running mysqld process for this datadir
+	out, err := exec.Command("bash", "-c",
+		fmt.Sprintf("pgrep -a mysqld | grep 'datadir=%s' | head -1 | awk -F' ' '{print $NF}' | xargs dirname | xargs dirname", datadir)).CombinedOutput()
+	if err == nil {
+		basedir := strings.TrimSpace(string(out))
+		if basedir != "" {
+			candidate := filepath.Join(basedir, "bin", "mysqld")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+
+	// Method 2: Common paths
+	for _, p := range []string{
+		"/opt/mysql/bin/mysqld",
+		"/usr/sbin/mysqld",
+		"/usr/local/mysql/bin/mysqld",
+		"/usr/bin/mysqld",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	// Method 3: From running process (any mysqld)
+	out, err = exec.Command("bash", "-c", "pgrep -a mysqld | head -1 | awk '{print $NF}'").Output()
+	if err == nil {
+		bin := strings.TrimSpace(string(out))
+		if bin != "" {
+			if _, err := os.Stat(bin); err == nil {
+				return bin
+			}
+		}
+	}
+
+	return "mysqld"
+}
+
+func detectMySQLSocket(port int, datadir string) string {
+	// Method 1: Find socket from running MySQL process via /proc
+	out, err := exec.Command("bash", "-c",
+		fmt.Sprintf("cat /proc/$(pgrep -f 'mysqld.*--port=%d' | head -1)/cmdline 2>/dev/null | tr '\\0' '\\n' | grep socket | head -1", port)).CombinedOutput()
+	if err == nil {
+		arg := strings.TrimSpace(string(out))
+		if strings.HasPrefix(arg, "--socket=") {
+			s := strings.TrimPrefix(arg, "--socket=")
+			return s
+		}
+	}
+
+	// Method 2: Check common socket paths
+	candidates := []string{
+		filepath.Join(datadir, "mysql.sock"),
+		fmt.Sprintf("/tmp/mysql_%d.sock", port),
+		fmt.Sprintf("/var/run/mysqld/mysqld_%d.sock", port),
+		"/var/lib/mysql/mysql.sock",
+		filepath.Join(datadir, "mysqld.sock"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+
+	// Method 3: Find any socket file in datadir
+	entries, _ := os.ReadDir(datadir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sock") {
+			return filepath.Join(datadir, e.Name())
+		}
+	}
+
+	// Default
+	return filepath.Join(datadir, "mysql.sock")
+}
+
+func detectMySQLDatadir(port int) string {
+	// Method 1: Find mysqld process for this port and read its --datadir
+	out, err := exec.Command("bash", "-c",
+		fmt.Sprintf("cat /proc/$(pgrep -f 'mysqld.*--port=%d' | head -1)/cmdline 2>/dev/null | tr '\\0' '\\n' | grep datadir | head -1", port)).CombinedOutput()
+	if err == nil {
+		arg := strings.TrimSpace(string(out))
+		if strings.HasPrefix(arg, "--datadir=") {
+			d := strings.TrimPrefix(arg, "--datadir=")
+			if info, err := os.Stat(d); err == nil && info.IsDir() {
+				return d
+			}
+		}
+	}
+
+	// Method 2: Check common datadir patterns
+	candidates := []string{
+		fmt.Sprintf("/data/mysql/%d", port),
+		fmt.Sprintf("/data/mysql_%d", port),
+		fmt.Sprintf("/data/mysql%d", port),
+		"/var/lib/mysql",
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+
+	// Method 3: Parse my.cnf for datadir
+	for _, cnf := range []string{"/etc/my.cnf", "/etc/mysql/my.cnf", fmt.Sprintf("/data/mysql/%d/my.cnf", port)} {
+		data, err := os.ReadFile(cnf)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "datadir") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					d := strings.TrimSpace(parts[1])
+					if info, err := os.Stat(d); err == nil && info.IsDir() {
+						return d
+					}
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func parseReadOnlyState(output string) (bool, bool) {
