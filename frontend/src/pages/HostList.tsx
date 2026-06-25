@@ -6,7 +6,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'
 import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
 
-const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart'])
+const longRunningAgentActions = new Set(['restart'])
 const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)

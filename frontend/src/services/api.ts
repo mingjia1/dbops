@@ -354,7 +354,7 @@ export const hostApi = {
     }),
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 240000) }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 600000) }),
 
   submitBatchAgentAction: (hostIds: string[], action: string, agentPort?: number) =>
     api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true } as any),
