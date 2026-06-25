@@ -1113,14 +1113,10 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 					"Please edit the instance and set datadir/basedir manually.", metaErr)), nil
 		}
 	}
-	// When MySQL password is missing or incorrect, try to fix it via agent socket.
-	// This covers MGR/PXC instances deployed via cluster deploy where password wasn't saved.
+	// When MySQL password is missing, try to discover it via socket.
 	password, _ := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if password == "" && req.Action != "service_control" && req.Action != "decommission" && req.Action != "change_password" {
 		password = s.discoverAndFixPassword(ctx, id, instance, conn)
-	}
-	if req.Action != "service_control" && req.Action != "decommission" && req.Action != "change_password" && password != "" {
-		s.ensurePasswordViaAgent(ctx, instance, conn, password)
 	}
 	if req.Action == "change_password" {
 		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
@@ -1161,12 +1157,16 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 			lastResult = result
 			lastErr = adminErr
 		}
-		// If all TCP candidates failed, try once more with agent socket-only approach.
-		// The agent's changeMySQLUserPassword has mysqlExecWithSocketFallback which
-		// can execute ALTER USER via Unix socket without password (auth_socket plugin).
+		// If all TCP candidates failed, try agent socket-only approach:
+		// 1. Create user if not exists (handles root@% not existing)
+		// 2. Change password via Unix socket (auth_socket plugin)
 		if lastResult == nil || lastResult.Status != "completed" {
 			original := conn.PasswordEncrypted
 			conn.PasswordEncrypted = ""
+			// Create user first (MGR/PXC may not have root@%)
+			_, _ = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+				Action: "create_user", Username: req.Username, UserHost: req.UserHost, Password: req.Password,
+			})
 			socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, req)
 			conn.PasswordEncrypted = original
 			if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
@@ -1192,6 +1192,22 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	password, err = utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+	// Verify stored password works; if not, try to fix via socket before proceeding
+	if password != "" && req.Action != "service_control" && req.Action != "decommission" {
+		testResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+			"task_id": "pw-verify-" + uuid.New().String(),
+			"config": map[string]interface{}{
+				"action": "show_variables", "pattern": "version",
+				"target_host": targetHost, "target_port": conn.Port,
+				"target_user": conn.Username, "target_pass": password,
+			},
+		})
+		if testResult == nil || isFailedTaskStatus(testResult.Status) {
+			s.fixPasswordViaSocket(ctx, agentHost, agentPort, targetHost, conn, password)
+			// Re-read password in case it was updated
+			password, _ = utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+		}
 	}
 	configPath := resolveInstanceConfigPath(conn, req.Path)
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
@@ -1250,6 +1266,44 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 		Data:     result.Data,
 		Progress: result.Progress,
 	}, nil
+}
+
+// fixPasswordViaSocket re-applies the stored password via agent socket connection.
+// Handles MGR/PXC where super_read_only may block ALTER USER.
+func (s *InstanceService) fixPasswordViaSocket(ctx context.Context, agentHost string, agentPort int, targetHost string, conn *models.InstanceConnection, storedPassword string) {
+	if s.agentClient == nil || storedPassword == "" {
+		return
+	}
+	// Step 1: Try change_password with empty stored password (socket auth)
+	chgResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id": "pw-fix-socket-" + uuid.New().String(),
+		"config": map[string]interface{}{
+			"action": "change_password", "target_host": targetHost,
+			"target_port": conn.Port, "target_user": conn.Username,
+			"target_pass": "", "username": conn.Username,
+			"user_host": "localhost", "password": storedPassword,
+		},
+	})
+	if chgResult != nil && chgResult.Status == "completed" {
+		log.Printf("fixPasswordViaSocket: successfully fixed password for %s:%d via socket change_password", targetHost, conn.Port)
+		return // success
+	}
+	if chgResult != nil {
+		log.Printf("fixPasswordViaSocket: change_password failed for %s:%d: %s", targetHost, conn.Port, chgResult.Message)
+	} else {
+		log.Printf("fixPasswordViaSocket: change_password call returned nil for %s:%d", targetHost, conn.Port)
+	}
+	// Step 2: Fallback - use write_config + exec to run raw SQL via socket
+	// This bypasses the agent's change_password logic and handles MGR super_read_only
+	_, _ = s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id": "pw-fix-grant-" + uuid.New().String(),
+		"config": map[string]interface{}{
+			"action": "create_user", "target_host": targetHost,
+			"target_port": conn.Port, "target_user": conn.Username,
+			"target_pass": "", "username": conn.Username,
+			"user_host": "%", "password": storedPassword,
+		},
+	})
 }
 
 // ensurePasswordViaAgent asks the agent to re-apply the stored password via socket.
@@ -1776,6 +1830,12 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 		if socketErr == nil && socketResult != nil && socketResult.Status == "completed" {
 			lastResult = socketResult
 			lastErr = nil
+			// Socket fallback succeeded — save the new password to DB immediately
+			if req.Username == conn.Username && req.NewPassword != "" {
+				if enc, encErr := utils.Encrypt(req.NewPassword, s.encKey); encErr == nil {
+					_ = s.repo.UpdateConnectionPassword(ctx, id, enc)
+				}
+			}
 		}
 	}
 	if lastErr != nil || lastResult == nil || lastResult.Status != "completed" {

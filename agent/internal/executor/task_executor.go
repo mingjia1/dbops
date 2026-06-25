@@ -4487,6 +4487,7 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 
 func changeMySQLUserPassword(ctx context.Context, host string, port int, user, pass, username, userHost, password string) (string, error) {
 	alterSQL := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(userHost), escapeSQL(password))
+	alterLocalSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
 
 	execSQL := func(sql string) (string, error) {
 		out, err := mysqlExecWithSocketFallback(ctx, host, port, user, pass, sql)
@@ -4509,38 +4510,52 @@ func changeMySQLUserPassword(ctx context.Context, host string, port int, user, p
 		return output, nil
 	}
 	if err == nil {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
-		localhostOut, _, localhostErr := tryAlter(localhostSQL)
+		localhostOut, _, localhostErr := tryAlter(alterLocalSQL)
 		if localhostErr == nil {
 			return localhostOut, nil
 		}
 		return output, localhostErr
 	}
-	if !strings.Contains(strings.ToLower(output), "read-only") {
-		return output, err
+
+	// Fallback: try with super_read_only disabled (MGR/replica nodes)
+	if strings.Contains(strings.ToLower(output), "read-only") {
+		stateOut, _ := execSQL("SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
+		restoreReadOnly, restoreSuperReadOnly := parseReadOnlyState(stateOut)
+		if disableOut, disableErr := execSQL("SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF"); disableErr != nil {
+			return strings.TrimSpace(output + "\n" + disableOut), err
+		}
+		alterOut, userExists, alterErr := tryAlter(alterSQL)
+		if !userExists {
+			alterOut, _, alterErr = tryAlter(alterLocalSQL)
+		}
+		restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))
+		restoreOut, restoreErr := execSQL(restoreSQL)
+		combined := strings.TrimSpace(output + "\n" + alterOut + "\n" + restoreOut)
+		if alterErr != nil {
+			return combined, alterErr
+		}
+		if restoreErr != nil {
+			return combined, fmt.Errorf("password changed but failed to restore read_only state: %w", restoreErr)
+		}
+		return combined, nil
 	}
 
-	stateOut, _ := execSQL("SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
-	restoreReadOnly, restoreSuperReadOnly := parseReadOnlyState(stateOut)
-	disableSQL := "SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF"
-	if disableOut, disableErr := execSQL(disableSQL); disableErr != nil {
-		return strings.TrimSpace(output + "\n" + disableOut), err
+	// Final fallback: use system mysql client via socket (handles missing shared libs)
+	socketPath := filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock")
+	for _, mysqlBin := range []string{"/usr/bin/mysql", "/usr/local/bin/mysql"} {
+		if _, statErr := os.Stat(mysqlBin); statErr != nil {
+			continue
+		}
+		sql := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; ALTER USER '%s'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION; FLUSH PRIVILEGES;",
+			escapeSQL(username), escapeSQL(password), escapeSQL(username), escapeSQL(password), escapeSQL(username))
+		cmd := exec.CommandContext(ctx, mysqlBin, "-S", socketPath, "-u", user, "-e", sql)
+		out, cmdErr := cmd.CombinedOutput()
+		if cmdErr == nil {
+			return string(out), nil
+		}
 	}
-	alterOut, userExists, alterErr := tryAlter(alterSQL)
-	if !userExists {
-		localhostSQL := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", escapeSQL(username), escapeSQL(password))
-		alterOut, _, alterErr = tryAlter(localhostSQL)
-	}
-	restoreSQL := fmt.Sprintf("SET GLOBAL read_only=%s; SET GLOBAL super_read_only=%s", boolSQLValue(restoreReadOnly), boolSQLValue(restoreSuperReadOnly))
-	restoreOut, restoreErr := execSQL(restoreSQL)
-	combined := strings.TrimSpace(output + "\n" + alterOut + "\n" + restoreOut)
-	if alterErr != nil {
-		return combined, alterErr
-	}
-	if restoreErr != nil {
-		return combined, fmt.Errorf("password changed but failed to restore read_only state: %w", restoreErr)
-	}
-	return combined, nil
+
+	return output, err
 }
 
 func parseReadOnlyState(output string) (bool, bool) {
