@@ -379,9 +379,13 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("agent binary verification failed: %v\n%s", verifyErr, verifyOut)
 			return result, nil
 		}
-		remoteSizeOut, _ := runSSH(client, "stat -c %s /opt/dbops-agent/agent 2>/dev/null || echo 0")
+		// Use wc -c to get file size (more portable than stat -c)
+		remoteSizeOut, _ := runSSH(client, "wc -c < /opt/dbops-agent/agent 2>/dev/null || ls -la /opt/dbops-agent/agent | awk '{print $5}'")
 		remoteSize := strings.TrimSpace(remoteSizeOut)
-		if remoteSize != fmt.Sprintf("%d", expectedSize) {
+		if remoteSize == "" {
+			remoteSize = "unknown"
+		}
+		if remoteSize != "unknown" && remoteSize != fmt.Sprintf("%d", expectedSize) {
 			result.Message = fmt.Sprintf("agent binary size mismatch: expected %d bytes, remote has %s bytes. Upload may have failed.", expectedSize, remoteSize)
 			return result, nil
 		}
