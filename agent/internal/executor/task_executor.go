@@ -3591,10 +3591,11 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 
 	sqlActions := map[string]bool{
 		"list_users": true, "create_user": true, "drop_user": true,
-		"change_password": true, "grant_privileges": true, "revoke_privileges": true,
+		"grant_privileges": true, "revoke_privileges": true,
 		"show_variables": true, "set_variable": true, "query_variables": true,
-		"reset_password_skip_grant": false,
 	}
+	// change_password and reset_password_skip_grant have their own socket fallback,
+	// so they should not block on cluster readiness
 	if sqlActions[action] && (clusterType == "pxc" || clusterType == "mgr") {
 		if err := waitForClusterReadiness(ctx, host, port, user, pass, clusterType); err != nil {
 			return adminFailed(req.TaskID, err.Error()), nil

@@ -27,14 +27,14 @@ type AgentClient struct {
 
 func NewAgentClient(agentToken string) *AgentClient {
 	return &AgentClient{
-		// B8: Previously 300s timeout caused long tasks to timeout (backup/upgrade/migration/role-switch).
-		// Fix: 30s for short ops; long ops use fire-and-forget + GetTaskProgress polling.
 		httpClient: &http.Client{
 			Timeout: agentDefaultTimeout,
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				MaxResponseHeaderBytes: 8192,
 			},
 		},
 		agentToken: agentToken,
