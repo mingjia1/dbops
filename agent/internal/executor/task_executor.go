@@ -141,13 +141,14 @@ type BackupConfig struct {
 }
 
 type RestoreConfig struct {
-	BackupPath string `json:"backup_path"`
-	BackupType string `json:"backup_type"`
-	DataDir    string `json:"datadir"`
-	MySQLHost  string `json:"mysql_host"`
-	MySQLPort  int    `json:"mysql_port"`
-	MySQLUser  string `json:"mysql_user"`
-	MySQLPass  string `json:"mysql_pass"`
+	BackupPath      string `json:"backup_path"`
+	BackupType      string `json:"backup_type"`
+	DataDir         string `json:"datadir"`
+	MySQLHost       string `json:"mysql_host"`
+	MySQLPort       int    `json:"mysql_port"`
+	MySQLUser       string `json:"mysql_user"`
+	MySQLPass       string `json:"mysql_pass"`
+	ConfirmOverwrite bool  `json:"confirm_overwrite"`
 }
 
 type BackupScanFile struct {
@@ -2401,6 +2402,9 @@ func parseRestoreConfig(config map[string]interface{}) RestoreConfig {
 	if v, ok := config["mysql_pass"].(string); ok {
 		rc.MySQLPass = v
 	}
+	if v, ok := config["confirm_overwrite"].(bool); ok {
+		rc.ConfirmOverwrite = v
+	}
 
 	return rc
 }
@@ -2503,6 +2507,16 @@ func (e *TaskExecutor) executeLogicalRestore(ctx context.Context, config Restore
 	}
 
 	mysqlBin := getMySQLBinary()
+
+	// Pre-restore: reset GTID to avoid GTID_PURGED conflicts
+	if config.ConfirmOverwrite {
+		preCmd := exec.CommandContext(ctx, mysqlBin, "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "-e", "RESET MASTER; SET GLOBAL GTID_PURGED='';")
+		if config.MySQLPass != "" {
+			preCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+		}
+		preCmd.CombinedOutput() // best effort
+	}
+
 	restoreCmd := exec.CommandContext(ctx, mysqlBin, "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user)
 	if config.MySQLPass != "" {
 		restoreCmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)

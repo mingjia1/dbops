@@ -709,12 +709,13 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 			"task_id":     taskID,
 			"instance_id": req.TargetInstanceID,
 			"config": map[string]interface{}{
-				"backup_path": backup.FilePath,
-				"mysql_host":  localMySQLHostForAgent(conn.Host, agentHost),
-				"mysql_port":  conn.Port,
-				"mysql_user":  conn.Username,
-				"mysql_pass":  password,
-				"target_type": req.TargetType,
+				"backup_path":       backup.FilePath,
+				"mysql_host":        localMySQLHostForAgent(conn.Host, agentHost),
+				"mysql_port":        conn.Port,
+				"mysql_user":        conn.Username,
+				"mysql_pass":        password,
+				"target_type":       req.TargetType,
+				"confirm_overwrite": req.ConfirmOverwrite,
 			},
 		})
 		if err != nil {
