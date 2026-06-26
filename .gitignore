@@ -261,3 +261,4 @@ db/*.db-wal
 *.bak
 nul
 **/nul
+r1*.md
