@@ -262,6 +262,3 @@ db/*.db-wal
 nul
 **/nul
 r1*.md
-test*.mjs
-test_all_pages.mjs
-test_all_pages.mjs
