@@ -1957,7 +1957,8 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 			args = append(args, "--exclude-gtids="+baseGTID)
 		}
 		args = append(args, binlogs...)
-		cmd := exec.CommandContext(ctx, "mysqlbinlog", args...)
+		mysqlbinlogPath := resolveBinaryPath("mysqlbinlog")
+		cmd := exec.CommandContext(ctx, mysqlbinlogPath, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			lastErr = fmt.Sprintf("host=%s: %v\n%s", host, err, strings.TrimSpace(string(out)))
 			continue
@@ -2021,7 +2022,7 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 func fetchBinaryLogFiles(ctx context.Context, config BackupConfig) ([]string, error) {
 	var lastErr error
 	for _, host := range backupMySQLHostCandidates(config.MySQLHost) {
-		cmd := exec.CommandContext(ctx, "mysql", "-N", "-B",
+		cmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), "-N", "-B",
 			"-h", host,
 			"-P", fmt.Sprintf("%d", config.MySQLPort),
 			"-u", defaultString(config.MySQLUser, "root"),

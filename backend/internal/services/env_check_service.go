@@ -127,6 +127,22 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	}
 
 	result.Status = "completed"
+	// Determine overall status: if network and agent are all passed, mark as success
+	networkOK := true
+	agentOK := true
+	for _, r := range result.Results {
+		if r.Category == "network" && !r.Passed {
+			networkOK = false
+		}
+		if r.Category == "agent" && !r.Passed {
+			agentOK = false
+		}
+	}
+	if networkOK && agentOK {
+		result.Status = "success"
+	} else if networkOK {
+		result.Status = "partial"
+	}
 	s.resultsMu.Lock()
 	s.results[result.CheckID] = result
 	s.resultsMu.Unlock()

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
@@ -288,9 +287,9 @@ func (r *BackupRepository) CreateRestoreRecord(ctx context.Context, record *mode
 		INSERT INTO restore_records (id, backup_id, target_instance_id, started_at, completed_at, status, restore_point, restored_tables, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	restorePoint := record.RestorePoint
-	if restorePoint.IsZero() || restorePoint.Year() < 1970 {
-		restorePoint = time.Time{}
+	var restorePoint interface{} = record.RestorePoint
+	if record.RestorePoint.IsZero() || record.RestorePoint.Year() < 1970 {
+		restorePoint = nil
 	}
 	_, err := r.db.Pool.ExecContext(ctx, query,
 		record.ID, record.BackupID, record.TargetInstanceID, record.StartedAt, record.CompletedAt,
