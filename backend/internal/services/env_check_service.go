@@ -291,6 +291,42 @@ func agentSystemResults(data map[string]interface{}) []CheckResult {
 			Suggestion: suggestion,
 		})
 	}
+
+	// Architecture deployment readiness checks
+	archChecks := []struct {
+		key      string
+		name     string
+		category string
+	}{
+		{"arch_ha_ready", "HA (Master-Slave)", "deploy_ha"},
+		{"arch_mha_ready", "MHA (MySQL HA)", "deploy_mha"},
+		{"arch_mgr_ready", "MGR (Group Replication)", "deploy_mgr"},
+		{"arch_pxc_ready", "PXC (Percona XtraDB Cluster)", "deploy_pxc"},
+	}
+	for _, ac := range archChecks {
+		val := stringMapValue(data, ac.key)
+		passed := val == "ready"
+		status := "passed"
+		suggestion := ""
+		if !passed {
+			status = "failed"
+			if val == "" {
+				val = "not_checked"
+				status = "unknown"
+			} else {
+				suggestion = "Install missing dependencies before deploying " + ac.name
+			}
+		}
+		out = append(out, CheckResult{
+			Category:   ac.category,
+			Name:       ac.name,
+			Status:     status,
+			Passed:     passed,
+			Value:      val,
+			Suggestion: suggestion,
+		})
+	}
+
 	return out
 }
 

@@ -2704,7 +2704,135 @@ func collectSystemInfo(ctx context.Context) map[string]any {
 	} else {
 		data["libaio"] = "not_found"
 	}
+
+	// Architecture prerequisite checks
+	data["arch_ha_ready"] = checkHAPrerequisites(ctx)
+	data["arch_mha_ready"] = checkMHAPrerequisites(ctx)
+	data["arch_mgr_ready"] = checkMGRPrerequisites(ctx)
+	data["arch_pxc_ready"] = checkPXCPrerequisites(ctx)
+
 	return data
+}
+
+func checkHAPrerequisites(ctx context.Context) string {
+	issues := []string{}
+	if _, err := exec.LookPath("mysqld"); err != nil {
+		for _, p := range []string{"/opt/mysql/bin/mysqld", "/usr/sbin/mysqld", "/usr/bin/mysqld"} {
+			if _, err := os.Stat(p); err == nil {
+				goto ha_ok_mysqld
+			}
+		}
+		issues = append(issues, "mysqld not found")
+	}
+ha_ok_mysqld:
+	if _, err := exec.LookPath("mysql"); err != nil {
+		for _, p := range []string{"/opt/mysql/bin/mysql", "/usr/bin/mysql"} {
+			if _, err := os.Stat(p); err == nil {
+				goto ha_ok_mysql
+			}
+		}
+		issues = append(issues, "mysql client not found")
+	}
+ha_ok_mysql:
+	if _, err := exec.LookPath("mysqladmin"); err != nil {
+		for _, p := range []string{"/opt/mysql/bin/mysqladmin", "/usr/bin/mysqladmin"} {
+			if _, err := os.Stat(p); err == nil {
+				goto ha_ok_admin
+			}
+		}
+		issues = append(issues, "mysqladmin not found")
+	}
+ha_ok_admin:
+	if len(issues) == 0 {
+		return "ready"
+	}
+	return "missing: " + strings.Join(issues, ", ")
+}
+
+func checkMHAPrerequisites(ctx context.Context) string {
+	issues := []string{}
+	ha := checkHAPrerequisites(ctx)
+	if ha != "ready" {
+		issues = append(issues, ha)
+	}
+	if _, err := exec.LookPath("save_binary_logs"); err != nil {
+		if _, err := os.Stat("/usr/bin/save_binary_logs"); err != nil {
+			issues = append(issues, "mha4mysql-node not installed (save_binary_logs)")
+		}
+	}
+	if _, err := exec.LookPath("masterha_check_ssh"); err != nil {
+		if _, err := os.Stat("/usr/bin/masterha_check_ssh"); err != nil {
+			issues = append(issues, "mha4mysql-manager not installed (masterha_check_ssh)")
+		}
+	}
+	if _, err := exec.LookPath("ssh"); err != nil {
+		issues = append(issues, "ssh client not found")
+	}
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		issues = append(issues, "ssh-keygen not found")
+	}
+	if len(issues) == 0 {
+		return "ready"
+	}
+	return "missing: " + strings.Join(issues, ", ")
+}
+
+func checkMGRPrerequisites(ctx context.Context) string {
+	issues := []string{}
+	ha := checkHAPrerequisites(ctx)
+	if ha != "ready" {
+		issues = append(issues, ha)
+	}
+	// MGR requires MySQL 8.0+ - check version
+	version := ""
+	for _, p := range []string{"/opt/mysql/bin/mysql", "/usr/bin/mysql", "mysql"} {
+		if _, err := os.Stat(p); err != nil && p == "mysql" {
+			if _, err := exec.LookPath("mysql"); err != nil {
+				continue
+			}
+		}
+		out := commandOutput(ctx, p, "--version")
+		if out != "" {
+			version = out
+			break
+		}
+	}
+	if version != "" && strings.Contains(version, "Ver 5.") {
+		issues = append(issues, "MySQL 5.x detected, MGR requires MySQL 8.0+")
+	}
+	if len(issues) == 0 {
+		return "ready"
+	}
+	return "missing: " + strings.Join(issues, ", ")
+}
+
+func checkPXCPrerequisites(ctx context.Context) string {
+	issues := []string{}
+	// Check PXC binaries
+	pxcMysqld := "/opt/dbops-pxc/usr/sbin/mysqld"
+	if _, err := os.Stat(pxcMysqld); err != nil {
+		issues = append(issues, "PXC mysqld not found at /opt/dbops-pxc/")
+	}
+	galera := "/opt/dbops-pxc/usr/lib/galera4/libgalera_smm.so"
+	if _, err := os.Stat(galera); err != nil {
+		issues = append(issues, "Galera library not found (libgalera_smm.so)")
+	}
+	// Check SST dependencies
+	if _, err := exec.LookPath("xtrabackup"); err != nil {
+		if _, err := os.Stat("/usr/bin/xtrabackup"); err != nil {
+			issues = append(issues, "xtrabackup not installed (required for SST)")
+		}
+	}
+	if _, err := exec.LookPath("socat"); err != nil {
+		issues = append(issues, "socat not installed (required for SST)")
+	}
+	if _, err := exec.LookPath("qpress"); err != nil {
+		issues = append(issues, "qpress not installed (required for SST compression)")
+	}
+	if len(issues) == 0 {
+		return "ready"
+	}
+	return "missing: " + strings.Join(issues, ", ")
 }
 
 func commandOutput(ctx context.Context, name string, args ...string) string {
