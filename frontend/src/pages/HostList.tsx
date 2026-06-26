@@ -318,7 +318,6 @@ const HostList: React.FC = () => {
       width: 300,
       render: (_, r) => (
         <Space>
-          <Button type="link" size="small" icon={<ScanOutlined />} loading={!!scanningHosts[r.id]} onClick={() => handleScan(r)}>扫描实例</Button>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/instances?host_id=${r.id}`)}>管理实例</Button>
           <Button type="link" size="small" onClick={() => navigate(`/dashboard/hosts/${r.id}/edit`)}>编辑</Button>
           <Popconfirm title="确定删除该主机？" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
@@ -336,7 +335,6 @@ const HostList: React.FC = () => {
         extra={
           <Space>
             <Button icon={<ThunderboltOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchTest}>批量检测</Button>
-            <Button icon={<RocketOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchDeployFromHosts}>部署MySQL</Button>
             <Dropdown menu={{ items: agentMenuItems, onClick: ({ key }) => handleBatchAgent(key) }} disabled={selectedRowKeys.length === 0}>
               <Button disabled={selectedRowKeys.length === 0}>Agent 操作 <DownOutlined /></Button>
             </Dropdown>

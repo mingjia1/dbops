@@ -351,7 +351,6 @@ const InstanceList: React.FC = () => {
               onChange={setHostFilter}
               options={hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))}
             />
-            <Button icon={<ScanOutlined />} onClick={handleScanHost} disabled={!hostFilter}>扫描该主机</Button>
             <Button icon={<CheckCircleOutlined />} disabled={selectedRowKeys.length === 0} onClick={handleBatchHealthCheck}>一键检测选中</Button>
             <Button icon={<ReloadOutlined />} onClick={fetchInstances}>刷新</Button>
             <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
@@ -370,7 +369,6 @@ const InstanceList: React.FC = () => {
             emptyText: (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无实例">
                 <Space>
-                  {hostFilter && <Button type="primary" icon={<ScanOutlined />} onClick={handleScanHost}>扫描该主机并纳管</Button>}
                   <Button icon={<PlusOutlined />} onClick={openCreate}>添加实例</Button>
                   <Button icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量添加</Button>
                 </Space>
