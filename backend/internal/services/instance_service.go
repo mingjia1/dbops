@@ -27,8 +27,9 @@ type InstanceService struct {
 	taskRepo    *repositories.TaskRepository
 	agentClient *AgentClient
 	backupSvc   *BackupService
-	auditSvc    *AuditService // P0: 删/更新/部署 写 audit, SOC2 合规
+	auditSvc    *AuditService
 	encKey      string
+	deployRepo  *repositories.ClusterDeployRepository
 }
 
 func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, auditSvc *AuditService, encKey string) *InstanceService {
@@ -44,6 +45,10 @@ func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *reposit
 
 func (s *InstanceService) SetBackupService(backupSvc *BackupService) {
 	s.backupSvc = backupSvc
+}
+
+func (s *InstanceService) SetDeployRepo(repo *repositories.ClusterDeployRepository) {
+	s.deployRepo = repo
 }
 
 func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest) (*models.Instance, error) {
@@ -815,11 +820,19 @@ func parseShowVariablesOutput(message string) map[string]string {
 }
 
 func (s *InstanceService) getClusterType(ctx context.Context, clusterID string) (string, error) {
-	repo := s.repo
-	_ = repo
-	// Check the deployments table for cluster_type
-	type deployRow struct{ ClusterType string }
-	// Simplified: try to infer from cluster_id prefix
+	if clusterID == "" {
+		return "ha", nil
+	}
+	if s.deployRepo != nil {
+		dep, err := s.deployRepo.GetByID(ctx, clusterID)
+		if err == nil && dep != nil && dep.ClusterType != "" {
+			return strings.ToLower(dep.ClusterType), nil
+		}
+		dep, err = s.deployRepo.GetByName(ctx, clusterID)
+		if err == nil && dep != nil && dep.ClusterType != "" {
+			return strings.ToLower(dep.ClusterType), nil
+		}
+	}
 	lower := strings.ToLower(clusterID)
 	if strings.Contains(lower, "pxc") {
 		return "pxc", nil
@@ -1546,6 +1559,14 @@ func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPass
 }
 
 func (s *InstanceService) adminActionWithConnection(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, req InstanceAdminRequest) (*InstanceAdminResult, error) {
+	return s.adminActionWithConnectionAndTimeout(ctx, instance, conn, req, 0)
+}
+
+func (s *InstanceService) adminActionWithConnectionLong(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, req InstanceAdminRequest) (*InstanceAdminResult, error) {
+	return s.adminActionWithConnectionAndTimeout(ctx, instance, conn, req, agentAdminLongTimeout)
+}
+
+func (s *InstanceService) adminActionWithConnectionAndTimeout(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, req InstanceAdminRequest, timeout time.Duration) (*InstanceAdminResult, error) {
 	if err := validateInstanceAdminMetadata(conn, req); err != nil {
 		return failedInstanceAdminResult(err.Error()), nil
 	}
@@ -1558,35 +1579,43 @@ func (s *InstanceService) adminActionWithConnection(ctx context.Context, instanc
 		return nil, err
 	}
 	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	clusterType, _ := s.getClusterType(ctx, instance.ClusterID)
 	if s.agentClient == nil {
 		return nil, fmt.Errorf("agent client not configured")
 	}
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+	payload := map[string]interface{}{
 		"task_id":     "instance-admin-" + uuid.New().String(),
 		"instance_id": instance.ID,
 		"config": map[string]interface{}{
-			"action":      req.Action,
-			"target_host": targetHost,
-			"target_port": conn.Port,
-			"target_user": conn.Username,
-			"target_pass": password,
-			"username":    req.Username,
-			"user_host":   req.UserHost,
-			"password":    req.Password,
-			"privileges":  req.Privileges,
-			"scope":       req.Scope,
-			"pattern":     req.Pattern,
-			"name":        req.Name,
-			"value":       req.Value,
-			"path":        req.Path,
-			"content":     req.Content,
-			"service":     req.Service,
-			"verb":        req.Verb,
-			"basedir":     conn.Basedir,
-			"datadir":     conn.Datadir,
-			"os_user":     conn.OSUser,
+			"action":       req.Action,
+			"target_host":  targetHost,
+			"target_port":  conn.Port,
+			"target_user":  conn.Username,
+			"target_pass":  password,
+			"username":     req.Username,
+			"user_host":    req.UserHost,
+			"password":     req.Password,
+			"privileges":   req.Privileges,
+			"scope":        req.Scope,
+			"pattern":      req.Pattern,
+			"name":         req.Name,
+			"value":        req.Value,
+			"path":         req.Path,
+			"content":      req.Content,
+			"service":      req.Service,
+			"verb":         req.Verb,
+			"basedir":      conn.Basedir,
+			"datadir":      firstNonEmpty(req.Datadir, conn.Datadir),
+			"os_user":      conn.OSUser,
+			"cluster_type": clusterType,
 		},
-	})
+	}
+	var result *AgentTaskResult
+	if timeout > 0 {
+		result, err = s.agentClient.callAgentLong(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", payload)
+	} else {
+		result, err = s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", payload)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("instance admin call failed: %w", err)
 	}
@@ -1824,13 +1853,13 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 	for _, uHost := range socketHosts {
 		original := conn.PasswordEncrypted
 		conn.PasswordEncrypted = ""
-		_, _ = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+		_, _ = s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
 			Action:   "create_user",
 			Username: req.Username,
 			UserHost: uHost,
 			Password: req.NewPassword,
 		})
-		socketResult, socketErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+		socketResult, socketErr := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
 			Action:               "change_password",
 			Username:             req.Username,
 			UserHost:             uHost,
@@ -1858,7 +1887,7 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 
 	// Try skip_grant_tables approach
 	log.Printf("ForceChangePassword [%s]: trying skip_grant_tables approach", id)
-	skipGrantResult, skipGrantErr := s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+	skipGrantResult, skipGrantErr := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
 		Action:               "reset_password_skip_grant",
 		Username:             req.Username,
 		UserHost:             req.UserHost,
@@ -1892,7 +1921,7 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 			continue
 		}
 		conn.PasswordEncrypted = encrypted
-		lastResult, lastErr = s.adminActionWithConnection(ctx, instance, conn, InstanceAdminRequest{
+		lastResult, lastErr = s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
 			Action:               "change_password",
 			Username:             req.Username,
 			UserHost:             req.UserHost,

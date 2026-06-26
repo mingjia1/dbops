@@ -182,6 +182,7 @@ func main() {
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)
 	clusterDeployNodeRepo := repositories.NewClusterDeployNodeRepository(db)
+	instanceService.SetDeployRepo(clusterDeployRepo)
 	clusterDeployService := services.NewClusterDeployService(clusterDeployRepo, clusterDeployNodeRepo, hostRepo, instanceRepo, agentClient, cfg.ClusterDefaults, auditService)
 	clusterDeployService.SetEncryptionKey(cfg.EncryptionKey)
 	clusterDeployService.SetBackupService(backupService)

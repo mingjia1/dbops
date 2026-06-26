@@ -3586,6 +3586,20 @@ func sortStrings(items []string) {
 func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	action, _ := req.Config["action"].(string)
 	host, port, user, pass := adminTarget(req.Config)
+	clusterType, _ := req.Config["cluster_type"].(string)
+	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
+
+	sqlActions := map[string]bool{
+		"list_users": true, "create_user": true, "drop_user": true,
+		"change_password": true, "grant_privileges": true, "revoke_privileges": true,
+		"show_variables": true, "set_variable": true, "query_variables": true,
+		"reset_password_skip_grant": false,
+	}
+	if sqlActions[action] && (clusterType == "pxc" || clusterType == "mgr") {
+		if err := waitForClusterReadiness(ctx, host, port, user, pass, clusterType); err != nil {
+			return adminFailed(req.TaskID, err.Error()), nil
+		}
+	}
 
 	var (
 		output string
@@ -3887,7 +3901,38 @@ func queryReplicationStatus(ctx context.Context, config map[string]interface{}) 
 	}
 }
 
+func waitForClusterReadiness(ctx context.Context, host string, port int, user, pass, clusterType string) error {
+	const maxWait = 30 * time.Second
+	const pollInterval = 3 * time.Second
+	deadline := time.Now().Add(maxWait)
+
+	switch clusterType {
+	case "pxc":
+		for time.Now().Before(deadline) {
+			out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+				"SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='wsrep_ready'")
+			if err == nil && strings.TrimSpace(out) == "ON" {
+				return nil
+			}
+			time.Sleep(pollInterval)
+		}
+		return fmt.Errorf("PXC node wsrep_ready did not become ON within %s", maxWait)
+	case "mgr":
+		for time.Now().Before(deadline) {
+			out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+				"SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid")
+			if err == nil && strings.TrimSpace(out) == "ONLINE" {
+				return nil
+			}
+			time.Sleep(pollInterval)
+		}
+		return fmt.Errorf("MGR node did not reach ONLINE state within %s", maxWait)
+	}
+	return nil
+}
+
 func detectClusterType(ctx context.Context, host string, port int, user, pass string) string {
+
 	out, err := runMySQLExecSafe(ctx, host, port, user, pass,
 		"SELECT COUNT(*) FROM performance_schema.replication_group_members")
 	if err == nil && strings.TrimSpace(out) != "0" {

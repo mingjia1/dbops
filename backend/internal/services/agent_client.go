@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	agentDefaultTimeout    = 2 * time.Minute
-	agentDeploymentTimeout = 60 * time.Minute
+	agentDefaultTimeout      = 2 * time.Minute
+	agentAdminLongTimeout    = 5 * time.Minute
+	agentDeploymentTimeout   = 60 * time.Minute
 	agentInstallToolsTimeout = 30 * time.Minute
 )
 
@@ -176,6 +177,10 @@ func (c *AgentClient) ExecuteBackup(ctx context.Context, hostAddr string, agentP
 
 func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}) (*AgentTaskResult, error) {
 	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, path, payload, agentDefaultTimeout)
+}
+
+func (c *AgentClient) callAgentLong(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}) (*AgentTaskResult, error) {
+	return c.callAgentWithTimeout(ctx, hostAddr, agentPort, path, payload, agentAdminLongTimeout)
 }
 
 func (c *AgentClient) CallAgentRaw(ctx context.Context, hostAddr string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error) {

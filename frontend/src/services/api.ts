@@ -247,7 +247,7 @@ export const instanceApi = {
     verb?: string
     update_stored_password?: boolean
   }) =>
-    api.post(`/instances/${id}/admin-action`, data, { timeout: 120000 }).then(rejectBusinessError).then(rejectFailedTaskData),
+    api.post(`/instances/${id}/admin-action`, data, { timeout: 360000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   batchUpdatePassword: (data: {
     host: string
@@ -261,7 +261,7 @@ export const instanceApi = {
     api.post('/instances/admin/batch-password', data),
 
   forceResetPassword: (id: string, data: { new_password?: string; username?: string; user_host?: string } = {}) =>
-    api.post(`/instances/${id}/force-reset-password`, data),
+    api.post(`/instances/${id}/force-reset-password`, data, { timeout: 360000 }),
 
   getCredentials: (id: string) =>
     api.get(`/instances/${id}/credentials`),
