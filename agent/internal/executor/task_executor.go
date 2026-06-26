@@ -1620,7 +1620,19 @@ func estimateMySQLDataSize(ctx context.Context, config BackupConfig) (int64, err
 	}
 	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("host=%s: parse size %q: %w", config.MySQLHost, strings.TrimSpace(string(out)), err)
+		// mysql client may echo the SQL query before the result; try last non-empty line
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			s := strings.TrimSpace(lines[i])
+			if s != "" {
+				if size, err = strconv.ParseInt(s, 10, 64); err == nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			return 0, fmt.Errorf("host=%s: parse size %q: %w", config.MySQLHost, strings.TrimSpace(string(out)), err)
+		}
 	}
 	return size, nil
 }

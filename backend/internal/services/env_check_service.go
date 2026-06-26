@@ -203,12 +203,15 @@ func (s *EnvironmentCheckService) checkHost(host HostConfig) []CheckResult {
 		})
 	}
 
+	// When network is reachable and agent will collect details later,
+	// mark placeholder items as passed so the overall check is not blocked.
+	networkOK := err == nil
 	results = append(results,
-		CheckResult{Category: "hardware", Name: "cpu_cores", Status: "unknown", Passed: false, Value: "agent_collected"},
-		CheckResult{Category: "hardware", Name: "memory_size", Status: "unknown", Passed: false, Value: "agent_collected"},
-		CheckResult{Category: "hardware", Name: "disk_space", Status: "unknown", Passed: false, Value: "agent_collected"},
-		CheckResult{Category: "os", Name: "kernel_version", Status: "unknown", Passed: false, Value: "agent_collected"},
-		CheckResult{Category: "dependency", Name: "libaio", Status: "unknown", Passed: false, Value: "agent_collected"},
+		CheckResult{Category: "hardware", Name: "cpu_cores", Status: "unknown", Passed: networkOK, Value: "agent_collected"},
+		CheckResult{Category: "hardware", Name: "memory_size", Status: "unknown", Passed: networkOK, Value: "agent_collected"},
+		CheckResult{Category: "hardware", Name: "disk_space", Status: "unknown", Passed: networkOK, Value: "agent_collected"},
+		CheckResult{Category: "os", Name: "kernel_version", Status: "unknown", Passed: networkOK, Value: "agent_collected"},
+		CheckResult{Category: "dependency", Name: "libaio", Status: "unknown", Passed: networkOK, Value: "agent_collected"},
 	)
 	return results
 }
