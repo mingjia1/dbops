@@ -1885,6 +1885,14 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 		return nil
 	}
 
+	// Ensure MySQL is running before attempting password reset
+	log.Printf("ForceChangePassword [%s]: ensuring MySQL is running", id)
+	s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
+		Action:  "service_control",
+		Verb:    "start",
+		Datadir: conn.Datadir,
+	})
+
 	// Try skip_grant_tables approach
 	log.Printf("ForceChangePassword [%s]: trying skip_grant_tables approach", id)
 	skipGrantResult, skipGrantErr := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
