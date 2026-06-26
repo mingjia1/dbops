@@ -4,7 +4,7 @@ import { triggerLogout } from './authEvents'
 
 const api = axios.create({
   baseURL: '/api/v1',
-  timeout: 10000,
+  timeout: 360000,
   // HttpOnly cookie (auth_token) is sent automatically; Authorization is no longer the only auth path.
   withCredentials: true,
 })
