@@ -109,7 +109,10 @@ const EnvironmentCheck: React.FC = () => {
         for (const item of data.results) {
           if (item.host) {
             if (!hostStatus[item.host]) hostStatus[item.host] = 'success'
-            if (!item.passed) hostStatus[item.host] = 'failed'
+            // Only network and agent categories determine host pass/fail
+            if ((item.category === 'network' || item.category === 'agent') && !item.passed) {
+              hostStatus[item.host] = 'failed'
+            }
           }
         }
         setHosts(prev => prev.map(h => {
@@ -117,15 +120,21 @@ const EnvironmentCheck: React.FC = () => {
           return status ? { ...h, status } : h
         }))
       }
-      const results = data?.results || []
-      const failedItems = results.filter((item: CheckItem) => !item.passed)
-      if (failedItems.length > 0) {
-        Modal.warning({
-          title: '环境检查完成',
-          content: `${failedItems.length} 项未通过`,
-        })
-      } else {
+      // Use backend overall status instead of counting all failed items
+      if (data?.status === 'success') {
         message.success('环境检查通过')
+      } else {
+        const criticalFailed = (data?.results || []).filter(
+          (item: CheckItem) => (item.category === 'network' || item.category === 'agent') && !item.passed
+        )
+        if (criticalFailed.length > 0) {
+          Modal.warning({
+            title: '环境检查完成',
+            content: `${criticalFailed.length} 项关键检查未通过（网络/代理）`,
+          })
+        } else {
+          message.success('环境检查通过')
+        }
       }
     } finally {
       setSubmitting(false)

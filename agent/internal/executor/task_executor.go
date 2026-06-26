@@ -2395,6 +2395,8 @@ func parseRestoreConfig(config map[string]interface{}) RestoreConfig {
 	}
 	if v, ok := config["mysql_port"].(int); ok {
 		rc.MySQLPort = v
+	} else if v, ok := config["mysql_port"].(float64); ok {
+		rc.MySQLPort = int(v)
 	}
 	if v, ok := config["mysql_user"].(string); ok {
 		rc.MySQLUser = v
