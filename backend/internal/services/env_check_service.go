@@ -291,6 +291,43 @@ func agentSystemResults(data map[string]interface{}) []CheckResult {
 			Suggestion: suggestion,
 		})
 	}
+	// Deployment readiness checks
+	readinessChecks := []struct {
+		key      string
+		name     string
+		passCond func(string) bool
+		suggest  string
+	}{
+		{"dep_numactl", "numactl", func(v string) bool { return v == "installed" }, "yum install -y numactl 或 apt-get install -y numactl"},
+		{"dep_ncurses", "ncurses", func(v string) bool { return v == "installed" }, "yum install -y ncurses-libs 或 apt-get install -y libncurses5"},
+		{"prep_mysql_user", "mysql 用户", func(v string) bool { return v == "exists" }, "useradd -r -s /sbin/nologin mysql"},
+		{"prep_datadir_perm", "数据目录", func(v string) bool { return v == "ready" }, "mkdir -p /data/mysql && chown -R mysql:mysql /data/mysql"},
+		{"prep_disk_space", "磁盘空间", func(v string) bool { return v == "sufficient" }, "磁盘可用空间不足 50G，建议清理或扩容"},
+		{"prep_port_available", "3306 端口", func(v string) bool { return v == "available" }, "端口 3306 已被占用，请释放或使用其他端口"},
+	}
+	for _, rc := range readinessChecks {
+		val := stringMapValue(data, rc.key)
+		passed := rc.passCond(val)
+		status := "passed"
+		suggestion := ""
+		if val == "" {
+			val = "not_checked"
+			status = "unknown"
+			passed = false
+		} else if !passed {
+			status = "failed"
+			suggestion = rc.suggest
+		}
+		out = append(out, CheckResult{
+			Category:   "readiness",
+			Name:       rc.name,
+			Status:     status,
+			Passed:     passed,
+			Value:      val,
+			Suggestion: suggestion,
+		})
+	}
+
 	return out
 }
 

@@ -2704,7 +2704,88 @@ func collectSystemInfo(ctx context.Context) map[string]any {
 	} else {
 		data["libaio"] = "not_found"
 	}
+
+	// Deployment readiness checks
+	data["dep_numactl"] = checkBinary(ctx, "numactl")
+	data["dep_ncurses"] = checkNcurses(ctx)
+	data["prep_mysql_user"] = checkMySQLUser()
+	data["prep_datadir_perm"] = checkDatadirPerm()
+	data["prep_disk_space"] = checkDiskSpace()
+	data["prep_port_available"] = checkPortAvailable(3306)
+
 	return data
+}
+
+func checkBinary(ctx context.Context, name string) string {
+	if _, err := exec.LookPath(name); err == nil {
+		return "installed"
+	}
+	if out := commandOutput(ctx, "sh", "-c", "rpm -q "+name+" 2>/dev/null || dpkg -s "+name+" 2>/dev/null | grep -m1 '^Status:'"); out != "" {
+		if strings.Contains(out, "not installed") || strings.Contains(out, "no packages") {
+			return "not_installed"
+		}
+		return "installed"
+	}
+	return "not_installed"
+}
+
+func checkNcurses(ctx context.Context) string {
+	for _, lib := range []string{"libncurses.so", "libncursesw.so", "libtinfo.so"} {
+		if out := commandOutput(ctx, "sh", "-c", "ldconfig -p 2>/dev/null | grep -m1 "+lib); out != "" {
+			return "installed"
+		}
+	}
+	for _, pkg := range []string{"ncurses-libs", "libncurses5", "libtinfo5", "ncurses-compat-libs"} {
+		if out := commandOutput(ctx, "sh", "-c", "rpm -q "+pkg+" 2>/dev/null || dpkg -s "+pkg+" 2>/dev/null | grep -m1 '^Status:'"); out != "" {
+			if !strings.Contains(out, "not installed") && !strings.Contains(out, "no packages") {
+				return "installed"
+			}
+		}
+	}
+	return "not_installed"
+}
+
+func checkMySQLUser() string {
+	if _, err := exec.Command("id", "mysql").CombinedOutput(); err == nil {
+		return "exists"
+	}
+	return "not_exists"
+}
+
+func checkDatadirPerm() string {
+	dirs := []string{"/data/mysql", "/data"}
+	for _, d := range dirs {
+		info, err := os.Stat(d)
+		if err == nil && info.IsDir() {
+			return "ready"
+		}
+	}
+	return "no_datadir"
+}
+
+func checkDiskSpace() string {
+	out := commandOutput(context.Background(), "sh", "-c", "df -BG / | awk 'NR==2 {print $4}'")
+	if out == "" {
+		return "unknown"
+	}
+	out = strings.TrimSuffix(strings.TrimSpace(out), "G")
+	var gb int
+	fmt.Sscanf(out, "%d", &gb)
+	if gb >= 50 {
+		return "sufficient"
+	} else if gb >= 20 {
+		return "low"
+	}
+	return "critical"
+}
+
+func checkPortAvailable(port int) string {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+	if err != nil {
+		return "available"
+	}
+	conn.Close()
+	return "in_use"
 }
 
 func commandOutput(ctx context.Context, name string, args ...string) string {
