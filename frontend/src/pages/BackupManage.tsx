@@ -194,7 +194,6 @@ const BackupManage: React.FC = () => {
       const list = data.backups || []
       setDiscovered(list)
       setScannedAt(data.scanned_at)
-      setScanOpen(true)
       await fetchRecordsFor(selectedInstance)
       message.success(`扫描完成，发现 ${list.length} 个备份文件`)
     } catch (err: any) {
@@ -340,17 +339,19 @@ const BackupManage: React.FC = () => {
   }
 
   const recordColumns: ColumnsType<BackupRecord> = [
-    { title: '实例', dataIndex: 'instance_id', key: 'instance_id', render: instanceName },
+    { title: '实例', dataIndex: 'instance_id', key: 'instance_id', width: 120, ellipsis: true, render: instanceName },
     {
       title: '类型',
       dataIndex: 'backup_type',
       key: 'backup_type',
+      width: 80,
       render: (type) => <BackupTypeTag type={type} />,
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 90,
       render: (status) => (
         <Tag color={isCompletedBackupStatus(status) ? 'success' : isActiveBackupStatus(status) ? 'processing' : isFailedBackupStatus(status) ? 'error' : 'default'}>
           {formatStatus(status)}
@@ -364,16 +365,16 @@ const BackupManage: React.FC = () => {
       ellipsis: true,
       render: (text) => text ? <Tooltip title={text}>{text}</Tooltip> : '-',
     },
-    { title: '大小', dataIndex: 'size', key: 'size' },
+    { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
     {
       title: '文件',
       dataIndex: 'file_path',
       key: 'file_path',
-      width: 180,
+      width: 260,
       ellipsis: true,
       render: (path) => path ? <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path.split('/').pop() || path}</span></Tooltip> : '-',
     },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v) => v ? new Date(v).toLocaleString() : '-' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v) => v ? new Date(v).toLocaleString() : '-' },
     {
       title: '\u64cd\u4f5c',
       key: 'actions',
@@ -406,7 +407,7 @@ const BackupManage: React.FC = () => {
   ]
 
   const policyColumns: ColumnsType<BackupPolicy> = [
-    { title: '实例', dataIndex: 'instance_id', key: 'instance_id', render: instanceName },
+    { title: '实例', dataIndex: 'instance_id', key: 'instance_id', width: 120, ellipsis: true, render: instanceName },
     { title: '类型', dataIndex: 'backup_type', key: 'backup_type', render: (type) => <BackupTypeTag type={type} /> },
     { title: 'Cron', dataIndex: 'schedule', key: 'schedule' },
     {
@@ -560,32 +561,23 @@ const BackupManage: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal
-        title="扫描已有备份"
-        open={scanOpen}
-        onCancel={() => setScanOpen(false)}
-        footer={[
-          <Button key="close" onClick={() => setScanOpen(false)}>关闭</Button>,
-          <Button key="scan" icon={<ScanOutlined />} onClick={scanBackups} loading={scanLoading}>重新扫描</Button>,
-        ]}
-        width="min(1040px, 96vw)"
-      >
-        {scannedAt && <div style={{ marginBottom: 8, color: '#8c8c8c' }}>扫描时间: {new Date(scannedAt).toLocaleString()}</div>}
-        <Table
-          rowKey="file_path"
-          size="small"
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 920 }}
-          dataSource={discovered}
-          columns={[
-            { title: '文件', dataIndex: 'file_name', key: 'file_name', width: 180, ellipsis: true, render: (name) => <Tag color="blue">{name}</Tag> },
-            { title: '类型', dataIndex: 'backup_type', key: 'backup_type', width: 100, render: (type) => <BackupTypeTag type={type} /> },
-            { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', width: 110, render: formatSize },
-            { title: '文件', dataIndex: 'file_path', key: 'file_path', width: 180, ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path?.split('/').pop() || path || '-'}</span></Tooltip> },
-            { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', width: 120, render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
-          ]}
-        />
-      </Modal>
+      {discovered.length > 0 && (
+        <Card style={{ marginTop: 16 }} title={<Space><FileSearchOutlined /><span>扫描发现的备份</span><Tag>{discovered.length} 个</Tag>{scannedAt && <span style={{ fontSize: 12, color: '#8c8c8c' }}>扫描于 {new Date(scannedAt).toLocaleString()}</span>}</Space>}>
+          <Table
+            rowKey="file_path"
+            size="small"
+            pagination={{ pageSize: 10 }}
+            dataSource={discovered}
+            columns={[
+              { title: '文件', dataIndex: 'file_name', key: 'file_name', width: 200, ellipsis: true, render: (name) => <Tag color="blue">{name}</Tag> },
+              { title: '类型', dataIndex: 'backup_type', key: 'backup_type', width: 80, render: (type) => <BackupTypeTag type={type} /> },
+              { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', width: 100, render: formatSize },
+              { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', width: 100, render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
+              { title: '路径', dataIndex: 'file_path', key: 'file_path', ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{path || '-'}</span></Tooltip> },
+            ]}
+          />
+        </Card>
+      )}
     </div>
   )
 }

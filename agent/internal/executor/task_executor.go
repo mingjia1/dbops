@@ -1825,7 +1825,26 @@ func isLogicalDumpBackupPath(path string) bool {
 	return strings.HasSuffix(normalized, ".sql") || strings.HasSuffix(normalized, ".sql.gz")
 }
 
+func hasBinary(name string) bool {
+	if _, err := exec.LookPath(name); err == nil {
+		return true
+	}
+	for _, dir := range []string{"/opt/mysql/bin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/mysql/bin"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *TaskExecutor) tryInstallMysqlClient(ctx context.Context) error {
+	// First check common MySQL binary locations even if not in PATH
+	for _, dir := range []string{"/opt/mysql/bin", "/usr/bin", "/usr/sbin", "/usr/local/bin"} {
+		bin := filepath.Join(dir, "mysqlbinlog")
+		if _, err := os.Stat(bin); err == nil {
+			return nil
+		}
+	}
 	packages := [][]string{
 		{"apt-get", "install", "-y", "-qq", "mysql-client"},
 		{"apt-get", "install", "-y", "-qq", "mysql-client-core-8.0"},
@@ -1843,6 +1862,13 @@ func (e *TaskExecutor) tryInstallMysqlClient(ctx context.Context) error {
 			}
 		}
 	}
+	// Re-check after install attempts
+	for _, dir := range []string{"/opt/mysql/bin", "/usr/bin", "/usr/sbin", "/usr/local/bin"} {
+		bin := filepath.Join(dir, "mysqlbinlog")
+		if _, err := os.Stat(bin); err == nil {
+			return nil
+		}
+	}
 	return fmt.Errorf("failed to install mysql-client package automatically")
 }
 
@@ -1858,7 +1884,7 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 	if !isLogicalDumpBackupPath(config.BaseBackupPath) {
 		return e.executeXtrabackup(ctx, config, false)
 	}
-	if _, err := exec.LookPath("mysqlbinlog"); err != nil {
+	if !hasBinary("mysqlbinlog") {
 		if installErr := e.tryInstallMysqlClient(ctx); installErr != nil {
 			return &TaskResult{
 				Status:    "failed",
@@ -1867,7 +1893,7 @@ func (e *TaskExecutor) executeGTIDIncrementalBackup(ctx context.Context, config 
 				Timestamp: time.Now(),
 			}, nil
 		}
-		if _, err := exec.LookPath("mysqlbinlog"); err != nil {
+		if !hasBinary("mysqlbinlog") {
 			return &TaskResult{
 				Status:    "failed",
 				Progress:  0,
