@@ -263,6 +263,9 @@ export const instanceApi = {
   forceResetPassword: (id: string, data: { new_password?: string; username?: string; user_host?: string } = {}) =>
     api.post(`/instances/${id}/force-reset-password`, data, { timeout: 360000 }),
 
+  recoverCluster: (id: string) =>
+    api.post(`/instances/${id}/recover-cluster`, {}, { timeout: 360000 }),
+
   getCredentials: (id: string) =>
     api.get(`/instances/${id}/credentials`),
 }

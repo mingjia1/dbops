@@ -233,6 +233,16 @@ func (c *InstanceController) UpdateStatus(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, instance)
 }
 
+func (c *InstanceController) RecoverCluster(ctx *gin.Context) {
+	id := ctx.Param("id")
+	result, err := c.service.RecoverCluster(ctx.Request.Context(), id)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to recover cluster", err)
+		return
+	}
+	utils.SuccessResponse(ctx, result)
+}
+
 func (c *InstanceController) GetCredentials(ctx *gin.Context) {
 	id := ctx.Param("id")
 	adminUser := ctx.GetString("user_id")

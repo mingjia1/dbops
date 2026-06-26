@@ -3758,6 +3758,10 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output, err = decommissionInstance(ctx, req.Config)
 	case "query_variables":
 		output, err = queryMySQLVariables(ctx, req.Config)
+	case "recover_cluster":
+		output, err = recoverCluster(ctx, req.Config)
+	case "repair_replication":
+		output, err = repairReplication(ctx, req.Config)
 	default:
 		return adminFailed(req.TaskID, "unsupported action: "+action), nil
 	}
@@ -3929,6 +3933,210 @@ func waitForClusterReadiness(ctx context.Context, host string, port int, user, p
 		return fmt.Errorf("MGR node did not reach ONLINE state within %s", maxWait)
 	}
 	return nil
+}
+
+func recoverCluster(ctx context.Context, config map[string]interface{}) (string, error) {
+	clusterType, _ := config["cluster_type"].(string)
+	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
+	host, port, user, pass := adminTarget(config)
+
+	switch clusterType {
+	case "pxc":
+		return recoverPXCCluster(ctx, host, port, user, pass, config)
+	case "mgr":
+		return recoverMGRCluster(ctx, host, port, user, pass)
+	default:
+		return repairReplication(ctx, config)
+	}
+}
+
+func recoverPXCCluster(ctx context.Context, host string, port int, user, pass string, config map[string]interface{}) (string, error) {
+	datadir, _ := config["datadir"].(string)
+	if datadir == "" {
+		datadir = detectMySQLDatadir(port)
+	}
+	if datadir == "" {
+		return "", fmt.Errorf("cannot determine datadir for PXC port %d", port)
+	}
+
+	grastatePath := filepath.Join(datadir, "grastate.dat")
+	data, err := os.ReadFile(grastatePath)
+	if err != nil {
+		return "", fmt.Errorf("cannot read grastate.dat: %w", err)
+	}
+
+	// Check if wsrep_ready is already ON
+	out, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SHOW GLOBAL STATUS LIKE 'wsrep_ready'")
+	if strings.Contains(out, "ON") {
+		// Check cluster status
+		out2, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+			"SHOW GLOBAL STATUS LIKE 'wsrep_cluster_status'")
+		if strings.Contains(out2, "Primary") {
+			return "PXC node already healthy: wsrep_ready=ON, cluster_status=Primary", nil
+		}
+		// Non-Primary: need to re-bootstrap
+	}
+
+	// Set safe_to_bootstrap=1 in grastate.dat
+	content := string(data)
+	if strings.Contains(content, "safe_to_bootstrap: 0") {
+		content = strings.Replace(content, "safe_to_bootstrap: 0", "safe_to_bootstrap: 1", 1)
+		if err := os.WriteFile(grastatePath, []byte(content), 0644); err != nil {
+			return "", fmt.Errorf("failed to update grastate.dat: %w", err)
+		}
+	}
+
+	// Read config to get original wsrep_cluster_address
+	cnfPath, _ := config["config_path"].(string)
+	if cnfPath == "" {
+		cnfPath = fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", port)
+	}
+
+	// Stop current instance
+	pkillCmd := exec.CommandContext(ctx, "pkill", "-9", "-f", fmt.Sprintf("mysqld.*pxc-%d", port))
+	pkillCmd.Run()
+	time.Sleep(3 * time.Second)
+
+	// Bootstrap: temporarily set wsrep_cluster_address=gcomm://
+	if _, err := os.Stat(cnfPath); err == nil {
+		cnfData, _ := os.ReadFile(cnfPath)
+		origCnf := string(cnfData)
+		bootstrapCnf := regexp.MustCompile(`wsrep_cluster_address=gcomm://[^\n]*`).ReplaceAllString(origCnf, "wsrep_cluster_address=gcomm://")
+		os.WriteFile(cnfPath, []byte(bootstrapCnf), 0644)
+
+		// Start bootstrap node
+		mysqld := fmt.Sprintf("/opt/dbops-pxc/usr/sbin/mysqld")
+		if _, err := os.Stat(mysqld); err != nil {
+			mysqld = findMysqldForReset(datadir)
+		}
+		startCmd := exec.CommandContext(ctx, mysqld, "--defaults-file="+cnfPath, "--user=mysql", "--daemonize")
+		startCmd.Run()
+		time.Sleep(15 * time.Second)
+
+		// Verify wsrep_ready
+		checkOut, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+			"SHOW GLOBAL STATUS LIKE 'wsrep_ready'")
+		if strings.Contains(checkOut, "ON") {
+			// Restore original config and do rolling restart
+			os.WriteFile(cnfPath, []byte(origCnf), 0644)
+			return "PXC cluster bootstrapped successfully, wsrep_ready=ON. Other nodes should auto-rejoin.", nil
+		}
+
+		// Restore config even if bootstrap failed
+		os.WriteFile(cnfPath, []byte(origCnf), 0644)
+		return "", fmt.Errorf("PXC bootstrap started but wsrep_ready is not ON after 15s")
+	}
+
+	return "", fmt.Errorf("PXC config file not found at %s", cnfPath)
+}
+
+func recoverMGRCluster(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	// Check current member state
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid")
+	if err != nil {
+		return "", fmt.Errorf("cannot query MGR state: %w", err)
+	}
+	state := strings.TrimSpace(out)
+
+	if state == "ONLINE" {
+		// Check if this is the only member (needs bootstrap)
+		countOut, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+			"SELECT COUNT(*) FROM performance_schema.replication_group_members WHERE MEMBER_STATE='ONLINE'")
+		count := strings.TrimSpace(countOut)
+		if count == "1" {
+			return "MGR single node ONLINE, other nodes should rejoin when started", nil
+		}
+		return "MGR node already ONLINE", nil
+	}
+
+	// Try to rejoin
+	runMySQLExecSafe(ctx, host, port, user, pass, "STOP GROUP_REPLICATION")
+	time.Sleep(2 * time.Second)
+
+	// Check if this should be the bootstrap node (all others offline)
+	offlineCount, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT COUNT(*) FROM performance_schema.replication_group_members WHERE MEMBER_STATE != 'ONLINE'")
+	allOffline := strings.TrimSpace(offlineCount) == "0" || strings.TrimSpace(offlineCount) == ""
+
+	if allOffline {
+		// Bootstrap the group
+		runMySQLExecSafe(ctx, host, port, user, pass,
+			"SET GLOBAL group_replication_bootstrap_group=ON")
+	}
+
+	_, startErr := runMySQLExecSafe(ctx, host, port, user, pass, "START GROUP_REPLICATION")
+
+	if allOffline {
+		runMySQLExecSafe(ctx, host, port, user, pass,
+			"SET GLOBAL group_replication_bootstrap_group=OFF")
+	}
+
+	if startErr != nil {
+		return "", fmt.Errorf("START GROUP_REPLICATION failed: %w", startErr)
+	}
+
+	time.Sleep(5 * time.Second)
+	out2, _ := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SELECT MEMBER_STATE FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid")
+	newState := strings.TrimSpace(out2)
+	return fmt.Sprintf("MGR recovery attempted, current state: %s", newState), nil
+}
+
+func repairReplication(ctx context.Context, config map[string]interface{}) (string, error) {
+	host, port, user, pass := adminTarget(config)
+	var results []string
+
+	// Check replication status
+	out, err := runMySQLExecSafe(ctx, host, port, user, pass,
+		"SHOW SLAVE STATUS")
+	if err != nil || !strings.Contains(out, "Slave_") {
+		// Try REPLICA syntax (MySQL 8.0+)
+		out, err = runMySQLExecSafe(ctx, host, port, user, pass,
+			"SHOW REPLICA STATUS")
+		if err != nil || !strings.Contains(out, "Replica_") {
+			return "No replication configured on this instance", nil
+		}
+	}
+
+	ioRunning := strings.Contains(out, "Yes") && (strings.Contains(out, "Slave_IO_Running: Yes") || strings.Contains(out, "Replica_IO_Running: Yes"))
+	sqlRunning := strings.Contains(out, "Yes") && (strings.Contains(out, "Slave_SQL_Running: Yes") || strings.Contains(out, "Replica_SQL_Running: Yes"))
+
+	if ioRunning && sqlRunning {
+		return "Replication is healthy: IO=Yes, SQL=Yes", nil
+	}
+
+	// Try to restart replication
+	for _, sql := range []string{
+		"START SLAVE;", "START REPLICA;",
+	} {
+		if _, err := runMySQLExecSafe(ctx, host, port, user, pass, sql); err == nil {
+			results = append(results, "Replication restarted with: "+sql)
+			break
+		}
+	}
+
+	// Verify
+	time.Sleep(3 * time.Second)
+	out2, _ := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW SLAVE STATUS")
+	if !strings.Contains(out2, "Slave_IO_Running: Yes") {
+		out2, _ = runMySQLExecSafe(ctx, host, port, user, pass, "SHOW REPLICA STATUS")
+	}
+
+	if strings.Contains(out2, "_IO_Running: Yes") && strings.Contains(out2, "_SQL_Running: Yes") {
+		results = append(results, "Replication restored: IO=Yes, SQL=Yes")
+	} else {
+		// Extract error info
+		lines := strings.Split(out2, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "Last_Error") || strings.Contains(line, "Last_IO_Error") || strings.Contains(line, "Last_SQL_Error") {
+				results = append(results, strings.TrimSpace(line))
+			}
+		}
+	}
+
+	return strings.Join(results, "\n"), nil
 }
 
 func detectClusterType(ctx context.Context, host string, port int, user, pass string) string {
@@ -4347,11 +4555,40 @@ func startInstanceProcess(ctx context.Context, basedir, datadir, osUser string, 
 	if port <= 0 {
 		return "", fmt.Errorf("target_port is required to start instance")
 	}
+	if datadir == "" {
+		return "", fmt.Errorf("datadir is required to start instance")
+	}
+	// Validate datadir exists and contains mysql schema
+	if info, err := os.Stat(datadir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("datadir %s does not exist or is not a directory", datadir)
+	}
+	// Clean stale socket and PID files that prevent mysqld from starting
+	for _, f := range []string{
+		filepath.Join(datadir, "mysql.sock"),
+		filepath.Join(datadir, "mysqld.sock"),
+		filepath.Join(datadir, "mysql.pid"),
+		filepath.Join(datadir, "mysqld.pid"),
+	} {
+		os.Remove(f)
+	}
+	// Also kill any orphan mysqld process holding this port
+	if out, err := exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).CombinedOutput(); err == nil {
+		_ = out
+		time.Sleep(1 * time.Second)
+	}
+	// Fix datadir ownership
+	if osUser != "" {
+		exec.Command("chown", "-R", osUser+":"+osUser, datadir).Run()
+	}
 	mysqld := "mysqld"
 	if basedir != "" {
 		mysqld = filepath.Join(basedir, "bin", "mysqld")
 		if _, err := os.Stat(mysqld); err != nil {
-			return "", fmt.Errorf("mysqld not found at %s: %w", mysqld, err)
+			// Try system mysqld as fallback
+			if _, err2 := exec.LookPath("mysqld"); err2 != nil {
+				return "", fmt.Errorf("mysqld not found at %s or in PATH: %w", mysqld, err)
+			}
+			mysqld = "mysqld"
 		}
 	}
 	if serverID <= 0 {

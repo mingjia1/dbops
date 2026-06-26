@@ -666,6 +666,31 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if isFailedTaskStatus(result.Status) {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 	} else if isSuccessfulTaskStatus(result.Status) {
+		// Cluster-specific readiness check
+		clusterType, _ := s.getClusterType(ctx, instance.ClusterID)
+		if clusterType == "pxc" || clusterType == "mgr" {
+			clusterResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+				"task_id": "cluster-check-" + uuid.New().String(),
+				"config": map[string]interface{}{
+					"action":       "query_variables",
+					"target_host":  targetHost,
+					"target_port":  conn.Port,
+					"target_user":  conn.Username,
+					"target_pass":  password,
+					"variables":    "wsrep_ready,wsrep_cluster_status",
+					"cluster_type": clusterType,
+				},
+			})
+			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
+				_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
+				return &InstanceAdminResult{
+					TaskID:   result.TaskID,
+					Status:   "unhealthy",
+					Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
+					Progress: 100,
+				}, nil
+			}
+		}
 		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
 	}
 	return &InstanceAdminResult{
@@ -2149,4 +2174,59 @@ func (s *InstanceService) resolveAgentMySQLTarget(ctx context.Context, instance 
 		}
 	}
 	return conn.Host
+}
+
+func (s *InstanceService) RecoverCluster(ctx context.Context, id string) (*InstanceAdminResult, error) {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+
+	// Ensure MySQL is running first
+	s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
+		Action:  "service_control",
+		Verb:    "start",
+		Datadir: conn.Datadir,
+	})
+
+	clusterType, _ := s.getClusterType(ctx, instance.ClusterID)
+	password, _ := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+
+	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, instance, conn)
+	if err != nil {
+		return nil, err
+	}
+	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+
+	result, err := s.agentClient.callAgentLong(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
+		"task_id":     "recover-cluster-" + uuid.New().String(),
+		"instance_id": id,
+		"config": map[string]interface{}{
+			"action":       "recover_cluster",
+			"target_host":  targetHost,
+			"target_port":  conn.Port,
+			"target_user":  conn.Username,
+			"target_pass":  password,
+			"cluster_type": clusterType,
+			"datadir":      conn.Datadir,
+			"config_path":  resolveInstanceConfigPath(conn, ""),
+		},
+	})
+	if err != nil {
+		return failedInstanceAdminResult("cluster recovery failed: " + err.Error()), nil
+	}
+	if result.Status == "completed" {
+		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
+	}
+	return &InstanceAdminResult{
+		TaskID:   result.TaskID,
+		Status:   result.Status,
+		Message:  result.Message,
+		Data:     result.Data,
+		Progress: result.Progress,
+	}, nil
 }
