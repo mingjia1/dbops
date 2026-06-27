@@ -329,12 +329,19 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 				result.BlockingReasons = append(result.BlockingReasons, msg)
 			}
 		} else if masterCheck == nil || !masterCheck.IsHealthy {
-			result.CurrentMasterHealthy = false
-			msg := "current master is unhealthy"
-			if masterCheck != nil && masterCheck.ErrorMessage != "" {
-				msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
+			// Agent returned unhealthy but check DB status - if previously healthy, don't block
+			if master.IsHealthy {
+				result.CurrentMasterHealthy = true
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("agent health check unhealthy but DB status is healthy: %s", masterCheck.ErrorMessage))
+			} else {
+				result.CurrentMasterHealthy = false
+				msg := "current master is unhealthy"
+				if masterCheck != nil && masterCheck.ErrorMessage != "" {
+					msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
+				}
+				result.BlockingReasons = append(result.BlockingReasons, msg)
 			}
-			result.BlockingReasons = append(result.BlockingReasons, msg)
 		} else {
 			result.CurrentMasterHealthy = true
 		}
@@ -353,6 +360,11 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 		})
 		if checkErr == nil && check != nil && check.IsHealthy {
 			result.HealthySlaveCount++
+		} else if slave.IsHealthy {
+			// Agent unreachable but slave was healthy in DB - count as healthy
+			result.HealthySlaveCount++
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("agent unreachable for slave %s but DB status is healthy", slave.InstanceID))
 		} else {
 			msg := fmt.Sprintf("slave %s is unhealthy", slave.InstanceID)
 			if checkErr != nil {
