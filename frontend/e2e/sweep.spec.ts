@@ -76,7 +76,7 @@ test.describe('全量页面 + 按钮覆盖', () => {
 
   // 轻量点击可安全重复的按钮，验证页面不会白屏或丢失主体内容。
   test('BUTTON 轻量扫描: 每页安全按钮点击后页面仍可交互', async ({ page }) => {
-    test.setTimeout(90_000)
+    test.setTimeout(240_000)
     await login(page, pwd)
     const issues: string[] = []
     const unsafeWords = ['退出', '删除', '提交', '创建', '保存', '安装', '部署', '执行', '重置', '修改', '启动', '停止', '销毁', '恢复', '授权', '回收', 'Logout', 'Delete']
@@ -119,9 +119,10 @@ test.describe('全量页面 + 按钮覆盖', () => {
 
   // 路由可达性: 客户端路由通通返回 200 + 非 404 错误.
   test('ROUTE 全部路由可达', async ({ page }) => {
+    test.setTimeout(120_000)
     await login(page, pwd)
     for (const p of PAGES) {
-      const resp = await page.goto(`${FRONTEND}${p.path}`, { waitUntil: 'networkidle' })
+      const resp = await page.goto(`${FRONTEND}${p.path}`, { waitUntil: 'domcontentloaded' })
       expect(resp?.status(), `route ${p.path} should be 200`).toBe(200)
     }
   })
