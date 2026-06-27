@@ -617,15 +617,16 @@ func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cluster instances: %w", err)
 	}
+	// First pass: look for explicit primary role
 	for _, item := range instances {
 		inst, err := s.instanceRepo.GetByID(ctx, item.ID)
 		if err != nil {
 			continue
 		}
-			role := inst.Status.Role
-			if !isFailoverPrimaryRole(role) {
-				continue
-			}
+		role := inst.Status.Role
+		if !isFailoverPrimaryRole(role) {
+			continue
+		}
 		conn, err := s.getInstanceConnection(ctx, inst.ID)
 		if err != nil {
 			return nil, err
@@ -639,6 +640,26 @@ func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string
 			IsHealthy:  inst.Status.HealthStatus != "unhealthy" && (failureState == nil || !failureState.IsMarkedFailed),
 		}, nil
 	}
+
+	// Fallback: if no explicit primary found, use the first instance as master
+	// This handles cases where role was not set during deployment
+	if len(instances) > 0 {
+		inst, err := s.instanceRepo.GetByID(ctx, instances[0].ID)
+		if err == nil {
+			conn, connErr := s.getInstanceConnection(ctx, inst.ID)
+			if connErr == nil {
+				failureState := s.healthService.GetFailureState(inst.ID)
+				return &MasterInfo{
+					InstanceID: inst.ID,
+					Host:       conn.Host,
+					Port:       conn.Port,
+					Role:       "master",
+					IsHealthy:  inst.Status.HealthStatus != "unhealthy" && (failureState == nil || !failureState.IsMarkedFailed),
+				}, nil
+			}
+		}
+	}
+
 	return nil, fmt.Errorf("master not found for cluster %s", clusterID)
 }
 

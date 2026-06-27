@@ -1537,6 +1537,27 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 	if s.instRepo == nil {
 		return nil, fmt.Errorf("instance repository not configured")
 	}
+	name := fmt.Sprintf("%s-%s-%d", clusterID, strings.ReplaceAll(node.Host, ".", "-"), node.Port)
+
+	// Check if instance with this name already exists (from a previous partial deployment)
+	if existing, err := s.findInstanceByName(ctx, name); err == nil {
+		// Update existing instance's cluster_id and connection
+		existing.ClusterID = clusterID
+		if hostID := strings.TrimSpace(node.HostID); hostID != "" {
+			existing.HostID = &hostID
+		}
+		_ = s.instRepo.Update(ctx, existing)
+		if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
+			if enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey); encErr == nil {
+				if conn, connErr := s.instRepo.GetConnection(ctx, existing.ID); connErr == nil {
+					conn.PasswordEncrypted = enc
+					_ = s.instRepo.UpdateConnection(ctx, conn)
+				}
+			}
+		}
+		return existing, nil
+	}
+
 	instanceID := uuid.New().String()
 	hostID := strings.TrimSpace(node.HostID)
 	username := strings.TrimSpace(node.MySQLUser)
@@ -1551,7 +1572,6 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 		}
 		passwordEncrypted = enc
 	}
-	name := fmt.Sprintf("%s-%s-%d", clusterID, strings.ReplaceAll(node.Host, ".", "-"), node.Port)
 	inst := &models.Instance{
 		ID:        instanceID,
 		Name:      name,
@@ -1593,6 +1613,22 @@ func (s *ClusterDeployService) findInstanceByEndpoint(ctx context.Context, host 
 		}
 	}
 	return nil, fmt.Errorf("no managed instance found for %s:%d", host, port)
+}
+
+// findInstanceByName looks up an existing instance by its generated deploy name.
+// Used to recover from partial deployments where the instance was created but
+// sync failed before completion.
+func (s *ClusterDeployService) findInstanceByName(ctx context.Context, name string) (*models.Instance, error) {
+	instances, err := s.instRepo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range instances {
+		if item.Name == name {
+			return &item, nil
+		}
+	}
+	return nil, fmt.Errorf("no instance found with name %s", name)
 }
 
 func sameHost(a, b string) bool {
