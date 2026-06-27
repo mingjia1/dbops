@@ -671,7 +671,7 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	} else if isSuccessfulTaskStatus(result.Status) {
 		// Cluster-specific readiness check
 		clusterType, _ := s.getClusterType(ctx, instance.ClusterID)
-		if clusterType == "pxc" || clusterType == "mgr" {
+		if clusterType == "pxc" {
 			clusterResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 				"task_id": "cluster-check-" + uuid.New().String(),
 				"config": map[string]interface{}{
