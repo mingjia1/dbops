@@ -229,16 +229,7 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 	// 尝试备份和退役
 	backup, err := s.backupAndDecommission(ctx, id)
 	if err != nil {
-		// 如果备份/退役失败（实例离线、无密码或agent不可达），跳过备份直接删除
-		log.Printf("WARN: backup/decommission failed for instance %s, proceeding with direct delete: %v", id, err)
-		log.Printf("INFO: Deleting instance %s without backup (instance may be offline or incomplete)", id)
-
-		if delErr := s.repo.Delete(ctx, id); delErr != nil {
-			return delErr
-		}
-
-		s.auditInstanceDelete(ctx, id, "success", "deleted without backup: "+err.Error(), "")
-		return nil
+		return fmt.Errorf("backup/decommission failed for instance %s, delete aborted: %w", id, err)
 	}
 
 	// 正常流程：备份成功后删除
