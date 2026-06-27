@@ -32,14 +32,14 @@ async function readAdminPassword(): Promise<string> {
     const t = await fs.readFile('d:/test_tmple/new_dbops/dbops/platform-backend/data/.admin_password', 'utf8').catch(() => '')
     if (t.trim()) return t.trim()
   } catch {}
-  return '2xUegKvuXr3WwNqjxKfD'
+  return 'admin123'
 }
 
 let cachedLoginBody: any
 
 async function login(page: Page, pwd: string) {
   if (!cachedLoginBody?.data?.token) {
-    const candidates = Array.from(new Set([process.env.E2E_ADMIN_PASSWORD, '123456', pwd, 'Tv@gTFz8HHMhYArjOhk2', '2xUegKvuXr3WwNqjxKfD'].filter(Boolean)))
+    const candidates = Array.from(new Set([process.env.E2E_ADMIN_PASSWORD, 'admin123', pwd, 'Tv@gTFz8HHMhYArjOhk2', '2xUegKvuXr3WwNqjxKfD'].filter(Boolean)))
     for (const candidate of candidates) {
       const resp = await page.request.post(`${BACKEND}/api/v1/auth/login`, {
         data: { username: 'admin', password: candidate },

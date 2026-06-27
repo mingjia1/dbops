@@ -41,7 +41,7 @@ Received: 429
   18  |       if (t.trim()) return t.trim()
   19  |     }
   20  |   } catch {}
-  21  |   return 'Tv@gTFz8HHMhYArjOhk2'
+  21  |   return 'admin123'
   22  | }
   23  | 
   24  | async function login(page: Page, pwd: string) {

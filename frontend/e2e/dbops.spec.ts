@@ -18,7 +18,7 @@ async function readAdminPassword(): Promise<string> {
       if (t.trim()) return t.trim()
     }
   } catch {}
-  return 'Tv@gTFz8HHMhYArjOhk2'
+  return 'admin123'
 }
 
 async function login(page: Page, pwd: string) {
