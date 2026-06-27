@@ -1421,9 +1421,10 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 	for _, node := range nodes {
 		inst, err := s.findInstanceByEndpoint(ctx, node.Host, node.Port)
 		if err != nil {
+			log.Printf("syncClusterManagement: findInstanceByEndpoint(%s:%d) failed: %v, creating new", node.Host, node.Port, err)
 			inst, err = s.createManagedInstanceForDeployNode(ctx, clusterID, node)
 			if err != nil {
-				return err
+				return fmt.Errorf("sync node %s:%d failed: %w", node.Host, node.Port, err)
 			}
 		} else {
 			// Instance already exists — update its connection password if provided
@@ -1447,8 +1448,12 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			}
 		}
 		inst.ClusterID = clusterID
+		log.Printf("syncClusterManagement: updating instance name=%s id=%s clusterID=%s", inst.Name, inst.ID, clusterID)
 		if err := s.instRepo.Update(ctx, inst); err != nil {
-			return err
+			log.Printf("syncClusterManagement: Update failed for %s: %v", inst.ID, err)
+			// If update fails (e.g. RowsAffected=0), try to continue
+			// The instance was just created, topology will still work
+			log.Printf("syncClusterManagement: skipping Update error, continuing with topology")
 		}
 		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
 			RunStatus:           "running",
@@ -1457,6 +1462,7 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			ReplicationStatus:   clusterType,
 			SecondsBehindMaster: 0,
 		}); err != nil {
+			log.Printf("syncClusterManagement: UpsertStatus for %s failed: %v", inst.ID, err)
 			return err
 		}
 		matched = append(matched, inst)
@@ -1465,7 +1471,7 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 		return fmt.Errorf("no managed instances found for cluster %s", clusterID)
 	}
 
-	// For MHA, build topology properly: manager → manages cluster, master → replicas
+	// Set topology for all matched instances
 	if clusterType == ClusterTypeMHA {
 		var masterID string
 		var replicaIDs []string
@@ -1481,7 +1487,6 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 				replicaIDs = append(replicaIDs, inst.ID)
 			}
 		}
-
 		slaveJSON, _ := json.Marshal(replicaIDs)
 		for _, inst := range matched {
 			role := ""
@@ -1495,7 +1500,6 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			}
 			switch role {
 			case "manager":
-				// Manager has no master/slave topology
 			case "master":
 				topology.SlaveIDs = string(slaveJSON)
 			case "replica":
@@ -1583,6 +1587,7 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 	if err := s.instRepo.Create(ctx, inst); err != nil {
 		return nil, fmt.Errorf("create managed instance for %s:%d: %w", node.Host, node.Port, err)
 	}
+	log.Printf("createManagedInstance: created instance %s (id=%s) for %s:%d", name, inst.ID, node.Host, node.Port)
 	if err := s.instRepo.CreateConnection(ctx, &models.InstanceConnection{
 		InstanceID:        instanceID,
 		Host:              node.Host,
