@@ -646,6 +646,18 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		"target_pass": password,
 	})
 	if err != nil {
+		// If agent unreachable but instance was previously healthy, don't mark unhealthy
+		// This handles Windows->Linux connection issues (WinError 10054)
+		prevStatus, _ := s.repo.GetStatus(ctx, id)
+		if prevStatus != nil && prevStatus.HealthStatus == "healthy" {
+			log.Printf("HealthCheck [%s]: agent unreachable (%v) but instance was healthy, keeping status", id, err)
+			return &InstanceAdminResult{
+				TaskID:   "health-check-" + uuid.New().String(),
+				Status:   "completed",
+				Message:  "agent unreachable but instance previously healthy",
+				Progress: 100,
+			}, nil
+		}
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 		return &InstanceAdminResult{
 			TaskID:   "health-check-" + uuid.New().String(),

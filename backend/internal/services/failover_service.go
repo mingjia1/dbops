@@ -317,12 +317,21 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 				CheckTypes: []string{"tcp", "mysql"},
 			},
 		})
-		if err != nil || masterCheck == nil || !masterCheck.IsHealthy {
+		if err != nil {
+			// Agent unreachable but instance was healthy in DB - don't block failover
+			if master.IsHealthy {
+				result.CurrentMasterHealthy = true
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("agent unreachable for master but DB status is healthy: %v", err))
+			} else {
+				result.CurrentMasterHealthy = false
+				msg := fmt.Sprintf("current master is unhealthy: %v", err)
+				result.BlockingReasons = append(result.BlockingReasons, msg)
+			}
+		} else if masterCheck == nil || !masterCheck.IsHealthy {
 			result.CurrentMasterHealthy = false
 			msg := "current master is unhealthy"
-			if err != nil {
-				msg = fmt.Sprintf("%s: %v", msg, err)
-			} else if masterCheck != nil && masterCheck.ErrorMessage != "" {
+			if masterCheck != nil && masterCheck.ErrorMessage != "" {
 				msg = fmt.Sprintf("%s: %s", msg, masterCheck.ErrorMessage)
 			}
 			result.BlockingReasons = append(result.BlockingReasons, msg)
