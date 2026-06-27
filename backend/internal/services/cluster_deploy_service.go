@@ -155,6 +155,9 @@ func (s *ClusterDeployService) ensureAgentReady(ctx context.Context, host string
 	if agentPort == 0 {
 		agentPort = 9090
 	}
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
 	// Quick probe: try a lightweight agent call
 	_, err := s.agentClient.callAgent(ctx, host, agentPort, "/agent/tasks/health-check", map[string]interface{}{
 		"task_id": "pre-flight-" + host,

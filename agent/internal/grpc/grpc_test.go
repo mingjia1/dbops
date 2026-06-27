@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,9 @@ func TestStreamer_ExecuteAndStream_NilFn(t *testing.T) {
 }
 
 func TestStreamer_ExecuteAndStream_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip: echo not available on Windows")
+	}
 	s := NewStreamer()
 	var events []StreamEvent
 	err := s.ExecuteAndStream(context.Background(), "task-001", "echo", []string{"hello"}, func(e StreamEvent) {

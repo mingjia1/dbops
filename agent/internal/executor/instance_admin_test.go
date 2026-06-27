@@ -112,6 +112,9 @@ func TestExecuteInstanceAdminReadConfigResolvesDefaultPathFromDatadir(t *testing
 }
 
 func TestExecuteInstanceAdminReadConfigReportsDefaultPathCandidates(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip: candidate paths may exist on Windows (e.g. MSYS /etc)")
+	}
 	executor := NewTaskExecutor()
 	datadir := t.TempDir()
 

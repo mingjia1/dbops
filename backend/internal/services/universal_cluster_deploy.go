@@ -386,6 +386,11 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 			if ex.clusterID == currentClusterID {
 				continue
 			}
+
+			// Skip unassigned instances (empty cluster_id) — they are available for adoption.
+			if ex.clusterID == "" {
+				continue
+			}
 			if dep.MySQLPort == ex.port {
 				return fmt.Errorf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, dep.MySQLPort, ex.instName, ex.clusterID)
 			}

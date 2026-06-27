@@ -3,13 +3,14 @@ package executor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
-// EnvironmentChecker 负责检查主机环境
+// EnvironmentChecker 负责检查主机环境（仅使用平台API，不调用外部命令）
 type EnvironmentChecker struct {
 	toolInstaller *ToolInstaller
 }
@@ -76,7 +77,7 @@ type NetworkInfo struct {
 	Hostname         string `json:"hostname"`
 }
 
-// CheckEnvironment 执行环境检查
+// CheckEnvironment 执行环境检查（仅使用平台API）
 func (e *EnvironmentChecker) CheckEnvironment(ctx context.Context, req EnvironmentCheckRequest) *EnvironmentCheckResult {
 	result := &EnvironmentCheckResult{
 		Status: "success",
@@ -122,7 +123,7 @@ func (e *EnvironmentChecker) CheckEnvironment(ctx context.Context, req Environme
 	return result
 }
 
-// checkOS 检查操作系统信息
+// checkOS 检查操作系统信息（仅使用文件API）
 func (e *EnvironmentChecker) checkOS() OSInfo {
 	info := OSInfo{
 		Type: runtime.GOOS,
@@ -131,7 +132,7 @@ func (e *EnvironmentChecker) checkOS() OSInfo {
 
 	switch runtime.GOOS {
 	case "linux":
-		// 读取 /etc/os-release
+		// 读取 /etc/os-release（纯文件读取，无外部命令）
 		if data, err := os.ReadFile("/etc/os-release"); err == nil {
 			content := string(data)
 
@@ -159,21 +160,25 @@ func (e *EnvironmentChecker) checkOS() OSInfo {
 
 	case "darwin":
 		info.Distribution = "macos"
-		if output, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
-			info.Version = strings.TrimSpace(string(output))
+		// 读取系统版本信息文件
+		if data, err := os.ReadFile("/System/Library/CoreServices/SystemVersion.plist"); err == nil {
+			content := string(data)
+			if idx := strings.Index(content, "<string>"); idx >= 0 {
+				endIdx := strings.Index(content[idx:], "</string>")
+				if endIdx > 0 {
+					info.Version = content[idx+8 : idx+endIdx]
+				}
+			}
 		}
 
 	case "windows":
 		info.Distribution = "windows"
-		if output, err := exec.Command("cmd", "/c", "ver").Output(); err == nil {
-			info.Version = strings.TrimSpace(string(output))
-		}
 	}
 
 	return info
 }
 
-// checkTools 检查MySQL工具
+// checkTools 检查MySQL工具（仅检查文件是否存在）
 func (e *EnvironmentChecker) checkTools() ToolsInfo {
 	info := ToolsInfo{}
 
@@ -192,7 +197,7 @@ func (e *EnvironmentChecker) checkTools() ToolsInfo {
 	return info
 }
 
-// checkTool 检查单个工具
+// checkTool 检查单个工具（使用平台API检查可执行性，不执行外部命令）
 func (e *EnvironmentChecker) checkTool(tool string) ToolStatus {
 	status := ToolStatus{Available: false}
 
@@ -202,138 +207,38 @@ func (e *EnvironmentChecker) checkTool(tool string) ToolStatus {
 		return status
 	}
 
-	// Verify the binary is actually executable (not blocked by missing shared libs)
-	version := e.getToolVersion(tool, path)
-	if version == "" {
-		// Binary exists but can't run — report it as found but broken
-		status.Path = path
-		status.Available = false
-		return status
-	}
+	// 检查文件是否存在且可执行（os.Access 在 Unix 上检查 X_OK 位，不执行任何命令）
+	if info, err := os.Stat(path); err == nil {
+		// 检查文件是否具有可执行权限
+		executable := false
+		if isExecutableMode(info.Mode()) {
+			executable = true
+		}
 
-	status.Available = true
-	status.Path = path
-	status.Version = version
+		status.Path = path
+		status.Available = executable
+		if executable {
+			status.Version = "available"
+		}
+	}
 
 	return status
 }
 
-// getToolVersion 获取工具版本
-func (e *EnvironmentChecker) getToolVersion(tool string, path string) string {
-	var cmd *exec.Cmd
-
-	switch tool {
-	case "mysql":
-		cmd = exec.Command(path, "--version")
-	case "mysqld":
-		cmd = exec.Command(path, "--version")
-	case "xtrabackup":
-		cmd = exec.Command(path, "--version")
-	default:
-		return ""
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return ""
-	}
-
-	// 从输出中提取版本号
-	lines := strings.Split(string(output), "\n")
-	if len(lines) > 0 {
-		line := strings.TrimSpace(lines[0])
-		// 简单处理：取第一行，去掉工具名后的部分
-		if idx := strings.Index(line, "Ver "); idx >= 0 {
-			line = line[idx+4:]
-			if idx := strings.Index(line, " "); idx >= 0 {
-				line = line[:idx]
-			}
-		}
-		return line
-	}
-
-	return ""
+// isExecutableMode 检查文件模式是否包含可执行位
+func isExecutableMode(mode os.FileMode) bool {
+	// 检查所有者、组或其他的可执行位
+	return mode&0111 != 0
 }
 
-// checkResources 检查系统资源
+// checkResources 检查系统资源（仅使用平台API）
 func (e *EnvironmentChecker) checkResources() ResourcesInfo {
 	info := ResourcesInfo{
 		CPUCores: runtime.NumCPU(),
 	}
 
-	switch runtime.GOOS {
-	case "linux":
-		// 检查内存
-		if data, err := os.ReadFile("/proc/meminfo"); err == nil {
-			content := string(data)
-			for _, line := range strings.Split(content, "\n") {
-				if strings.HasPrefix(line, "MemTotal:") {
-					// MemTotal:        8192000 kB
-					parts := strings.Fields(line)
-					if len(parts) >= 2 {
-						var memKB int
-						fmt.Sscanf(parts[1], "%d", &memKB)
-						info.MemoryMB = memKB / 1024
-					}
-					break
-				}
-			}
-		}
-
-		// 检查磁盘空间 (/)
-		if output, err := exec.Command("df", "-BG", "/").Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			if len(lines) >= 2 {
-				fields := strings.Fields(lines[1])
-				if len(fields) >= 4 {
-					// 可用空间在第4列
-					var diskGB int
-					fmt.Sscanf(strings.TrimSuffix(fields[3], "G"), "%d", &diskGB)
-					info.DiskSpaceGB = diskGB
-				}
-			}
-		}
-
-	case "darwin":
-		// macOS内存检查
-		if output, err := exec.Command("sysctl", "-n", "hw.memsize").Output(); err == nil {
-			var memBytes int64
-			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &memBytes)
-			info.MemoryMB = int(memBytes / 1024 / 1024)
-		}
-
-		// macOS磁盘空间检查
-		if output, err := exec.Command("df", "-g", "/").Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			if len(lines) >= 2 {
-				fields := strings.Fields(lines[1])
-				if len(fields) >= 4 {
-					fmt.Sscanf(fields[3], "%d", &info.DiskSpaceGB)
-				}
-			}
-		}
-
-	case "windows":
-		// Windows内存检查
-		if output, err := exec.Command("wmic", "computersystem", "get", "TotalPhysicalMemory").Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			if len(lines) >= 2 {
-				var memBytes int64
-				fmt.Sscanf(strings.TrimSpace(lines[1]), "%d", &memBytes)
-				info.MemoryMB = int(memBytes / 1024 / 1024)
-			}
-		}
-
-		// Windows磁盘空间检查
-		if output, err := exec.Command("wmic", "logicaldisk", "where", "DeviceID='C:'", "get", "FreeSpace").Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			if len(lines) >= 2 {
-				var freeBytes int64
-				fmt.Sscanf(strings.TrimSpace(lines[1]), "%d", &freeBytes)
-				info.DiskSpaceGB = int(freeBytes / 1024 / 1024 / 1024)
-			}
-		}
-	}
+	// 获取内存和磁盘信息（平台特定实现）
+	e.checkResourcesPlatform(&info)
 
 	// 判断资源是否充足
 	// 最低要求：2核、2GB内存、10GB磁盘空间
@@ -342,7 +247,7 @@ func (e *EnvironmentChecker) checkResources() ResourcesInfo {
 	return info
 }
 
-// checkNetwork 检查网络连接
+// checkNetwork 检查网络连接（使用net包，无外部命令）
 func (e *EnvironmentChecker) checkNetwork() NetworkInfo {
 	info := NetworkInfo{}
 
@@ -351,16 +256,12 @@ func (e *EnvironmentChecker) checkNetwork() NetworkInfo {
 		info.Hostname = hostname
 	}
 
-	// 检查是否能访问互联网（ping常见的DNS服务器）
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("ping", "-n", "1", "-w", "2000", "8.8.8.8")
-	default:
-		cmd = exec.Command("ping", "-c", "1", "-W", "2", "8.8.8.8")
-	}
-
-	if err := cmd.Run(); err == nil {
+	// 检查是否能访问互联网（使用TCP连接检查，无外部命令）
+	// 尝试连接到DNS服务器的53端口
+	addr := "8.8.8.8:53"
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err == nil {
+		conn.Close()
 		info.CanReachInternet = true
 	}
 

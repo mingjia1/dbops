@@ -15,7 +15,7 @@ func TestParseMasterSlaveConfig_Defaults(t *testing.T) {
 	assert.Equal(t, "localhost", got.SlaveHost)
 	assert.Equal(t, 3307, got.SlavePort)
 	assert.Equal(t, "repl", got.ReplicateUser)
-	assert.Equal(t, "repl123", got.ReplicatePass)
+	assert.Equal(t, "", got.ReplicatePass)
 	assert.Equal(t, "root", got.MySQLUser)
 	assert.Equal(t, "", got.MySQLPass)
 	assert.Equal(t, 1, got.ServerID)

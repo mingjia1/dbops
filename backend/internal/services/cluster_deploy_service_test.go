@@ -81,11 +81,15 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	ctx := context.Background()
 	payloads := make([]DeployTaskPayload, 0, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/agent/tasks/health-check" {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"health-probe","status":"completed","progress":100,"message":"healthy"}}`))
+			return
+		}
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
 		var payload DeployTaskPayload
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		payloads = append(payloads, payload)
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"ha-sync","status":"completed","progress":100,"message":"ha deployed"}}`))
 	}))
 	defer server.Close()
@@ -145,20 +149,25 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
-	require.Len(t, payloads, 3)
+	// New plan-based execution: master bootstrap + (init + configure) per replica = 5 total
+	require.Len(t, payloads, 5)
 	require.Equal(t, "single", payloads[0].Config["deploy_mode"])
-	require.Equal(t, "ha-replica", payloads[1].Config["deploy_mode"])
-	require.Equal(t, "ha-replica", payloads[2].Config["deploy_mode"])
 	require.Equal(t, "127.0.0.1", payloads[0].Config["host"])
-	require.Equal(t, "127.0.0.1", payloads[1].Config["slave_host"])
 	require.Equal(t, float64(11), payloads[0].Config["server_id"])
 	require.Equal(t, "/data/mysql/3306", payloads[0].Config["data_dir"])
 	require.Equal(t, "/opt/mysql", payloads[0].Config["basedir"])
 	require.Equal(t, "https://repo.example/mysql.tar.gz", payloads[0].Config["package_url"])
 	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", payloads[0].Config["checksum"])
+	require.Equal(t, map[string]interface{}{"innodb_buffer_pool_size": "2G", "max_connections": "512"}, payloads[0].Config["mysql_config"])
+	// Replica 1: init (single) + configure (ha-replica)
+	require.Equal(t, "single", payloads[1].Config["deploy_mode"])
 	require.Equal(t, float64(22), payloads[1].Config["server_id"])
 	require.Equal(t, "/data/mysql/3307", payloads[1].Config["data_dir"])
-	require.Equal(t, map[string]interface{}{"innodb_buffer_pool_size": "2G", "max_connections": "512"}, payloads[0].Config["mysql_config"])
+	require.Equal(t, "ha-replica", payloads[2].Config["deploy_mode"])
+	require.Equal(t, "127.0.0.1", payloads[2].Config["slave_host"])
+	// Replica 2: init (single) + configure (ha-replica)
+	require.Equal(t, "single", payloads[3].Config["deploy_mode"])
+	require.Equal(t, "ha-replica", payloads[4].Config["deploy_mode"])
 	master, err := instRepo.GetByID(ctx, "ha-master")
 	require.NoError(t, err)
 	require.Equal(t, "ha-real-sync", master.ClusterID)
@@ -373,8 +382,13 @@ func TestNormalizeDeployStatusMapsAgentFailureStatuses(t *testing.T) {
 func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
+		// Handle health-check probes from ensureAgentReady as well as deploy calls.
+		if r.URL.Path == "/agent/tasks/health-check" {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"health-probe","status":"completed","progress":100,"message":"healthy"}}`))
+			return
+		}
+		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
 		var payload map[string]interface{}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		configMap, _ := payload["config"].(map[string]interface{})
@@ -447,11 +461,15 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 	ctx := context.Background()
 	payloads := make([]DeployTaskPayload, 0, 5)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/agent/tasks/health-check" {
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"health-probe","status":"completed","progress":100,"message":"healthy"}}`))
+			return
+		}
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
 		var payload DeployTaskPayload
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		payloads = append(payloads, payload)
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"task_id":"mha-ok","status":"completed","progress":100,"message":"ok"}}`))
 	}))
 	defer server.Close()
