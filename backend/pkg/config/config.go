@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -47,6 +49,11 @@ type ClusterDefaults struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env file if present (supports multiple search paths)
+	_ = godotenv.Load("../../.env")
+	_ = godotenv.Load("../.env")
+	_ = godotenv.Load(".env")
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	// Search paths in order: current dir, ./config/, ../config/, ../../config/

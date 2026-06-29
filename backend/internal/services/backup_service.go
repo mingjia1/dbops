@@ -122,6 +122,7 @@ type DiscoveredBackup struct {
 type BackupScanResult struct {
 	Backups   []DiscoveredBackup `json:"backups"`
 	ScannedAt time.Time          `json:"scanned_at"`
+	Warning   string             `json:"warning,omitempty"`
 }
 
 // CreatePolicy P0-4: 真实写入 backup_policies 表, 不再是占位字符串.
@@ -570,10 +571,10 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 	}
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, inst)
 	if err != nil {
-		return nil, err
+		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: fmt.Sprintf("cannot resolve agent: %v", err)}, nil
 	}
 	if s.agentClient == nil {
-		return nil, fmt.Errorf("agent client not configured")
+		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: "agent client not configured"}, nil
 	}
 
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup-scan", map[string]interface{}{
@@ -584,16 +585,17 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("agent backup scan failed: %w", err)
+		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: fmt.Sprintf("agent unreachable: %v", err)}, nil
 	}
 	if result == nil {
-		return nil, fmt.Errorf("agent backup scan failed: empty result")
+		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: "agent returned empty result"}, nil
 	}
 	if normalizeBackupAgentStatus(result.Status) == "failed" {
+		msg := "agent backup scan failed"
 		if result.Message != "" {
-			return nil, fmt.Errorf("agent backup scan failed: %s", result.Message)
+			msg = result.Message
 		}
-		return nil, fmt.Errorf("agent backup scan failed")
+		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: msg}, nil
 	}
 
 	discovered := dedupeDiscoveredBackups(decodeDiscoveredBackups(result.Data))

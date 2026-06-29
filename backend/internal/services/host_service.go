@@ -120,13 +120,14 @@ type HostAgentActionRequest struct {
 }
 
 type HostAgentActionResult struct {
-	HostID    string `json:"host_id"`
-	HostName  string `json:"host_name"`
-	Address   string `json:"address"`
-	AgentPort int    `json:"agent_port"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
+	HostID    string                 `json:"host_id"`
+	HostName  string                 `json:"host_name"`
+	Address   string                 `json:"address"`
+	AgentPort int                    `json:"agent_port"`
+	Action    string                 `json:"action"`
+	Status    string                 `json:"status"`
+	Message   string                 `json:"message"`
+	Result    map[string]interface{} `json:"result,omitempty"`
 }
 
 type BatchHostAgentActionRequest struct {
@@ -328,6 +329,18 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = msg
 			return result, nil
 		}
+	}
+
+	if action == "check-environment" {
+		data, err := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, port)
+		if err != nil {
+			result.Message = "check-environment failed: " + err.Error()
+			return result, nil
+		}
+		result.Status = "success"
+		result.Message = "environment check completed"
+		result.Result = data
+		return result, nil
 	}
 
 	password, err := utils.Decrypt(host.SSHCredential, s.encKey)
