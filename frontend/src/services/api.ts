@@ -282,6 +282,7 @@ export interface Host {
   description: string
   tags: string
   status: string
+  instance_count?: number
   last_check_at: string | null
   created_at: string
   updated_at: string

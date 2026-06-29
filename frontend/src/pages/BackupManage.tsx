@@ -82,8 +82,10 @@ const BackupManage: React.FC = () => {
   const [policyForm] = Form.useForm()
 
   useEffect(() => {
-    instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => setInstances([]))
-    fetchPolicies()
+    Promise.all([
+      instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => setInstances([])),
+      fetchPolicies()
+    ])
   }, [])
 
   useEffect(() => {

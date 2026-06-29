@@ -15,6 +15,7 @@ type Host struct {
 	Description       string     `json:"description"`
 	Tags              string     `json:"tags"`
 	Status            string     `json:"status"`
+	InstanceCount     int        `json:"instance_count"`
 	LastCheckAt       *time.Time `json:"last_check_at"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`

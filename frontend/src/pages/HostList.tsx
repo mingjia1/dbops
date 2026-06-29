@@ -19,7 +19,6 @@ const HostList: React.FC = () => {
   const navigate = useNavigate()
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(false)
-  const [instanceCount, setInstanceCount] = useState<Record<string, number>>({})
   const [scanningHosts, setScanningHosts] = useState<Record<string, boolean>>({})
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
@@ -39,22 +38,9 @@ const HostList: React.FC = () => {
     }
   }
 
-  const fetchInstanceCount = async (hostId: string) => {
-    try {
-      const r: any = await instanceApi.listByHost(hostId, 1000, 0)
-      setInstanceCount((p) => ({ ...p, [hostId]: Array.isArray(r?.data) ? r.data.length : 0 }))
-    } catch {
-      setInstanceCount((p) => ({ ...p, [hostId]: 0 }))
-    }
-  }
-
   useEffect(() => {
     fetchHosts()
   }, [])
-
-  useEffect(() => {
-    hosts.forEach((h) => fetchInstanceCount(h.id))
-  }, [hosts.length])
 
   useEffect(() => () => {
     Object.values(pollRef.current).forEach((timer) => window.clearInterval(timer))
@@ -83,7 +69,7 @@ const HostList: React.FC = () => {
             navigate(`/dashboard/hosts/${host.id}?tab=instances&scan_task=${taskId}`)
           } else {
             message.success(`${host.name} 扫描完成，无待纳管实例`)
-            fetchInstanceCount(host.id)
+            fetchHosts()
           }
         }
         if (data.status === 'failed') {
@@ -289,7 +275,7 @@ const HostList: React.FC = () => {
       title: '实例数',
       key: 'instances',
       render: (_, r) => {
-        const n = instanceCount[r.id]
+        const n = r.instance_count
         if (n === undefined) return <Tag>加载中</Tag>
         if (n === 0) {
           return (

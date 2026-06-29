@@ -112,9 +112,16 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 		return nil, fmt.Errorf("database not initialized")
 	}
 	rows, err := r.db.Pool.QueryContext(ctx, `
-		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, agent_port,
-			os_type, description, tags, status, last_check_at, created_at, updated_at
-		FROM hosts ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+		SELECT h.id, h.name, h.address, h.ssh_port, h.ssh_user, h.ssh_auth_method, h.ssh_credential, h.agent_port,
+			h.os_type, h.description, h.tags, h.status, h.last_check_at, h.created_at, h.updated_at,
+			COALESCE(i.instance_count, 0) as instance_count
+		FROM hosts h
+		LEFT JOIN (
+			SELECT host_id, COUNT(*) as instance_count
+			FROM instances
+			GROUP BY host_id
+		) i ON h.id = i.host_id
+		ORDER BY h.created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list hosts: %w", err)
 	}
@@ -128,7 +135,7 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 		if err := rows.Scan(
 			&h.ID, &h.Name, &h.Address, &h.SSHPort, &h.SSHUser, &h.SSHAuthMethod,
 			&sshCredential, &h.AgentPort, &h.OSType, &description, &tags, &h.Status,
-			&lastCheckAt, &h.CreatedAt, &h.UpdatedAt,
+			&lastCheckAt, &h.CreatedAt, &h.UpdatedAt, &h.InstanceCount,
 		); err != nil {
 			return nil, err
 		}
@@ -144,9 +151,6 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 		}
 		if tags.Valid {
 			h.Tags = tags.String
-		}
-		if sshCredential.Valid {
-			h.SSHCredential = sshCredential.String
 		}
 		hosts = append(hosts, h)
 	}
