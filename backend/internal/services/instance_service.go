@@ -122,11 +122,8 @@ func (s *InstanceService) ListByHostID(ctx context.Context, hostID string, limit
 }
 
 func (s *InstanceService) enrichListedInstances(ctx context.Context, instances []models.Instance) []models.Instance {
-	for i := range instances {
-		full, err := s.repo.GetByID(ctx, instances[i].ID)
-		if err == nil && full != nil {
-			instances[i] = *full
-		}
+	if err := s.repo.EnrichInstancesBatch(ctx, instances); err != nil {
+		return instances
 	}
 	return instances
 }

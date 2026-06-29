@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -411,6 +412,184 @@ func (r *InstanceRepository) List(ctx context.Context, limit, offset int) ([]mod
 	return instances, rows.Err()
 }
 
+// BatchGetStatuses fetches instance_statuses for a set of instance IDs in one query.
+func (r *InstanceRepository) BatchGetStatuses(ctx context.Context, ids []string) (map[string]*models.InstanceStatus, error) {
+	if r.db == nil || r.db.Pool == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	query, args, err := sqlxIn(`SELECT id, instance_id, run_status, health_status, role, COALESCE(replication_status,''), COALESCE(seconds_behind_master,-1), updated_at FROM instance_statuses WHERE instance_id IN (?)`, args)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get statuses: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]*models.InstanceStatus, len(ids))
+	for rows.Next() {
+		var s models.InstanceStatus
+		var id, instID string
+		var lag sql.NullInt64
+		if err := rows.Scan(&id, &instID, &s.RunStatus, &s.HealthStatus, &s.Role, &s.ReplicationStatus, &lag, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		s.InstanceID = instID
+		if lag.Valid {
+			s.SecondsBehindMaster = int(lag.Int64)
+		}
+		result[instID] = &s
+	}
+	return result, rows.Err()
+}
+
+// BatchGetTopologies fetches instance_topologies for a set of instance IDs in one query.
+func (r *InstanceRepository) BatchGetTopologies(ctx context.Context, ids []string) (map[string]*models.InstanceTopology, error) {
+	if r.db == nil || r.db.Pool == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	query, args, err := sqlxIn(`SELECT id, instance_id, COALESCE(cluster_id,''), COALESCE(master_id,''), COALESCE(slave_ids,''), COALESCE(replication_mode,'') FROM instance_topologies WHERE instance_id IN (?)`, args)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get topologies: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]*models.InstanceTopology, len(ids))
+	for rows.Next() {
+		var t models.InstanceTopology
+		var id, instID string
+		if err := rows.Scan(&id, &instID, &t.ClusterID, &t.MasterID, &t.SlaveIDs, &t.ReplicationMode); err != nil {
+			return nil, err
+		}
+		t.InstanceID = instID
+		result[instID] = &t
+	}
+	return result, rows.Err()
+}
+
+// BatchGetConnections fetches instance_connections for a set of instance IDs in one query.
+func (r *InstanceRepository) BatchGetConnections(ctx context.Context, ids []string) (map[string]*models.InstanceConnection, error) {
+	if r.db == nil || r.db.Pool == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	query, args, err := sqlxIn(`SELECT id, instance_id, host, port, username, password_encrypted, ssl_enabled, COALESCE(basedir,''), COALESCE(datadir,''), COALESCE(os_user,''), COALESCE(package_url,''), COALESCE(version_id,'') FROM instance_connections WHERE instance_id IN (?)`, args)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get connections: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]*models.InstanceConnection, len(ids))
+	for rows.Next() {
+		var conn models.InstanceConnection
+		if err := rows.Scan(
+			&conn.ID, &conn.InstanceID, &conn.Host, &conn.Port, &conn.Username, &conn.PasswordEncrypted, &conn.SSLEnabled,
+			&conn.Basedir, &conn.Datadir, &conn.OSUser, &conn.PackageURL, &conn.VersionID,
+		); err != nil {
+			return nil, err
+		}
+		result[conn.InstanceID] = &conn
+	}
+	return result, rows.Err()
+}
+
+// BatchGetVersions fetches instance_versions for a set of instance IDs in one query.
+func (r *InstanceRepository) BatchGetVersions(ctx context.Context, ids []string) (map[string]*models.InstanceVersion, error) {
+	if r.db == nil || r.db.Pool == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	query, args, err := sqlxIn(`SELECT id, instance_id, flavor, version, full_version, release_date, eol_date, is_lts, COALESCE(features,''), COALESCE(engines,'') FROM instance_versions WHERE instance_id IN (?)`, args)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get versions: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]*models.InstanceVersion, len(ids))
+	for rows.Next() {
+		var v models.InstanceVersion
+		var releaseDate, eolDate sql.NullTime
+		if err := rows.Scan(&v.ID, &v.InstanceID, &v.Flavor, &v.Version, &v.FullVersion, &releaseDate, &eolDate, &v.IsLTS, &v.Features, &v.Engines); err != nil {
+			return nil, err
+		}
+		if releaseDate.Valid {
+			v.ReleaseDate = releaseDate.Time
+		}
+		if eolDate.Valid {
+			v.EOLDate = eolDate.Time
+		}
+		result[v.InstanceID] = &v
+	}
+	return result, rows.Err()
+}
+
+// EnrichInstancesBatch populates status/topology/connection/version for a slice of instances in 4 batch queries.
+func (r *InstanceRepository) EnrichInstancesBatch(ctx context.Context, instances []models.Instance) error {
+	if len(instances) == 0 {
+		return nil
+	}
+	ids := make([]string, len(instances))
+	for i := range instances {
+		ids[i] = instances[i].ID
+	}
+	statuses, err := r.BatchGetStatuses(ctx, ids)
+	if err != nil {
+		return err
+	}
+	topologies, err := r.BatchGetTopologies(ctx, ids)
+	if err != nil {
+		return err
+	}
+	connections, err := r.BatchGetConnections(ctx, ids)
+	if err != nil {
+		return err
+	}
+	versions, err := r.BatchGetVersions(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range instances {
+		id := instances[i].ID
+		if s, ok := statuses[id]; ok {
+			instances[i].Status = *s
+		}
+		if t, ok := topologies[id]; ok {
+			instances[i].Topology = *t
+		}
+		if c, ok := connections[id]; ok {
+			instances[i].Connection = *c
+			instances[i].Connection.PasswordEncrypted = ""
+		}
+		if v, ok := versions[id]; ok {
+			instances[i].Version = *v
+		}
+	}
+	return nil
+}
+
 func (r *InstanceRepository) ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not initialized")
@@ -512,4 +691,25 @@ func nullableStringPtr(s *string) interface{} {
 		return nil
 	}
 	return *s
+}
+
+// sqlxIn builds a "col IN (?,?,?)" clause for any number of args (replaces sqlx.In).
+func sqlxIn(query string, args []interface{}) (string, []interface{}, error) {
+	n := len(args)
+	if n == 0 {
+		return "", nil, fmt.Errorf("sqlxIn: empty args")
+	}
+	placeholders := make([]string, n)
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	idx := len(query)
+	for i, c := range query {
+		if c == '?' {
+			idx = i
+			break
+		}
+	}
+	newQuery := query[:idx] + "(" + strings.Join(placeholders, ",") + ") " + query[idx+1:]
+	return newQuery, args, nil
 }
