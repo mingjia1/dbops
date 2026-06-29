@@ -93,6 +93,21 @@ const isMGRInstance = (instance: Instance) => {
   return mode === 'mgr' || repl === 'mgr' || mode.includes('group_replication') || repl.includes('group_replication')
 }
 
+const isPXCInstance = (instance: Instance) => {
+  const mode = (instance.topology?.replication_mode || '').toLowerCase()
+  const repl = (instance.status?.replication_status || '').toLowerCase()
+  return mode === 'pxc' || repl === 'pxc' || mode.includes('galera') || repl.includes('galera') || mode.includes('wsrep') || repl.includes('wsrep')
+}
+
+const detectClusterArch = (instances: Instance[]): 'ha' | 'mha' | 'mgr' | 'pxc' | '' => {
+  if (instances.some(isMGRInstance)) return 'mgr'
+  if (instances.some(isPXCInstance)) return 'pxc'
+  const mode = (instances[0]?.topology?.replication_mode || '').toLowerCase()
+  if (mode === 'mha') return 'mha'
+  if (instances.length > 0) return 'ha'
+  return ''
+}
+
 const HAManage: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
   const [clusterId, setClusterId] = useState<string | undefined>(undefined)
@@ -138,7 +153,10 @@ const HAManage: React.FC = () => {
   const clusterInstances = instances.filter((i) => i.cluster_id === clusterId)
   const masterInstance = clusterInstances.find((i) => isPrimaryRole(i.status?.role))
   const slaveInstances = clusterInstances.filter((i) => isReplicaRole(i.status?.role))
-  const clusterIsMGR = clusterInstances.some(isMGRInstance)
+  const clusterArch = detectClusterArch(clusterInstances)
+  const clusterIsMGR = clusterArch === 'mgr'
+  const clusterIsPXC = clusterArch === 'pxc'
+  const clusterSupportsRoleSwitch = clusterIsMGR || clusterIsPXC
   const preflightPass = !!preflight?.pass
 
   const refreshClusterData = async () => {
@@ -225,11 +243,11 @@ const HAManage: React.FC = () => {
       }
 
       setSubmitting(true)
-      const res: any = clusterIsMGR
+      const res: any = clusterSupportsRoleSwitch
         ? await roleSwitchApi.switch({
           cluster_id: clusterId as string,
           instance_id: values.new_master_id,
-          target_role: 'primary',
+          target_role: clusterIsPXC ? 'secondary' : 'primary',
           old_master_id: masterInstance?.id,
         })
         : await haApi.manualSwitch({
@@ -358,14 +376,14 @@ const HAManage: React.FC = () => {
             <Col span={6}>
               <Card size="small">
                 <Statistic
-                  title="主节点"
+                  title={clusterIsPXC || clusterIsMGR ? '主节点' : '主节点'}
                   value={masterInstance ? instanceEndpoint(masterInstance) : '无主'}
                   valueStyle={{ fontSize: 14, color: masterInstance ? '#3f8600' : '#cf1322' }}
                 />
               </Card>
             </Col>
             <Col span={6}>
-              <Card size="small"><Statistic title="从节点数" value={slaveInstances.length} /></Card>
+              <Card size="small"><Statistic title={clusterIsPXC || clusterIsMGR ? '非主节点数' : '从节点数'} value={slaveInstances.length} /></Card>
             </Col>
             <Col span={6}>
               <Card size="small">
@@ -508,7 +526,7 @@ const HAManage: React.FC = () => {
       </Modal>
 
       <Modal
-        title="手动主从切换"
+        title={clusterIsPXC ? 'PXC 集群角色切换' : clusterIsMGR ? 'MGR 集群角色切换' : '手动主从切换'}
         open={manualOpen}
         onCancel={() => setManualOpen(false)}
         onOk={submitManual}
@@ -521,13 +539,17 @@ const HAManage: React.FC = () => {
           <Alert
             type="error"
             showIcon
-            message="手动切换需要选择一个非主节点作为新主"
-            description="未选择强制模式时，Pre-flight 通过后即可切换；MGR 集群会调用角色切换接口。"
+            message={clusterIsPXC ? 'PXC 集群将通过角色切换接口完成主从切换' : clusterIsMGR ? 'MGR 集群将通过角色切换接口完成主从切换' : '手动切换需要选择一个非主节点作为新主'}
+            description={clusterIsPXC
+              ? '选择一个 secondary 节点，系统将通过角色切换接口将其提升为 primary。'
+              : clusterIsMGR
+                ? '选择一个 secondary 节点，系统将通过角色切换接口将其提升为 primary。'
+                : '未选择强制模式时，Pre-flight 通过后即可切换。'}
             style={{ marginBottom: 12 }}
           />
-          <Form.Item name="new_master_id" label="新主实例" rules={[{ required: true, message: '请选择新主实例' }]}>
+          <Form.Item name="new_master_id" label={clusterIsPXC ? '目标节点' : '新主实例'} rules={[{ required: true, message: clusterIsPXC ? '请选择目标节点' : '请选择新主实例' }]}>
             <Select
-              placeholder="选择非主节点"
+              placeholder={clusterIsPXC ? '选择 secondary 节点' : '选择非主节点'}
               onChange={() => setPreflight(null)}
               options={slaveInstances.map((instance) => ({
                 value: instance.id,

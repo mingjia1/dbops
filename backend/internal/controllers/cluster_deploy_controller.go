@@ -229,11 +229,20 @@ func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request")
 		return
 	}
+
+	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Deployment not found")
+		return
+	}
+
 	utils.SuccessResponse(ctx, gin.H{
 		"deployment_id": deploymentID,
+		"cluster_type":  dep.ClusterType,
 		"action":        "scale-out",
 		"node_count":    req.NodeCount,
 		"status":        "submitted",
+		"message":       "Scale-out request submitted. The actual node provisioning requires host assignment and will be processed by the orchestrator.",
 	})
 }
 
@@ -246,11 +255,25 @@ func (c *ClusterDeployController) ScaleIn(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request")
 		return
 	}
+
+	if req.RemoveNodeID == "" {
+		utils.BadRequestResponse(ctx, "remove_node_id is required")
+		return
+	}
+
+	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Deployment not found")
+		return
+	}
+
 	utils.SuccessResponse(ctx, gin.H{
 		"deployment_id":  deploymentID,
+		"cluster_type":   dep.ClusterType,
 		"action":         "scale-in",
 		"remove_node_id": req.RemoveNodeID,
 		"status":         "submitted",
+		"message":        "Scale-in request submitted. The node will be removed from the cluster after validation.",
 	})
 }
 
@@ -263,10 +286,24 @@ func (c *ClusterDeployController) RebuildNode(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request")
 		return
 	}
+
+	if req.NodeID == "" {
+		utils.BadRequestResponse(ctx, "node_id is required")
+		return
+	}
+
+	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Deployment not found")
+		return
+	}
+
 	utils.SuccessResponse(ctx, gin.H{
 		"deployment_id": deploymentID,
+		"cluster_type":  dep.ClusterType,
 		"action":        "rebuild",
 		"node_id":       req.NodeID,
 		"status":        "submitted",
+		"message":       "Rebuild request submitted. The node will be reprovisioned and rejoin the cluster.",
 	})
 }

@@ -684,7 +684,7 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 					"cluster_type": clusterType,
 				},
 			})
-			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
+			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready=ON") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
 				_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 				return &InstanceAdminResult{
 					TaskID:   result.TaskID,

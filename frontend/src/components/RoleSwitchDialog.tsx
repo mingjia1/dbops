@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Modal, Select, Button, Space, Alert, Spin, Descriptions, Tag, message } from 'antd'
-import { SwapOutlined, CheckCircleOutlined, WarningOutlined } from '@ant-design/icons'
-import api from '../services/api'
+import { Modal, Select, Button, Space, Alert, Spin, Descriptions, message } from 'antd'
+import { SwapOutlined } from '@ant-design/icons'
+import { roleSwitchApi } from '../services/api'
 
 interface NodeInfo {
   instance_id: string
@@ -9,14 +9,6 @@ interface NodeInfo {
   role: string
   host?: string
   status?: string
-}
-
-interface PreflightResult {
-  cluster_id: string
-  target_master_id: string
-  warnings: string[]
-  errors: string[]
-  is_ready: boolean
 }
 
 interface RoleSwitchDialogProps {
@@ -31,43 +23,27 @@ export const RoleSwitchDialog: React.FC<RoleSwitchDialogProps> = ({
   open, clusterID, nodes, onClose, onComplete,
 }) => {
   const [targetNode, setTargetNode] = useState<string>('')
-  const [step, setStep] = useState<'select' | 'preflight' | 'confirm' | 'executing' | 'done'>('select')
-  const [preflight, setPreflight] = useState<PreflightResult | null>(null)
+  const [step, setStep] = useState<'select' | 'confirm' | 'executing' | 'done'>('select')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (open) {
       setStep('select')
       setTargetNode('')
-      setPreflight(null)
     }
   }, [open])
 
   const replicaNodes = nodes.filter(n => n.role === 'replica' || n.role === 'secondary')
 
-  const handlePreflight = async () => {
-    if (!targetNode) { message.warning('请选择目标主节点'); return }
-    setStep('preflight')
-    setLoading(true)
-    try {
-      const res = await api.post(`/clusters/${clusterID}/switch/preflight`, {
-        target_master_id: targetNode,
-      })
-      setPreflight(res.data?.data || null)
-    } catch (err: any) {
-      message.error(`预检失败: ${err.message}`)
-      setStep('select')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleExecute = async () => {
+    if (!targetNode) { message.warning('请选择目标主节点'); return }
     setStep('executing')
     setLoading(true)
     try {
-      await api.post(`/clusters/${clusterID}/switch`, {
-        new_master_id: targetNode,
+      await roleSwitchApi.switch({
+        cluster_id: clusterID,
+        instance_id: targetNode,
+        target_role: 'primary',
       })
       message.success('角色切换完成')
       setStep('done')
@@ -101,34 +77,12 @@ export const RoleSwitchDialog: React.FC<RoleSwitchDialogProps> = ({
               value: n.instance_id,
             }))}
           />
-          <Button type="primary" block onClick={handlePreflight}>
-            预检
+          <Button type="primary" block onClick={() => {
+            if (!targetNode) { message.warning('请选择目标主节点'); return }
+            setStep('confirm')
+          }}>
+            下一步
           </Button>
-        </Space>
-      )}
-
-      {step === 'preflight' && loading && <Spin tip="预检中..." />}
-
-      {step === 'preflight' && preflight && !loading && (
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          {preflight.is_ready ? (
-            <Alert type="success" showIcon icon={<CheckCircleOutlined />}
-              message="预检通过，可以安全切换" />
-          ) : (
-            <Alert type="error" showIcon icon={<WarningOutlined />}
-              message="预检未通过" description={preflight.errors.join('; ')} />
-          )}
-          {preflight.warnings.length > 0 && (
-            <Alert type="warning" showIcon message="警告"
-              description={preflight.warnings.join('; ')} />
-          )}
-          <Space>
-            <Button onClick={() => setStep('select')}>返回</Button>
-            <Button type="primary" danger disabled={!preflight.is_ready}
-              onClick={() => setStep('confirm')}>
-              确认切换
-            </Button>
-          </Space>
         </Space>
       )}
 
@@ -143,7 +97,7 @@ export const RoleSwitchDialog: React.FC<RoleSwitchDialogProps> = ({
             </Descriptions.Item>
           </Descriptions>
           <Space>
-            <Button onClick={() => setStep('preflight')}>返回</Button>
+            <Button onClick={() => setStep('select')}>返回</Button>
             <Button type="primary" danger loading={loading} onClick={handleExecute}>
               执行切换
             </Button>

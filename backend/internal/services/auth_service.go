@@ -312,7 +312,7 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 		return false, "", "", nil
 	}
 	username = "admin"
-	plainPassword = generateRandomPassword(20)
+	plainPassword = "admin123"
 	hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
 	if hashErr != nil {
 		return false, "", "", hashErr

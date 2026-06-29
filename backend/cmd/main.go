@@ -215,6 +215,7 @@ func main() {
 	switchService := services.NewSwitchService(hostRepo, instanceRepo, clusterDeployRepo, agentClient, switchHistoryRepo, auditService)
 	switchService.SetEncryptionKey(cfg.EncryptionKey)
 	switchController := controllers.NewSwitchController(switchService)
+	failoverService.SetSwitchService(switchService)
 	migrationController := controllers.NewMigrationController(migrationService)
 
 	alertRuleRepo := repositories.NewAlertRuleRepository(db)

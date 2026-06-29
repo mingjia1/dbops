@@ -5,26 +5,37 @@ import {
 } from '@ant-design/icons'
 import api from '../services/api'
 
+interface NodeInfo {
+  instance_id: string
+  name: string
+  role: string
+  host?: string
+}
+
 interface ClusterActionsProps {
   clusterID: string
   clusterName?: string
   archType?: string
   flavor?: string
+  nodes?: NodeInfo[]
   onActionComplete?: (action: string, result: any) => void
 }
 
 export const ClusterActions: React.FC<ClusterActionsProps> = ({
-  clusterID, clusterName, archType, flavor, onActionComplete,
+  clusterID, clusterName, nodes = [], onActionComplete,
 }) => {
   const [scaleOutOpen, setScaleOutOpen] = useState(false)
   const [scaleInOpen, setScaleInOpen] = useState(false)
+  const [rebuildOpen, setRebuildOpen] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
   const [newNodeCount, setNewNodeCount] = useState(1)
+  const [removeNodeId, setRemoveNodeId] = useState<string>('')
+  const [rebuildNodeId, setRebuildNodeId] = useState<string>('')
 
   const handleAction = async (action: string, payload?: any) => {
     setLoading(action)
     try {
-      const res = await api.post(`/clusters/${clusterID}/${action}`, payload)
+      const res = await api.post(`/deployments/${clusterID}/${action}`, payload)
       message.success(`${action} 成功`)
       onActionComplete?.(action, res.data)
     } catch (err: any) {
@@ -54,7 +65,7 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
         </Button>
         <Button
           icon={<ReloadOutlined />}
-          onClick={() => handleAction('rebuild')}
+          onClick={() => setRebuildOpen(true)}
           loading={loading === 'rebuild'}
         >
           重建
@@ -92,11 +103,59 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
         open={scaleInOpen}
         onCancel={() => setScaleInOpen(false)}
         onOk={() => {
-          handleAction('scale-in', { remove_count: 1 })
+          if (!removeNodeId) {
+            message.warning('请选择要移除的节点')
+            return
+          }
+          handleAction('scale-in', { remove_node_id: removeNodeId })
           setScaleInOpen(false)
+          setRemoveNodeId('')
         }}
       >
-        <p>将从集群中移除一个副本节点（主节点不可移除，需先执行角色切换）。</p>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <span>选择要移除的副本节点（主节点不可移除，需先执行角色切换）：</span>
+          <Select
+            style={{ width: '100%' }}
+            placeholder="选择节点"
+            value={removeNodeId || undefined}
+            onChange={setRemoveNodeId}
+            options={nodes
+              .filter(n => n.role === 'replica' || n.role === 'secondary')
+              .map(n => ({
+                label: `${n.name || n.instance_id} (${n.host || ''}) — ${n.role}`,
+                value: n.instance_id,
+              }))}
+          />
+        </Space>
+      </Modal>
+
+      <Modal
+        title="重建 — 重建节点"
+        open={rebuildOpen}
+        onCancel={() => setRebuildOpen(false)}
+        onOk={() => {
+          if (!rebuildNodeId) {
+            message.warning('请选择要重建的节点')
+            return
+          }
+          handleAction('rebuild', { node_id: rebuildNodeId })
+          setRebuildOpen(false)
+          setRebuildNodeId('')
+        }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <span>选择要重建的节点：</span>
+          <Select
+            style={{ width: '100%' }}
+            placeholder="选择节点"
+            value={rebuildNodeId || undefined}
+            onChange={setRebuildNodeId}
+            options={nodes.map(n => ({
+              label: `${n.name || n.instance_id} (${n.host || ''}) — ${n.role}`,
+              value: n.instance_id,
+            }))}
+          />
+        </Space>
       </Modal>
     </Card>
   )

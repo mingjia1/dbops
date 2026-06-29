@@ -21,6 +21,7 @@ type FailoverService struct {
 	db            *repositories.Database
 	instanceRepo  *repositories.InstanceRepository
 	healthService *HealthCheckService
+	switchSvc     *SwitchService
 	encryptionKey string
 }
 
@@ -31,6 +32,10 @@ func NewFailoverService(db *repositories.Database, encryptionKey string) *Failov
 		healthService: NewHealthCheckService(db, encryptionKey),
 		encryptionKey: encryptionKey,
 	}
+}
+
+func (s *FailoverService) SetSwitchService(svc *SwitchService) {
+	s.switchSvc = svc
 }
 
 type FailoverConfig struct {
@@ -120,6 +125,12 @@ type MasterInfo struct {
 
 func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverRequest) (*FailoverResult, error) {
 	startTime := time.Now()
+
+	clusterType := s.inferClusterType(ctx, req.ClusterID)
+
+	if clusterType == "mgr" || clusterType == "pxc" {
+		return s.executeClusterTypeFailover(ctx, req, clusterType, startTime)
+	}
 
 	master, err := s.GetCurrentMaster(ctx, req.ClusterID)
 	if err != nil {
@@ -1059,4 +1070,120 @@ func (s *FailoverService) ValidateFailoverRequest(ctx context.Context, req Failo
 	}
 
 	return nil
+}
+
+func (s *FailoverService) inferClusterType(ctx context.Context, clusterID string) string {
+	instances, err := s.instanceRepo.ListByClusterID(ctx, clusterID)
+	if err != nil || len(instances) == 0 {
+		return ""
+	}
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if v := strings.ToLower(strings.TrimSpace(inst.Topology.ReplicationMode)); v != "" {
+			return v
+		}
+		if v := strings.ToLower(strings.TrimSpace(inst.Status.ReplicationStatus)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (s *FailoverService) executeClusterTypeFailover(ctx context.Context, req FailoverRequest, clusterType string, startTime time.Time) (*FailoverResult, error) {
+	if s.switchSvc == nil {
+		return nil, fmt.Errorf("switch service not configured for %s cluster failover", clusterType)
+	}
+
+	master, err := s.GetCurrentMaster(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current master: %w", err)
+	}
+
+	if master.IsHealthy && !req.Manual {
+		return &FailoverResult{
+			ClusterID:    req.ClusterID,
+			OldMasterID:  master.InstanceID,
+			Status:       "skipped",
+			Success:      false,
+			ErrorMessage: "Master is healthy, auto-failover not triggered",
+		}, nil
+	}
+
+	failureState := s.healthService.GetFailureState(master.InstanceID)
+	if failureState == nil || (!failureState.IsMarkedFailed && !req.Manual) {
+		return &FailoverResult{
+			ClusterID:    req.ClusterID,
+			OldMasterID:  master.InstanceID,
+			Status:       "skipped",
+			Success:      false,
+			ErrorMessage: "Master failure not confirmed",
+		}, nil
+	}
+
+	slaves, err := s.GetSlaves(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get slaves: %w", err)
+	}
+
+	if len(slaves) == 0 {
+		return nil, fmt.Errorf("no non-primary instances available for failover")
+	}
+
+	newMaster, err := s.SelectCandidateMaster(ctx, slaves, req.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select candidate: %w", err)
+	}
+
+	replResult, _ := s.healthService.ExecuteHealthCheck(ctx, HealthCheckRequest{
+		InstanceID: newMaster.InstanceID,
+		Config: HealthCheckConfig{
+			CheckTypes: []string{"tcp", "mysql"},
+		},
+	})
+	if replResult == nil || !replResult.IsHealthy {
+		return nil, fmt.Errorf("candidate %s is not healthy", newMaster.InstanceID)
+	}
+
+	targetRole := "primary"
+	if clusterType == "pxc" {
+		targetRole = "secondary"
+	}
+
+	swResult, err := s.switchSvc.SwitchRoleWithinCluster(ctx, RoleSwitchRequest{
+		ClusterID:  req.ClusterID,
+		InstanceID: newMaster.InstanceID,
+		TargetRole: targetRole,
+		OldMasterID: master.InstanceID,
+		Force:      req.Config.AutoFailoverEnabled || req.Manual,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("role switch failed: %w", err)
+	}
+
+	result := &FailoverResult{
+		ClusterID:     req.ClusterID,
+		OldMasterID:   master.InstanceID,
+		OldMasterHost: fmt.Sprintf("%s:%d", master.Host, master.Port),
+		NewMasterID:   newMaster.InstanceID,
+		NewMasterHost: fmt.Sprintf("%s:%d", newMaster.Host, newMaster.Port),
+		FailoverTime:  startTime,
+		FailoverType:  "auto",
+		Duration:      time.Since(startTime),
+	}
+
+	if swResult != nil && swResult.Status == "completed" {
+		result.Status = "completed"
+		result.Success = true
+	} else if swResult != nil {
+		result.Status = swResult.Status
+		result.ErrorMessage = swResult.Message
+	} else {
+		result.Status = "failed"
+		result.ErrorMessage = "role switch returned nil result"
+	}
+
+	s.recordFailoverHistory(ctx, result)
+	return result, nil
 }
