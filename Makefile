@@ -68,8 +68,8 @@ db-migrate:
 
 dist: build-backend build-agent build-web
 	rm -rf dist && mkdir -p dist/bin dist/config dist/scripts
-	cp backend/build/dbops-backend dist/bin/
-	cp agent/build/dbops-agent dist/bin/
+	cp backend/bin/platform dist/bin/dbops-backend
+	cp agent/bin/agent dist/bin/dbops-agent
 	cp -r backend/config/*.yaml dist/config/ 2>/dev/null || true
 	cp scripts/upgrade-platform.sh scripts/start.sh scripts/stop.sh dist/scripts/
 	cp docker-compose.dev.yml dist/
@@ -82,8 +82,8 @@ upgrade: build-backend build-agent
 	@echo "Stopping services..."
 	scripts/stop.sh || true
 	@echo "Installing new binaries..."
-	cp backend/build/dbops-backend /usr/local/bin/dbops-backend 2>/dev/null || true
-	cp agent/build/dbops-agent /usr/local/bin/dbops-agent 2>/dev/null || true
+	cp backend/bin/platform /usr/local/bin/dbops-backend 2>/dev/null || true
+	cp agent/bin/agent /usr/local/bin/dbops-agent 2>/dev/null || true
 	@echo "Running DB migrations..."
 	cd backend && go run ./cmd/main.go migrate 2>/dev/null || true
 	@echo "Starting services..."

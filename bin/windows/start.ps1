@@ -261,6 +261,11 @@ try {
     $WebNodeModulesDir = Join-Path $WebDir "node_modules"
     if (-not (Test-Path -LiteralPath $BackendBinDir)) { New-Item -ItemType Directory -Path $BackendBinDir -Force | Out-Null }
     if (-not (Test-Path -LiteralPath $AgentBinDir))   { New-Item -ItemType Directory -Path $AgentBinDir   -Force | Out-Null }
+    # 非跳过编译时，清除上次遗留的构建产物，确保每次都重新编译
+    if (-not $SkipBuild) {
+        if (Test-Path -LiteralPath $BackendExe) { Remove-Item -LiteralPath $BackendExe -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $AgentExe)   { Remove-Item -LiteralPath $AgentExe -Force -ErrorAction SilentlyContinue }
+    }
     Write-Success "[成功] 构建目录就绪"
 
     # ---------- 5. 重新编译后端 ----------

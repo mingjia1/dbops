@@ -27,6 +27,8 @@ $LogDir     = Join-Path $ProjectRoot "logs"
 $BackendPidFile = Join-Path $LogDir "backend.pid"
 $AgentPidFile   = Join-Path $LogDir "agent.pid"
 $WebPidFile     = Join-Path $LogDir "frontend.pid"
+$BackendExe  = Join-Path $BackendDir "bin\platform.exe"
+$AgentExe    = Join-Path $AgentDir "bin\agent.exe"
 
 # 通过端口查找占用进程
 function Get-ProcessByPort {
@@ -215,8 +217,28 @@ try {
         }
     }
 
+    # ---------- 5. 清理构建产物 ----------
+    Write-Step "5. 清理构建产物"
+    $cleanOk = $true
+    foreach ($item in @(
+        @{ Path = $BackendExe; Name = "后端可执行文件" },
+        @{ Path = $AgentExe;   Name = "Agent 可执行文件" }
+    )) {
+        if (Test-Path -LiteralPath $item.Path) {
+            try {
+                Remove-Item -LiteralPath $item.Path -Force -ErrorAction Stop
+                Write-Success "[成功] 已移除 $($item.Name): $($item.Path)"
+            } catch {
+                Write-Warn "[警告] 移除 $($item.Name) 失败: $_"
+                $cleanOk = $false
+            }
+        } else {
+            Write-Info "[信息] $($item.Name) 不存在，跳过"
+        }
+    }
+
     Write-Host ""
-    if ($allOk) {
+    if ($allOk -and $cleanOk) {
         Write-Host "  ====================== 停止完成 ======================" -ForegroundColor Green
     } else {
         Write-Host "  ================== 停止完成 (有警告) ==================" -ForegroundColor Yellow

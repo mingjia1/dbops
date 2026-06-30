@@ -20,23 +20,47 @@ apt update
 # 安装基础工具
 echo ""
 echo "[2/8] 安装基础工具..."
-apt install -y curl wget git vim net-tools lsof
+apt install -y curl wget git vim net-tools lsof software-properties-common
 
-# 安装 Go
+# 安装 Go（从国内镜像下载 tarball，比 golang.org 快数十倍）
 echo ""
-echo "[3/8] 安装 Go 1.21+..."
-if ! command -v go &> /dev/null; then
-    GO_VERSION="1.21.6"
-    wget -q https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
-    rm go${GO_VERSION}.linux-amd64.tar.gz
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-    export PATH=$PATH:/usr/local/go/bin
-    echo "Go installed: $(go version)"
+echo "[3/8] 安装 Go 1.23+..."
+GO_VERSION="1.23.6"
+GO_MIRROR="https://mirrors.ustc.edu.cn/golang"
+
+# 检查当前 Go 版本
+INSTALL_GO=false
+if command -v go &> /dev/null; then
+    cur=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' | head -1)
+    major="${cur%.*}"; minor="${cur#*.}"
+    if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 23 ]; }; then
+        echo "当前 Go ${cur} 版本过旧，升级到 ${GO_VERSION}..."
+        INSTALL_GO=true
+    else
+        echo "Go already installed: $(go version)"
+    fi
 else
-    echo "Go already installed: $(go version)"
+    echo "Go 未安装，安装 ${GO_VERSION}..."
+    INSTALL_GO=true
 fi
+
+if [ "$INSTALL_GO" = true ]; then
+    wget -q "${GO_MIRROR}/go${GO_VERSION}.linux-amd64.tar.gz" -O "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
+    rm "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
+fi
+
+# 确保 /usr/local/go/bin 在 PATH 中（优先级高于旧版系统 Go）
+if [ -x /usr/local/go/bin/go ]; then
+    export PATH="/usr/local/go/bin:$PATH"
+fi
+if ! grep -q '/usr/local/go/bin' /etc/profile; then
+    echo 'export PATH=/usr/local/go/bin:$PATH' >> /etc/profile
+fi
+echo 'export GOPROXY=https://goproxy.cn,direct' >> /etc/profile
+export GOPROXY=https://goproxy.cn,direct
+echo "Go version: $(go version)"
 
 # 安装 Node.js
 echo ""
@@ -53,14 +77,14 @@ fi
 # 安装 MySQL Server 和 Client
 echo ""
 echo "[5/8] 安装 MySQL Server 8.0..."
-if ! command -v mysqld &> /dev/null; then
-    apt install -y mysql-server-8.0 mysql-client-8.0
-    systemctl enable mysql
-    systemctl start mysql
-    echo "MySQL installed: $(mysql --version)"
-else
-    echo "MySQL already installed: $(mysqld --version)"
-fi
+# if ! command -v mysqld &> /dev/null; then
+#     apt install -y mysql-server-8.0 mysql-client-8.0
+#     systemctl enable mysql
+#     systemctl start mysql
+#     echo "MySQL installed: $(mysql --version)"
+# else
+#     echo "MySQL already installed: $(mysqld --version)"
+# fi
 
 # 安装 Percona XtraBackup
 echo ""
@@ -76,31 +100,7 @@ else
     echo "XtraBackup already installed: $(xtrabackup --version 2>&1 | head -1)"
 fi
 
-# 安装 Docker (可选)
-echo ""
-echo "[7/8] 安装 Docker..."
-if ! command -v docker &> /dev/null; then
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    rm get-docker.sh
-    systemctl enable docker
-    systemctl start docker
-    echo "Docker installed: $(docker --version)"
-else
-    echo "Docker already installed: $(docker --version)"
-fi
 
-# 安装 Docker Compose (可选)
-echo ""
-echo "[8/8] 安装 Docker Compose..."
-if ! command -v docker-compose &> /dev/null; then
-    COMPOSE_VERSION="2.24.0"
-    curl -L "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    chmod +x /usr/local/bin/docker-compose
-    echo "Docker Compose installed: $(docker-compose --version)"
-else
-    echo "Docker Compose already installed: $(docker-compose --version)"
-fi
 
 # 验证安装
 echo ""
@@ -112,8 +112,6 @@ echo "Node.js:    $(node --version 2>&1 || echo '未安装')"
 echo "npm:        $(npm --version 2>&1 || echo '未安装')"
 echo "MySQL:      $(mysqld --version 2>&1 || echo '未安装')"
 echo "XtraBackup: $(xtrabackup --version 2>&1 | head -1 || echo '未安装')"
-echo "Docker:     $(docker --version 2>&1 || echo '未安装')"
-echo "Docker Compose: $(docker-compose --version 2>&1 || echo '未安装')"
 
 echo ""
 echo "==================================="
