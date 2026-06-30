@@ -158,15 +158,41 @@ export const authApi = {
     api.post('/auth/reset-all-passwords', { new_password: newPassword }),
 }
 
+const normalizeInstance = (item: any): Instance => {
+  const connection = item?.connection || {}
+  const host = connection.host || item?.host || item?.endpoint?.split?.(':')?.[0] || ''
+  const port = connection.port || item?.port || Number(item?.endpoint?.split?.(':')?.[1]) || 3306
+  const username = connection.username || item?.username || 'root'
+  return {
+    ...item,
+    host,
+    port,
+    username,
+    connection: {
+      ...connection,
+      host,
+      port,
+      username,
+      ssl_enabled: connection.ssl_enabled ?? item?.ssl_enabled ?? false,
+    },
+  }
+}
+
+const normalizeInstanceResponse = (res: any) => {
+  if (Array.isArray(res?.data)) return { ...res, data: res.data.map(normalizeInstance) }
+  if (res?.data) return { ...res, data: normalizeInstance(res.data) }
+  return res
+}
+
 export const instanceApi = {
   list: (limit = 20, offset = 0) =>
-    api.get(`/instances?limit=${limit}&offset=${offset}`),
+    api.get(`/instances?limit=${limit}&offset=${offset}`).then(normalizeInstanceResponse),
 
   listByHost: (hostId: string, limit = 20, offset = 0) =>
-    api.get(`/instances?host_id=${hostId}&limit=${limit}&offset=${offset}`),
+    api.get(`/instances?host_id=${hostId}&limit=${limit}&offset=${offset}`).then(normalizeInstanceResponse),
   
   get: (id: string) =>
-    api.get(`/instances/${id}`),
+    api.get(`/instances/${id}`).then(normalizeInstanceResponse),
   
   create: (data: {
     name: string
@@ -268,6 +294,9 @@ export const instanceApi = {
 
   getCredentials: (id: string) =>
     api.get(`/instances/${id}/credentials`),
+
+  batchHealthCheck: (ids: string[]) =>
+    api.post('/ha/health/batch', { instance_ids: ids }, { timeout: 240000, suppressGlobalError: true } as any),
 }
 
 export interface Host {

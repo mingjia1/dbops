@@ -4,7 +4,7 @@ import { Button, Card, Dropdown, Empty, Form, Input, InputNumber, message, Modal
 import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'
-import { hostApi, instanceApi, type Host, type HostScanResult } from '../services/api'
+import { hostApi, instanceApi, type Host, type HostScanResult, type HostTestResult } from '../services/api'
 
 const longRunningAgentActions = new Set(['restart'])
 const isFailedAgentStatus = (status?: string) => {
@@ -23,8 +23,10 @@ const HostList: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchSubmitting, setBatchSubmitting] = useState(false)
+  const [testRows, setTestRows] = useState<Record<string, HostTestResult & { host_name?: string; address?: string }>>({})
   const [batchForm] = Form.useForm()
   const pollRef = useRef<Record<string, number>>({})
+  const testPollRef = useRef<Record<string, number>>({})
 
   const fetchHosts = async () => {
     setLoading(true)
@@ -44,6 +46,7 @@ const HostList: React.FC = () => {
 
   useEffect(() => () => {
     Object.values(pollRef.current).forEach((timer) => window.clearInterval(timer))
+    Object.values(testPollRef.current).forEach((timer) => window.clearInterval(timer))
   }, [])
 
   const stopScanPolling = (hostId: string) => {
@@ -106,16 +109,77 @@ const HostList: React.FC = () => {
       message.warning('请先选择主机')
       return
     }
+    setTestRows((prev) => {
+      const next = { ...prev }
+      selected.forEach((host) => {
+        next[host.id] = {
+          task_id: '',
+          host_id: host.id,
+          host_name: host.name,
+          address: host.address,
+          status: 'pending',
+          message: '检测任务提交中',
+          latency_ms: 0,
+          started_at: new Date().toISOString(),
+          ended_at: '',
+        }
+      })
+      return next
+    })
     let submitted = 0
     for (const host of selected) {
       try {
-        await hostApi.testConnection(host.id)
+        const res: any = await hostApi.testConnection(host.id)
+        const initial: HostTestResult = res?.data
+        if (initial) {
+          setTestRows((prev) => ({
+            ...prev,
+            [host.id]: { ...initial, host_name: host.name, address: host.address },
+          }))
+          if (initial.task_id && initial.status === 'pending') pollHostTestResult(host, initial.task_id)
+        }
         submitted += 1
-      } catch {
-        // interceptor shows error
+      } catch (err: any) {
+        setTestRows((prev) => ({
+          ...prev,
+          [host.id]: {
+            task_id: '',
+            host_id: host.id,
+            host_name: host.name,
+            address: host.address,
+            status: 'failed',
+            message: err?.response?.data?.message || err?.message || '检测提交失败',
+            latency_ms: 0,
+            started_at: new Date().toISOString(),
+            ended_at: new Date().toISOString(),
+          },
+        }))
       }
     }
     message.success(`已提交 ${submitted} 个主机连通性检测任务`)
+  }
+
+  const pollHostTestResult = (host: Host, taskId: string) => {
+    const existingTimer = testPollRef.current[host.id]
+    if (existingTimer) window.clearInterval(existingTimer)
+    testPollRef.current[host.id] = window.setInterval(async () => {
+      try {
+        const res: any = await hostApi.getTestResult(taskId)
+        const row: HostTestResult = res?.data
+        if (!row) return
+        setTestRows((prev) => ({
+          ...prev,
+          [host.id]: { ...row, host_name: host.name, address: host.address },
+        }))
+        if (row.status === 'success' || row.status === 'failed') {
+          window.clearInterval(testPollRef.current[host.id])
+          delete testPollRef.current[host.id]
+          fetchHosts()
+        }
+      } catch {
+        // keep polling; the task may not be visible immediately
+      }
+    }, 1500)
   }
 
   const handleBatchAgent = async (action: string) => {
@@ -314,6 +378,13 @@ const HostList: React.FC = () => {
     },
   ]
 
+  const testResultColumns: ColumnsType<HostTestResult & { host_name?: string; address?: string }> = [
+    { title: '主机', key: 'host', render: (_, r) => `${r.host_name || r.host_id} (${r.address || '-'})` },
+    { title: '检测结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={v === 'success' ? 'success' : v === 'failed' ? 'error' : 'processing'}>{v || 'pending'}</Tag> },
+    { title: '说明', dataIndex: 'message', key: 'message', render: (v) => v || '-' },
+    { title: '延迟', dataIndex: 'latency_ms', key: 'latency_ms', render: (v) => (v ? `${v} ms` : '-') },
+  ]
+
   return (
     <div style={{ padding: 24 }}>
       <Card
@@ -349,6 +420,18 @@ const HostList: React.FC = () => {
           }}
         />
       </Card>
+
+      {Object.keys(testRows).length > 0 && (
+        <Card title="批量检测结果" style={{ marginTop: 16 }} size="small">
+          <Table
+            size="small"
+            columns={testResultColumns}
+            dataSource={Object.values(testRows).filter((row) => selectedRowKeys.length === 0 || selectedRowKeys.includes(row.host_id))}
+            rowKey={(row) => row.host_id || row.task_id}
+            pagination={false}
+          />
+        </Card>
+      )}
 
       <Modal
         title="批量添加主机"

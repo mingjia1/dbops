@@ -2581,6 +2581,10 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 		user = "root"
 	}
 	pass, _ := req.Config["target_pass"].(string)
+	data["target_host"] = host
+	data["target_port"] = port
+	data["target_user"] = user
+	data["target_endpoint"] = fmt.Sprintf("%s:%d", host, port)
 
 	var mysqlAdminArgs []string
 	mysqlAdminArgs = append(mysqlAdminArgs, "mysqladmin", "ping",

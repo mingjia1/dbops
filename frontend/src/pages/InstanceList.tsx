@@ -5,22 +5,10 @@ import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeIn
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
-const isFailedTaskStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled'].includes(normalized)
-}
-
 const isSuccessfulTaskStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['success', 'succeeded', 'healthy', 'ok', 'completed'].includes(normalized)
 }
-
-const isHealthCheckSuccess = (task: any) => {
-  if (!task || isFailedTaskStatus(task.status)) return false
-  return isSuccessfulTaskStatus(task.status)
-}
-
-const getHealthCheckTask = (res: any) => extractTaskPayload(res)
 
 const getHealthCheckErrorTask = (err: any) => extractTaskPayload(err?.response?.data || err?.data || null)
 
@@ -34,7 +22,32 @@ const formatHealthCheckFailure = (instanceName: string, task: any, fallback: str
 }
 
 const formatHealthCheckSummary = (ok: number, failed: number) =>
-  `一键检测失败：成功 ${ok} 个，失败 ${failed} 个。Agent 端口拒绝连接、Agent 返回 failed/error/timeout、或后端 code 非 200 都按失败处理。`
+  `一键检测完成：成功 ${ok} 个，异常 ${failed} 个。后端 HTTP 200 只表示批量请求完成，逐实例按 is_healthy/status/error_message 判断。`
+
+const healthStatusFromBatchRow = (row: any) => {
+  if (!row) return 'unhealthy'
+  if (row.is_healthy === true) return 'healthy'
+  if (isSuccessfulTaskStatus(row.status)) return 'healthy'
+  return 'unhealthy'
+}
+
+const formatBatchHealthFailure = (instanceName: string, row: any) => {
+  const connection = row?.connection || [row?.connection_host, row?.connection_port].filter(Boolean).join(':')
+  const agent = row?.agent_endpoint || [row?.agent_host, row?.agent_port].filter(Boolean).join(':')
+  const target = row?.target_endpoint || [row?.target_host, row?.target_port].filter(Boolean).join(':')
+  const context = [
+    connection ? `连接=${connection}` : '',
+    agent ? `Agent=${agent}` : '',
+    target ? `实际检测=${target}` : '',
+    row?.target_user ? `用户=${row.target_user}` : '',
+  ].filter(Boolean).join(' | ')
+  const parts = [
+    `${instanceName}${context ? ` [${context}]` : ''}: ${row?.error_message || row?.message || row?.status || 'health check failed'}`,
+    row?.status ? `status=${row.status}` : '',
+    row?.task_id ? `task_id=${row.task_id}` : '',
+  ].filter(Boolean)
+  return parts.join(' | ')
+}
 
 const InstanceList: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -99,6 +112,8 @@ const InstanceList: React.FC = () => {
     const host = hosts.find((item) => item.id === id)
     return host ? host.name : id.substring(0, 8)
   }
+
+  const hostAddressById = (id: string | null | undefined) => hosts.find((item) => item.id === id)?.address
 
   const selectedHostAddress = (hostId?: string) => hosts.find((item) => item.id === hostId)?.address
 
@@ -168,28 +183,62 @@ const InstanceList: React.FC = () => {
       message.warning('\u8bf7\u5148\u9009\u62e9\u5b9e\u4f8b')
       return
     }
+
+    const selectedIds = selected.map((item) => item.id)
+    const selectedById = new Map(selected.map((item) => [item.id, item]))
     let ok = 0
     let failed = 0
     const failedRows: string[] = []
-    for (const instance of selected) {
-      try {
-        const res: any = await instanceApi.healthCheck(instance.id)
-        const task = getHealthCheckTask(res)
-        if (!isHealthCheckSuccess(task)) {
-          failed += 1
-          failedRows.push(formatHealthCheckFailure(instance.name, task, 'health check failed'))
-        } else {
+
+    try {
+      const res: any = await instanceApi.batchHealthCheck(selectedIds)
+      const rows = Array.isArray(res?.data) ? res.data : []
+      const statusById = new Map<string, string>()
+
+      rows.forEach((row: any) => {
+        const instanceId = row?.instance_id
+        const instance = selectedById.get(instanceId)
+        const status = healthStatusFromBatchRow(row)
+        if (instanceId) statusById.set(instanceId, status)
+        if (status === 'healthy') {
           ok += 1
+        } else {
+          failed += 1
+          failedRows.push(formatBatchHealthFailure(instance?.name || instanceId || '-', row))
         }
-      } catch (err: any) {
+      })
+
+      selectedIds.forEach((id) => {
+        if (statusById.has(id)) return
         failed += 1
-        const task = getHealthCheckErrorTask(err)
-        failedRows.push(formatHealthCheckFailure(instance.name, task, err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'))
-      }
+        failedRows.push(formatBatchHealthFailure(selectedById.get(id)?.name || id, {
+          status: 'error',
+          error_message: 'health check did not return a result',
+        }))
+      })
+
+      setInstances((prev) => prev.map((item) => {
+        const status = statusById.get(item.id)
+        if (!status) return item
+        return {
+          ...item,
+          status: {
+            ...(item.status || {}),
+            health_status: status,
+            run_status: status === 'healthy' ? 'running' : (item.status?.run_status || 'unknown'),
+            role: item.status?.role || '',
+          },
+        }
+      }))
+    } catch (err: any) {
+      failed = selected.length
+      const task = getHealthCheckErrorTask(err)
+      failedRows.push(formatHealthCheckFailure('batch', task, err?.response?.data?.message || err?.message || '\u8bf7\u6c42\u5931\u8d25'))
     }
+
     if (failed > 0) {
-      Modal.error({
-        title: `一键检测失败：${failed} 个实例未通过`,
+      Modal.warning({
+        title: `一键检测完成：${failed} 个实例异常`,
         content: (
           <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
             <div>{formatHealthCheckSummary(ok, failed)}</div>
@@ -280,7 +329,15 @@ const InstanceList: React.FC = () => {
   const columns: ColumnsType<Instance> = [
     { title: '实例名称', dataIndex: 'name', key: 'name' },
     { title: '所属主机', dataIndex: 'host_id', key: 'host_id', render: (id) => hostNameById(id) },
-    { title: '连接地址', key: 'endpoint', render: (_, r) => `${r.connection?.host || r.host || '-'}:${r.connection?.port || r.port || '-'}` },
+    {
+      title: '连接地址',
+      key: 'endpoint',
+      render: (_, r) => {
+        const host = r.connection?.host || r.host || hostAddressById(r.host_id)
+        const port = r.connection?.port || r.port || 3306
+        return host ? `${host}:${port}` : '-'
+      },
+    },
     { title: '用户名', key: 'username', render: (_, r) => r.connection?.username || 'root' },
     {
       title: '密码',

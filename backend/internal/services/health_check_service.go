@@ -61,6 +61,16 @@ type HealthCheckResult struct {
 	ErrorMessage   string        `json:"error_message"`
 	Details        CheckDetails  `json:"details"`
 	CheckTime      time.Time     `json:"check_time"`
+	ConnectionHost string        `json:"connection_host,omitempty"`
+	ConnectionPort int           `json:"connection_port,omitempty"`
+	AgentHost      string        `json:"agent_host,omitempty"`
+	AgentPort      int           `json:"agent_port,omitempty"`
+	TargetHost     string        `json:"target_host,omitempty"`
+	TargetPort     int           `json:"target_port,omitempty"`
+	TargetUser     string        `json:"target_user,omitempty"`
+	Connection     string        `json:"connection,omitempty"`
+	AgentEndpoint  string        `json:"agent_endpoint,omitempty"`
+	TargetEndpoint string        `json:"target_endpoint,omitempty"`
 }
 
 type CheckDetails struct {
@@ -103,9 +113,16 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 	}
 
 	result := &HealthCheckResult{
-		InstanceID: req.InstanceID,
-		CheckTime:  time.Now(),
-		Details:    CheckDetails{},
+		InstanceID:     req.InstanceID,
+		CheckTime:      time.Now(),
+		Details:        CheckDetails{},
+		ConnectionHost: conn.Host,
+		ConnectionPort: conn.Port,
+		TargetHost:     conn.Host,
+		TargetPort:     conn.Port,
+		TargetUser:     conn.Username,
+		Connection:     fmt.Sprintf("%s:%d", conn.Host, conn.Port),
+		TargetEndpoint: fmt.Sprintf("%s:%d", conn.Host, conn.Port),
 	}
 
 	for _, checkType := range config.CheckTypes {

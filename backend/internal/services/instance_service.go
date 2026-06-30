@@ -623,12 +623,14 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		return nil, err
 	}
 	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	connectionData := healthCheckConnectionData(nil, conn, agentHost, agentPort, targetHost)
 	if s.agentClient == nil {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 		return &InstanceAdminResult{
 			TaskID:   "health-check-" + uuid.New().String(),
 			Status:   "failed",
 			Message:  "agent client not configured",
+			Data:     connectionData,
 			Progress: 100,
 		}, nil
 	}
@@ -648,21 +650,24 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		prevStatus, _ := s.repo.GetStatus(ctx, id)
 		if prevStatus != nil && prevStatus.HealthStatus == "healthy" {
 			log.Printf("HealthCheck [%s]: agent unreachable (%v) but instance was healthy, keeping status", id, err)
+				return &InstanceAdminResult{
+					TaskID:   "health-check-" + uuid.New().String(),
+					Status:   "completed",
+					Message:  "agent unreachable but instance previously healthy",
+					Data:     connectionData,
+					Progress: 100,
+				}, nil
+			}
+		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 			return &InstanceAdminResult{
 				TaskID:   "health-check-" + uuid.New().String(),
-				Status:   "completed",
-				Message:  "agent unreachable but instance previously healthy",
+				Status:   "failed",
+				Message:  err.Error(),
+				Data:     connectionData,
 				Progress: 100,
 			}, nil
 		}
-		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
-		return &InstanceAdminResult{
-			TaskID:   "health-check-" + uuid.New().String(),
-			Status:   "failed",
-			Message:  err.Error(),
-			Progress: 100,
-		}, nil
-	}
+	connectionData = healthCheckConnectionData(result.Data, conn, agentHost, agentPort, targetHost)
 	if isFailedTaskStatus(result.Status) {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 	} else if isSuccessfulTaskStatus(result.Status) {
@@ -683,13 +688,14 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 			})
 			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready=ON") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
 				_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
-				return &InstanceAdminResult{
-					TaskID:   result.TaskID,
-					Status:   "unhealthy",
-					Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
-					Progress: 100,
-				}, nil
-			}
+					return &InstanceAdminResult{
+						TaskID:   result.TaskID,
+						Status:   "unhealthy",
+						Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
+						Data:     connectionData,
+						Progress: 100,
+					}, nil
+				}
 		}
 		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
 	}
@@ -697,7 +703,7 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		TaskID:   result.TaskID,
 		Status:   result.Status,
 		Message:  result.Message,
-		Data:     result.Data,
+		Data:     connectionData,
 		Progress: result.Progress,
 	}, nil
 }
@@ -2174,6 +2180,31 @@ func (s *InstanceService) resolveAgentMySQLTarget(ctx context.Context, instance 
 		}
 	}
 	return conn.Host
+}
+
+func healthCheckConnectionData(agentData interface{}, conn *models.InstanceConnection, agentHost string, agentPort int, targetHost string) map[string]interface{} {
+	data := map[string]interface{}{}
+	if agentMap, ok := agentData.(map[string]interface{}); ok {
+		for key, value := range agentMap {
+			data[key] = value
+		}
+	} else if agentData != nil {
+		data["agent_data"] = agentData
+	}
+	if conn == nil {
+		return data
+	}
+	data["connection_host"] = conn.Host
+	data["connection_port"] = conn.Port
+	data["connection"] = fmt.Sprintf("%s:%d", conn.Host, conn.Port)
+	data["agent_host"] = agentHost
+	data["agent_port"] = agentPort
+	data["agent_endpoint"] = fmt.Sprintf("%s:%d", agentHost, agentPort)
+	data["target_host"] = targetHost
+	data["target_port"] = conn.Port
+	data["target_user"] = conn.Username
+	data["target_endpoint"] = fmt.Sprintf("%s:%d", targetHost, conn.Port)
+	return data
 }
 
 func (s *InstanceService) RecoverCluster(ctx context.Context, id string) (*InstanceAdminResult, error) {
