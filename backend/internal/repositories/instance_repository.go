@@ -710,6 +710,6 @@ func sqlxIn(query string, args []interface{}) (string, []interface{}, error) {
 			break
 		}
 	}
-	newQuery := query[:idx] + "(" + strings.Join(placeholders, ",") + ") " + query[idx+1:]
+	newQuery := query[:idx] + strings.Join(placeholders, ",") + query[idx+1:]
 	return newQuery, args, nil
 }

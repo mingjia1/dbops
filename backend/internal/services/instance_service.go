@@ -2172,13 +2172,6 @@ func (s *InstanceService) resolveAgentMySQLTarget(ctx context.Context, instance 
 	if conn == nil || strings.TrimSpace(conn.Host) == "" {
 		return "127.0.0.1"
 	}
-	if s.hostRepo != nil && instance != nil && instance.HostID != nil && *instance.HostID != "" {
-		if host, err := s.hostRepo.GetByID(ctx, *instance.HostID); err == nil && host != nil {
-			if sameHost(host.Address, conn.Host) && sameHost(host.Address, agentHost) {
-				return "127.0.0.1"
-			}
-		}
-	}
 	return conn.Host
 }
 
