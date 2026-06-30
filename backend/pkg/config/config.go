@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("server_port", "8080")
 	viper.SetDefault("tls_cert_path", "")
 	viper.SetDefault("tls_key_path", "")
-	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_level", "warning")
 	viper.SetDefault("database_url", "root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local")
 	viper.SetDefault("sqlite_path", "") // 空表示使用 <DataDir>/dbops.db
 	viper.SetDefault("redis_url", "localhost:6379")

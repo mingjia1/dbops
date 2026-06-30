@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  MySQL 运维平台 - 一键重启脚本
 #  作用: 停止后重新启动所有服务
 #  用法: powershell -ExecutionPolicy Bypass -File .\restart.ps1
@@ -8,15 +8,9 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 chcp 65001 | Out-Null
 
-$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.FullName } else { (Get-Location).Path }
-$stopScript  = Join-Path $ProjectRoot "bin\stop.ps1"
-$startScript = Join-Path $ProjectRoot "bin\start.ps1"
-
-# 兼容旧版目录结构: 如果 bin/ 下找不到则尝试 scripts/
-if (-not (Test-Path -LiteralPath $stopScript)) {
-    $stopScript = Join-Path $ProjectRoot "scripts\stop.ps1"
-    $startScript = Join-Path $ProjectRoot "scripts\start.ps1"
-}
+$ProjectRoot = if ($PSScriptRoot) { (Get-Item $PSScriptRoot).Parent.Parent.FullName } else { (Get-Location).Path }
+$stopScript  = Join-Path $ProjectRoot "bin\windows\stop.ps1"
+$startScript = Join-Path $ProjectRoot "bin\windows\start.ps1"
 
 Write-Host ""
 Write-Host "  MySQL 运维平台 - 一键重启" -ForegroundColor White -BackgroundColor DarkMagenta

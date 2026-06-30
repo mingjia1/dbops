@@ -37,7 +37,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("agent_port", "9090")
 	viper.SetDefault("platform_url", "http://localhost:8080")
 	viper.SetDefault("agent_token", "")
-	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_level", "warning")
 	viper.SetDefault("relay.enabled", false)
 	viper.SetDefault("relay.cache_dir", "/data/relay/packages")
 	viper.SetDefault("relay.relay_port", 9091)
