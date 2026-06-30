@@ -265,3 +265,4 @@ r1*.md
 test_button_click.mjs
 r2.md
 .continue/
+bin/ubuntu/*.tar.gz

@@ -24,16 +24,21 @@ apt install -y curl wget git vim net-tools lsof software-properties-common
 
 # 安装 Go（从国内镜像下载 tarball，比 golang.org 快数十倍）
 echo ""
-echo "[3/8] 安装 Go 1.23+..."
-GO_VERSION="1.23.6"
-GO_MIRROR="https://mirrors.ustc.edu.cn/golang"
+echo "[3/8] 安装 Go 1.25+..."
+GO_VERSION="1.25.11"
+GO_MIRRORS=(
+    "https://mirrors.ustc.edu.cn/golang"
+    "https://mirrors.huaweicloud.com/go"
+    "https://mirrors.aliyun.com/golang"
+    "https://go.dev/dl"
+)
 
-# 检查当前 Go 版本
+# 检查当前 Go 版本（需要 >= 1.25，因为依赖要求 go 1.25+）
 INSTALL_GO=false
 if command -v go &> /dev/null; then
     cur=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' | head -1)
     major="${cur%.*}"; minor="${cur#*.}"
-    if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 23 ]; }; then
+    if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 25 ]; }; then
         echo "当前 Go ${cur} 版本过旧，升级到 ${GO_VERSION}..."
         INSTALL_GO=true
     else
@@ -45,20 +50,46 @@ else
 fi
 
 if [ "$INSTALL_GO" = true ]; then
-    wget -q "${GO_MIRROR}/go${GO_VERSION}.linux-amd64.tar.gz" -O "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
-    rm "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
+    TAR_FILE="go${GO_VERSION}.linux-amd64.tar.gz"
+    # 优先使用当前目录已有的 tarball，避免重复下载
+    if [ -f "./${TAR_FILE}" ]; then
+        echo "  使用本地文件: ./${TAR_FILE}"
+        cp "./${TAR_FILE}" "/tmp/${TAR_FILE}"
+    elif [ -f "/tmp/${TAR_FILE}" ]; then
+        echo "  使用本地文件: /tmp/${TAR_FILE}"
+    else
+        DOWNLOAD_OK=false
+        for mirror in "${GO_MIRRORS[@]}"; do
+            url="${mirror}/go${GO_VERSION}.linux-amd64.tar.gz"
+            echo "  尝试下载: ${url}"
+            wget -q --timeout=10 "${url}" -O "/tmp/${TAR_FILE}" && { DOWNLOAD_OK=true; break; } || true
+        done
+        if [ "$DOWNLOAD_OK" != true ]; then
+            echo "[WARN] 所有镜像下载失败，保留当前 Go $(go version 2>/dev/null | head -1)"
+            echo "       可手动下载后重试:"
+            echo "       wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+            echo "       bash $0"
+            INSTALL_GO=false
+        fi
+    fi
+    if [ "$INSTALL_GO" = true ]; then
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf "/tmp/${TAR_FILE}"
+        rm "/tmp/${TAR_FILE}"
+    fi
 fi
 
 # 确保 /usr/local/go/bin 在 PATH 中（优先级高于旧版系统 Go）
 if [ -x /usr/local/go/bin/go ]; then
+    # 创建软链到 /usr/local/bin（默认在 PATH 中且优先于 /usr/bin）
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt 2>/dev/null || true
     export PATH="/usr/local/go/bin:$PATH"
 fi
-if ! grep -q '/usr/local/go/bin' /etc/profile; then
+if ! grep -q '/usr/local/go/bin' /etc/profile 2>/dev/null; then
     echo 'export PATH=/usr/local/go/bin:$PATH' >> /etc/profile
 fi
-echo 'export GOPROXY=https://goproxy.cn,direct' >> /etc/profile
+echo 'export GOPROXY=https://goproxy.cn,direct' >> /etc/profile 2>/dev/null || true
 export GOPROXY=https://goproxy.cn,direct
 echo "Go version: $(go version)"
 
