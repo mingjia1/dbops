@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -688,54 +689,70 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	if len(data) < 4 || !(data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F') {
 		return fmt.Errorf("agent binary %s is not a valid Linux ELF executable (wrong format)", binPath)
 	}
+	// 1. Ensure remote directory exists
 	if out, err := runSSH(client, "mkdir -p /opt/dbops-agent"); err != nil {
 		return fmt.Errorf("prepare agent directory failed: %v\n%s", err, out)
 	}
-	session, err := client.NewSession()
-	if err != nil {
-		return err
+	// 2. Check remote disk space (need 2x binary size + 100MB buffer)
+	neededKB := int64(len(data))/1024*2 + 102400
+	dfOut, _ := runSSH(client, "df -k /opt/dbops-agent | awk 'NR==2{print $4}'")
+	dfOut = strings.TrimSpace(dfOut)
+	if freeKB, parseErr := strconv.ParseInt(dfOut, 10, 64); parseErr == nil && freeKB < neededKB {
+		return fmt.Errorf("insufficient disk space on remote %s: need ~%dKB but only %dKB available at /opt/dbops-agent",
+			client.RemoteAddr().String(), neededKB, freeKB)
 	}
-	defer session.Close()
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return err
+	// 3. Upload via SCP-like protocol (more reliable than cat pipe for large binaries)
+	//    Uses base64 to avoid shell escaping issues, then decodes on remote side.
+	encoded := base64.StdEncoding.EncodeToString(data)
+	// Split into chunks to avoid SSH command line length limits (usually 2MB per command)
+	const maxChunkArgs = 768 * 1024 // ~750KB base64 text per chunk (~560KB binary)
+	totalChunks := (len(encoded) + maxChunkArgs - 1) / maxChunkArgs
+	// Prepare remote: clean slate
+	if out, err := runSSH(client, "rm -f /opt/dbops-agent/agent.b64 /opt/dbops-agent/agent.new; : ok"); err != nil {
+		return fmt.Errorf("prepare remote temp dir failed: %v\n%s", err, out)
 	}
-	var stderr bytes.Buffer
-	session.Stderr = &stderr
-	if err := session.Start("cat > /opt/dbops-agent/agent.new && chmod +x /opt/dbops-agent/agent.new && mv -f /opt/dbops-agent/agent.new /opt/dbops-agent/agent"); err != nil {
-		return err
-	}
-	done := make(chan error, 1)
-	go func() {
-		if _, err := stdin.Write(data); err != nil {
-			_ = stdin.Close()
-			done <- err
-			return
+	for i := 0; i < totalChunks; i++ {
+		start := i * maxChunkArgs
+		end := start + maxChunkArgs
+		if end > len(encoded) {
+			end = len(encoded)
 		}
-		_ = stdin.Close()
-		done <- session.Wait()
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("upload agent binary failed: %w %s", err, strings.TrimSpace(stderr.String()))
+		chunk := encoded[start:end]
+		// Use printf + append to build the base64 file safely
+		cmd := fmt.Sprintf("printf '%%s' %s >> /opt/dbops-agent/agent.b64",
+			shellEscape(chunk))
+		if out, err := runSSH(client, cmd); err != nil {
+			return fmt.Errorf("upload chunk %d/%d failed: %v\n%s", i+1, totalChunks, err, out)
 		}
-	case <-time.After(agentUploadTimeout):
-		_ = session.Close()
-		return fmt.Errorf("upload agent binary timed out after %s", agentUploadTimeout)
+	}
+	// 4. Decode base64 and install binary
+	installCmd := `base64 -d < /opt/dbops-agent/agent.b64 > /opt/dbops-agent/agent.new && chmod +x /opt/dbops-agent/agent.new && mv -f /opt/dbops-agent/agent.new /opt/dbops-agent/agent && rm -f /opt/dbops-agent/agent.b64`
+	if out, err := runSSH(client, installCmd); err != nil {
+		return fmt.Errorf("install agent binary failed: %v\n%s", err, out)
+	}
+	// 5. Verify remote binary
+	verifyOut, err := runSSH(client, "ls -la /opt/dbops-agent/agent && file /opt/dbops-agent/agent")
+	if err != nil {
+		return fmt.Errorf("agent binary verification failed: %v\n%s", err, verifyOut)
 	}
 	return nil
 }
 
 func findAgentBinary() (string, error) {
 	candidates := []string{
-		filepath.Join("agent", "bin", "agent-linux-amd64"),
-		filepath.Join("..", "agent", "bin", "agent-linux-amd64"),
-		filepath.Join("..", "..", "agent", "bin", "agent-linux-amd64"),
-		filepath.Join("agent", "bin", "agent_linux"),
-		filepath.Join("..", "agent", "bin", "agent_linux"),
+		// start-agent.sh 编译产物 (通用命名)
+		filepath.Join("agent", "bin", "agent"),
+		filepath.Join("..", "agent", "bin", "agent"),
+		filepath.Join("..", "..", "agent", "bin", "agent"),
+		// 平台预编译产物
 		filepath.Join("agent", "bin", "mysql-ops-agent-linux"),
 		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux"),
+		filepath.Join("agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
+		filepath.Join("agent", "bin", "agent-linux-amd64"),
+		filepath.Join("..", "agent", "bin", "agent-linux-amd64"),
+		filepath.Join("agent", "bin", "agent_linux"),
+		filepath.Join("..", "agent", "bin", "agent_linux"),
 		filepath.Join("agent", "bin", "dbops-agent-linux"),
 		filepath.Join("..", "agent", "bin", "dbops-agent-linux"),
 	}
