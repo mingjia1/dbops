@@ -1089,6 +1089,7 @@ type InstanceAdminRequest struct {
 	Verb                 string `json:"verb"`
 	UpdateStoredPassword bool   `json:"update_stored_password"`
 	Datadir              string `json:"datadir"`
+	Basedir              string `json:"basedir"`
 }
 
 type BatchPasswordRequest struct {
@@ -1635,7 +1636,7 @@ func (s *InstanceService) adminActionWithConnectionAndTimeout(ctx context.Contex
 			"content":      req.Content,
 			"service":      req.Service,
 			"verb":         req.Verb,
-			"basedir":      conn.Basedir,
+			"basedir":      firstNonEmpty(req.Basedir, conn.Basedir),
 			"datadir":      firstNonEmpty(req.Datadir, conn.Datadir),
 			"os_user":      conn.OSUser,
 			"cluster_type": clusterType,
@@ -1918,11 +1919,52 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 
 	// Ensure MySQL is running before attempting password reset
 	log.Printf("ForceChangePassword [%s]: ensuring MySQL is running", id)
-	s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
+	statusResult, statusErr := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
 		Action:  "service_control",
-		Verb:    "start",
+		Verb:    "status",
 		Datadir: conn.Datadir,
 	})
+	if statusErr != nil {
+		log.Printf("ForceChangePassword [%s]: failed to check MySQL status: %v", id, statusErr)
+	}
+	needsStart := true
+	if statusResult != nil && statusResult.Status == "completed" && strings.Contains(strings.ToLower(statusResult.Message), "running") {
+		needsStart = false
+		log.Printf("ForceChangePassword [%s]: MySQL is already running", id)
+	}
+	if needsStart {
+		log.Printf("ForceChangePassword [%s]: MySQL is not running, attempting to start...", id)
+		startResult, startErr := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
+			Action:  "service_control",
+			Verb:    "start",
+			Datadir: conn.Datadir,
+			Basedir: conn.Basedir,
+		})
+		if startErr != nil {
+			return fmt.Errorf("failed to start MySQL instance: %w", startErr)
+		}
+		if startResult == nil || startResult.Status != "completed" {
+			errMsg := "failed to start MySQL instance"
+			if startResult != nil && startResult.Message != "" {
+				errMsg = startResult.Message
+			}
+			return fmt.Errorf("force reset password failed: %s", errMsg)
+		}
+		// Wait for MySQL to be ready
+		log.Printf("ForceChangePassword [%s]: MySQL started, waiting for readiness...", id)
+		for i := 0; i < 15; i++ {
+			time.Sleep(2 * time.Second)
+			checkResult, _ := s.adminActionWithConnectionLong(ctx, instance, conn, InstanceAdminRequest{
+				Action:  "service_control",
+				Verb:    "status",
+				Datadir: conn.Datadir,
+			})
+			if checkResult != nil && checkResult.Status == "completed" && strings.Contains(strings.ToLower(checkResult.Message), "running") {
+				log.Printf("ForceChangePassword [%s]: MySQL is ready", id)
+				break
+			}
+		}
+	}
 
 	// Try skip_grant_tables approach
 	log.Printf("ForceChangePassword [%s]: trying skip_grant_tables approach", id)
