@@ -1213,9 +1213,10 @@ func isForbiddenMySQLDeployOption(key string) bool {
 
 func allowedClusterCustomOptions(clusterType string) map[string]bool {
 	common := map[string]bool{
-		"package_url":      true,
-		"package_checksum": true,
-		"relay_url":        true,
+		"package_url":       true,
+		"package_checksum":  true,
+		"relay_url":         true,
+		"relay_upload_url":  true,
 	}
 	switch clusterType {
 	case ClusterTypeHA:
