@@ -176,7 +176,8 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	}
 	now := time.Now()
 	_ = s.userRepo.UpdateLoginMetadata(ctx, user.ID, req.IPAddress, now)
-	s.auditAuth(ctx, "login", "login", "user", user.ID, "success", "", "source="+user.Source, req.IPAddress, req.UserAgent)
+	auditCtx := context.WithValue(ctx, "user_id", user.ID)
+	s.auditAuth(auditCtx, "login", "login", "user", user.ID, "success", "", "source="+user.Source, req.IPAddress, req.UserAgent)
 
 	return &LoginResponse{
 		Token:     tokenString,

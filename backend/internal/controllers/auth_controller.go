@@ -76,7 +76,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 }
 
 func (c *AuthController) Me(ctx *gin.Context) {
-	user, err := c.authService.CurrentUser(ctx.Request.Context(), ctx.GetString("user_id"))
+	user, err := c.authService.CurrentUser(requestContext(ctx), ctx.GetString("user_id"))
 	if err != nil {
 		utils.UnauthorizedResponse(ctx, "Invalid user session")
 		return
@@ -91,7 +91,7 @@ func (c *AuthController) ChangePassword(ctx *gin.Context) {
 		return
 	}
 	userID := ctx.GetString("user_id")
-	if err := c.authService.ChangePassword(ctx.Request.Context(), userID, req); err != nil {
+	if err := c.authService.ChangePassword(requestContext(ctx), userID, req); err != nil {
 		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -104,7 +104,7 @@ func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
-	updated, err := c.authService.ResetAllPasswords(ctx.Request.Context(), req)
+	updated, err := c.authService.ResetAllPasswords(requestContext(ctx), req)
 	if err != nil {
 		utils.ErrorResponse(ctx, http.StatusBadRequest, err.Error(), nil)
 		return

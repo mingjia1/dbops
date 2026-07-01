@@ -31,6 +31,7 @@ const DataStorage = lazy(() => import('./pages/DataStorage'))
 const AgentManage = lazy(() => import('./pages/AgentManage'))
 const PluginManage = lazy(() => import('./pages/PluginManage'))
 const SecuritySettings = lazy(() => import('./pages/SecuritySettings'))
+const UserManagePage = lazy(() => import('./pages/UserManagePage'))
 
 function App() {
   const navigate = useNavigate()
@@ -82,6 +83,7 @@ function App() {
             <Route path="agent-manage" element={<AgentManage />} />
             <Route path="plugins" element={<PluginManage />} />
             <Route path="security-settings" element={<SecuritySettings />} />
+            <Route path="users" element={<UserManagePage />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>

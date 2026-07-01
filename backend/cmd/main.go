@@ -28,6 +28,7 @@ import (
 	"github.com/jackcode/mysql-ops-platform/pkg/middleware"
 	"github.com/jackcode/mysql-ops-platform/pkg/storage"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -97,13 +98,25 @@ func main() {
 
 	var userRepo *repositories.UserRepository
 	userRepo = repositories.NewUserRepository(db)
+	roleRepo := repositories.NewRoleRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	auditService.SetHMACSecret(cfg.EncryptionKey)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, auditService)
+	authService.SetRoleRepository(roleRepo)
 	authController := controllers.NewAuthController(authService)
 	userService := services.NewUserService(userRepo)
+	userService.SetRoleRepository(roleRepo)
+	userService.SetAuditService(auditService)
 	userController := controllers.NewUserController(userService)
+	roleService := services.NewRoleService(roleRepo)
+	roleService.SetAuditService(auditService)
+	roleController := controllers.NewRoleController(roleService)
+
+	if err := roleRepo.SeedBuiltinRoles(context.Background()); err != nil {
+		logInstance.Warn("Failed to seed builtin roles: " + err.Error())
+	}
+	seedAuthSettings(context.Background(), db, logInstance)
 
 	// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
 	if created, username, plain, err := authService.SeedAdminIfEmpty(context.Background()); err != nil {
@@ -383,16 +396,30 @@ func main() {
 			{
 				authProtected.POST("/change-password", authController.ChangePassword)
 				authProtected.POST("/reset-all-passwords", middleware.RequirePermission("admin"), authController.ResetAllPasswords)
+				authProtected.GET("/me", authController.Me)
 			}
 
 			users := protected.Group("/users")
-			users.Use(middleware.RequirePermission("admin"))
+			users.Use(middleware.RequirePermission("user:manage"))
 			{
 				users.GET("", userController.List)
 				users.POST("", userController.Create)
 				users.GET("/:id", userController.GetByID)
 				users.PUT("/:id", userController.Update)
 				users.DELETE("/:id", userController.Delete)
+				users.POST("/:id/reset-password", userController.ResetPassword)
+				users.POST("/:id/enable", userController.Enable)
+				users.POST("/:id/disable", userController.Disable)
+				users.PUT("/:id/roles", userController.UpdateRoles)
+			}
+
+			roles := protected.Group("/roles")
+			roles.Use(middleware.RequirePermission("user:manage"))
+			{
+				roles.GET("", roleController.List)
+				roles.POST("", roleController.Create)
+				roles.PUT("/:id", roleController.Update)
+				roles.DELETE("/:id", roleController.Delete)
 			}
 
 			instances := protected.Group("/instances")
@@ -485,10 +512,10 @@ func main() {
 				deployments.POST("/mgr", middleware.RequirePermission("admin"), clusterDeployController.DeployMGR)
 				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)
 				deployments.POST("/ha", middleware.RequirePermission("admin"), clusterDeployController.DeployHA)
-			deployments.GET("", clusterDeployController.List)
-			deployments.GET("/clusters", clusterDeployController.ListClusters)
-			deployments.GET("/clusters/:cluster_id", clusterDeployController.GetClusterDetail)
-			deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
+				deployments.GET("", clusterDeployController.List)
+				deployments.GET("/clusters", clusterDeployController.ListClusters)
+				deployments.GET("/clusters/:cluster_id", clusterDeployController.GetClusterDetail)
+				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
 				deployments.GET("/:id/plan", clusterDeployController.GetDeployPlan)
 				deployments.POST("/:id/change-password", middleware.RequirePermission("admin"), clusterDeployController.ChangeClusterPassword)
 				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
@@ -567,7 +594,9 @@ func main() {
 						return
 					}
 					client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-						if len(via) >= 3 { return fmt.Errorf("too many redirects") }
+						if len(via) >= 3 {
+							return fmt.Errorf("too many redirects")
+						}
 						return nil
 					}}
 					method := "HEAD"
@@ -1153,4 +1182,26 @@ func defaultInt(v, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func seedAuthSettings(ctx context.Context, db *repositories.Database, logInstance *zap.Logger) {
+	if db == nil || db.Pool == nil {
+		return
+	}
+	defaults := map[string]string{
+		"auth.local_enabled":  "true",
+		"auth.ldap_enabled":   "false",
+		"auth.oauth2_enabled": "false",
+		"auth.default_role":   "operator",
+	}
+	for key, value := range defaults {
+		var existing string
+		err := db.Pool.QueryRowContext(ctx, "SELECT value FROM platform_settings WHERE key = ?", key).Scan(&existing)
+		if err == nil {
+			continue
+		}
+		if _, err := db.Pool.ExecContext(ctx, "INSERT INTO platform_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", key, value); err != nil {
+			logInstance.Warn("Failed to seed auth setting " + key + ": " + err.Error())
+		}
+	}
 }

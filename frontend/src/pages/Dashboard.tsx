@@ -73,6 +73,11 @@ const Dashboard: React.FC = () => {
     resetForm.resetFields()
   }
 
+  const hasPermission = (permission: string) => {
+    const permissions = user?.permissions || []
+    return permissions.includes('*') || permissions.includes(permission)
+  }
+
   const menuItems = [
     { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
     { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
@@ -103,6 +108,7 @@ const Dashboard: React.FC = () => {
         { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
         { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: 'Agent 管理' },
         { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
+        ...(hasPermission('user:manage') ? [{ key: '/dashboard/users', icon: <UserOutlined />, label: '用户与认证' }] : []),
         { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
         { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
         { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '系统设置' },

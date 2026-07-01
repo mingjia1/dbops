@@ -147,6 +147,9 @@ export interface InstanceTopology {
 export const authApi = {
   login: (username: string, password: string) =>
     api.post('/auth/login', { username, password }),
+
+  me: () =>
+    api.get('/auth/me'),
   
   register: (username: string, password: string, email: string, role: string) =>
     api.post('/auth/register', { username, password, email, role }),
@@ -156,6 +159,33 @@ export const authApi = {
 
   resetAllPasswords: (newPassword: string) =>
     api.post('/auth/reset-all-passwords', { new_password: newPassword }),
+}
+
+export interface PlatformRole {
+  id: string
+  name: string
+  display_name: string
+  description: string
+  permissions: string[]
+  is_builtin: boolean
+}
+
+export const userApi = {
+  list: () => api.get('/users'),
+  create: (data: any) => api.post('/users', data),
+  update: (id: string, data: any) => api.put(`/users/${id}`, data),
+  delete: (id: string) => api.delete(`/users/${id}`),
+  enable: (id: string) => api.post(`/users/${id}/enable`),
+  disable: (id: string) => api.post(`/users/${id}/disable`),
+  resetPassword: (id: string, newPassword: string) => api.post(`/users/${id}/reset-password`, { new_password: newPassword }),
+  updateRoles: (id: string, roles: string[]) => api.put(`/users/${id}/roles`, { roles }),
+}
+
+export const roleApi = {
+  list: () => api.get('/roles'),
+  create: (data: any) => api.post('/roles', data),
+  update: (id: string, data: any) => api.put(`/roles/${id}`, data),
+  delete: (id: string) => api.delete(`/roles/${id}`),
 }
 
 const normalizeInstance = (item: any): Instance => {

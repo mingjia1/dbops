@@ -51,13 +51,14 @@ func TestAuthChangePasswordWritesAuditLogAndUpdatesPassword(t *testing.T) {
 
 	logs, err := auditRepo.ListByResource(context.Background(), "user", "user-001", 10, 0)
 	require.NoError(t, err)
-	require.Len(t, logs, 1)
-	assert.Equal(t, "user-001", logs[0].UserID)
-	assert.Equal(t, "change_password", logs[0].Operation)
-	assert.Equal(t, "change_password", logs[0].Action)
-	assert.Equal(t, "success", logs[0].Result)
-	assert.NotContains(t, logs[0].Details, "new-password")
-	assert.NotContains(t, logs[0].Details, "old-password")
+	changeLog := findAuditLogByOperation(logs, "change_password")
+	require.NotNil(t, changeLog)
+	assert.Equal(t, "user-001", changeLog.UserID)
+	assert.Equal(t, "change_password", changeLog.Operation)
+	assert.Equal(t, "change_password", changeLog.Action)
+	assert.Equal(t, "success", changeLog.Result)
+	assert.NotContains(t, changeLog.Details, "new-password")
+	assert.NotContains(t, changeLog.Details, "old-password")
 }
 
 func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
@@ -86,6 +87,56 @@ func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
 	assert.NotContains(t, logs[0].Details, "123456")
 }
 
+func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
+	service, userRepo, _ := newAuthAuditTestService()
+	ctx := context.Background()
+	createAuthTestUser(t, ctx, userRepo, "user-003", "carol", "old-password", "operator")
+
+	resp, err := service.Login(ctx, LoginRequest{Username: "carol", Password: "old-password"})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Token)
+
+	require.NoError(t, userRepo.UpdateStatus(ctx, "user-003", "disabled"))
+	claims, err := service.ValidateToken(resp.Token)
+
+	require.Error(t, err)
+	assert.Nil(t, claims)
+	assert.Contains(t, err.Error(), "not active")
+}
+
+func TestAuthLoginReturnsPermissions(t *testing.T) {
+	service, userRepo, _ := newAuthAuditTestService()
+	ctx := context.Background()
+	createAuthTestUser(t, ctx, userRepo, "user-004", "dana", "old-password", "admin")
+
+	resp, err := service.Login(ctx, LoginRequest{Username: "dana", Password: "old-password"})
+
+	require.NoError(t, err)
+	require.Contains(t, resp.User.Permissions, "*")
+}
+
+func TestUserServiceCannotRemoveLastAdminViaUpdate(t *testing.T) {
+	db := newTestDB()
+	userRepo := repositories.NewUserRepository(db)
+	roleRepo := repositories.NewRoleRepository(db)
+	require.NoError(t, roleRepo.SeedBuiltinRoles(context.Background()))
+	service := NewUserService(userRepo)
+	service.SetRoleRepository(roleRepo)
+	ctx := context.Background()
+	createAuthTestUser(t, ctx, userRepo, "admin-002", "root", "old-password", "admin")
+
+	_, err := service.Update(ctx, "admin-002", UpdateUserRequest{
+		Username: "root",
+		Email:    "root@localhost",
+		Role:     "operator",
+		Roles:    []string{"operator"},
+		Status:   "active",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "last admin")
+}
+
 func TestUserRepositoryUpdatePasswordReturnsNotFoundForMissingUser(t *testing.T) {
 	repo := repositories.NewUserRepository(newTestDB())
 
@@ -93,4 +144,13 @@ func TestUserRepositoryUpdatePasswordReturnsNotFoundForMissingUser(t *testing.T)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "user not found")
+}
+
+func findAuditLogByOperation(logs []models.AuditLog, operation string) *models.AuditLog {
+	for i := range logs {
+		if logs[i].Operation == operation {
+			return &logs[i]
+		}
+	}
+	return nil
 }

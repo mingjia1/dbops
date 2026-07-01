@@ -60,8 +60,8 @@ func ErrorHandler() gin.HandlerFunc {
 				message = "Resource not found"
 			}
 			ctx.JSON(status, gin.H{
-				"code":    status,
-				"message": message,
+				"code":     status,
+				"message":  message,
 				"trace_id": ctx.GetString("trace_id"),
 			})
 		}
@@ -119,6 +119,12 @@ func RequirePermission(permission string) gin.HandlerFunc {
 			ctx.Next()
 			return
 		}
+		if values, ok := ctx.Get("permissions"); ok {
+			if permissions, ok := values.([]string); ok && hasPermission(permissions, permission) {
+				ctx.Next()
+				return
+			}
+		}
 
 		rolePermissions := map[string][]string{
 			"dba":       {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
@@ -155,4 +161,22 @@ func RequirePermission(permission string) gin.HandlerFunc {
 
 		ctx.Next()
 	}
+}
+
+func hasPermission(permissions []string, required string) bool {
+	for _, granted := range permissions {
+		if granted == "*" || granted == required {
+			return true
+		}
+		if required == "admin" {
+			continue
+		}
+		if strings.HasSuffix(granted, ":*") {
+			prefix := strings.TrimSuffix(granted, "*")
+			if strings.HasPrefix(required, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }

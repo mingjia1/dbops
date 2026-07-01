@@ -231,7 +231,19 @@ func (r *ClusterDeployRepository) ListClusters(ctx context.Context) ([]models.Cl
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments WHERE cluster_id != '' AND status IN ('completed','success','running','in_progress') GROUP BY cluster_id ORDER BY created_at DESC`
+	query := `
+		SELECT d.id, d.cluster_type, d.name, d.status, d.request_json, d.plan_json, d.custom_json,
+		       d.started_at, d.finished_at, d.error_message, d.cluster_id, d.display_name, d.arch,
+		       d.nodes, d.mysql_version, d.config_json, d.created_at, d.updated_at
+		FROM cluster_deployments d
+		INNER JOIN (
+			SELECT cluster_id, MAX(created_at) AS latest_created_at
+			FROM cluster_deployments
+			WHERE cluster_id != '' AND status IN ('completed','success','running','in_progress')
+			GROUP BY cluster_id
+		) latest ON latest.cluster_id = d.cluster_id AND latest.latest_created_at = d.created_at
+		WHERE d.cluster_id != '' AND d.status IN ('completed','success','running','in_progress')
+		ORDER BY d.created_at DESC`
 	rows, err := r.db.Pool.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %w", err)
