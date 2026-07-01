@@ -22,6 +22,8 @@ func (c *AuthController) Login(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
+	req.IPAddress = ctx.ClientIP()
+	req.UserAgent = ctx.Request.UserAgent()
 
 	resp, err := c.authService.Login(ctx.Request.Context(), req)
 	if err != nil {
@@ -71,6 +73,15 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	ctx.SetSameSite(http.SameSiteLaxMode)
 	ctx.SetCookie("auth_token", "", -1, "/", "", true, true)
 	ctx.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
+}
+
+func (c *AuthController) Me(ctx *gin.Context) {
+	user, err := c.authService.CurrentUser(ctx.Request.Context(), ctx.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedResponse(ctx, "Invalid user session")
+		return
+	}
+	utils.SuccessResponse(ctx, user)
 }
 
 func (c *AuthController) ChangePassword(ctx *gin.Context) {
@@ -130,5 +141,6 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	ctx.Set("user_id", claims.UserID)
 	ctx.Set("username", claims.Username)
 	ctx.Set("role", claims.Role)
+	ctx.Set("permissions", claims.Permissions)
 	ctx.Next()
 }

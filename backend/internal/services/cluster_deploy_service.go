@@ -469,6 +469,13 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
+	// Write back cluster base info (cluster_id, arch, nodes, mysql_version, config_json)
+	nodeCount := len(plan.Nodes)
+	mysqlVer := req.MySQL.Version
+	if mysqlVer == "" {
+		mysqlVer = "8.0"
+	}
+	_ = s.repo.UpdateClusterMeta(ctx, clusterID, nodeCount, mysqlVer, dep.RequestJSON)
 	if s.nodeRepo != nil {
 		_ = s.nodeRepo.UpdateStatusByDeploymentID(ctx, clusterID, "completed", "部署完成")
 	}
@@ -815,6 +822,86 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 		})
 	}
 	return responses, nil
+}
+
+func (s *ClusterDeployService) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
+	deployments, err := s.repo.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ClusterInfo, 0, len(deployments))
+	for _, dep := range deployments {
+		nodeCount := len(s.deploymentNodes(ctx, dep.ID))
+		info := ClusterInfo{
+			ClusterID:    dep.ClusterID,
+			DeploymentID: dep.ID,
+			Name:         dep.Name,
+			DisplayName:  dep.DisplayName,
+			Arch:         dep.Arch,
+			ClusterType:  dep.ClusterType,
+			Status:       dep.Status,
+			Nodes:        nodeCount,
+			MySQLVersion: dep.MySQLVersion,
+			ConfigJSON:   dep.ConfigJSON,
+			CreatedAt:    dep.CreatedAt,
+		}
+		if info.Arch == "" {
+			info.Arch = dep.ClusterType
+		}
+		if info.Nodes == 0 {
+			info.Nodes = dep.Nodes
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
+type ClusterInfo struct {
+	ClusterID    string    `json:"cluster_id"`
+	DeploymentID string    `json:"deployment_id"`
+	Name         string    `json:"name"`
+	DisplayName  string    `json:"display_name"`
+	Arch         string    `json:"arch"`
+	ClusterType  string    `json:"cluster_type"`
+	Status       string    `json:"status"`
+	Nodes        int       `json:"nodes"`
+	MySQLVersion string    `json:"mysql_version"`
+	ConfigJSON   string    `json:"config_json"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (s *ClusterDeployService) GetClusterDetail(ctx context.Context, clusterID string) (*ClusterDetail, error) {
+	dep, err := s.repo.GetByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	nodeCount := len(s.deploymentNodes(ctx, dep.ID))
+	info := ClusterInfo{
+		ClusterID:    dep.ClusterID,
+		DeploymentID: dep.ID,
+		Name:         dep.Name,
+		DisplayName:  dep.DisplayName,
+		Arch:         dep.Arch,
+		ClusterType:  dep.ClusterType,
+		Status:       dep.Status,
+		Nodes:        nodeCount,
+		MySQLVersion: dep.MySQLVersion,
+		ConfigJSON:   dep.ConfigJSON,
+		CreatedAt:    dep.CreatedAt,
+	}
+	if info.Arch == "" {
+		info.Arch = dep.ClusterType
+	}
+	if info.Nodes == 0 {
+		info.Nodes = dep.Nodes
+	}
+	instances, _ := s.instRepo.ListByClusterID(ctx, clusterID)
+	return &ClusterDetail{ClusterInfo: info, Instances: instances}, nil
+}
+
+type ClusterDetail struct {
+	ClusterInfo
+	Instances []*models.Instance `json:"instances"`
 }
 
 func deploymentFallbackProgress(clusterType, status string) (string, int, string) {

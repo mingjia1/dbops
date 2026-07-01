@@ -321,11 +321,18 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	if action == "status" {
 		if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 			_ = s.repo.UpdateStatus(ctx, host.ID, "active")
+			ver, _ := s.agentClient.GetAgentVersion(ctx, host.Address, port)
+			now := time.Now().UTC()
+			_ = s.repo.UpdateAgentMeta(ctx, host.ID, ver, "running", &now)
 			result.Status = "success"
 			result.Message = msg
+			if ver != "" {
+				result.Message = msg + " (agent version: " + ver + ")"
+			}
 			return result, nil
 		} else {
 			_ = s.repo.UpdateStatus(ctx, host.ID, "failed")
+			_ = s.repo.UpdateAgentMeta(ctx, host.ID, host.AgentVersion, "stopped", nil)
 			result.Status = "failed"
 			result.Message = msg
 			return result, nil
@@ -430,6 +437,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("delete agent failed: %v\n%s", err, out)
 			return result, nil
 		}
+		_ = s.repo.UpdateAgentMeta(ctx, host.ID, "", "removed", nil)
 	default:
 		result.Message = "unsupported agent action: " + action
 		return result, nil
@@ -438,6 +446,9 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	if action == "delete" || action == "remove" || action == "stop" {
 		if action == "stop" || action == "delete" || action == "remove" {
 			_ = s.repo.UpdateStatus(ctx, host.ID, "inactive")
+		}
+		if action == "stop" {
+			_ = s.repo.UpdateAgentMeta(ctx, host.ID, host.AgentVersion, "stopped", nil)
 		}
 		result.Status = "success"
 		result.Message = "agent " + action + " completed"
@@ -452,6 +463,19 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 		result.Status = "success"
 		result.Message = msg
+		ver, _ := s.agentClient.GetAgentVersion(ctx, host.Address, port)
+		if ver != "" {
+			result.Message = msg + " (agent version: " + ver + ")"
+			if action == "install" || action == "add" || action == "update" {
+				_ = s.repo.UpdateAgentInstalled(ctx, host.ID, ver)
+			} else {
+				now := time.Now().UTC()
+				_ = s.repo.UpdateAgentMeta(ctx, host.ID, ver, "running", &now)
+			}
+		} else {
+			now := time.Now().UTC()
+			_ = s.repo.UpdateAgentMeta(ctx, host.ID, host.AgentVersion, "running", &now)
+		}
 	} else {
 		// Read agent log to help diagnose startup failure
 		logOut, _ := runSSH(client, "cat /opt/dbops-agent/agent.log 2>/dev/null | tail -10")

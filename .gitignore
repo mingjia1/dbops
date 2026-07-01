@@ -261,7 +261,7 @@ db/*.db-wal
 *.bak
 nul
 **/nul
-r1*.md
+*.md
 test_button_click.mjs
 r2.md
 .continue/

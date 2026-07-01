@@ -127,6 +127,7 @@ const AgentManage: React.FC = () => {
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', render: (v) => v || 9090 },
+    { title: 'Agent 版本', dataIndex: 'agent_version', key: 'agent_version', render: (v) => v || '-' },
     {
       title: '主机状态',
       key: 'status',

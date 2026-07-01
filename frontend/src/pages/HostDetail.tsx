@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm,
-  Tabs, Modal, Form, Input, Result, Statistic, Row, Col, Badge, Radio, Switch, Tooltip,
+  Tabs, Modal, Form, Input, Result, Statistic, Row, Col, Badge, Radio, Switch, Tooltip, Select,
 } from 'antd'
 import {
   ArrowLeftOutlined, ThunderboltOutlined, DatabaseOutlined, PlusOutlined,
@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  hostApi, instanceApi,
+  hostApi, instanceApi, clusterDeployApi,
   type Host, type HostTestResult, type Instance,
   type HostScanResult, type ScannedInstance,
 } from '../services/api'
@@ -48,6 +48,7 @@ const HostDetail: React.FC = () => {
   const [scanPorts, setScanPorts] = useState<number[]>([3306, 33060, 3307])
   const [scanRange, setScanRange] = useState<string>('3306-3310')
   const [discoverProcess, setDiscoverProcess] = useState(true)
+  const [clusters, setClusters] = useState<any[]>([])
   const [scanForm] = Form.useForm()
 
   useEffect(() => {
@@ -83,6 +84,7 @@ const HostDetail: React.FC = () => {
 
   useEffect(() => {
     fetchHost()
+    fetchClusters()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -106,6 +108,15 @@ const HostDetail: React.FC = () => {
     if (scanPollRef.current) {
       window.clearInterval(scanPollRef.current)
       scanPollRef.current = null
+    }
+  }
+
+  const fetchClusters = async () => {
+    try {
+      const res: any = await clusterDeployApi.listClusters()
+      setClusters(res.data || [])
+    } catch {
+      setClusters([])
     }
   }
 
@@ -724,8 +735,12 @@ const HostDetail: React.FC = () => {
           <Form.Item name="password" label="连接密码" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
           </Form.Item>
-          <Form.Item name="cluster_id" label="集群 ID">
-            <Input placeholder="可选；同一批实例会写入相同集群 ID" />
+          <Form.Item name="cluster_id" label="所属集群">
+            <Select
+              allowClear
+              placeholder="选择集群（可选）"
+              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
+            />
           </Form.Item>
         </Form>
       </Modal>
@@ -829,8 +844,12 @@ const HostDetail: React.FC = () => {
           >
             <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
           </Form.Item>
-          <Form.Item name="cluster_id" label="集群 ID (可选)">
-            <Input placeholder="例如: mgr-cluster-01" />
+          <Form.Item name="cluster_id" label="所属集群">
+            <Select
+              allowClear
+              placeholder="选择集群（可选）"
+              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
+            />
           </Form.Item>
         </Form>
       </Modal>

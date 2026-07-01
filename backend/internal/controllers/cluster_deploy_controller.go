@@ -307,3 +307,22 @@ func (c *ClusterDeployController) RebuildNode(ctx *gin.Context) {
 		"message":       "Rebuild request submitted. The node will be reprovisioned and rejoin the cluster.",
 	})
 }
+
+func (c *ClusterDeployController) ListClusters(ctx *gin.Context) {
+	clusters, err := c.service.ListClusters(ctx.Request.Context())
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Failed to list clusters", err)
+		return
+	}
+	utils.SuccessResponse(ctx, clusters)
+}
+
+func (c *ClusterDeployController) GetClusterDetail(ctx *gin.Context) {
+	clusterID := ctx.Param("cluster_id")
+	detail, err := c.service.GetClusterDetail(ctx.Request.Context(), clusterID)
+	if err != nil {
+		utils.NotFoundResponse(ctx, "Cluster not found")
+		return
+	}
+	utils.SuccessResponse(ctx, detail)
+}

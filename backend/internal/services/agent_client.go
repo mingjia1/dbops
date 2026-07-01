@@ -235,6 +235,47 @@ func (c *AgentClient) CheckEnvironmentDirect(ctx context.Context, hostAddr strin
 	return result.Data, nil
 }
 
+func (c *AgentClient) GetAgentVersion(ctx context.Context, hostAddr string, agentPort int) (string, error) {
+	url := c.buildURL(hostAddr, agentPort, "/version")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		Code int    `json:"code"`
+		Data struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("failed to parse version response: %w", err)
+	}
+	return result.Data.Version, nil
+}
+
+func (c *AgentClient) GetAgentHealth(ctx context.Context, hostAddr string, agentPort int) (bool, error) {
+	url := c.buildURL(hostAddr, agentPort, "/health")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK, nil
+}
+
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := c.buildURL(hostAddr, agentPort, path)
 

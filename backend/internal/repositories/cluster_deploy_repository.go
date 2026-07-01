@@ -35,8 +35,8 @@ func (r *ClusterDeployRepository) createInDB(ctx context.Context, dep *models.Cl
 	dep.CreatedAt = now
 	dep.UpdatedAt = now
 
-	query := `INSERT INTO cluster_deployments (id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := r.db.Pool.ExecContext(ctx, query, dep.ID, dep.ClusterType, dep.Name, dep.Status, dep.RequestJSON, dep.PlanJSON, dep.CustomJSON, dep.StartedAt, dep.FinishedAt, dep.ErrorMessage, dep.CreatedAt, dep.UpdatedAt)
+	query := `INSERT INTO cluster_deployments (id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := r.db.Pool.ExecContext(ctx, query, dep.ID, dep.ClusterType, dep.Name, dep.Status, dep.RequestJSON, dep.PlanJSON, dep.CustomJSON, dep.StartedAt, dep.FinishedAt, dep.ErrorMessage, dep.ClusterID, dep.DisplayName, dep.Arch, dep.Nodes, dep.MySQLVersion, dep.ConfigJSON, dep.CreatedAt, dep.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create deployment: %w", err)
 	}
@@ -64,7 +64,7 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 	if limit <= 0 {
 		limit = 20
 	}
-	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments ORDER BY created_at DESC LIMIT ? OFFSET ?`
 	rows, err := r.db.Pool.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
@@ -75,9 +75,12 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 	for rows.Next() {
 		var dep models.ClusterDeployment
 		var startedAt, finishedAt sql.NullTime
+		var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+		var nodes sql.NullInt64
 		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
 			&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
 			&startedAt, &finishedAt, &dep.ErrorMessage,
+			&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
 			&dep.CreatedAt, &dep.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -86,6 +89,24 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 		}
 		if finishedAt.Valid {
 			dep.FinishedAt = &finishedAt.Time
+		}
+		if clusterID.Valid {
+			dep.ClusterID = clusterID.String
+		}
+		if displayName.Valid {
+			dep.DisplayName = displayName.String
+		}
+		if arch.Valid {
+			dep.Arch = arch.String
+		}
+		if nodes.Valid {
+			dep.Nodes = int(nodes.Int64)
+		}
+		if mysqlVersion.Valid {
+			dep.MySQLVersion = mysqlVersion.String
+		}
+		if configJSON.Valid {
+			dep.ConfigJSON = configJSON.String
 		}
 		deployments = append(deployments, dep)
 	}
@@ -100,9 +121,12 @@ func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {
 }) (*models.ClusterDeployment, error) {
 	var dep models.ClusterDeployment
 	var startedAt, finishedAt sql.NullTime
+	var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+	var nodes sql.NullInt64
 	err := scanner.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
 		&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
 		&startedAt, &finishedAt, &dep.ErrorMessage,
+		&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
 		&dep.CreatedAt, &dep.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -116,16 +140,34 @@ func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {
 	if finishedAt.Valid {
 		dep.FinishedAt = &finishedAt.Time
 	}
+	if clusterID.Valid {
+		dep.ClusterID = clusterID.String
+	}
+	if displayName.Valid {
+		dep.DisplayName = displayName.String
+	}
+	if arch.Valid {
+		dep.Arch = arch.String
+	}
+	if nodes.Valid {
+		dep.Nodes = int(nodes.Int64)
+	}
+	if mysqlVersion.Valid {
+		dep.MySQLVersion = mysqlVersion.String
+	}
+	if configJSON.Valid {
+		dep.ConfigJSON = configJSON.String
+	}
 	return &dep, nil
 }
 
 func (r *ClusterDeployRepository) getByIDInDB(ctx context.Context, id string) (*models.ClusterDeployment, error) {
-	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments WHERE id = ?`
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments WHERE id = ?`
 	return r.scanClusterDeployment(r.db.Pool.QueryRowContext(ctx, query, id))
 }
 
 func (r *ClusterDeployRepository) getByNameInDB(ctx context.Context, name string) (*models.ClusterDeployment, error) {
-	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, created_at, updated_at FROM cluster_deployments WHERE name = ? ORDER BY created_at DESC LIMIT 1`
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments WHERE name = ? ORDER BY created_at DESC LIMIT 1`
 	return r.scanClusterDeployment(r.db.Pool.QueryRowContext(ctx, query, name))
 }
 
@@ -175,6 +217,81 @@ func (r *ClusterDeployRepository) Delete(ctx context.Context, id string) error {
 	}
 	_, err := r.db.Pool.ExecContext(ctx, `DELETE FROM cluster_deployments WHERE id = ?`, id)
 	return err
+}
+
+func (r *ClusterDeployRepository) GetByClusterID(ctx context.Context, clusterID string) (*models.ClusterDeployment, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments WHERE cluster_id = ? ORDER BY created_at DESC LIMIT 1`
+	return r.scanClusterDeployment(r.db.Pool.QueryRowContext(ctx, query, clusterID))
+}
+
+func (r *ClusterDeployRepository) ListClusters(ctx context.Context) ([]models.ClusterDeployment, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	query := `SELECT id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at FROM cluster_deployments WHERE cluster_id != '' AND status IN ('completed','success','running','in_progress') GROUP BY cluster_id ORDER BY created_at DESC`
+	rows, err := r.db.Pool.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list clusters: %w", err)
+	}
+	defer rows.Close()
+
+	deployments := make([]models.ClusterDeployment, 0)
+	for rows.Next() {
+		var dep models.ClusterDeployment
+		var startedAt, finishedAt sql.NullTime
+		var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+		var nodes sql.NullInt64
+		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
+			&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
+			&startedAt, &finishedAt, &dep.ErrorMessage,
+			&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
+			&dep.CreatedAt, &dep.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if startedAt.Valid {
+			dep.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			dep.FinishedAt = &finishedAt.Time
+		}
+		if clusterID.Valid {
+			dep.ClusterID = clusterID.String
+		}
+		if displayName.Valid {
+			dep.DisplayName = displayName.String
+		}
+		if arch.Valid {
+			dep.Arch = arch.String
+		}
+		if nodes.Valid {
+			dep.Nodes = int(nodes.Int64)
+		}
+		if mysqlVersion.Valid {
+			dep.MySQLVersion = mysqlVersion.String
+		}
+		if configJSON.Valid {
+			dep.ConfigJSON = configJSON.String
+		}
+		deployments = append(deployments, dep)
+	}
+	return deployments, rows.Err()
+}
+
+func (r *ClusterDeployRepository) UpdateClusterMeta(ctx context.Context, clusterID string, nodes int, mysqlVersion, configJSON string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	now := time.Now()
+	_, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE cluster_deployments SET nodes = ?, mysql_version = ?, config_json = ?, updated_at = ? WHERE cluster_id = ?`,
+		nodes, mysqlVersion, configJSON, now, clusterID)
+	if err != nil {
+		return fmt.Errorf("failed to update cluster meta: %w", err)
+	}
+	return nil
 }
 
 func isFinalStatus(status string) bool {

@@ -13,6 +13,12 @@ type ClusterDeployment struct {
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
 	ErrorMessage string     `json:"error_message"`
+	ClusterID    string     `json:"cluster_id"`
+	DisplayName  string     `json:"display_name"`
+	Arch         string     `json:"arch"`
+	Nodes        int        `json:"nodes"`
+	MySQLVersion string     `json:"mysql_version"`
+	ConfigJSON   string     `json:"config_json"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }

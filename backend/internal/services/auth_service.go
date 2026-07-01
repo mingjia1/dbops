@@ -20,6 +20,7 @@ import (
 
 type AuthService struct {
 	userRepo    *repositories.UserRepository
+	roleRepo    *repositories.RoleRepository
 	auditSvc    *AuditService
 	db          interface{}
 	standalone  bool
@@ -53,9 +54,15 @@ func (s *AuthService) IsStandalone() bool {
 	return s.standalone
 }
 
+func (s *AuthService) SetRoleRepository(roleRepo *repositories.RoleRepository) {
+	s.roleRepo = roleRepo
+}
+
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username  string `json:"username" binding:"required"`
+	Password  string `json:"password" binding:"required"`
+	IPAddress string `json:"-"`
+	UserAgent string `json:"-"`
 }
 
 type LoginResponse struct {
@@ -74,15 +81,20 @@ type ResetAllPasswordsRequest struct {
 }
 
 type UserInfo struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"display_name"`
+	Email       string   `json:"email"`
+	Role        string   `json:"role"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
 }
 
 type Claims struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	UserID      string   `json:"user_id"`
+	Username    string   `json:"username"`
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"`
 	jwt.RegisteredClaims
 }
 
@@ -92,9 +104,10 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 		log.Printf("[SECURITY] WARNING: Standalone mode active — all authentication bypassed")
 		expiresAt := time.Now().Add(s.tokenExpiry)
 		claims := &Claims{
-			UserID:   "standalone-user",
-			Username: req.Username,
-			Role:     "admin",
+			UserID:      "standalone-user",
+			Username:    req.Username,
+			Role:        "admin",
+			Permissions: []string{"*"},
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(expiresAt),
 				IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -112,9 +125,11 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 			Token:     tokenString,
 			ExpiresAt: expiresAt.Unix(),
 			User: UserInfo{
-				ID:       "standalone-user",
-				Username: req.Username,
-				Role:     "admin",
+				ID:          "standalone-user",
+				Username:    req.Username,
+				Role:        "admin",
+				Roles:       []string{"admin"},
+				Permissions: []string{"*"},
 			},
 		}, nil
 	}
@@ -140,11 +155,13 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 		return nil, errors.New("user account is not active")
 	}
 
+	permissions, roles := s.permissionsForUser(ctx, user)
 	expiresAt := time.Now().Add(s.tokenExpiry)
 	claims := &Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     user.Role,
+		UserID:      user.ID,
+		Username:    user.Username,
+		Role:        user.Role,
+		Permissions: permissions,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -157,14 +174,21 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
+	now := time.Now()
+	_ = s.userRepo.UpdateLoginMetadata(ctx, user.ID, req.IPAddress, now)
+	s.auditAuth(ctx, "login", "login", "user", user.ID, "success", "", "source="+user.Source, req.IPAddress, req.UserAgent)
 
 	return &LoginResponse{
 		Token:     tokenString,
 		ExpiresAt: expiresAt.Unix(),
 		User: UserInfo{
-			ID:       user.ID,
-			Username: user.Username,
-			Role:     user.Role,
+			ID:          user.ID,
+			Username:    user.Username,
+			DisplayName: user.DisplayName,
+			Email:       user.Email,
+			Role:        user.Role,
+			Roles:       roles,
+			Permissions: permissions,
 		},
 	}, nil
 }
@@ -182,6 +206,19 @@ func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		if !s.IsStandalone() && s.userRepo != nil {
+			user, err := s.userRepo.GetByID(context.Background(), claims.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if user == nil || user.Status != "active" {
+				return nil, errors.New("user account is not active")
+			}
+			permissions, _ := s.permissionsForUser(context.Background(), user)
+			claims.Permissions = permissions
+			claims.Role = user.Role
+			claims.Username = user.Username
+		}
 		return claims, nil
 	}
 
@@ -213,6 +250,18 @@ func (s *AuthService) HasPermission(role, permission string) bool {
 	return false
 }
 
+func (s *AuthService) HasAnyPermission(permissions []string, permission string) bool {
+	if permission == "" {
+		return true
+	}
+	for _, p := range permissions {
+		if permissionMatches(p, permission) {
+			return true
+		}
+	}
+	return false
+}
+
 // Register P0-2: 真实实现 - bcrypt 哈希 + 写库, 不再是 no-op.
 func (s *AuthService) ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error {
 	if s.IsStandalone() || s.userRepo == nil {
@@ -235,7 +284,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 	if err := s.userRepo.UpdatePassword(ctx, userID, string(hash)); err != nil {
 		return err
 	}
-	s.auditAuth(ctx, "change_password", "change_password", "user", userID, "success", "", "user changed own password")
+	s.auditAuth(ctx, "change_password", "change_password", "user", userID, "success", "", "user changed own password", "", "")
 	return nil
 }
 
@@ -251,11 +300,11 @@ func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswor
 	if err != nil {
 		return 0, err
 	}
-	s.auditAuth(ctx, "reset_all_passwords", "reset_password", "user", "all", "success", "", fmt.Sprintf("updated_count=%d", updated))
+	s.auditAuth(ctx, "reset_all_passwords", "reset_password", "user", "all", "success", "", fmt.Sprintf("updated_count=%d", updated), "", "")
 	return updated, nil
 }
 
-func (s *AuthService) auditAuth(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details string) {
+func (s *AuthService) auditAuth(ctx context.Context, operation, action, resourceType, resourceID, result, errorMsg, details, ip, userAgent string) {
 	if s.auditSvc == nil {
 		return
 	}
@@ -268,6 +317,8 @@ func (s *AuthService) auditAuth(ctx context.Context, operation, action, resource
 		Details:      details,
 		Result:       result,
 		ErrorMsg:     errorMsg,
+		IPAddress:    ip,
+		UserAgent:    userAgent,
 	})
 }
 
@@ -288,14 +339,23 @@ func (s *AuthService) Register(ctx context.Context, username, password, email, r
 	if role == "" {
 		role = "operator"
 	}
-	return s.userRepo.Create(ctx, &models.User{
+	if err := s.userRepo.Create(ctx, &models.User{
 		Username:  username,
 		Password:  string(hash),
 		Email:     email,
 		Role:      role,
 		Status:    "active",
+		Source:    "local",
 		CreatedAt: time.Now(),
-	})
+	}); err != nil {
+		return err
+	}
+	if s.roleRepo != nil {
+		if user, err := s.userRepo.GetByUsername(ctx, username); err == nil && user != nil {
+			_ = s.roleRepo.SetUserRolesByName(ctx, user.ID, []string{role})
+		}
+	}
+	return nil
 }
 
 // SeedAdminIfEmpty 首次启动 + users 表为空时, 创建一个 admin 账号并返回明文密码.
@@ -323,11 +383,40 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 		Email:     "admin@localhost",
 		Role:      "admin",
 		Status:    "active",
+		Source:    "local",
 		CreatedAt: time.Now(),
 	}); createErr != nil {
 		return false, "", "", createErr
 	}
+	if s.roleRepo != nil {
+		if user, err := s.userRepo.GetByUsername(ctx, username); err == nil && user != nil {
+			_ = s.roleRepo.SetUserRolesByName(ctx, user.ID, []string{"admin"})
+		}
+	}
 	return true, username, plainPassword, nil
+}
+
+func (s *AuthService) CurrentUser(ctx context.Context, userID string) (*UserInfo, error) {
+	if s.IsStandalone() {
+		return &UserInfo{ID: "standalone-user", Username: "standalone", Role: "admin", Roles: []string{"admin"}, Permissions: []string{"*"}}, nil
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || user.Status != "active" {
+		return nil, errors.New("user account is not active")
+	}
+	permissions, roles := s.permissionsForUser(ctx, user)
+	return &UserInfo{
+		ID:          user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Email:       user.Email,
+		Role:        user.Role,
+		Roles:       roles,
+		Permissions: permissions,
+	}, nil
 }
 
 func generateRandomPassword(n int) string {
@@ -344,4 +433,64 @@ func generateRandomPassword(n int) string {
 		b[i] = charset[idx.Int64()]
 	}
 	return string(b)
+}
+
+func (s *AuthService) permissionsForUser(ctx context.Context, user *models.User) ([]string, []string) {
+	if user == nil {
+		return nil, nil
+	}
+	if s.roleRepo != nil {
+		roles, err := s.roleRepo.ListByUserID(ctx, user.ID)
+		if err == nil && len(roles) > 0 {
+			return mergeRolePermissions(roles), roleNames(roles)
+		}
+		if role, err := s.roleRepo.GetByName(ctx, user.Role); err == nil && role != nil {
+			return role.Permissions, []string{role.Name}
+		}
+	}
+	rolePermissions := map[string][]string{
+		"admin":     {"*"},
+		"dba":       {"instance:*", "deploy:*", "upgrade:*", "backup:*", "restore:*", "monitor:view"},
+		"operator":  {"instance:view", "deploy:execute", "backup:execute", "restore:execute", "monitor:view"},
+		"developer": {"instance:view_own", "backup:apply", "monitor:view_own"},
+		"auditor":   {"instance:view", "monitor:view", "audit:view"},
+		"viewer":    {"instance:view", "host:read", "monitor:view"},
+	}
+	return rolePermissions[user.Role], []string{user.Role}
+}
+
+func mergeRolePermissions(roles []models.Role) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, role := range roles {
+		for _, permission := range role.Permissions {
+			if !seen[permission] {
+				out = append(out, permission)
+				seen[permission] = true
+			}
+		}
+	}
+	return out
+}
+
+func roleNames(roles []models.Role) []string {
+	out := make([]string, 0, len(roles))
+	for _, role := range roles {
+		out = append(out, role.Name)
+	}
+	return out
+}
+
+func permissionMatches(granted, required string) bool {
+	if granted == "*" || granted == required {
+		return true
+	}
+	if required == "admin" {
+		return granted == "*"
+	}
+	if strings.HasSuffix(granted, ":*") {
+		prefix := strings.TrimSuffix(granted, "*")
+		return strings.HasPrefix(required, prefix)
+	}
+	return false
 }

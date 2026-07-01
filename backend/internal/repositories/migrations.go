@@ -589,7 +589,20 @@ var InitialSchema = []string{
 	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP NULL`,
 	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ('')`,
 
-	// Phase 5: Credential vault for cluster-level account management.
+	// Phase 4b: Extend hosts with Agent metadata fields.
+	`ALTER TABLE hosts ADD COLUMN agent_version VARCHAR(64) DEFAULT ('')`,
+	`ALTER TABLE hosts ADD COLUMN agent_status VARCHAR(32) DEFAULT 'unknown'`,
+	`ALTER TABLE hosts ADD COLUMN agent_installed_at TIMESTAMP NULL`,
+	`ALTER TABLE hosts ADD COLUMN agent_last_heartbeat TIMESTAMP NULL`,
+
+	// Phase 4c: Extend cluster_deployments with cluster base info fields.
+	`ALTER TABLE cluster_deployments ADD COLUMN cluster_id VARCHAR(64) DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN display_name VARCHAR(255) DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN arch VARCHAR(32) DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN nodes INT DEFAULT 0`,
+	`ALTER TABLE cluster_deployments ADD COLUMN mysql_version VARCHAR(64) DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD COLUMN config_json TEXT DEFAULT ('')`,
+	`ALTER TABLE cluster_deployments ADD INDEX idx_cluster_deployments_cluster_id (cluster_id)`,
 	`CREATE TABLE IF NOT EXISTS cluster_credentials (
 		id VARCHAR(64) PRIMARY KEY,
 		cluster_id VARCHAR(64) NOT NULL,
@@ -668,6 +681,32 @@ var InitialSchema = []string{
 		value TEXT NOT NULL DEFAULT (''),
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
+	`ALTER TABLE users ADD COLUMN display_name VARCHAR(128) DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN phone VARCHAR(32) DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN source VARCHAR(32) DEFAULT 'local'`,
+	`ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP NULL`,
+	`ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(64) DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP NULL`,
+	`CREATE TABLE IF NOT EXISTS roles (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(64) NOT NULL UNIQUE,
+		display_name VARCHAR(128) DEFAULT '',
+		description TEXT,
+		permissions TEXT NOT NULL,
+		is_builtin TINYINT(1) DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS user_roles (
+		user_id VARCHAR(64) NOT NULL,
+		role_id VARCHAR(64) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (user_id, role_id),
+		INDEX idx_user_roles_user (user_id),
+		INDEX idx_user_roles_role (role_id),
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -1251,7 +1290,20 @@ var schemaSQLite = []string{
 	`ALTER TABLE cluster_deployments ADD COLUMN finished_at TIMESTAMP`,
 	`ALTER TABLE cluster_deployments ADD COLUMN error_message TEXT DEFAULT ''`,
 
-	// Phase 5: Credential vault for cluster-level account management.
+	// Phase 4b: Extend hosts with Agent metadata fields.
+	`ALTER TABLE hosts ADD COLUMN agent_version TEXT DEFAULT ''`,
+	`ALTER TABLE hosts ADD COLUMN agent_status TEXT DEFAULT 'unknown'`,
+	`ALTER TABLE hosts ADD COLUMN agent_installed_at TIMESTAMP`,
+	`ALTER TABLE hosts ADD COLUMN agent_last_heartbeat TIMESTAMP`,
+
+	// Phase 4c: Extend cluster_deployments with cluster base info fields.
+	`ALTER TABLE cluster_deployments ADD COLUMN cluster_id TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN display_name TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN arch TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN nodes INTEGER DEFAULT 0`,
+	`ALTER TABLE cluster_deployments ADD COLUMN mysql_version TEXT DEFAULT ''`,
+	`ALTER TABLE cluster_deployments ADD COLUMN config_json TEXT DEFAULT ''`,
+	`CREATE INDEX IF NOT EXISTS idx_cluster_deployments_cluster_id ON cluster_deployments(cluster_id)`,
 	`CREATE TABLE IF NOT EXISTS cluster_credentials (
 		id TEXT PRIMARY KEY,
 		cluster_id TEXT NOT NULL,
@@ -1329,6 +1381,30 @@ var schemaSQLite = []string{
 		value TEXT NOT NULL DEFAULT '',
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
+	`ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN source TEXT DEFAULT 'local'`,
+	`ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP`,
+	`ALTER TABLE users ADD COLUMN last_login_ip TEXT DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP`,
+	`CREATE TABLE IF NOT EXISTS roles (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		display_name TEXT DEFAULT '',
+		description TEXT,
+		permissions TEXT NOT NULL,
+		is_builtin INTEGER DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE TABLE IF NOT EXISTS user_roles (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (user_id, role_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

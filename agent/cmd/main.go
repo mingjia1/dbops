@@ -13,6 +13,8 @@ import (
 	"github.com/monkeycode/mysql-ops-agent/pkg/logger"
 )
 
+const AgentVersion = "1.0.0"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -48,6 +50,14 @@ func main() {
 			"code":    200,
 			"message": "success",
 			"data":    gin.H{"status": "ok", "service": "mysql-ops-agent"},
+		})
+	})
+
+	r.GET("/version", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"code":    200,
+			"message": "success",
+			"data":    gin.H{"version": AgentVersion, "service": "mysql-ops-agent"},
 		})
 	})
 

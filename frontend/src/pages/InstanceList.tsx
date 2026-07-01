@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { extractTaskPayload, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
+import { extractTaskPayload, hostApi, instanceApi, versionApi, clusterDeployApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
 const isSuccessfulTaskStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
@@ -57,6 +57,7 @@ const InstanceList: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [versions, setVersions] = useState<VersionEntry[]>([])
+  const [clusters, setClusters] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [hostFilter, setHostFilter] = useState<string | undefined>(presetHost)
   const [modalOpen, setModalOpen] = useState(false)
@@ -94,9 +95,19 @@ const InstanceList: React.FC = () => {
     }
   }
 
+  const fetchClusters = async () => {
+    try {
+      const res: any = await clusterDeployApi.listClusters()
+      setClusters(res.data || [])
+    } catch {
+      setClusters([])
+    }
+  }
+
   useEffect(() => {
     fetchInstances()
     fetchHosts()
+    fetchClusters()
     versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -459,8 +470,12 @@ const InstanceList: React.FC = () => {
           <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
           </Form.Item>
-          <Form.Item name="cluster_id" label="集群 ID">
-            <Input placeholder="例如: mgr-cluster-01" />
+          <Form.Item name="cluster_id" label="所属集群">
+            <Select
+              allowClear
+              placeholder="选择集群（可选）"
+              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
+            />
           </Form.Item>
           <Divider plain>部署参数</Divider>
           <Form.Item name="version_id" label="目标版本">

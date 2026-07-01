@@ -307,6 +307,10 @@ export interface Host {
   ssh_user: string
   ssh_auth_method: string
   agent_port?: number
+  agent_version?: string
+  agent_status?: string
+  agent_installed_at?: string | null
+  agent_last_heartbeat?: string | null
   os_type: string
   description: string
   tags: string
@@ -857,6 +861,8 @@ export interface DeployCredentials {
 
 export const clusterDeployApi = {
   list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
+  listClusters: () => api.get('/deployments/clusters'),
+  getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
   precheck: (host_ids: string[]) => api.post('/deployments/precheck', { host_ids }),

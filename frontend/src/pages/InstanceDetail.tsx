@@ -32,7 +32,7 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useNavigate, useParams } from 'react-router-dom'
-import { instanceApi, type Instance as InstanceModel } from '../services/api'
+import { instanceApi, clusterDeployApi, type Instance as InstanceModel } from '../services/api'
 
 interface AdminRow {
   [key: string]: string
@@ -71,6 +71,7 @@ const InstanceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [instance, setInstance] = useState<InstanceModel | null>(null)
+  const [clusters, setClusters] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -118,6 +119,7 @@ const InstanceDetail: React.FC = () => {
 
   useEffect(() => {
     fetchInstance()
+    fetchClusters()
   }, [id])
 
   const fetchInstance = async () => {
@@ -130,6 +132,15 @@ const InstanceDetail: React.FC = () => {
       message.error('获取实例信息失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchClusters = async () => {
+    try {
+      const res: any = await clusterDeployApi.listClusters()
+      setClusters(res.data || [])
+    } catch {
+      setClusters([])
     }
   }
 
@@ -608,8 +619,12 @@ const InstanceDetail: React.FC = () => {
           <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="cluster_id" label="集群 ID">
-            <Input placeholder="例如 mgr-cluster-01" />
+          <Form.Item name="cluster_id" label="所属集群">
+            <Select
+              allowClear
+              placeholder="选择集群（可选）"
+              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
+            />
           </Form.Item>
           <Form.Item name="host" label="连接地址" rules={[{ required: true, message: '请输入连接地址' }]}>
             <Input placeholder="例如 10.1.81.16" />

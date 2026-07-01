@@ -47,21 +47,29 @@ func (r *HostRepository) Create(ctx context.Context, host *models.Host) error {
 	if r.db.IsSQLite() {
 		_, err = r.db.Pool.ExecContext(ctx, `
 			INSERT OR IGNORE INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential,
-				agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				agent_port, os_type, description, tags, status, last_check_at,
+				agent_version, agent_status, agent_installed_at, agent_last_heartbeat,
+				created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
 			nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
-			nullableTime(host.LastCheckAt), host.CreatedAt, host.UpdatedAt,
+			nullableTime(host.LastCheckAt),
+			host.AgentVersion, host.AgentStatus, nullableTime(host.AgentInstalledAt), nullableTime(host.AgentLastHeartbeat),
+			host.CreatedAt, host.UpdatedAt,
 		)
 	} else {
 		_, err = r.db.Pool.ExecContext(ctx, `
 			INSERT INTO hosts (id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential,
-				agent_port, os_type, description, tags, status, last_check_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				agent_port, os_type, description, tags, status, last_check_at,
+				agent_version, agent_status, agent_installed_at, agent_last_heartbeat,
+				created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE id=id`,
 			host.ID, host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
 			nullableString(host.SSHCredential), host.AgentPort, host.OSType, host.Description, host.Tags, host.Status,
-			nullableTime(host.LastCheckAt), host.CreatedAt, host.UpdatedAt,
+			nullableTime(host.LastCheckAt),
+			host.AgentVersion, host.AgentStatus, nullableTime(host.AgentInstalledAt), nullableTime(host.AgentLastHeartbeat),
+			host.CreatedAt, host.UpdatedAt,
 		)
 	}
 	if err != nil {
@@ -76,15 +84,20 @@ func (r *HostRepository) GetByID(ctx context.Context, id string) (*models.Host, 
 	}
 	row := r.db.Pool.QueryRowContext(ctx, `
 		SELECT id, name, address, ssh_port, ssh_user, ssh_auth_method, ssh_credential, agent_port,
-			os_type, description, tags, status, last_check_at, created_at, updated_at
+			os_type, description, tags, status, last_check_at,
+			agent_version, agent_status, agent_installed_at, agent_last_heartbeat,
+			created_at, updated_at
 		FROM hosts WHERE id = ?`, id)
 	host := &models.Host{}
 	var lastCheckAt sql.NullTime
-	var sshCredential, description, tags sql.NullString
+	var agentInstalledAt, agentLastHeartbeat sql.NullTime
+	var sshCredential, description, tags, agentVersion, agentStatus sql.NullString
 	if err := row.Scan(
 		&host.ID, &host.Name, &host.Address, &host.SSHPort, &host.SSHUser, &host.SSHAuthMethod,
 		&sshCredential, &host.AgentPort, &host.OSType, &description, &tags, &host.Status,
-		&lastCheckAt, &host.CreatedAt, &host.UpdatedAt,
+		&lastCheckAt,
+		&agentVersion, &agentStatus, &agentInstalledAt, &agentLastHeartbeat,
+		&host.CreatedAt, &host.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("host not found")
@@ -104,6 +117,20 @@ func (r *HostRepository) GetByID(ctx context.Context, id string) (*models.Host, 
 	if tags.Valid {
 		host.Tags = tags.String
 	}
+	if agentVersion.Valid {
+		host.AgentVersion = agentVersion.String
+	}
+	if agentStatus.Valid {
+		host.AgentStatus = agentStatus.String
+	}
+	if agentInstalledAt.Valid {
+		t := agentInstalledAt.Time
+		host.AgentInstalledAt = &t
+	}
+	if agentLastHeartbeat.Valid {
+		t := agentLastHeartbeat.Time
+		host.AgentLastHeartbeat = &t
+	}
 	return host, nil
 }
 
@@ -113,7 +140,9 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 	}
 	rows, err := r.db.Pool.QueryContext(ctx, `
 		SELECT h.id, h.name, h.address, h.ssh_port, h.ssh_user, h.ssh_auth_method, h.ssh_credential, h.agent_port,
-			h.os_type, h.description, h.tags, h.status, h.last_check_at, h.created_at, h.updated_at,
+			h.os_type, h.description, h.tags, h.status, h.last_check_at,
+			h.agent_version, h.agent_status, h.agent_installed_at, h.agent_last_heartbeat,
+			h.created_at, h.updated_at,
 			COALESCE(i.instance_count, 0) as instance_count
 		FROM hosts h
 		LEFT JOIN (
@@ -131,11 +160,14 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 	for rows.Next() {
 		var h models.Host
 		var lastCheckAt sql.NullTime
-		var sshCredential, description, tags sql.NullString
+		var agentInstalledAt, agentLastHeartbeat sql.NullTime
+		var sshCredential, description, tags, agentVersion, agentStatus sql.NullString
 		if err := rows.Scan(
 			&h.ID, &h.Name, &h.Address, &h.SSHPort, &h.SSHUser, &h.SSHAuthMethod,
 			&sshCredential, &h.AgentPort, &h.OSType, &description, &tags, &h.Status,
-			&lastCheckAt, &h.CreatedAt, &h.UpdatedAt, &h.InstanceCount,
+			&lastCheckAt,
+			&agentVersion, &agentStatus, &agentInstalledAt, &agentLastHeartbeat,
+			&h.CreatedAt, &h.UpdatedAt, &h.InstanceCount,
 		); err != nil {
 			return nil, err
 		}
@@ -152,6 +184,20 @@ func (r *HostRepository) List(ctx context.Context, limit, offset int) ([]models.
 		if tags.Valid {
 			h.Tags = tags.String
 		}
+		if agentVersion.Valid {
+			h.AgentVersion = agentVersion.String
+		}
+		if agentStatus.Valid {
+			h.AgentStatus = agentStatus.String
+		}
+		if agentInstalledAt.Valid {
+			t := agentInstalledAt.Time
+			h.AgentInstalledAt = &t
+		}
+		if agentLastHeartbeat.Valid {
+			t := agentLastHeartbeat.Time
+			h.AgentLastHeartbeat = &t
+		}
 		hosts = append(hosts, h)
 	}
 	return hosts, rows.Err()
@@ -166,10 +212,14 @@ func (r *HostRepository) Update(ctx context.Context, host *models.Host) error {
 	// 修: 拿 res.RowsAffected, 0 行返 not found, 业务层能感知.
 	res, err := r.db.Pool.ExecContext(ctx, `
 		UPDATE hosts SET name = ?, address = ?, ssh_port = ?, ssh_user = ?, ssh_auth_method = ?,
-			ssh_credential = ?, agent_port = ?, os_type = ?, description = ?, tags = ?, updated_at = ?
+			ssh_credential = ?, agent_port = ?, os_type = ?, description = ?, tags = ?,
+			agent_version = ?, agent_status = ?, agent_installed_at = ?, agent_last_heartbeat = ?,
+			updated_at = ?
 		WHERE id = ?`,
 		host.Name, host.Address, host.SSHPort, host.SSHUser, host.SSHAuthMethod,
-		host.SSHCredential, host.AgentPort, host.OSType, host.Description, host.Tags, host.UpdatedAt, host.ID,
+		host.SSHCredential, host.AgentPort, host.OSType, host.Description, host.Tags,
+		host.AgentVersion, host.AgentStatus, nullableTime(host.AgentInstalledAt), nullableTime(host.AgentLastHeartbeat),
+		host.UpdatedAt, host.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update host: %w", err)
@@ -194,6 +244,48 @@ func (r *HostRepository) UpdateStatus(ctx context.Context, id, status string) er
 		status, now, now, id)
 	if err != nil {
 		return fmt.Errorf("failed to update host status: %w", err)
+	}
+	return nil
+}
+
+func (r *HostRepository) UpdateAgentMeta(ctx context.Context, id, version, status string, heartbeat *time.Time) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	now := time.Now().UTC()
+	res, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE hosts SET agent_version = ?, agent_status = ?, agent_last_heartbeat = ?, updated_at = ? WHERE id = ?`,
+		version, status, nullableTime(heartbeat), now, id)
+	if err != nil {
+		return fmt.Errorf("failed to update agent meta: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("host not found: %s", id)
+	}
+	return nil
+}
+
+func (r *HostRepository) UpdateAgentInstalled(ctx context.Context, id, version string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	now := time.Now().UTC()
+	res, err := r.db.Pool.ExecContext(ctx,
+		`UPDATE hosts SET agent_version = ?, agent_status = 'running', agent_installed_at = COALESCE(agent_installed_at, ?), agent_last_heartbeat = ?, updated_at = ? WHERE id = ?`,
+		version, now, now, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to update agent installed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("host not found: %s", id)
 	}
 	return nil
 }

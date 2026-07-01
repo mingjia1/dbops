@@ -361,6 +361,23 @@ const HostList: React.FC = () => {
         return <Tag color={colorMap[status] || 'default'}>{textMap[status] || '未知'}</Tag>
       },
     },
+    {
+      title: 'Agent 版本',
+      dataIndex: 'agent_version',
+      key: 'agent_version',
+      render: (v) => v || '-',
+    },
+    {
+      title: 'Agent 状态',
+      dataIndex: 'agent_status',
+      key: 'agent_status',
+      render: (s) => {
+        if (!s) return <Tag>未安装</Tag>
+        const colorMap: Record<string, string> = { running: 'success', stopped: 'error', removed: 'default', unknown: 'default' }
+        const textMap: Record<string, string> = { running: '运行中', stopped: '已停止', removed: '已移除', unknown: '未知' }
+        return <Tag color={colorMap[s] || 'default'}>{textMap[s] || s}</Tag>
+      },
+    },
     { title: '最后检测', dataIndex: 'last_check_at', key: 'last_check_at', render: (t) => (t ? new Date(t).toLocaleString() : '-') },
     {
       title: '操作',

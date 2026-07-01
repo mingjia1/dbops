@@ -16,6 +16,10 @@ type Host struct {
 	Tags              string     `json:"tags"`
 	Status            string     `json:"status"`
 	InstanceCount     int        `json:"instance_count"`
+	AgentVersion      string     `json:"agent_version"`
+	AgentStatus       string     `json:"agent_status"`
+	AgentInstalledAt  *time.Time `json:"agent_installed_at"`
+	AgentLastHeartbeat *time.Time `json:"agent_last_heartbeat"`
 	LastCheckAt       *time.Time `json:"last_check_at"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
