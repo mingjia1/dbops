@@ -242,27 +242,44 @@ const UpgradeManage: React.FC = () => {
     }))
   }, [instances])
 
-  const findInstance = (id?: string) => instances.find((i) => i.id === id)
-  const detectedVersion = (inst?: Instance) => {
-    const raw = inst as any
-    const versionId = inst?.connection?.version_id || raw?.version_id || raw?.target_version_id
-    const versionEntry = versions.find((v) => v.id === versionId)
-    return inst?.version?.full_version ||
-      inst?.version?.version ||
-      raw?.full_version ||
-      raw?.mysql_version ||
-      raw?.version ||
-      (versionEntry ? `${versionEntry.flavor} ${versionEntry.version}` : versionId) ||
-      '未识别'
+  const findInstance = (id?: string) => id ? instances.find((i) => i.id === id) : undefined
+  const detectedVersion = (inst?: Instance): string => {
+    if (!inst) return '未识别'
+    try {
+      const raw = inst as any
+      const pick = (...candidates: any[]): string => {
+        for (const c of candidates) {
+          if (typeof c === 'string' && c) return c
+          if (typeof c === 'number') return String(c)
+        }
+        return ''
+      }
+      const versionId = pick(inst.connection?.version_id, raw?.version_id, raw?.target_version_id)
+      const versionEntry = versionId ? versions.find((v) => v.id === versionId) : undefined
+      return pick(
+        inst.version?.full_version,
+        inst.version?.version,
+        raw?.full_version,
+        raw?.mysql_version,
+        raw?.version,
+        versionEntry ? `${versionEntry.flavor} ${versionEntry.version}` : '',
+        versionId,
+      ) || '未识别'
+    } catch {
+      return '未识别'
+    }
   }
 
-  const versionInfo = (id?: string) => (
-    <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
-      <Descriptions.Item label="当前源版本">
-        <Tag color={id ? 'blue' : 'default'}>{detectedVersion(findInstance(id))}</Tag>
-      </Descriptions.Item>
-    </Descriptions>
-  )
+  const versionInfo = (id?: string) => {
+    if (!id) return null
+    return (
+      <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
+        <Descriptions.Item label="当前源版本">
+          <Tag color="blue">{detectedVersion(findInstance(id))}</Tag>
+        </Descriptions.Item>
+      </Descriptions>
+    )
+  }
 
   const planUpgrade = async (values: any) => {
     if (!values.backup_confirmed) {
