@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,8 @@ type ClusterDeployService struct {
 	encKey      string
 	progressMu  sync.RWMutex
 	progress    map[string]*DeploymentProgress
+	scaleSvc    *ScaleService
+	rebuildSvc  *RebuildService
 }
 
 type ClusterDestroyOperationError struct {
@@ -147,6 +150,89 @@ func (s *ClusterDeployService) SetVersionCatalog(catalog *VersionCatalog) {
 
 func (s *ClusterDeployService) SetHostService(hs *HostService) {
 	s.hostService = hs
+}
+
+func (s *ClusterDeployService) SetScaleService(svc *ScaleService) {
+	s.scaleSvc = svc
+}
+
+func (s *ClusterDeployService) SetRebuildService(svc *RebuildService) {
+	s.rebuildSvc = svc
+}
+
+func (s *ClusterDeployService) ScaleInCluster(ctx context.Context, deploymentID, removeNodeID string) (*ScaleInResult, error) {
+	if s.scaleSvc == nil {
+		return nil, fmt.Errorf("scale service not configured")
+	}
+	dep, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("deployment not found: %w", err)
+	}
+	flavor := mysqlFlavorFromVersion(dep.MySQLVersion)
+	result, err := s.scaleSvc.ScaleIn(ctx, ScaleInRequest{
+		ClusterID:    dep.ClusterID,
+		RemoveNodeID: removeNodeID,
+		Flavor:       flavor,
+		ArchType:     dep.ClusterType,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *ClusterDeployService) RebuildClusterNode(ctx context.Context, deploymentID, nodeID string) (*RebuildServiceResult, error) {
+	if s.rebuildSvc == nil {
+		return nil, fmt.Errorf("rebuild service not configured")
+	}
+	dep, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("deployment not found: %w", err)
+	}
+	conn, err := s.instRepo.GetConnection(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("instance connection not found: %w", err)
+	}
+	var agentPort int
+	if conn.Host != "" {
+		hosts, _ := s.hostRepo.List(ctx, 1000, 0)
+		for _, h := range hosts {
+			if h.Address == conn.Host {
+				agentPort = h.AgentPort
+				break
+			}
+		}
+	}
+	flavor := mysqlFlavorFromVersion(dep.MySQLVersion)
+	result, err := s.rebuildSvc.RebuildNode(ctx, RebuildServiceRequest{
+		ClusterID:  dep.ClusterID,
+		InstanceID: nodeID,
+		Flavor:     flavor,
+		ArchType:   dep.ClusterType,
+		EncKey:     s.encKey,
+		Node: OrchestratorNode{
+			HostID:    conn.Host,
+			Address:   conn.Host,
+			AgentPort: agentPort,
+			MySQLPort: conn.Port,
+			DataDir:   conn.Datadir,
+			Basedir:   conn.Basedir,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func mysqlFlavorFromVersion(version string) string {
+	if strings.HasPrefix(version, "mariadb") || strings.HasPrefix(version, "10.") {
+		return "mariadb"
+	}
+	if strings.HasPrefix(version, "percona") {
+		return "percona"
+	}
+	return "mysql"
 }
 
 // ensureAgentReady checks if the agent on the given host is reachable and accepts
@@ -469,6 +555,8 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
+	// BUG-006: Clean up progress from memory after terminal state
+	defer s.clearProgress(clusterID)
 	// Write back cluster base info (cluster_id, arch, nodes, mysql_version, config_json)
 	nodeCount := len(plan.Nodes)
 	mysqlVer := req.MySQL.Version
@@ -568,6 +656,13 @@ type ClusterDeployCheckNode struct {
 	DataDir   string `json:"data_dir,omitempty"`
 }
 
+type instanceEndpoint struct {
+	host      string
+	port      int
+	instName  string
+	clusterID string
+}
+
 func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, nodes []ClusterDeployCheckNode) ([]PreCheckResult, error) {
 	if s.hostRepo == nil {
 		return nil, fmt.Errorf("host repository not configured")
@@ -587,6 +682,8 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
+	// BUG-005: Load instance endpoints once instead of per-port-check
+	endpoints := s.loadInstanceEndpoints(ctx)
 	results := make([]PreCheckResult, 0, len(hostIDs))
 	for _, hostID := range dedupeStrings(hostIDs) {
 		host, err := s.hostRepo.GetByID(ctx, hostID)
@@ -599,7 +696,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 			agentPort = 9090
 		}
 		r := PreCheckResult{HostID: hostID, Host: host.Address, Status: "pass", Details: []PreCheckItem{}}
-		s.appendPreCheckPortResults(ctx, &r, host.Address, nodeByHostID[hostID])
+		s.appendPreCheckPortResults(ctx, &r, host.Address, nodeByHostID[hostID], endpoints)
 
 		// 1. Agent connectivity
 		if s.agentClient == nil {
@@ -698,12 +795,12 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode) {
+func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode, instanceEndpoints []instanceEndpoint) {
 	for _, node := range nodes {
 		if node.MySQLPort == 0 {
 			continue
 		}
-		if conflict := s.findManagedPortConflict(ctx, host, node.MySQLPort, ""); conflict != "" {
+		if conflict := findManagedPortConflictInEndpoints(host, node.MySQLPort, "", instanceEndpoints); conflict != "" {
 			result.Status = "fail"
 			result.Details = append(result.Details, PreCheckItem{
 				Name:    fmt.Sprintf("MySQL Port %d", node.MySQLPort),
@@ -719,6 +816,43 @@ func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, re
 			})
 		}
 	}
+}
+
+func (s *ClusterDeployService) loadInstanceEndpoints(ctx context.Context) []instanceEndpoint {
+	if s.instRepo == nil {
+		return nil
+	}
+	instances, err := s.instRepo.List(ctx, 10000, 0)
+	if err != nil {
+		return nil
+	}
+	endpoints := make([]instanceEndpoint, 0, len(instances))
+	for _, inst := range instances {
+		conn, connErr := s.instRepo.GetConnection(ctx, inst.ID)
+		if connErr != nil || conn == nil || conn.Host == "" {
+			continue
+		}
+		endpoints = append(endpoints, instanceEndpoint{
+			host:      conn.Host,
+			port:      conn.Port,
+			instName:  inst.Name,
+			clusterID: inst.ClusterID,
+		})
+	}
+	return endpoints
+}
+
+func findManagedPortConflictInEndpoints(host string, port int, currentClusterID string, endpoints []instanceEndpoint) string {
+	for _, ep := range endpoints {
+		if !sameHost(ep.host, host) || ep.port != port {
+			continue
+		}
+		if ep.clusterID == "" || ep.clusterID == currentClusterID {
+			continue
+		}
+		return fmt.Sprintf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, port, ep.instName, ep.clusterID)
+	}
+	return ""
 }
 
 // Helper: find a PlanNode in a slice by ID
@@ -758,6 +892,8 @@ func (s *ClusterDeployService) buildPartialResponse(ctx context.Context, cluster
 		resp.Steps = prog.Steps
 		resp.Logs = prog.Logs
 	}
+	// BUG-006: Clean up progress from memory after terminal state
+	s.clearProgress(clusterID)
 	return resp
 }
 
@@ -1007,6 +1143,8 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err := s.repo.UpdateStatus(ctx, dep.ID, "destroyed"); err != nil {
 		return nil, err
 	}
+	// BUG-006: Clean up progress from memory after terminal state
+	s.clearProgress(dep.ID)
 	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", dep.ID)
 	if decommissioned == 0 {
 		message = fmt.Sprintf("Cluster %s deployment metadata destroyed; no managed instances were found to back up or decommission", dep.ID)
@@ -1469,8 +1607,7 @@ func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallb
 	if port == 0 {
 		port = 9090
 	}
-	// DEBUG: Log the resolved host
-	log.Printf("[DEBUG] resolveHostRef: hostID=%s -> Address='%s', AgentPort=%d", hostID, host.Address, port)
+	log.Printf("resolveHostRef: hostID=%s -> Address='%s', AgentPort=%d", hostID, host.Address, port)
 	return deploymentHost{Address: host.Address, AgentPort: port}, nil
 }
 
@@ -1791,13 +1928,24 @@ func (s *ClusterDeployService) findInstanceByName(ctx context.Context, name stri
 }
 
 func sameHost(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
 	if a == b {
 		return true
 	}
-	if (a == "127.0.0.1" || a == "localhost") && (b == "127.0.0.1" || b == "localhost") {
+	// Normalize localhost aliases
+	if (a == "127.0.0.1" || a == "localhost" || a == "::1") && (b == "127.0.0.1" || b == "localhost" || b == "::1") {
 		return true
 	}
-	return false
+	// Try to parse both as IPs and compare normalized forms
+	// This handles cases like "192.168.001.001" == "192.168.1.1"
+	ipa := net.ParseIP(a)
+	ipb := net.ParseIP(b)
+	if ipa != nil && ipb != nil {
+		return ipa.Equal(ipb)
+	}
+	// One or both are hostnames — do case-insensitive comparison
+	return strings.EqualFold(a, b)
 }
 
 func normalizeDeployStatus(status string) string {

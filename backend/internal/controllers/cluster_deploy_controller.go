@@ -237,13 +237,16 @@ func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 		return
 	}
 
+	// Scale-out requires additional host selection via the deployment UI.
+	// Return the deployment context so the frontend can prompt the user for new hosts.
 	utils.SuccessResponse(ctx, gin.H{
 		"deployment_id": deploymentID,
 		"cluster_type":  dep.ClusterType,
+		"cluster_id":    dep.Name,
 		"action":        "scale-out",
 		"node_count":    req.NodeCount,
-		"status":        "submitted",
-		"message":       "Scale-out request submitted. The actual node provisioning requires host assignment and will be processed by the orchestrator.",
+		"status":        "awaiting_hosts",
+		"message":       "Please select hosts for the new nodes via the deployment page",
 	})
 }
 
@@ -262,20 +265,13 @@ func (c *ClusterDeployController) ScaleIn(ctx *gin.Context) {
 		return
 	}
 
-	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
+	result, err := c.service.ScaleInCluster(ctx.Request.Context(), deploymentID, req.RemoveNodeID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Deployment not found")
+		utils.InternalServerErrorResponse(ctx, "Scale-in failed", err)
 		return
 	}
 
-	utils.SuccessResponse(ctx, gin.H{
-		"deployment_id":  deploymentID,
-		"cluster_type":   dep.ClusterType,
-		"action":         "scale-in",
-		"remove_node_id": req.RemoveNodeID,
-		"status":         "submitted",
-		"message":        "Scale-in request submitted. The node will be removed from the cluster after validation.",
-	})
+	utils.SuccessResponse(ctx, result)
 }
 
 func (c *ClusterDeployController) RebuildNode(ctx *gin.Context) {
@@ -293,20 +289,13 @@ func (c *ClusterDeployController) RebuildNode(ctx *gin.Context) {
 		return
 	}
 
-	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
+	result, err := c.service.RebuildClusterNode(ctx.Request.Context(), deploymentID, req.NodeID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Deployment not found")
+		utils.InternalServerErrorResponse(ctx, "Rebuild failed", err)
 		return
 	}
 
-	utils.SuccessResponse(ctx, gin.H{
-		"deployment_id": deploymentID,
-		"cluster_type":  dep.ClusterType,
-		"action":        "rebuild",
-		"node_id":       req.NodeID,
-		"status":        "submitted",
-		"message":       "Rebuild request submitted. The node will be reprovisioned and rejoin the cluster.",
-	})
+	utils.SuccessResponse(ctx, result)
 }
 
 func (c *ClusterDeployController) ListClusters(ctx *gin.Context) {

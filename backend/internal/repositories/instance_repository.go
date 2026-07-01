@@ -210,6 +210,37 @@ func (r *InstanceRepository) CreateVersion(ctx context.Context, version *models.
 	return tx.Commit()
 }
 
+// UpdateVersion updates an existing version record for an instance.
+func (r *InstanceRepository) UpdateVersion(ctx context.Context, version *models.InstanceVersion) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	if version.ID == "" {
+		return fmt.Errorf("version ID is required for update")
+	}
+	res, err := r.db.Pool.ExecContext(ctx, `
+		UPDATE instance_versions
+		SET flavor = ?, version = ?, full_version = ?, release_date = ?, eol_date = ?, is_lts = ?, features = ?, engines = ?
+		WHERE id = ? AND instance_id = ?`,
+		version.Flavor, version.Version, version.FullVersion,
+		nullableTime(&version.ReleaseDate), nullableTime(&version.EOLDate),
+		version.IsLTS, version.Features, version.Engines,
+		version.ID, version.InstanceID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update version: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		// No row updated — insert as new record
+		return r.CreateVersion(ctx, version)
+	}
+	return nil
+}
+
 func (r *InstanceRepository) GetVersion(ctx context.Context, instanceID string) (*models.InstanceVersion, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not initialized")

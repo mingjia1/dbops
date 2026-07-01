@@ -325,6 +325,9 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 
+	// Check if version already exists - update instead of creating new record
+	existingVersion, _ := s.repo.GetVersion(ctx, id)
+
 	// P0: 之前返 error "agent not yet wired", 阻断所有升级路径.
 	// 修: 调 agent POST /agent/tasks/version-detect, 真跑 SELECT @@version, @@version_comment.
 	if s.agentClient == nil {
@@ -374,6 +377,21 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 			Features:    result.Message,
 			Engines:     "",
 		}
+		if existingVersion != nil {
+			// Update existing version record
+			existingVersion.Flavor = versionRow.Flavor
+			existingVersion.Version = versionRow.Version
+			existingVersion.FullVersion = versionRow.FullVersion
+			existingVersion.IsLTS = versionRow.IsLTS
+			existingVersion.ReleaseDate = versionRow.ReleaseDate
+			existingVersion.EOLDate = versionRow.EOLDate
+			existingVersion.Features = versionRow.Features
+			existingVersion.Engines = versionRow.Engines
+			if err := s.repo.UpdateVersion(ctx, existingVersion); err != nil {
+				return nil, fmt.Errorf("failed to update version: %w", err)
+			}
+			return existingVersion, nil
+		}
 		if err := s.repo.CreateVersion(ctx, versionRow); err != nil {
 			return nil, fmt.Errorf("failed to create version: %w", err)
 		}
@@ -412,6 +430,21 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 		EOLDate:     time.Now().AddDate(3, 0, 0),
 		Features:    "auto-detected from agent",
 		Engines:     "innodb",
+	}
+	if existingVersion != nil {
+		// Update existing version record instead of creating new one
+		existingVersion.Flavor = versionRow.Flavor
+		existingVersion.Version = versionRow.Version
+		existingVersion.FullVersion = versionRow.FullVersion
+		existingVersion.IsLTS = versionRow.IsLTS
+		existingVersion.ReleaseDate = versionRow.ReleaseDate
+		existingVersion.EOLDate = versionRow.EOLDate
+		existingVersion.Features = versionRow.Features
+		existingVersion.Engines = versionRow.Engines
+		if err := s.repo.UpdateVersion(ctx, existingVersion); err != nil {
+			return nil, fmt.Errorf("failed to update version: %w", err)
+		}
+		return existingVersion, nil
 	}
 	if err := s.repo.CreateVersion(ctx, versionRow); err != nil {
 		return nil, fmt.Errorf("failed to create version: %w", err)
@@ -1460,7 +1493,7 @@ func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string
 
 // discoverAndFixPassword tries to fix an empty password by:
 // 1. Querying MySQL via socket (agent) to read the actual root password state
-// 2. Setting the stored password to the known default from cluster deploy
+// 2. Generating a random password and setting it via socket
 // This handles cases where cluster deploy didn't persist the password.
 func (s *InstanceService) discoverAndFixPassword(ctx context.Context, id string, instance *models.Instance, conn *models.InstanceConnection) string {
 	if s.agentClient == nil {
@@ -1470,6 +1503,8 @@ func (s *InstanceService) discoverAndFixPassword(ctx context.Context, id string,
 	if err != nil {
 		return ""
 	}
+	// Generate a random password with complexity (uppercase + digit + special char) to pass validate_password
+	newPassword := fmt.Sprintf("Db%s@%s", uuid.New().String()[:8], uuid.New().String()[:12])
 	// Try service_control status via socket (no password needed)
 	statusResult, _ := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
 		"task_id": "pw-discover-" + id,
@@ -1494,14 +1529,14 @@ func (s *InstanceService) discoverAndFixPassword(ctx context.Context, id string,
 				"target_pass": "",
 				"username":    conn.Username,
 				"user_host":   "localhost",
-				"password":    "Root2024abc",
+				"password":    newPassword,
 			},
 		})
 		// Save the password we just set
-		if enc, encErr := utils.Encrypt("Root2024abc", s.encKey); encErr == nil {
+		if enc, encErr := utils.Encrypt(newPassword, s.encKey); encErr == nil {
 			conn.PasswordEncrypted = enc
 			_ = s.repo.UpdateConnection(ctx, conn)
-			return "Root2024abc"
+			return newPassword
 		}
 	}
 	return ""

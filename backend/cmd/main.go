@@ -201,6 +201,13 @@ func main() {
 	clusterDeployService.SetBackupService(backupService)
 	clusterDeployService.SetHostService(hostService)
 
+	pluginExec := plugins.NewExecutor(pluginRegistry)
+	credentialRepo := repositories.NewCredentialRepository(db)
+	credentialVault := services.NewCredentialVault(credentialRepo, cfg.EncryptionKey)
+	clusterDeployService.SetCredentialVault(credentialVault)
+	rebuildSvc := services.NewRebuildService(pluginExec, credentialVault, instanceRepo)
+	clusterDeployService.SetRebuildService(rebuildSvc)
+
 	settingsRepo := repositories.NewPlatformSettingsRepository(db)
 	settingsController := controllers.NewSettingsController(settingsRepo)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)

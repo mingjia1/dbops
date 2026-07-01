@@ -203,10 +203,6 @@ const ClusterDeploy: React.FC = () => {
     }
   }
 
-  useEffect(() => {
-    loadDeployments()
-  }, [])
-
   const showDeploymentResultMessage = (dep: DeployResult) => {
     const arch = dep.cluster_type?.toUpperCase?.() || 'Cluster'
     if (isCompletedDeployStatus(dep.status)) {

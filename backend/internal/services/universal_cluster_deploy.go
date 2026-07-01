@@ -406,24 +406,8 @@ func (s *ClusterDeployService) findManagedPortConflict(ctx context.Context, host
 	if s.instRepo == nil || strings.TrimSpace(host) == "" || port == 0 {
 		return ""
 	}
-	instances, err := s.instRepo.List(ctx, 10000, 0)
-	if err != nil {
-		return ""
-	}
-	for _, inst := range instances {
-		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
-		if err != nil || conn == nil || conn.Host == "" {
-			continue
-		}
-		if !sameHost(conn.Host, host) || conn.Port != port {
-			continue
-		}
-		if inst.ClusterID == "" || inst.ClusterID == currentClusterID {
-			continue
-		}
-		return fmt.Sprintf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, port, inst.Name, inst.ClusterID)
-	}
-	return ""
+	endpoints := s.loadInstanceEndpoints(ctx)
+	return findManagedPortConflictInEndpoints(host, port, currentClusterID, endpoints)
 }
 
 func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, groupName, currentClusterID string) error {
