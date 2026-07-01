@@ -143,8 +143,9 @@ const currentUpgradeStage = (upgrade: ActiveUpgrade) => {
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
-  const [versions, setVersions] = useState<VersionEntry[]>([])
-  const [versionsLoading, setVersionsLoading] = useState(false)
+const [versions, setVersions] = useState<VersionEntry[]>([])
+const [versionsLoading, setVersionsLoading] = useState(false)
+const [detectingVersions, setDetectingVersions] = useState<Record<string, boolean>>({})
   const [planOpen, setPlanOpen] = useState(false)
   const [compatOpen, setCompatOpen] = useState(false)
   const [inPlaceOpen, setInPlaceOpen] = useState(false)
@@ -169,12 +170,24 @@ const UpgradeManage: React.FC = () => {
     upgradeApi.listHistory().then((res: any) => setHistory(res?.data || [])).catch(() => setHistory([]))
     instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => setInstances([]))
     setVersionsLoading(true)
-    versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([])).finally(() => setVersionsLoading(false))
+    versionApi.listSupported().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([])).finally(() => setVersionsLoading(false))
   }
 
   useEffect(() => {
     loadData()
   }, [])
+
+  // Auto-detect version when an instance is selected and version is unknown
+  useEffect(() => {
+    const ids = [planInstanceId, compatInstanceId, inPlaceInstanceId].filter(Boolean) as string[]
+    if (ids.length === 0) return
+    ids.forEach((id) => {
+      const inst = findInstance(id)
+      if (inst && !inst.version?.full_version && !inst.version?.version && !detectingVersions[id]) {
+        detectInstanceVersion(id)
+      }
+    })
+  }, [planInstanceId, compatInstanceId, inPlaceInstanceId])
 
   useEffect(() => {
     if (!history.some((item) => activeUpgradeStatuses.has((item.status || '').toLowerCase()))) return
@@ -242,6 +255,29 @@ const UpgradeManage: React.FC = () => {
     }))
   }, [instances])
 
+  const detectInstanceVersion = async (instanceId: string) => {
+    if (!instanceId || detectingVersions[instanceId]) return
+    setDetectingVersions((prev) => ({ ...prev, [instanceId]: true }))
+    try {
+      const res: any = await instanceApi.detectVersion(instanceId)
+      const v = res?.data
+      if (v?.version || v?.full_version) {
+        setInstances((prev) => prev.map((inst) =>
+          inst.id === instanceId
+            ? { ...inst, version: v as any }
+            : inst,
+        ))
+        message.success(`实例 ${instanceId} 版本检测成功: ${v.full_version || v.version}`)
+      } else {
+        message.warning(`实例 ${instanceId} 版本检测返回空数据`)
+      }
+    } catch (err: any) {
+      message.warning(`版本检测失败: ${err?.response?.data?.message || err?.message || '未知错误'}`)
+    } finally {
+      setDetectingVersions((prev) => ({ ...prev, [instanceId]: false }))
+    }
+  }
+
   const findInstance = (id?: string) => id ? instances.find((i) => i.id === id) : undefined
   const detectedVersion = (inst?: Instance): string => {
     if (!inst) return '未识别'
@@ -272,10 +308,21 @@ const UpgradeManage: React.FC = () => {
 
   const versionInfo = (id?: string) => {
     if (!id) return null
+    const inst = findInstance(id)
+    const version = detectedVersion(inst)
+    const isDetecting = detectingVersions[id || '']
     return (
       <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
         <Descriptions.Item label="当前源版本">
-          <Tag color="blue">{detectedVersion(findInstance(id))}</Tag>
+          <Space>
+            <Tag color={version === '未识别' ? 'warning' : 'blue'}>{version}</Tag>
+            {version === '未识别' && (
+              <Button size="small" loading={isDetecting} onClick={() => detectInstanceVersion(id)}>
+                {isDetecting ? '检测中...' : '检测版本'}
+              </Button>
+            )}
+            {isDetecting && <Spin size="small" />}
+          </Space>
         </Descriptions.Item>
       </Descriptions>
     )

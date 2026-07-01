@@ -380,7 +380,7 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	for _, dep := range nodes {
 		host := strings.TrimSpace(dep.Host)
 		for _, ex := range existing {
-			if host != ex.host {
+			if !sameHost(host, ex.host) {
 				continue
 			}
 			if ex.clusterID == currentClusterID {
@@ -400,6 +400,30 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 		}
 	}
 	return nil
+}
+
+func (s *ClusterDeployService) findManagedPortConflict(ctx context.Context, host string, port int, currentClusterID string) string {
+	if s.instRepo == nil || strings.TrimSpace(host) == "" || port == 0 {
+		return ""
+	}
+	instances, err := s.instRepo.List(ctx, 10000, 0)
+	if err != nil {
+		return ""
+	}
+	for _, inst := range instances {
+		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
+		if err != nil || conn == nil || conn.Host == "" {
+			continue
+		}
+		if !sameHost(conn.Host, host) || conn.Port != port {
+			continue
+		}
+		if inst.ClusterID == "" || inst.ClusterID == currentClusterID {
+			continue
+		}
+		return fmt.Sprintf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, port, inst.Name, inst.ClusterID)
+	}
+	return ""
 }
 
 func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, groupName, currentClusterID string) error {
@@ -1213,10 +1237,10 @@ func isForbiddenMySQLDeployOption(key string) bool {
 
 func allowedClusterCustomOptions(clusterType string) map[string]bool {
 	common := map[string]bool{
-		"package_url":       true,
-		"package_checksum":  true,
-		"relay_url":         true,
-		"relay_upload_url":  true,
+		"package_url":      true,
+		"package_checksum": true,
+		"relay_url":        true,
+		"relay_upload_url": true,
 	}
 	switch clusterType {
 	case ClusterTypeHA:

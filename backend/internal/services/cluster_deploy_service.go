@@ -546,10 +546,10 @@ func isMySQLDeployRole(clusterType, role string) bool {
 }
 
 type PreCheckResult struct {
-	HostID  string `json:"host_id"`
-	Host    string `json:"host"`
-	Status  string `json:"status"` // pass, warn, fail
-	Message string `json:"message"`
+	HostID  string         `json:"host_id"`
+	Host    string         `json:"host"`
+	Status  string         `json:"status"` // pass, warn, fail
+	Message string         `json:"message"`
 	Details []PreCheckItem `json:"details"`
 }
 
@@ -560,12 +560,35 @@ type PreCheckItem struct {
 	Message string `json:"message,omitempty"`
 }
 
-func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) ([]PreCheckResult, error) {
+type ClusterDeployCheckNode struct {
+	HostID    string `json:"host_id"`
+	Host      string `json:"host,omitempty"`
+	Role      string `json:"role,omitempty"`
+	MySQLPort int    `json:"mysql_port,omitempty"`
+	DataDir   string `json:"data_dir,omitempty"`
+}
+
+func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, nodes []ClusterDeployCheckNode) ([]PreCheckResult, error) {
 	if s.hostRepo == nil {
 		return nil, fmt.Errorf("host repository not configured")
 	}
+	nodeByHostID := map[string][]ClusterDeployCheckNode{}
+	for _, node := range nodes {
+		if node.MySQLPort == 0 {
+			node.MySQLPort = 3306
+		}
+		if node.HostID != "" {
+			nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
+			if !containsString(hostIDs, node.HostID) {
+				hostIDs = append(hostIDs, node.HostID)
+			}
+		}
+	}
+	if len(hostIDs) == 0 {
+		return nil, fmt.Errorf("host_ids or nodes is required")
+	}
 	results := make([]PreCheckResult, 0, len(hostIDs))
-	for _, hostID := range hostIDs {
+	for _, hostID := range dedupeStrings(hostIDs) {
 		host, err := s.hostRepo.GetByID(ctx, hostID)
 		if err != nil {
 			results = append(results, PreCheckResult{HostID: hostID, Status: "fail", Message: fmt.Sprintf("host not found: %v", err)})
@@ -576,6 +599,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) (
 			agentPort = 9090
 		}
 		r := PreCheckResult{HostID: hostID, Host: host.Address, Status: "pass", Details: []PreCheckItem{}}
+		s.appendPreCheckPortResults(ctx, &r, host.Address, nodeByHostID[hostID])
 
 		// 1. Agent connectivity
 		if s.agentClient == nil {
@@ -593,7 +617,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) (
 		}
 		r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: true, Value: healthResult.Status})
 
-		// 2. Check mysql client availability via agent environment check
+		// 3. Check mysql client availability via agent environment check
 		envData, envErr := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, agentPort)
 		if envErr == nil && envData != nil {
 			if tools, ok := envData["tools"].(map[string]interface{}); ok {
@@ -623,18 +647,25 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) (
 				memMB, _ := resources["memory_mb"].(float64)
 				sufficient, _ := resources["sufficient"].(bool)
 				r.Details = append(r.Details, PreCheckItem{
-					Name:    "Resources",
-					Passed:  sufficient,
-					Value:   fmt.Sprintf("disk=%dGB mem=%dMB", int(diskGB), int(memMB)),
-					Message: func() string { if !sufficient { return "insufficient disk or memory" }; return "" }(),
+					Name:   "Resources",
+					Passed: sufficient,
+					Value:  fmt.Sprintf("disk=%dGB mem=%dMB", int(diskGB), int(memMB)),
+					Message: func() string {
+						if !sufficient {
+							return "insufficient disk or memory"
+						}
+						return ""
+					}(),
 				})
-				if !sufficient {
+				if !sufficient && r.Status == "pass" {
 					r.Status = "warn"
 				}
 			}
 		} else {
 			r.Details = append(r.Details, PreCheckItem{Name: "Environment", Passed: false, Message: "could not check environment via agent"})
-			r.Status = "warn"
+			if r.Status == "pass" {
+				r.Status = "warn"
+			}
 		}
 
 		// Summary message
@@ -652,6 +683,42 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string) (
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode) {
+	for _, node := range nodes {
+		if node.MySQLPort == 0 {
+			continue
+		}
+		if conflict := s.findManagedPortConflict(ctx, host, node.MySQLPort, ""); conflict != "" {
+			result.Status = "fail"
+			result.Details = append(result.Details, PreCheckItem{
+				Name:    fmt.Sprintf("MySQL Port %d", node.MySQLPort),
+				Passed:  false,
+				Value:   fmt.Sprintf("%s:%d", host, node.MySQLPort),
+				Message: conflict,
+			})
+		} else {
+			result.Details = append(result.Details, PreCheckItem{
+				Name:   fmt.Sprintf("MySQL Port %d", node.MySQLPort),
+				Passed: true,
+				Value:  fmt.Sprintf("%s:%d available", host, node.MySQLPort),
+			})
+		}
+	}
 }
 
 // Helper: find a PlanNode in a slice by ID

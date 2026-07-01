@@ -35,6 +35,25 @@ func (c *VersionController) GetOne(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, v)
 }
 
+// ListSupported returns only versions available for deployment (active status + usable package URL).
+// Used by ClusterDeploy and UpgradeManage to populate version dropdowns.
+func (c *VersionController) ListSupported(ctx *gin.Context) {
+	flavor := ctx.Query("flavor")
+	var entries []services.VersionEntry
+	if flavor != "" {
+		entries = c.catalog.ByFlavor(flavor)
+	} else {
+		entries = c.catalog.List()
+	}
+	out := make([]services.VersionEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Status == "active" && e.PackageURL != "" {
+			out = append(out, e)
+		}
+	}
+	utils.SuccessResponse(ctx, out)
+}
+
 // ValidatePath validates an upgrade path. Body: {source_flavor, source_version, target_flavor, target_version}.
 func (c *VersionController) ValidatePath(ctx *gin.Context) {
 	var req struct {

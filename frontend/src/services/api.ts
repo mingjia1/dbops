@@ -278,6 +278,9 @@ export const instanceApi = {
   delete: (id: string) =>
     api.delete(`/instances/${id}`),
   
+  detectVersion: (id: string) =>
+    api.post(`/instances/${id}/detect-version`).then(rejectBusinessError),
+
   deploy: (id: string) =>
     api.post(`/instances/${id}/deploy`),
 
@@ -865,6 +868,8 @@ export interface VersionEntry {
 export const versionApi = {
   // List all versions in the catalog. Optional ?flavor=mysql|mariadb|percona.
   list: (flavor?: string) => api.get('/versions' + (flavor ? `?flavor=${flavor}` : '')),
+  // List supported versions for deployment (active status + usable package URL).
+  listSupported: (flavor?: string) => api.get('/versions/supported' + (flavor ? `?flavor=${flavor}` : '')),
   get: (id: string) => api.get(`/versions/${encodeURIComponent(id)}`),
   // Validate an upgrade path (e.g. before submitting an in-place upgrade).
   validatePath: (data: { source_flavor?: string; source_version: string; target_flavor?: string; target_version: string }) =>
@@ -895,7 +900,8 @@ export const clusterDeployApi = {
   getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
-  precheck: (host_ids: string[]) => api.post('/deployments/precheck', { host_ids }),
+  precheck: (data: string[] | { host_ids?: string[]; nodes?: any[] }) =>
+    api.post('/deployments/precheck', Array.isArray(data) ? { host_ids: data } : data),
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),

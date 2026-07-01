@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { clusterDeployApi, hostApi, instanceApi, type Host, type Instance } from '../services/api'
+import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 
 const { Text } = Typography
 
@@ -104,6 +104,7 @@ const deploymentStepStatus = (status?: string) => {
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
+  const [versions, setVersions] = useState<VersionEntry[]>([])
   const [tab, setTab] = useState<ArchType>('ha')
   const [submitting, setSubmitting] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -162,6 +163,7 @@ const ClusterDeploy: React.FC = () => {
   useEffect(() => {
     hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => {})
     instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
+    versionApi.listSupported().then((res: any) => setVersions(res?.data || [])).catch(() => {})
     loadDeployments()
   }, [])
 
@@ -326,12 +328,10 @@ const ClusterDeploy: React.FC = () => {
     doPreview(arch, values)
   }
 
-  const runPrecheck = async (values: any) => {
-    const hostIDs: string[] = []
-    if (values.master_host_id) hostIDs.push(values.master_host_id)
-    if (values.replica_host_ids) hostIDs.push(...values.replica_host_ids)
-    if (values.replica_host_id) hostIDs.push(values.replica_host_id)
-    if (values.manager_host_id) hostIDs.push(values.manager_host_id)
+  const runPrecheck = async (arch: ArchType, values: any) => {
+    const payload = buildDeployPayload(arch, values)
+    const nodes = payload.nodes || []
+    const hostIDs: string[] = nodes.map((node: any) => node.host_id).filter(Boolean)
     if (hostIDs.length === 0) {
       message.warning('请先选择部署节点主机')
       return
@@ -339,7 +339,7 @@ const ClusterDeploy: React.FC = () => {
     setPrecheckLoading(true)
     setPrecheckResults(null)
     try {
-      const res: any = await clusterDeployApi.precheck(hostIDs)
+      const res: any = await clusterDeployApi.precheck({ host_ids: hostIDs, nodes })
       setPrecheckResults(res?.data || [])
       const failed = (res?.data || []).filter((r: any) => r.status === 'fail')
       if (failed.length > 0) {
@@ -482,7 +482,7 @@ const ClusterDeploy: React.FC = () => {
         server_id: values.replica_server_id || (values.master_server_id ? Number(values.master_server_id) + index + 1 : undefined),
       }))
     } else if (arch === 'mha') {
-      addNode(values.manager_host_id, 'manager', values.mysql_port)
+      addNode(values.manager_host_id, 'manager', values.manager_port || values.mysql_port)
       addNode(values.master_host_id, 'master', values.mysql_port)
       replicaHostIDs.forEach((hostID: string) => addNode(hostID, 'replica', values.replica_port || values.mysql_port || 3306))
     } else if (arch === 'mgr') {
@@ -645,28 +645,44 @@ const ClusterDeploy: React.FC = () => {
     onFinish: (values: any) => void,
     options?: { simpleReplica?: boolean },
   ) => (
-    <Form form={form} layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }} onFinish={onFinish}>
+    <Form form={form} layout="horizontal" onFinish={onFinish}>
       <Form.Item name="pseudo_mode" valuePropName="checked" initialValue={false} hidden>
         <Checkbox />
       </Form.Item>
-      <Form.Item name="mysql_port" initialValue={3306} hidden>
-        <InputNumber />
-      </Form.Item>
-      <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]}>
-        <Select placeholder="选择版本" options={[
-          { value: '8.0', label: 'MySQL 8.0' },
-          { value: '5.7', label: 'MySQL 5.7' },
-          { value: '8.4', label: 'MySQL 8.4 LTS' },
-        ]} />
-      </Form.Item>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]}>
+          <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+            <Select
+              placeholder="选择版本"
+              showSearch
+              optionFilterProp="label"
+              options={versions
+                .slice()
+                .sort((a, b) => {
+                  if (a.flavor !== b.flavor) return a.flavor.localeCompare(b.flavor)
+                  return b.release_date.localeCompare(a.release_date)
+                })
+                .map((v) => ({
+                  value: v.version,
+                  label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.min_glibc ? ` (glibc>=${v.min_glibc})` : ''}`,
+                }))}
+            />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item name="mysql_port" label="主节点端口" initialValue={3306} rules={[{ required: true, message: '请输入主节点端口' }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input placeholder={`${arch}-cluster-01`} />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="master_host_id" label="主节点" rules={[{ required: true }]}>
+          <Form.Item name="master_host_id" label="主节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Select options={hostOptions} placeholder="选择主节点主机" />
           </Form.Item>
         </Col>
@@ -674,42 +690,47 @@ const ClusterDeploy: React.FC = () => {
       {!options?.simpleReplica && (
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name="replica_host_ids" label="从节点" rules={[{ required: true }]}>
+            <Form.Item name="replica_host_ids" label="从节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <Select mode="multiple" options={hostOptions} placeholder="至少选择1个从节点" maxTagCount={2} />
             </Form.Item>
           </Col>
-          <Col span={12}>{extraFields}</Col>
+          <Col span={12}>
+            <Form.Item name="replica_port" label="从节点端口" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+              <InputNumber min={1} max={65535} placeholder="默认同主节点端口" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
         </Row>
       )}
       {options?.simpleReplica && (
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]}>
+            <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <Select options={hostOptions} placeholder="选择从节点主机" />
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name="replica_port" label="从端口" initialValue={3310}>
+            <Form.Item name="replica_port" label="从节点端口" initialValue={3310} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <InputNumber min={1} max={65535} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
         </Row>
       )}
+      {extraFields && <Row gutter={16}>{extraFields}</Row>}
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item name="repl_user" label="复制用户" initialValue="repl">
+          <Form.Item name="repl_user" label="复制用户" initialValue="repl" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input placeholder="repl" />
           </Form.Item>
         </Col>
         <Col span={12}>
-          <Form.Item name="repl_password" label="复制密码" initialValue="Repl#2024">
+          <Form.Item name="repl_password" label="复制密码" initialValue="Repl#2024" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input.Password placeholder="Repl#2024" />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Form.Item label="中间件插件" tooltip="部署完成后自动装配所选中间件">
+          <Form.Item label="中间件插件" tooltip="部署完成后自动装配所选中间件" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Space>
               <Form.Item name="enable_keepalived" valuePropName="checked" noStyle>
                 <Checkbox>Keepalived</Checkbox>
@@ -722,7 +743,7 @@ const ClusterDeploy: React.FC = () => {
         </Col>
         <Col span={12} />
       </Row>
-      <Form.Item wrapperCol={{ offset: 6 }}>
+      <Form.Item wrapperCol={{ offset: 0 }}>
         <Space>
           <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
             启动部署
@@ -730,7 +751,7 @@ const ClusterDeploy: React.FC = () => {
           <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then((values: any) => doPreview(arch, values)).catch(() => {})}>
             预览计划
           </Button>
-          <Button icon={<ReloadOutlined />} loading={precheckLoading} onClick={() => form.validateFields().then((values: any) => runPrecheck(values)).catch(() => {})}>
+          <Button icon={<ReloadOutlined />} loading={precheckLoading} onClick={() => form.validateFields().then((values: any) => runPrecheck(arch, values)).catch(() => {})}>
             环境预检
           </Button>
         </Space>
@@ -872,7 +893,7 @@ const ClusterDeploy: React.FC = () => {
                 key: 'ha',
                 label: 'HA 主从',
                 children: renderForm('ha', haForm,
-                  <></>,
+                  null,
                   (values) => runDeploy('ha', values),
                   { simpleReplica: true },
                 ),
@@ -881,9 +902,18 @@ const ClusterDeploy: React.FC = () => {
                 key: 'mha',
                 label: 'MHA 部署',
                 children: renderForm('mha', mhaForm,
-                  <Form.Item name="manager_host_id" label="Manager" rules={[{ required: true }]}>
-                    <Select options={hostOptions} placeholder="选择 Manager 主机" />
-                  </Form.Item>,
+                  <>
+                    <Col span={12}>
+                      <Form.Item name="manager_host_id" label="Manager主机" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <Select options={hostOptions} placeholder="选择 Manager 主机" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="manager_port" label="Manager端口" initialValue={3306} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <InputNumber min={1} max={65535} placeholder="默认同主节点端口" style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                  </>,
                   (values) => runDeploy('mha', values),
                 ),
               },
@@ -891,9 +921,11 @@ const ClusterDeploy: React.FC = () => {
                 key: 'mgr',
                 label: 'MGR 部署',
                 children: renderForm('mgr', mgrForm,
-                  <Form.Item name="group_name" label="MGR 组名" initialValue={createMgrGroupName()}>
-                    <Input />
-                  </Form.Item>,
+                  <Col span={12}>
+                    <Form.Item name="group_name" label="MGR组名" initialValue={createMgrGroupName()} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                      <Input />
+                    </Form.Item>
+                  </Col>,
                   (values) => runDeploy('mgr', values),
                 ),
               },
@@ -901,9 +933,11 @@ const ClusterDeploy: React.FC = () => {
                 key: 'pxc',
                 label: 'PXC 部署',
                 children: renderForm('pxc', pxcForm,
-                  <Form.Item name="wsrep_port" label="wsrep 端口" initialValue={4567}>
-                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>,
+                  <Col span={12}>
+                    <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                      <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>,
                   (values) => runDeploy('pxc', values),
                 ),
               },

@@ -570,6 +570,7 @@ func main() {
 			versions := protected.Group("/versions")
 			{
 				versions.GET("", versionController.List)
+				versions.GET("/supported", versionController.ListSupported)
 				versions.POST("/validate-path", versionController.ValidatePath)
 				versions.GET("/:id", versionController.GetOne)
 			}

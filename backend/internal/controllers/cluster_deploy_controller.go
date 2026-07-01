@@ -52,13 +52,14 @@ func (c *ClusterDeployController) ValidateClusterDeploy(ctx *gin.Context) {
 
 func (c *ClusterDeployController) PreCheck(ctx *gin.Context) {
 	var req struct {
-		HostIDs []string `json:"host_ids" binding:"required"`
+		HostIDs []string                          `json:"host_ids"`
+		Nodes   []services.ClusterDeployCheckNode `json:"nodes"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "host_ids is required")
+		utils.BadRequestResponse(ctx, "invalid precheck request")
 		return
 	}
-	results, err := c.service.PreCheck(ctx.Request.Context(), req.HostIDs)
+	results, err := c.service.PreCheck(ctx.Request.Context(), req.HostIDs, req.Nodes)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Pre-check failed", err)
 		return
