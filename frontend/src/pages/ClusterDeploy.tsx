@@ -121,13 +121,28 @@ const ClusterDeploy: React.FC = () => {
     mysql_password: string
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
-  const [credential] = useState<{ username: string; password: string }>(() => {
+  const [credential, setCredential] = useState<{ username: string; password: string }>(() => {
     try {
       const stored = localStorage.getItem('dbops_default_mysql_credential')
       if (stored) return JSON.parse(stored)
     } catch { /* ignore */ }
     return { username: 'root', password: '' }
   })
+  const [mysqlPasswordModalOpen, setMysqlPasswordModalOpen] = useState(false)
+  const [mysqlPasswordForm] = Form.useForm()
+
+  const handleSaveMysqlPassword = async () => {
+    try {
+      const values = await mysqlPasswordForm.validateFields()
+      const newCredential = { username: values.username || 'root', password: values.password }
+      setCredential(newCredential)
+      localStorage.setItem('dbops_default_mysql_credential', JSON.stringify(newCredential))
+      setMysqlPasswordModalOpen(false)
+      message.success('MySQL root 密码已保存')
+    } catch {
+      // validation failed
+    }
+  }
   const pollRef = useRef<number | null>(null)
 
   // Plan preview state
@@ -782,6 +797,15 @@ const ClusterDeploy: React.FC = () => {
         }
         extra={
           <Space>
+            <Button
+              icon={<KeyOutlined />}
+              onClick={() => {
+                mysqlPasswordForm.setFieldsValue({ username: credential.username || 'root', password: credential.password || 'Root#1234' })
+                setMysqlPasswordModalOpen(true)
+              }}
+            >
+              MySQL密码 {credential.password ? '(已设置)' : '(未设置)'}
+            </Button>
             <Button type="primary" icon={<ClusterOutlined />} onClick={() => setShowHistory(!showHistory)}>
               {showHistory ? '返回部署' : '部署历史'}
             </Button>
@@ -1065,6 +1089,43 @@ const ClusterDeploy: React.FC = () => {
             rowKey={(row) => `${row.host}:${row.port}`}
           />
         )}
+      </Modal>
+
+      {/* MySQL Root Password Modal */}
+      <Modal
+        title={
+          <Space>
+            <KeyOutlined />
+            <span>设置 MySQL Root 密码</span>
+          </Space>
+        }
+        open={mysqlPasswordModalOpen}
+        onCancel={() => setMysqlPasswordModalOpen(false)}
+        onOk={handleSaveMysqlPassword}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="此密码将用于集群部署时设置 MySQL root 用户密码"
+          description="部署过程中会使用此密码初始化 MySQL root 账户。请牢记此密码，部署完成后可使用此密码连接 MySQL。"
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={mysqlPasswordForm} layout="vertical">
+          <Form.Item name="username" label="用户名" initialValue="root">
+            <Input placeholder="root" disabled />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="密码"
+            rules={[{ required: true, message: '请输入 MySQL root 密码' }]}
+            initialValue="Root#1234"
+          >
+            <Input.Password placeholder="请输入 MySQL root 密码" />
+          </Form.Item>
+        </Form>
       </Modal>
 
       {activeDeployment && (
