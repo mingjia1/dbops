@@ -49,8 +49,8 @@ const PluginManage: React.FC = () => {
         setLoading(true)
         const res: any = await api.get('/plugins')
         setPlugins(res?.data || [])
-      } catch (err: any) {
-        console.error('Failed to load plugins:', err)
+      } catch {
+        // ignore - plugin list failure is non-critical
       } finally {
         setLoading(false)
       }

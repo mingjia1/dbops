@@ -118,8 +118,8 @@ const Dashboard: React.FC = () => {
 
   const selectedKey = (() => {
     for (const item of menuItems) {
-      if ((item as any).children) {
-        const hit = (item as any).children.find((child: any) => location.pathname.startsWith(child.key))
+      if ('children' in item && item.children) {
+        const hit = item.children.find((child) => location.pathname.startsWith(child.key))
         if (hit) return hit.key
       }
       if (location.pathname.startsWith(item.key)) return item.key
@@ -129,8 +129,8 @@ const Dashboard: React.FC = () => {
 
   const routeOpenKeys = (() => {
     for (const item of menuItems) {
-      if ((item as any).children) {
-        const hit = (item as any).children.find((child: any) => location.pathname.startsWith(child.key))
+      if ('children' in item && item.children) {
+        const hit = item.children.find((child) => location.pathname.startsWith(child.key))
         if (hit) return [item.key]
       }
     }
@@ -191,13 +191,13 @@ const Dashboard: React.FC = () => {
             selectedKeys={[selectedKey]}
             openKeys={manualOpenKeys}
             onOpenChange={(keys) => setManualOpenKeys(keys)}
-            items={menuItems.map((item: any) => {
-              if (item.children) {
+            items={menuItems.map((item) => {
+              if ('children' in item && item.children) {
                 return {
                   key: item.key,
                   icon: item.icon,
                   label: item.label,
-                  children: item.children.map((child: any) => ({
+                  children: item.children.map((child) => ({
                     key: child.key,
                     icon: child.icon,
                     label: child.label,

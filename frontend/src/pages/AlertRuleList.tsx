@@ -163,7 +163,7 @@ const NotificationChannelsSection: React.FC<{
           <Form.Item name={['config', 'webhook']} label="Webhook地址"
             rules={[{ required: true, message: '请输入Webhook地址' }]}
             hidden={channelType !== 'dingtalk' && channelType !== 'wechat'}>
-            <Input placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" />
+            <Input placeholder="请输入 Webhook URL" />
           </Form.Item>
           <Form.Item name={['config', 'url']} label="URL地址"
             rules={[{ required: true, message: '请输入URL地址' }]}

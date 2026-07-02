@@ -161,9 +161,9 @@ const ClusterDeploy: React.FC = () => {
   const [pxcForm] = Form.useForm()
 
   useEffect(() => {
-    hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => {})
-    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
-    versionApi.listSupported().then((res: any) => setVersions(res?.data || [])).catch(() => {})
+    hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => { /* BUG-014: host list load failure is non-critical, page works with empty list */ })
+    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => { /* BUG-014: instance list load failure is non-critical */ })
+    versionApi.listSupported().then((res: any) => setVersions(res?.data || [])).catch(() => { /* BUG-014: version list load failure is non-critical */ })
     loadDeployments()
   }, [])
 
@@ -744,10 +744,10 @@ const ClusterDeploy: React.FC = () => {
           <Button type="primary" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>
             启动部署
           </Button>
-          <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then((values: any) => doPreview(arch, values)).catch(() => {})}>
+          <Button icon={<EyeOutlined />} loading={planPreviewLoading} onClick={() => form.validateFields().then((values: any) => doPreview(arch, values)).catch(() => { /* validation error shown by antd */ })}>
             预览计划
           </Button>
-          <Button icon={<ReloadOutlined />} loading={precheckLoading} onClick={() => form.validateFields().then((values: any) => runPrecheck(arch, values)).catch(() => {})}>
+          <Button icon={<ReloadOutlined />} loading={precheckLoading} onClick={() => form.validateFields().then((values: any) => runPrecheck(arch, values)).catch(() => { /* validation error shown by antd */ })}>
             环境预检
           </Button>
         </Space>
@@ -1020,7 +1020,7 @@ const ClusterDeploy: React.FC = () => {
                 { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 80, render: (v: number) => v || '-' },
               ]}
               dataSource={planPreviewData.nodes || []}
-              rowKey={(row: any) => row.id || row.host || Math.random()}
+              rowKey={(row: any, index?: number) => row.id || row.host || `node-${index}`}
               pagination={false}
               style={{ marginBottom: 16 }}
             />

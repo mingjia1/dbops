@@ -402,13 +402,6 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	return nil
 }
 
-func (s *ClusterDeployService) findManagedPortConflict(ctx context.Context, host string, port int, currentClusterID string) string {
-	if s.instRepo == nil || strings.TrimSpace(host) == "" || port == 0 {
-		return ""
-	}
-	endpoints := s.loadInstanceEndpoints(ctx)
-	return findManagedPortConflictInEndpoints(host, port, currentClusterID, endpoints)
-}
 
 func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, groupName, currentClusterID string) error {
 	deployments, err := s.repo.List(ctx, 1000, 0)

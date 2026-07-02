@@ -109,14 +109,12 @@ const InstanceList: React.FC = () => {
     fetchHosts()
     fetchClusters()
     versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([]))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     fetchInstances()
     if (presetHost) form.setFieldsValue({ host_id: presetHost })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostFilter, presetHost])
+  }, [hostFilter, presetHost, fetchInstances, form])
 
   const hostNameById = (id: string | null | undefined) => {
     if (!id) return '-'

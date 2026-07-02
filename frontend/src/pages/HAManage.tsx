@@ -130,7 +130,7 @@ const HAManage: React.FC = () => {
   }
 
   useEffect(() => {
-    loadInstances().catch(() => {})
+    loadInstances().catch(() => { /* soft fallback: instance list unavailable */ })
   }, [])
 
   const fetchStatus = async (cid: string) => {
@@ -160,7 +160,7 @@ const HAManage: React.FC = () => {
   const preflightPass = !!preflight?.pass
 
   const refreshClusterData = async () => {
-    await loadInstances().catch(() => {})
+    await loadInstances().catch(() => { /* soft fallback: instance list unavailable */ })
     if (clusterId) await fetchStatus(clusterId)
   }
 

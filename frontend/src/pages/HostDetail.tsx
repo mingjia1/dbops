@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm,
@@ -55,7 +55,7 @@ const HostDetail: React.FC = () => {
     setTab(searchParams.get('tab') || 'basic')
   }, [searchParams])
 
-  const fetchHost = async () => {
+  const fetchHost = useCallback(async () => {
     if (!id) return
     setLoading(true)
     try {
@@ -67,9 +67,9 @@ const HostDetail: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [id, navigate])
 
-  const fetchInstances = async () => {
+  const fetchInstances = useCallback(async () => {
     if (!id) return
     setInstLoading(true)
     try {
@@ -80,47 +80,25 @@ const HostDetail: React.FC = () => {
     } finally {
       setInstLoading(false)
     }
-  }
-
-  useEffect(() => {
-    fetchHost()
-    fetchClusters()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  useEffect(() => {
-    if (id) fetchInstances()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
-
-  useEffect(() => () => {
-    if (scanPollRef.current) window.clearInterval(scanPollRef.current)
-  }, [])
-
-  useEffect(() => {
-    if (initialScanTask && id) {
-      pollScanResult(initialScanTask)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialScanTask, id])
-
-  const stopScanPolling = () => {
+  const stopScanPolling = useCallback(() => {
     if (scanPollRef.current) {
       window.clearInterval(scanPollRef.current)
       scanPollRef.current = null
     }
-  }
+  }, [])
 
-  const fetchClusters = async () => {
+  const fetchClusters = useCallback(async () => {
     try {
       const res: any = await clusterDeployApi.listClusters()
       setClusters(res.data || [])
     } catch {
       setClusters([])
     }
-  }
+  }, [])
 
-  const pollScanResult = (taskId: string) => {
+  const pollScanResult = useCallback((taskId: string) => {
     stopScanPolling()
     setScanning(true)
     setTab('instances')
@@ -157,7 +135,26 @@ const HostDetail: React.FC = () => {
         setScanError(err?.response?.data?.message || err?.message || '扫描结果查询失败')
       }
     }, 2000)
-  }
+  }, [id, searchParams, setSearchParams, stopScanPolling])
+
+  useEffect(() => {
+    fetchHost()
+    fetchClusters()
+  }, [fetchHost, fetchClusters])
+
+  useEffect(() => {
+    if (id) fetchInstances()
+  }, [id, fetchInstances])
+
+  useEffect(() => () => {
+    if (scanPollRef.current) window.clearInterval(scanPollRef.current)
+  }, [])
+
+  useEffect(() => {
+    if (initialScanTask && id) {
+      pollScanResult(initialScanTask)
+    }
+  }, [initialScanTask, id, pollScanResult])
 
   const openScanConfig = () => {
     scanForm.setFieldsValue({

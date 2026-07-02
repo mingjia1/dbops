@@ -1,6 +1,12 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { message } from 'antd'
 import { triggerLogout } from './authEvents'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    suppressGlobalError?: boolean
+  }
+}
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -80,7 +86,7 @@ api.interceptors.response.use(
     if (error.response?.status === 404) {
       return Promise.reject(error)
     }
-    if (!(error.config as any)?.suppressGlobalError) {
+    if (!error.config?.suppressGlobalError) {
       const errMsg = error.response?.data?.message || error.message || 'Request failed'
       showErrorToast(errMsg)
     }
@@ -329,7 +335,7 @@ export const instanceApi = {
     api.get(`/instances/${id}/credentials`),
 
   batchHealthCheck: (ids: string[]) =>
-    api.post('/ha/health/batch', { instance_ids: ids }, { timeout: 240000, suppressGlobalError: true } as any),
+    api.post('/ha/health/batch', { instance_ids: ids }, { timeout: 240000, suppressGlobalError: true }),
 }
 
 export interface Host {
@@ -427,7 +433,7 @@ export const hostApi = {
     api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 600000) }),
 
   submitBatchAgentAction: (hostIds: string[], action: string, agentPort?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true } as any),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),
@@ -885,7 +891,7 @@ export const migrationApi = {
   cancel: (taskId: string) => api.post(`/migrations/${taskId}/cancel`),
   list: () => api.get('/migrations'),
   get: (taskId: string) => api.get(`/migrations/${taskId}`),
-  getProgress: (taskId: string) => api.get(`/migrations/${taskId}/progress`, { suppressGlobalError: true } as any),
+  getProgress: (taskId: string) => api.get(`/migrations/${taskId}/progress`, { suppressGlobalError: true }),
 }
 
 export interface DeployCredentials {
@@ -900,8 +906,13 @@ export const clusterDeployApi = {
   getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
-  precheck: (data: string[] | { host_ids?: string[]; nodes?: any[] }) =>
-    api.post('/deployments/precheck', Array.isArray(data) ? { host_ids: data } : data),
+  precheck: (data: string[] | { host_ids?: string[]; nodes?: any[] }) => {
+    const payload = Array.isArray(data) ? { host_ids: data } : data
+    if (!payload.host_ids?.length && !payload.nodes?.length) {
+      return Promise.reject({ message: 'host_ids or nodes is required' })
+    }
+    return api.post('/deployments/precheck', payload)
+  },
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),

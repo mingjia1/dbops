@@ -96,7 +96,6 @@ const MonitorDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchInstances()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchMetrics = async () => {
@@ -115,8 +114,7 @@ const MonitorDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchMetrics()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedInstance])
+  }, [fetchMetrics])
 
   const normalizeMetrics = (raw: any): MetricBundle => {
     const seriesFrom = (k: string): MetricPoint[] | undefined => {

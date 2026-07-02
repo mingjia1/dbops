@@ -28,7 +28,7 @@ import {
   ReloadOutlined,
   RollbackOutlined,
 } from '@ant-design/icons'
-import { instanceApi, upgradeApi, versionApi, type Instance, type VersionEntry } from '../services/api'
+import { instanceApi, upgradeApi, versionApi, type Instance, type InstanceVersion, type VersionEntry } from '../services/api'
 
 const { Title, Paragraph } = Typography
 
@@ -73,6 +73,7 @@ interface UpgradeHistory {
   id: string
   instance_id: string
   instance_name?: string
+  strategy?: string
   upgrade_type?: string
   task_type?: string
   plan_id?: string
@@ -102,8 +103,8 @@ const clampProgress = (progress?: number) => {
   return Math.max(0, Math.min(100, progress))
 }
 
-const upgradeStagesFor = (upgrade?: Pick<ActiveUpgrade, 'strategy' | 'task_type'> | Pick<UpgradeHistory, 'upgrade_type' | 'task_type'>) => {
-  const rawType = `${(upgrade as any)?.strategy || ''} ${(upgrade as any)?.upgrade_type || ''} ${(upgrade as any)?.task_type || ''}`.toLowerCase()
+const upgradeStagesFor = (upgrade?: { strategy?: string; upgrade_type?: string; task_type?: string }) => {
+  const rawType = `${upgrade?.strategy || ''} ${upgrade?.upgrade_type || ''} ${upgrade?.task_type || ''}`.toLowerCase()
   return rawType.includes('rolling') ? ROLLING_UPGRADE_STAGES : UPGRADE_STAGES
 }
 
@@ -143,9 +144,9 @@ const currentUpgradeStage = (upgrade: ActiveUpgrade) => {
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
-const [versions, setVersions] = useState<VersionEntry[]>([])
-const [versionsLoading, setVersionsLoading] = useState(false)
-const [detectingVersions, setDetectingVersions] = useState<Record<string, boolean>>({})
+  const [versions, setVersions] = useState<VersionEntry[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [detectingVersions, setDetectingVersions] = useState<Record<string, boolean>>({})
   const [planOpen, setPlanOpen] = useState(false)
   const [compatOpen, setCompatOpen] = useState(false)
   const [inPlaceOpen, setInPlaceOpen] = useState(false)
@@ -257,6 +258,14 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
 
   const detectInstanceVersion = async (instanceId: string) => {
     if (!instanceId || detectingVersions[instanceId]) return
+    // BUG-008: detect-version endpoint requires admin permission
+    try {
+      const storedUser = localStorage.getItem('user')
+      if (!storedUser) return
+      const user = JSON.parse(storedUser)
+      const role = user?.role || user?.roles?.[0] || ''
+      if (role !== 'admin') return
+    } catch { return }
     setDetectingVersions((prev) => ({ ...prev, [instanceId]: true }))
     try {
       const res: any = await instanceApi.detectVersion(instanceId)
@@ -264,7 +273,7 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
       if (v?.version || v?.full_version) {
         setInstances((prev) => prev.map((inst) =>
           inst.id === instanceId
-            ? { ...inst, version: v as any }
+            ? { ...inst, version: v as InstanceVersion }
             : inst,
         ))
         message.success(`实例 ${instanceId} 版本检测成功: ${v.full_version || v.version}`)
@@ -282,8 +291,8 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
   const detectedVersion = (inst?: Instance): string => {
     if (!inst) return '未识别'
     try {
-      const raw = inst as any
-      const pick = (...candidates: any[]): string => {
+      const raw = inst as Instance & { version_id?: string; target_version_id?: string; full_version?: string; mysql_version?: string; version?: string }
+      const pick = (...candidates: (string | number | undefined)[]): string => {
         for (const c of candidates) {
           if (typeof c === 'string' && c) return c
           if (typeof c === 'number') return String(c)
@@ -456,10 +465,10 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
 
   const rollbackUpgrade = (record: UpgradeHistory) => {
     Modal.confirm({
-      title: '\u786e\u8ba4\u56de\u6eda\u5347\u7ea7',
-      content: '\u56de\u6eda\u4f1a\u505c\u6b62\u76ee\u6807\u5b9e\u4f8b\u3001\u6062\u590d\u6570\u636e\u548c\u914d\u7f6e\uff0c\u8bf7\u786e\u8ba4\u5df2\u8bc4\u4f30\u4e1a\u52a1\u5f71\u54cd\u3002',
-      okText: '\u786e\u8ba4\u56de\u6eda',
-      cancelText: '\u53d6\u6d88',
+      title: '确认回滚升级',
+      content: '回滚会停止目标实例、恢复数据和配置，请确认已评估业务影响。',
+      okText: '确认回滚',
+      cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
         setSubmitting(true)
@@ -470,10 +479,10 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
             force: true,
           })
           const data = res?.data || {}
-          message.success(data.rollback_id ? `\u56de\u6eda\u4efb\u52a1\u5df2\u63d0\u4ea4: ${data.rollback_id}` : '\u56de\u6eda\u4efb\u52a1\u5df2\u63d0\u4ea4')
+          message.success(data.rollback_id ? `回滚任务已提交: ${data.rollback_id}` : '回滚任务已提交')
           loadData()
         } catch (err: any) {
-          message.error(err?.response?.data?.message || err?.message || '\u56de\u6eda\u5347\u7ea7\u5931\u8d25')
+          message.error(err?.response?.data?.message || err?.message || '回滚升级失败')
         } finally {
           setSubmitting(false)
         }
@@ -503,7 +512,7 @@ const [detectingVersions, setDetectingVersions] = useState<Record<string, boolea
           </Button>
           {canRollback(record) && (
             <Button size="small" danger icon={<RollbackOutlined />} loading={submitting} onClick={() => rollbackUpgrade(record)}>
-              {'\u56de\u6eda'}
+              {'回滚'}
             </Button>
           )}
         </Space>

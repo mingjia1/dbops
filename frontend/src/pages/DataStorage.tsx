@@ -27,7 +27,7 @@ const DataStoragePage: React.FC = () => {
       const r = await dataMigrationApi.getStatus()
       if (r.code === 200) setStatus(r.data)
     } catch (e: any) {
-      console.error(e)
+      // ignore - status load failure is non-critical
     } finally {
       setLoading(false)
     }

@@ -536,6 +536,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		errMsg := fmt.Sprintf("元数据同步失败: %v", err)
 		s.repo.UpdateStatus(ctx, clusterID, "partial")
 		finish := time.Now()
+		prog := s.getProgress(clusterID)
 		partialResp := &DeployResponse{
 			DeploymentID: clusterID,
 			ClusterType:  clusterType,
@@ -546,8 +547,13 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			StartedAt:    dep.StartedAt,
 			FinishedAt:   &finish,
 			CreatedAt:    dep.CreatedAt,
-			Steps:        s.getProgress(clusterID).Steps,
 		}
+		if prog != nil {
+			partialResp.Steps = prog.Steps
+			partialResp.Logs = prog.Logs
+		}
+		// BUG-006: Clean up progress from memory after terminal state
+		s.clearProgress(clusterID)
 		finalResp = partialResp
 		finalErr = err
 		return partialResp, nil
@@ -674,18 +680,16 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 		}
 		if node.HostID != "" {
 			nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
-			if !containsString(hostIDs, node.HostID) {
-				hostIDs = append(hostIDs, node.HostID)
-			}
 		}
 	}
+	hostIDs = dedupeStrings(hostIDs)
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
 	// BUG-005: Load instance endpoints once instead of per-port-check
 	endpoints := s.loadInstanceEndpoints(ctx)
 	results := make([]PreCheckResult, 0, len(hostIDs))
-	for _, hostID := range dedupeStrings(hostIDs) {
+	for _, hostID := range hostIDs {
 		host, err := s.hostRepo.GetByID(ctx, hostID)
 		if err != nil {
 			results = append(results, PreCheckResult{HostID: hostID, Status: "fail", Message: fmt.Sprintf("host not found: %v", err)})
@@ -714,7 +718,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 		}
 		r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: true, Value: healthResult.Status})
 
-		// 3. Check mysql client availability via agent environment check
+		// 2. Check mysql client availability via agent environment check
 		envData, envErr := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, agentPort)
 		if envErr == nil && envData != nil {
 			if tools, ok := envData["tools"].(map[string]interface{}); ok {
@@ -1607,7 +1611,7 @@ func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallb
 	if port == 0 {
 		port = 9090
 	}
-	log.Printf("resolveHostRef: hostID=%s -> Address='%s', AgentPort=%d", hostID, host.Address, port)
+	log.Printf("resolveHostRef: %s -> %s (agent=%d)", hostID, host.Address, port)
 	return deploymentHost{Address: host.Address, AgentPort: port}, nil
 }
 
