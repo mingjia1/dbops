@@ -43,7 +43,7 @@ func newTestOrchestratorRegistry() *plugins.Registry {
 func TestDeployOrchestrator_SingleNode(t *testing.T) {
 	registry := newTestOrchestratorRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 
 	orch := NewDeployOrchestrator(registry, vault, repo)
 
@@ -70,7 +70,7 @@ func TestDeployOrchestrator_SingleNode(t *testing.T) {
 func TestDeployOrchestrator_ThreeNodeHA(t *testing.T) {
 	registry := newTestOrchestratorRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 
 	orch := NewDeployOrchestrator(registry, vault, repo)
 
@@ -95,7 +95,7 @@ func TestDeployOrchestrator_ThreeNodeHA(t *testing.T) {
 
 func TestDeployOrchestrator_NoNodes(t *testing.T) {
 	registry := newTestOrchestratorRegistry()
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, nil)
 
 	req := DeployOrchestratorRequest{

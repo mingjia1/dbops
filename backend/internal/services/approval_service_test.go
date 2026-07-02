@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestApprovalService() (*ApprovalService, *repositories.AuditLogRepository) {
+func newTestApprovalService(t *testing.T) (*ApprovalService, *repositories.AuditLogRepository) {
 	db := newTestDB(t)
 	approvalRepo := repositories.NewApprovalRequestRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
@@ -18,7 +18,7 @@ func newTestApprovalService() (*ApprovalService, *repositories.AuditLogRepositor
 
 func TestCreateApprovalRequestWritesAuditLog(t *testing.T) {
 	ctx := context.Background()
-	service, auditRepo := newTestApprovalService()
+	service, auditRepo := newTestApprovalService(t)
 
 	req, err := service.CreateApprovalRequest(ctx, CreateApprovalRequestRequest{
 		RequesterID:   "requester-1",
@@ -42,7 +42,7 @@ func TestCreateApprovalRequestWritesAuditLog(t *testing.T) {
 
 func TestApproveRequestWritesAuditAndRejectsSecondApproval(t *testing.T) {
 	ctx := context.Background()
-	service, auditRepo := newTestApprovalService()
+	service, auditRepo := newTestApprovalService(t)
 
 	req, err := service.CreateApprovalRequest(ctx, CreateApprovalRequestRequest{
 		RequesterID:   "requester-1",

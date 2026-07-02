@@ -27,7 +27,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repositories.HostRepository, *
 	instRepo := repositories.NewInstanceRepository(newTestDB(t))
 	clusterRepo := repositories.NewClusterDeployRepository(newTestDB(t))
 
-	// Use a non-existent agent port â€?service should still record & return completed
+	// Use a non-existent agent port --?service should still record & return completed
 	// because the agent call returns "failed" but the service still records.
 	hostID := "h1"
 	hostRepo.Create(ctx, &models.Host{ID: hostID, Address: "127.0.0.1", AgentPort: 1, SSHPort: 22, SSHUser: "root", Name: "h1"})
@@ -99,7 +99,7 @@ func TestSwitchController_SwitchRoleWithinCluster_Success(t *testing.T) {
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data, _ := resp["data"].(map[string]interface{})
-	// agent call will fail (port 1 unreachable) â†?service returns "failed" result with nil error
+	// agent call will fail (port 1 unreachable) --?service returns "failed" result with nil error
 	assert.Contains(t, []string{"failed", "completed"}, data["status"])
 }
 

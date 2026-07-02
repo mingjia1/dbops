@@ -13,7 +13,7 @@ import (
 func TestRollingUpgradeService_RequiresMin2Nodes(t *testing.T) {
 	registry := plugins.NewRegistry()
 	_ = registry.Register(&stubKernelPlugin{name: "mysql-core"})
-	vault := NewCredentialVault(newTestCredentialRepo(), "ru-key-1")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "ru-key-1")
 	orch := NewDeployOrchestrator(registry, vault, nil)
 
 	svc := NewRollingUpgradeService(orch, nil)
@@ -30,7 +30,7 @@ func TestRollingUpgradeService_RequiresMin2Nodes(t *testing.T) {
 func TestRollingUpgradeService_RequiresPrimary(t *testing.T) {
 	registry := plugins.NewRegistry()
 	_ = registry.Register(&stubKernelPlugin{name: "mysql-core"})
-	vault := NewCredentialVault(newTestCredentialRepo(), "ru-key-2")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "ru-key-2")
 	orch := NewDeployOrchestrator(registry, vault, nil)
 
 	svc := NewRollingUpgradeService(orch, nil)
@@ -55,7 +55,7 @@ func TestRollingUpgradeService_Success(t *testing.T) {
 	}
 	_ = registry.Register(arch.NewReplicaAddonPlugin(fakeAgent))
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "ru-key-3")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "ru-key-3")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 
 	svc := NewRollingUpgradeService(orch, repo)

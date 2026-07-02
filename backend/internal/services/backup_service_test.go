@@ -26,12 +26,12 @@ type backupAgentRequest struct {
 
 // newTestBackupService 创建一个共享 db 的 BackupService — hostRepo / instRepo /
 // backupRepo 都连同一 Database, 这样 backup_policies 外键能正确指向 instances 行.
-func newTestBackupService() *BackupService {
-	service, _ := newTestBackupServiceWithAudit()
+func newTestBackupService(t *testing.T) *BackupService {
+	service, _ := newTestBackupServiceWithAudit(t)
 	return service
 }
 
-func newTestBackupServiceWithAudit() (*BackupService, *repositories.AuditLogRepository) {
+func newTestBackupServiceWithAudit(t *testing.T) (*BackupService, *repositories.AuditLogRepository) {
 	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -53,12 +53,12 @@ func newTestBackupServiceWithAudit() (*BackupService, *repositories.AuditLogRepo
 }
 
 func TestNewBackupService(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	assert.NotNil(t, service)
 }
 
 func TestCreatePolicy(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 
 	req := CreateBackupPolicyRequest{
 		InstanceID:    "instance-001",
@@ -78,7 +78,7 @@ func TestCreatePolicy(t *testing.T) {
 }
 
 func TestCreatePolicyWritesAuditLog(t *testing.T) {
-	service, auditRepo := newTestBackupServiceWithAudit()
+	service, auditRepo := newTestBackupServiceWithAudit(t)
 	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
 
 	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
@@ -102,7 +102,7 @@ func TestCreatePolicyWritesAuditLog(t *testing.T) {
 }
 
 func TestUpdatePolicy(t *testing.T) {
-	service, auditRepo := newTestBackupServiceWithAudit()
+	service, auditRepo := newTestBackupServiceWithAudit(t)
 	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
 	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
 		InstanceID:    "instance-001",
@@ -147,7 +147,7 @@ func TestUpdatePolicy(t *testing.T) {
 }
 
 func TestDeletePolicyWithoutRecords(t *testing.T) {
-	service, auditRepo := newTestBackupServiceWithAudit()
+	service, auditRepo := newTestBackupServiceWithAudit(t)
 	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
 	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
 		InstanceID:    "instance-001",
@@ -172,7 +172,7 @@ func TestDeletePolicyWithoutRecords(t *testing.T) {
 }
 
 func TestDeletePolicyWithRecordsIsRejected(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	ctx := context.Background()
 	policyID, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
 		InstanceID:    "instance-001",
@@ -198,7 +198,7 @@ func TestDeletePolicyWithRecordsIsRejected(t *testing.T) {
 }
 
 func TestExecuteBackup(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 
 	req := ExecuteBackupRequest{
 		InstanceID: "instance-001",
@@ -226,7 +226,7 @@ func TestExecuteBackup(t *testing.T) {
 }
 
 func TestExecuteIncrementalBackupWithoutFullBaseCreatesFailedRecord(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 
 	result, err := service.ExecuteBackup(context.Background(), ExecuteBackupRequest{
 		InstanceID: "instance-001",
@@ -249,7 +249,7 @@ func TestExecuteIncrementalBackupWithoutFullBaseCreatesFailedRecord(t *testing.T
 }
 
 func TestExecuteBackupWritesAuditLogForFailedIncremental(t *testing.T) {
-	service, auditRepo := newTestBackupServiceWithAudit()
+	service, auditRepo := newTestBackupServiceWithAudit(t)
 	ctx := context.WithValue(context.Background(), "user_id", "backup-user")
 
 	result, err := service.ExecuteBackup(ctx, ExecuteBackupRequest{
@@ -879,7 +879,7 @@ func TestRestoreBackupWithoutAgentClientReturnsFailedResultAndWritesRestoreRecor
 }
 
 func TestDeleteBackupRecordRemovesRecord(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	execCtx, execCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer execCancel()
 	result, err := service.ExecuteBackup(execCtx, ExecuteBackupRequest{InstanceID: "instance-001", BackupType: "full"})
@@ -905,7 +905,7 @@ func TestDeleteBackupRecordRemovesRecord(t *testing.T) {
 }
 
 func TestListBackups(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 
 	ctx := context.Background()
 	backups, err := service.ListBackups(ctx, "instance-001")
@@ -960,7 +960,7 @@ func TestBackupTaskResult_Fields(t *testing.T) {
 }
 
 func TestCreatePolicy_DifferentTypes(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	ctx := context.Background()
 
 	fullReq := CreateBackupPolicyRequest{InstanceID: "instance-001", BackupType: "full"}
@@ -975,7 +975,7 @@ func TestCreatePolicy_DifferentTypes(t *testing.T) {
 }
 
 func TestExecuteBackup_NoInstance(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	ctx := context.Background()
 
 	result, err := service.ExecuteBackup(ctx, ExecuteBackupRequest{BackupType: "full"})
@@ -984,7 +984,7 @@ func TestExecuteBackup_NoInstance(t *testing.T) {
 }
 
 func TestListBackups_MultipleInstances(t *testing.T) {
-	service := newTestBackupService()
+	service := newTestBackupService(t)
 	ctx := context.Background()
 
 	backups1, err := service.ListBackups(ctx, "instance-001")

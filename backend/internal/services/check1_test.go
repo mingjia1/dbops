@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestTopoPublisherRepo() *repositories.TopologyEventRepository {
+func newTestTopoPublisherRepo(t *testing.T) *repositories.TopologyEventRepository {
 	return repositories.NewTopologyEventRepository(newTestDB(t))
 }
 
 func TestTopologyEventPublisher_PublishTopologyChange(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	bus := NewMessageBus()
 	pub := NewTopologyEventPublisher(repo, bus)
 
@@ -41,7 +41,7 @@ func TestTopologyEventPublisher_PublishTopologyChange(t *testing.T) {
 }
 
 func TestTopologyEventPublisher_PublishFailover(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	pub := NewTopologyEventPublisher(repo, nil)
 
 	err := pub.PublishFailover(context.Background(), "tpub-002", "master-001", "master-002")
@@ -54,7 +54,7 @@ func TestTopologyEventPublisher_PublishFailover(t *testing.T) {
 }
 
 func TestTopologyEventPublisher_PublishRoleSwitch(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	pub := NewTopologyEventPublisher(repo, nil)
 
 	err := pub.PublishRoleSwitch(context.Background(), "tpub-003", "old-master", "new-master")
@@ -62,7 +62,7 @@ func TestTopologyEventPublisher_PublishRoleSwitch(t *testing.T) {
 }
 
 func TestTopologyEventPublisher_PublishNodeJoin(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	pub := NewTopologyEventPublisher(repo, nil)
 
 	err := pub.PublishNodeJoin(context.Background(), "tpub-004", "node-005")
@@ -75,7 +75,7 @@ func TestTopologyEventPublisher_PublishNodeJoin(t *testing.T) {
 }
 
 func TestTopologyEventPublisher_PublishNodeLeave(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	pub := NewTopologyEventPublisher(repo, nil)
 
 	err := pub.PublishNodeLeave(context.Background(), "tpub-005", "node-003")
@@ -83,7 +83,7 @@ func TestTopologyEventPublisher_PublishNodeLeave(t *testing.T) {
 }
 
 func TestTopologyEventPublisher_GetHistory(t *testing.T) {
-	repo := newTestTopoPublisherRepo()
+	repo := newTestTopoPublisherRepo(t)
 	pub := NewTopologyEventPublisher(repo, nil)
 
 	_ = pub.PublishNodeJoin(context.Background(), "tpub-006", "n1")
@@ -133,13 +133,13 @@ func TestRedisPubSubBackend_Enabled(t *testing.T) {
 }
 
 func TestRebuildService_New(t *testing.T) {
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	svc := NewRebuildService(nil, vault, nil)
 	assert.NotNil(t, svc)
 }
 
 func TestRebuildService_RebuildNode_MissingKey(t *testing.T) {
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	svc := NewRebuildService(nil, vault, nil)
 	_, err := svc.RebuildNode(context.Background(), RebuildServiceRequest{
 		ClusterID: "c", Flavor: "mysql",

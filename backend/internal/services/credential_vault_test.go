@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestCredentialRepo() *repositories.CredentialRepository {
+func newTestCredentialRepo(t *testing.T) *repositories.CredentialRepository {
 	return repositories.NewCredentialRepository(newTestDB(t))
 }
 
 func TestCredentialVault_SetAndGet(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault := NewCredentialVault(repo, "test-key-123456")
 	ctx := context.Background()
 
@@ -31,7 +31,7 @@ func TestCredentialVault_SetAndGet(t *testing.T) {
 }
 
 func TestCredentialVault_GetDecryptedPassword(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	encKey := "test-key-secure"
 	vault := NewCredentialVault(repo, encKey)
 	ctx := context.Background()
@@ -45,7 +45,7 @@ func TestCredentialVault_GetDecryptedPassword(t *testing.T) {
 }
 
 func TestCredentialVault_GetDecryptedPassword_WrongKey(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault1 := NewCredentialVault(repo, "key-a")
 	ctx := context.Background()
 
@@ -58,7 +58,7 @@ func TestCredentialVault_GetDecryptedPassword_WrongKey(t *testing.T) {
 }
 
 func TestCredentialVault_NotFound(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault := NewCredentialVault(repo, "test-key")
 	ctx := context.Background()
 
@@ -67,7 +67,7 @@ func TestCredentialVault_NotFound(t *testing.T) {
 }
 
 func TestCredentialVault_RotateClusterCredentials(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	encKey := "rotate-test-key"
 	vault := NewCredentialVault(repo, encKey)
 	ctx := context.Background()
@@ -89,7 +89,7 @@ func TestCredentialVault_RotateClusterCredentials(t *testing.T) {
 }
 
 func TestCredentialVault_ListAndDelete(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault := NewCredentialVault(repo, "test-key")
 	ctx := context.Background()
 
@@ -133,7 +133,7 @@ func TestCredentialVault_EncryptionRoundTrip(t *testing.T) {
 }
 
 func TestCredentialVault_SyncCredentialToNode(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault := NewCredentialVault(repo, "sync-test-key")
 	ctx := context.Background()
 
@@ -155,7 +155,7 @@ func TestCredentialVault_SyncCredentialToNode(t *testing.T) {
 }
 
 func TestCredentialVault_SyncCredentialToNode_NilCaller(t *testing.T) {
-	repo := newTestCredentialRepo()
+	repo := newTestCredentialRepo(t)
 	vault := NewCredentialVault(repo, "sync-test-key")
 	ctx := context.Background()
 

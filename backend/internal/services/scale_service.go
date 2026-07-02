@@ -4,12 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 )
+
+// archTypeToPluginName maps a cluster architecture type to its plugin name.
+// The plugin executor uses these names to dispatch to the correct join/leave handler.
+func archTypeToPluginName(archType string) string {
+	switch strings.ToLower(strings.TrimSpace(archType)) {
+	case "ha":
+		return "ha-replica"
+	case "mha":
+		return "mha-manager"
+	case "mgr":
+		return "mgr-group"
+	case "pxc":
+		return "pxc-cluster"
+	default:
+		return archType
+	}
+}
 
 type ScaleService struct {
 	orchestrator *DeployOrchestrator
@@ -83,7 +101,7 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			}, err
 		}
 
-		archPluginName := req.ArchType + "-addon"
+		archPluginName := archTypeToPluginName(req.ArchType)
 		joinEnv := plugins.PluginEnv{
 			ClusterID: req.ClusterID,
 			Nodes: []plugins.PluginNode{
@@ -151,7 +169,7 @@ func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleI
 	}
 
 	if req.ArchType != "" && req.ArchType != "single" {
-		archPluginName := req.ArchType + "-addon"
+		archPluginName := archTypeToPluginName(req.ArchType)
 		leaveEnv := plugins.PluginEnv{
 			ClusterID: req.ClusterID,
 			Nodes:     []plugins.PluginNode{{Address: req.RemoveNodeID}},

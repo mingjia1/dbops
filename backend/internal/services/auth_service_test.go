@@ -27,7 +27,7 @@ func createAuthTestUser(t *testing.T, ctx context.Context, repo *repositories.Us
 	}))
 }
 
-func newAuthAuditTestService() (*AuthService, *repositories.UserRepository, *repositories.AuditLogRepository) {
+func newAuthAuditTestService(t *testing.T) (*AuthService, *repositories.UserRepository, *repositories.AuditLogRepository) {
 	db := newTestDB(t)
 	userRepo := repositories.NewUserRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
@@ -36,7 +36,7 @@ func newAuthAuditTestService() (*AuthService, *repositories.UserRepository, *rep
 }
 
 func TestAuthChangePasswordWritesAuditLogAndUpdatesPassword(t *testing.T) {
-	service, userRepo, auditRepo := newAuthAuditTestService()
+	service, userRepo, auditRepo := newAuthAuditTestService(t)
 	ctx := context.WithValue(context.Background(), "user_id", "user-001")
 	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "old-password", "dba")
 
@@ -62,7 +62,7 @@ func TestAuthChangePasswordWritesAuditLogAndUpdatesPassword(t *testing.T) {
 }
 
 func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
-	service, userRepo, auditRepo := newAuthAuditTestService()
+	service, userRepo, auditRepo := newAuthAuditTestService(t)
 	ctx := context.WithValue(context.Background(), "user_id", "admin-001")
 	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "old-password-1", "dba")
 	createAuthTestUser(t, ctx, userRepo, "user-002", "bob", "old-password-2", "operator")
@@ -88,7 +88,7 @@ func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
 }
 
 func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
-	service, userRepo, _ := newAuthAuditTestService()
+	service, userRepo, _ := newAuthAuditTestService(t)
 	ctx := context.Background()
 	createAuthTestUser(t, ctx, userRepo, "user-003", "carol", "old-password", "operator")
 
@@ -105,7 +105,7 @@ func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
 }
 
 func TestAuthLoginReturnsPermissions(t *testing.T) {
-	service, userRepo, _ := newAuthAuditTestService()
+	service, userRepo, _ := newAuthAuditTestService(t)
 	ctx := context.Background()
 	createAuthTestUser(t, ctx, userRepo, "user-004", "dana", "old-password", "admin")
 

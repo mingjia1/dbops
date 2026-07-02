@@ -20,7 +20,7 @@ func TestEndToEnd_MHA_Deploy_ScaleOut_Destroy(t *testing.T) {
 	_ = registry.Register(arch.NewMHAAddonPlugin(fakeAgent))
 
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "e2e-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "e2e-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -85,7 +85,7 @@ func TestEndToEnd_SingleNode_Deploy_Rebuild(t *testing.T) {
 	_ = registry.Register(&stubKernelPlugin{name: "mysql-core"})
 
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "e2e-single-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "e2e-single-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 

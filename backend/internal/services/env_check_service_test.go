@@ -17,19 +17,19 @@ func newTestEnvCheckCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 2*time.Second)
 }
 
-func newTestEnvCheckService(tctx context.Context) *EnvironmentCheckService {
+func newTestEnvCheckService(t *testing.T, tctx context.Context) *EnvironmentCheckService {
 	return NewEnvironmentCheckService(newTestHostRepo(t, tctx), newTestAgentClient(), testEnvCheckKey)
 }
 
 func TestNewEnvironmentCheckService(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 	assert.NotNil(t, service)
 }
 
 func TestEnvironmentCheck_Execute(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 
 	req := EnvironmentCheckRequest{
 		Hosts: []HostConfig{
@@ -49,7 +49,7 @@ func TestEnvironmentCheck_Execute(t *testing.T) {
 
 func TestEnvironmentCheck_Execute_MultipleHosts(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 
 	req := EnvironmentCheckRequest{
 		Hosts: []HostConfig{
@@ -98,7 +98,7 @@ func TestEnvironmentCheck_ResolveHostIDsUsesStoredCredential(t *testing.T) {
 
 func TestEnvironmentCheck_GetByID(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
@@ -120,7 +120,7 @@ func TestEnvironmentCheck_GetByID(t *testing.T) {
 
 func TestEnvironmentCheck_checkHost(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 
 	host := HostConfig{Host: "127.0.0.1", Port: 1, Username: "root", Password: "password"}
 	results := service.checkHost(host)
@@ -209,7 +209,7 @@ func TestCheckResult_Fields(t *testing.T) {
 
 func TestCheckResult_DifferentCategories(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
 
@@ -249,7 +249,7 @@ func TestCheckResult_DifferentCategories(t *testing.T) {
 
 func TestCheckResult_AllPassed(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 	ctx, cancel := newTestEnvCheckCtx()
 	defer cancel()
 
@@ -340,7 +340,7 @@ func TestAgentSystemResultsFailUnsafeKernelParameters(t *testing.T) {
 
 func TestEnvironmentCheck_EmptyHosts(t *testing.T) {
 	tctx := context.Background()
-	service := newTestEnvCheckService(tctx)
+	service := newTestEnvCheckService(t, tctx)
 
 	req := EnvironmentCheckRequest{Hosts: []HostConfig{}}
 	ctx, cancel := newTestEnvCheckCtx()

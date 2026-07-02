@@ -26,7 +26,7 @@ func newTestLifecycleRegistry() *plugins.Registry {
 func TestScaleService_ScaleOut(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -50,7 +50,7 @@ func TestScaleService_ScaleOut(t *testing.T) {
 
 func TestScaleService_ScaleOut_NoNodes(t *testing.T) {
 	registry := newTestLifecycleRegistry()
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, nil)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -63,7 +63,7 @@ func TestScaleService_ScaleOut_NoNodes(t *testing.T) {
 func TestScaleService_ScaleIn(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -83,7 +83,7 @@ func TestScaleService_ScaleIn(t *testing.T) {
 func TestScaleService_ScaleIn_PrimaryRejected(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -107,7 +107,7 @@ func TestScaleService_ScaleIn_EmptyID(t *testing.T) {
 func TestScaleService_RebuildNode(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -128,7 +128,7 @@ func TestScaleService_RebuildNode(t *testing.T) {
 func TestClusterLifecycleService_DestroyCluster(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
@@ -154,7 +154,7 @@ func TestClusterLifecycleService_DestroyCluster(t *testing.T) {
 func TestClusterLifecycleService_RebuildCluster(t *testing.T) {
 	registry := newTestLifecycleRegistry()
 	repo := newTestInstanceRepo(t, context.Background())
-	vault := NewCredentialVault(newTestCredentialRepo(), "test-key")
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 	pluginExec := plugins.NewExecutor(registry)
 
