@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -75,6 +76,14 @@ func (m *MockInstanceRepoForDestroy) UpsertTopology(ctx context.Context, instanc
 }
 
 func (m *MockInstanceRepoForDestroy) ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error) {
+	return nil, nil
+}
+
+func (m *MockInstanceRepoForDestroy) ListAllEndpoints(ctx context.Context) ([]repositories.InstanceEndpoint, error) {
+	return nil, nil
+}
+
+func (m *MockInstanceRepoForDestroy) ListEndpointsByHosts(ctx context.Context, hosts []string) ([]repositories.InstanceEndpoint, error) {
 	return nil, nil
 }
 

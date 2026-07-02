@@ -282,6 +282,11 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 		if node.DataDir == "" && node.Role != "manager" {
 			node.DataDir = fmt.Sprintf("/data/mysql/%d", node.MySQLPort)
 		}
+		// Basedir default: matches agent's install layout. Without this, the agent
+		// receives no basedir key and cannot locate mysqladmin/mysqld binaries.
+		if node.Basedir == "" && node.Role != "manager" {
+			node.Basedir = fmt.Sprintf("/usr/local/mysql-%d", node.MySQLPort)
+		}
 		if node.Custom == nil {
 			node.Custom = map[string]interface{}{}
 		}
@@ -302,7 +307,7 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 			return req, fmt.Errorf("node %d host or host_id is required", i+1)
 		}
 	}
-	if err := validateUniversalRoles(req.ClusterType, req.Nodes); err != nil {
+	if err := validateUniversalRoles(req.ClusterType, req.Nodes, req.Mode); err != nil {
 		return req, err
 	}
 	if err := validateDeployCustomOptions(req.ClusterType, req.Custom, req.MySQL.Config, req.Nodes); err != nil {
@@ -387,11 +392,14 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	existing, err := s.instRepo.ListEndpointsByHosts(ctx, hosts)
 	if err != nil {
 		return nil
-	}
-	// M4: Check for duplicate host:port within the same deployment request.
+	}	// M4: Check for duplicate host:port within the same deployment request.
+	// Skip manager nodes — they don't run MySQL, so their MySQLPort is unused.
 	type nodeKey struct{ host string; port int }
 	seenNodes := map[nodeKey]int{} // index of first node with this key
 	for i, dep := range nodes {
+		if dep.Role == "manager" {
+			continue
+		}
 		host := strings.TrimSpace(dep.Host)
 		if host == "" {
 			continue
@@ -403,15 +411,19 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 		seenNodes[key] = i
 	}
 	// Check for duplicate data_dir within the same deployment request.
-	seenDataDirs := map[string]int{}
+	// Scoped per-host: different hosts can share the same data_dir path.
+	type hostDataDir struct{ host, dataDir string }
+	seenDataDirs := map[hostDataDir]int{}
 	for i, dep := range nodes {
 		if dep.DataDir == "" {
 			continue
 		}
-		if prevIdx, exists := seenDataDirs[dep.DataDir]; exists {
-			return fmt.Errorf("data_dir conflict within deployment: node %d and node %d both use %s. Please use unique data directories", prevIdx+1, i+1, dep.DataDir)
+		host := strings.ToLower(strings.TrimSpace(dep.Host))
+		key := hostDataDir{host: host, dataDir: dep.DataDir}
+		if prevIdx, exists := seenDataDirs[key]; exists {
+			return fmt.Errorf("data_dir conflict within deployment: node %d and node %d both use %s on host %s. Please use unique data directories", prevIdx+1, i+1, dep.DataDir, dep.Host)
 		}
-	seenDataDirs[dep.DataDir] = i
+		seenDataDirs[key] = i
 	}
 	for _, dep := range nodes {
 		host := strings.TrimSpace(dep.Host)
@@ -624,7 +636,7 @@ func normalizeDeployRole(clusterType, role string) string {
 	return role
 }
 
-func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode) error {
+func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode, mode string) error {
 	counts := map[string]int{}
 	for _, node := range nodes {
 		counts[node.Role]++
@@ -645,7 +657,9 @@ func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode) error
 		if counts["primary"]+counts["bootstrap"] != 1 {
 			return fmt.Errorf("mgr deployment requires exactly one primary or bootstrap node")
 		}
-		if len(nodes) < 3 {
+		// H7: Enforce minimum 3 nodes for split-brain protection in real mode.
+		// Pseudo mode is for testing and allows 2 nodes.
+		if mode != DeployModePseudo && len(nodes) < 3 {
 			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection (use pseudo mode for 2-node testing)")
 		}
 	case ClusterTypePXC:

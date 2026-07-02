@@ -607,7 +607,7 @@ func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 					Name:           "mgr-no-agent",
 					PrimaryHost:    "10.0.0.11",
 					PrimaryPort:    3306,
-					SecondaryHosts: []SecondaryNode{{Host: "10.0.0.12", Port: 3307}},
+					SecondaryHosts: []SecondaryNode{{Host: "10.0.0.12", Port: 3307}, {Host: "10.0.0.13", Port: 3308}},
 					MySQLUser:      "root",
 					MySQLPassword:  "rootpass",
 				})
@@ -654,6 +654,10 @@ func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 				ID: "generic-slv", Name: "generic-slv", Address: "10.0.0.12",
 				SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: 9090,
 			}))
+			require.NoError(t, hostRepo.Create(ctx, &models.Host{
+				ID: "generic-slv2", Name: "generic-slv2", Address: "10.0.0.13",
+				SSHPort: 22, SSHUser: "root", SSHCredential: password, AgentPort: 9090,
+			}))
 
 			resp, err := tt.deploy(service)
 
@@ -698,6 +702,7 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 		SecondaryHosts:   []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
 		MySQLUser:        "root",
 		MySQLPassword:    "rootpass",
+		PseudoMode:       true,
 	})
 
 	require.NoError(t, err)
@@ -770,6 +775,7 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 		SecondaryHosts:   []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
 		MySQLUser:        "root",
 		MySQLPassword:    "rootpass",
+		PseudoMode:       true,
 	})
 
 	require.NoError(t, err)

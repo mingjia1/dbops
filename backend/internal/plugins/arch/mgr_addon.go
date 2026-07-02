@@ -145,6 +145,24 @@ func (p *MGRAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv) error 
 	return nil
 }
 
-func (p *MGRAddonPlugin) Teardown(_ context.Context, _ plugins.PluginEnv) error {
-	return nil
+func (p *MGRAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) error {
+	if p.agentCaller == nil {
+		return nil
+	}
+	// Best-effort: ask each non-primary node to leave the group.
+	// Primary/bootstrap cannot be removed via leave while it's the last primary.
+	var lastErr error
+	for _, node := range env.Nodes {
+		if node.Role == "primary" || node.Role == "bootstrap" {
+			continue
+		}
+		payload := map[string]interface{}{
+			"task_id": fmt.Sprintf("mgr-teardown-%s-%s", env.ClusterID, node.Address),
+			"action":  "leave",
+		}
+		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/mgr/setup", payload); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }

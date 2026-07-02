@@ -47,8 +47,8 @@ func (p *ReplicaAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, n
 	var primary *plugins.PluginNode
 	for _, n := range env.Nodes {
 		if n.Role == "primary" || n.Role == "master" {
-			p := n
-			primary = &p
+			primaryNode := n
+			primary = &primaryNode
 			break
 		}
 	}
@@ -133,6 +133,36 @@ func (p *ReplicaAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv) er
 	return nil
 }
 
-func (p *ReplicaAddonPlugin) Teardown(_ context.Context, _ plugins.PluginEnv) error {
-	return nil
+func (p *ReplicaAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) error {
+	if p.agentCaller == nil {
+		return nil
+	}
+	var primary *plugins.PluginNode
+	for _, n := range env.Nodes {
+		if n.Role == "primary" || n.Role == "master" {
+			primaryNode := n
+			primary = &primaryNode
+			break
+		}
+	}
+	if primary == nil {
+		return nil
+	}
+	var lastErr error
+	for _, node := range env.Nodes {
+		if node.Role == "primary" || node.Role == "master" {
+			continue
+		}
+		payload := map[string]interface{}{
+			"task_id":      fmt.Sprintf("teardown-%s-%s", env.ClusterID, node.Address),
+			"master_host":  primary.Address,
+			"master_port":  primary.MySQLPort,
+			"replica_host": node.Address,
+			"replica_port": node.MySQLPort,
+		}
+		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/replication/teardown", payload); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
