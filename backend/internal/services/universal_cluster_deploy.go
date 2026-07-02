@@ -273,6 +273,9 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 		if node.MySQLPort == 0 {
 			node.MySQLPort = 3306
 		}
+		// H6: Track whether agent_port was explicitly provided by the user.
+		// Only apply default / host-record override when not explicitly set.
+		hadExplicitAgentPort := node.AgentPort > 0
 		if node.AgentPort == 0 {
 			node.AgentPort = 9090
 		}
@@ -290,7 +293,8 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 			if resolved.Address != "" {
 				node.Host = resolved.Address
 			}
-			if node.AgentPort == 9090 && resolved.AgentPort != 0 {
+			// Only override agent_port from host record when user didn't explicitly set it.
+			if !hadExplicitAgentPort && resolved.AgentPort != 0 {
 				node.AgentPort = resolved.AgentPort
 			}
 		}
@@ -324,6 +328,14 @@ func (s *ClusterDeployService) checkDeployConflicts(ctx context.Context, req Uni
 		groupName := stringFromMap(req.Custom, "group_name")
 		if groupName != "" {
 			if err := s.checkMgrGroupNameConflict(ctx, groupName, req.ClusterID); err != nil {
+				return err
+			}
+		}
+	}
+	// MHA: check VIP cross-deployment conflict.
+	if req.ClusterType == ClusterTypeMHA {
+		if vip := stringFromMap(req.Custom, "vip"); vip != "" {
+			if err := s.checkMHAVIPConflict(ctx, vip, req.ClusterID); err != nil {
 				return err
 			}
 		}
@@ -501,6 +513,30 @@ func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, gr
 	return nil
 }
 
+func (s *ClusterDeployService) checkMHAVIPConflict(ctx context.Context, vip, currentClusterID string) error {
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for _, d := range deployments {
+		if d.Status == "destroyed" || d.Status == "failed" {
+			continue
+		}
+		dcid := extractClusterIDFromRequest(d.RequestJSON)
+		if dcid == currentClusterID {
+			continue
+		}
+		if d.ClusterType != ClusterTypeMHA {
+			continue
+		}
+		existingVIP := extractStringFromCustom(d.RequestJSON, "vip")
+		if existingVIP == vip {
+			return fmt.Errorf("MHA VIP %q already in use by deployment %q. Please choose a different VIP address", vip, d.Name)
+		}
+	}
+	return nil
+}
+
 func extractClusterIDFromRequest(requestJSON string) string {
 	var m map[string]interface{}
 	if json.Unmarshal([]byte(requestJSON), &m) != nil {
@@ -583,6 +619,9 @@ func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode) error
 	case ClusterTypeMGR:
 		if counts["primary"]+counts["bootstrap"] != 1 {
 			return fmt.Errorf("mgr deployment requires exactly one primary or bootstrap node")
+		}
+		if len(nodes) < 3 {
+			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection (use pseudo mode for 2-node testing)")
 		}
 	case ClusterTypePXC:
 		if counts["bootstrap"] != 1 {
@@ -1838,18 +1877,6 @@ func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 			DataDir:   r.DataDir,
 			Basedir:   r.Basedir,
 			ServerID:  r.ServerID,
-		})
-	}
-	// Handle singular ReplicaHost (legacy format)
-	if len(req.ReplicaHosts) == 0 && req.ReplicaHost != "" {
-		port := req.ReplicaPort
-		if port == 0 {
-			port = 3306
-		}
-		out.Nodes = append(out.Nodes, ClusterDeployNode{
-			Host:      req.ReplicaHost,
-			MySQLPort: port,
-			Role:      "replica",
 		})
 	}
 	return out

@@ -249,7 +249,7 @@ const PackageTab: React.FC = () => {
   const { settings, save } = usePlatformSettings()
 
   useEffect(() => {
-    hostApi.list(100, 0).then((r: any) => setHosts(r?.data || [])).catch(() => {})
+    hostApi.list(100, 0).then((r: any) => setHosts(r?.data || [])).catch(e => console.warn('Failed to load hosts:', e))
     const raw = settings.relay_config
     if (raw) {
       try { const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw; if (cfg.relay_host_id) setRelayHostId(cfg.relay_host_id); if (cfg.relay_path) setRelayPath(cfg.relay_path) } catch {}

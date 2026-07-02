@@ -1504,14 +1504,11 @@ type DeployPXCRequest struct {
 }
 
 type DeployHARequest struct {
-	Name            string            `json:"name"`
-	ClusterID       string            `json:"cluster_id"`
-	MasterHostID    string            `json:"master_host_id"`
-	ReplicaHostID   string            `json:"replica_host_id"`
-	ReplicaHostIDs  []string          `json:"replica_host_ids"`
-	MasterHost      string            `json:"master_host"`
-	ReplicaHost     string            `json:"replica_host"`
-	ReplicaHosts    []SecondaryNode   `json:"replica_hosts"`
+	Name           string          `json:"name"`
+	ClusterID      string          `json:"cluster_id"`
+	MasterHostID   string          `json:"master_host_id"`
+	MasterHost     string          `json:"master_host"`
+	ReplicaHosts   []SecondaryNode `json:"replica_hosts"`
 	MasterPort      int               `json:"master_port"`
 	ReplicaPort     int               `json:"replica_port"`
 	MasterAgentPort int               `json:"master_agent_port"`

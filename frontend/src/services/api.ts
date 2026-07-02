@@ -53,7 +53,7 @@ const showErrorToast = (msg: string) => {
   try {
     message.error(msg)
   } catch {
-    console.error('[API Error]', msg)
+    // message.error itself failed; nothing more we can do
   }
 }
 
