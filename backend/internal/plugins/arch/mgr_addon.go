@@ -2,6 +2,7 @@ package arch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
@@ -151,7 +152,7 @@ func (p *MGRAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) er
 	}
 	// Best-effort: ask each non-primary node to leave the group.
 	// Primary/bootstrap cannot be removed via leave while it's the last primary.
-	var lastErr error
+	var errs []error
 	for _, node := range env.Nodes {
 		if node.Role == "primary" || node.Role == "bootstrap" {
 			continue
@@ -161,8 +162,8 @@ func (p *MGRAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) er
 			"action":  "leave",
 		}
 		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/mgr/setup", payload); err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Errorf("leave %s: %w", node.Address, err))
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }

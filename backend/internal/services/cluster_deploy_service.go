@@ -686,8 +686,8 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
-	// BUG-005: Load instance endpoints once instead of per-port-check
-	endpoints := s.loadInstanceEndpoints(ctx)
+	// S2: Load instance endpoints scoped to deployment hosts only.
+	endpoints := s.loadInstanceEndpointsByHosts(ctx, hostIDs)
 	results := make([]PreCheckResult, 0, len(hostIDs))
 	for _, hostID := range hostIDs {
 		host, err := s.hostRepo.GetByID(ctx, hostID)
@@ -822,16 +822,30 @@ func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, re
 	}
 }
 
-func (s *ClusterDeployService) loadInstanceEndpoints(ctx context.Context) []instanceEndpoint {
+// S2: loadInstanceEndpointsByHosts uses ListEndpointsByHosts to avoid loading ALL instances.
+func (s *ClusterDeployService) loadInstanceEndpointsByHosts(ctx context.Context, hostIDs []string) []instanceEndpoint {
 	if s.instRepo == nil {
 		return nil
 	}
-	allEndpoints, err := s.instRepo.ListAllEndpoints(ctx)
-	if err != nil || len(allEndpoints) == 0 {
+	// Collect unique host addresses for scoped query.
+	var hosts []string
+	hostMap := map[string]bool{}
+	for _, hostID := range hostIDs {
+		h, err := s.hostRepo.GetByID(ctx, hostID)
+		if err == nil && h.Address != "" && !hostMap[h.Address] {
+			hosts = append(hosts, h.Address)
+			hostMap[h.Address] = true
+		}
+	}
+	if len(hosts) == 0 {
 		return nil
 	}
-	endpoints := make([]instanceEndpoint, 0, len(allEndpoints))
-	for _, ep := range allEndpoints {
+	episodes, err := s.instRepo.ListEndpointsByHosts(ctx, hosts)
+	if err != nil || len(episodes) == 0 {
+		return nil
+	}
+	endpoints := make([]instanceEndpoint, 0, len(episodes))
+	for _, ep := range episodes {
 		if ep.Host == "" {
 			continue
 		}

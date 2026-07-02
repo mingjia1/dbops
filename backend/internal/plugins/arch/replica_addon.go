@@ -2,6 +2,7 @@ package arch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
@@ -148,7 +149,7 @@ func (p *ReplicaAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv
 	if primary == nil {
 		return nil
 	}
-	var lastErr error
+	var errs []error
 	for _, node := range env.Nodes {
 		if node.Role == "primary" || node.Role == "master" {
 			continue
@@ -161,8 +162,8 @@ func (p *ReplicaAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv
 			"replica_port": node.MySQLPort,
 		}
 		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/replication/teardown", payload); err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Errorf("teardown %s: %w", node.Address, err))
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }

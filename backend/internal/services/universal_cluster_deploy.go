@@ -660,7 +660,7 @@ func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode, mode 
 		// H7: Enforce minimum 3 nodes for split-brain protection in real mode.
 		// Pseudo mode is for testing and allows 2 nodes.
 		if mode != DeployModePseudo && len(nodes) < 3 {
-			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection (use pseudo mode for 2-node testing)")
+			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection (set mode to \"pseudo\" for 2-node testing)")
 		}
 	case ClusterTypePXC:
 		if counts["bootstrap"] != 1 {
