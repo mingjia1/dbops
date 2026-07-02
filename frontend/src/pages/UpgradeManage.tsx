@@ -533,7 +533,15 @@ const UpgradeManage: React.FC = () => {
   const activeUpgradeStages = activeUpgrade ? upgradeStagesFor(activeUpgrade) : UPGRADE_STAGES
   const activeUpgradeSteps = activeUpgrade ? buildUpgradeSteps(activeUpgrade) : []
   const activeUpgradeCurrentStage = activeUpgrade ? currentUpgradeStage(activeUpgrade) : UPGRADE_STAGES[0]
-  const activeUpgradeSubsteps = UPGRADE_SUBSTEPS[activeUpgradeCurrentStage] || UPGRADE_SUBSTEPS['预检查']
+  const activeUpgradeSubsteps = useMemo(() => {
+    // M6: derive substeps from plan result's upgrade_path when available
+    if (planResult?.upgrade_path?.length) {
+      return planResult.upgrade_path
+        .sort((a: any, b: any) => a.order - b.order)
+        .map((s: any) => s.name)
+    }
+    return UPGRADE_SUBSTEPS[activeUpgradeCurrentStage] || UPGRADE_SUBSTEPS['预检查']
+  }, [planResult, activeUpgradeCurrentStage])
 
   return (
     <div>
@@ -601,7 +609,7 @@ const UpgradeManage: React.FC = () => {
           <div style={{ marginTop: 16 }}>
             <strong>当前阶段子步骤</strong>
             <div style={{ marginTop: 8 }}>
-              {activeUpgradeSubsteps.map((substep, idx) => (
+              {activeUpgradeSubsteps.map((substep: string, idx: number) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   {idx < activeUpgradeSubsteps.length - 1 ?
                     <span style={{ color: '#52c41a' }}>&#10003;</span> :

@@ -183,18 +183,20 @@ func (c *UpgradeController) GenerateUpgradeReport(ctx *gin.Context) {
 }
 
 type UpgradeHistoryItem struct {
-	ID          string    `json:"id"`
-	TaskType    string    `json:"task_type"`
-	UpgradeType string    `json:"upgrade_type"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	InstanceID  string    `json:"instance_id"`
-	Status      string    `json:"status"`
-	Progress    int       `json:"progress"`
-	Stage       string    `json:"stage,omitempty"`
-	Message     string    `json:"message,omitempty"`
-	StartTime   time.Time `json:"start_time"`
-	CreatedAt   time.Time `json:"created_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	ID            string    `json:"id"`
+	TaskType      string    `json:"task_type"`
+	UpgradeType   string    `json:"upgrade_type"`
+	PlanID        string    `json:"plan_id,omitempty"`
+	SourceVersion string    `json:"source_version,omitempty"`
+	TargetVersion string    `json:"target_version,omitempty"`
+	InstanceID    string    `json:"instance_id"`
+	Status        string    `json:"status"`
+	Progress      int       `json:"progress"`
+	Stage         string    `json:"stage,omitempty"`
+	Message       string    `json:"message,omitempty"`
+	StartTime     time.Time `json:"start_time"`
+	CreatedAt     time.Time `json:"created_at"`
+	CompletedAt   time.Time `json:"completed_at,omitempty"`
 }
 
 func mapUpgradeHistoryItem(task models.Task) UpgradeHistoryItem {
@@ -202,34 +204,49 @@ func mapUpgradeHistoryItem(task models.Task) UpgradeHistoryItem {
 	if startTime.IsZero() {
 		startTime = task.CreatedAt
 	}
-	planID, message := splitUpgradeTaskMessage(task.ErrorMessage)
+	planID, sourceVersion, targetVersion, message := parseUpgradeTaskMeta(task.ErrorMessage)
 	return UpgradeHistoryItem{
-		ID:          task.ID,
-		TaskType:    task.TaskType,
-		UpgradeType: strings.TrimPrefix(task.TaskType, "upgrade_"),
-		PlanID:      planID,
-		InstanceID:  task.InstanceID,
-		Status:      task.Status,
-		Progress:    task.Progress,
-		Stage:       inferUpgradeStage(task),
-		Message:     message,
-		StartTime:   startTime,
-		CreatedAt:   task.CreatedAt,
-		CompletedAt: task.CompletedAt,
+		ID:            task.ID,
+		TaskType:      task.TaskType,
+		UpgradeType:   strings.TrimPrefix(task.TaskType, "upgrade_"),
+		PlanID:        planID,
+		SourceVersion: sourceVersion,
+		TargetVersion: targetVersion,
+		InstanceID:    task.InstanceID,
+		Status:        task.Status,
+		Progress:      task.Progress,
+		Stage:         inferUpgradeStage(task),
+		Message:       message,
+		StartTime:     startTime,
+		CreatedAt:     task.CreatedAt,
+		CompletedAt:   task.CompletedAt,
 	}
 }
 
-func splitUpgradeTaskMessage(raw string) (string, string) {
+// parseUpgradeTaskMeta extracts planID, sourceVersion, targetVersion, and message
+// from the task's ErrorMessage field. Format: "plan:<id>|source:<ver>|target:<ver>\n<message>"
+func parseUpgradeTaskMeta(raw string) (planID, sourceVersion, targetVersion, message string) {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "plan:") {
-		return "", raw
+	if raw == "" {
+		return
 	}
-	parts := strings.SplitN(raw, "\n", 2)
-	planID := strings.TrimSpace(strings.TrimPrefix(parts[0], "plan:"))
-	if len(parts) == 1 {
-		return planID, ""
+	metaAndMsg := strings.SplitN(raw, "\n", 2)
+	meta := metaAndMsg[0]
+	if len(metaAndMsg) > 1 {
+		message = strings.TrimSpace(metaAndMsg[1])
 	}
-	return planID, strings.TrimSpace(parts[1])
+	for _, part := range strings.Split(meta, "|") {
+		part = strings.TrimSpace(part)
+		switch {
+		case strings.HasPrefix(part, "plan:"):
+			planID = strings.TrimPrefix(part, "plan:")
+		case strings.HasPrefix(part, "source:"):
+			sourceVersion = strings.TrimPrefix(part, "source:")
+		case strings.HasPrefix(part, "target:"):
+			targetVersion = strings.TrimPrefix(part, "target:")
+		}
+	}
+	return
 }
 
 func inferUpgradeStage(task models.Task) string {

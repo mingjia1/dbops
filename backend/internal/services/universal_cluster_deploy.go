@@ -388,6 +388,31 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	if err != nil {
 		return nil
 	}
+	// M4: Check for duplicate host:port within the same deployment request.
+	type nodeKey struct{ host string; port int }
+	seenNodes := map[nodeKey]int{} // index of first node with this key
+	for i, dep := range nodes {
+		host := strings.TrimSpace(dep.Host)
+		if host == "" {
+			continue
+		}
+		key := nodeKey{host: strings.ToLower(host), port: dep.MySQLPort}
+		if prevIdx, exists := seenNodes[key]; exists {
+			return fmt.Errorf("port conflict within deployment: node %d and node %d both use %s:%d. Please use unique host:port pairs", prevIdx+1, i+1, host, dep.MySQLPort)
+		}
+		seenNodes[key] = i
+	}
+	// Check for duplicate data_dir within the same deployment request.
+	seenDataDirs := map[string]int{}
+	for i, dep := range nodes {
+		if dep.DataDir == "" {
+			continue
+		}
+		if prevIdx, exists := seenDataDirs[dep.DataDir]; exists {
+			return fmt.Errorf("data_dir conflict within deployment: node %d and node %d both use %s. Please use unique data directories", prevIdx+1, i+1, dep.DataDir)
+		}
+	seenDataDirs[dep.DataDir] = i
+	}
 	for _, dep := range nodes {
 		host := strings.TrimSpace(dep.Host)
 		for _, ex := range existing {
@@ -740,6 +765,11 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		last = id
 	}
 
+	// M3: Avoid server_id conflict: use master_server_id as base for replica server_ids.
+	masterSID := 1
+	if masterNode != nil && masterNode.ServerID != 0 {
+		masterSID = masterNode.ServerID
+	}
 	// Replica join steps
 	// Note: master_host uses master's real IP (for replica to connect to),
 	// slave_host uses the replica's real IP, falling back to 127.0.0.1 only when unset.
@@ -781,7 +811,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 			"master_port":    masterNode.MySQLPort,
 			"slave_host":     slaveHost,
 			"slave_port":     replicaNodes[i].MySQLPort,
-			"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
+			"server_id":      defaultInt(replicaNodes[i].ServerID, masterSID+i+1),
 			"replicate_user": req.Replication.User,
 			"replicate_pass": req.Replication.Password,
 			"mysql_user":     req.MySQL.User,
@@ -878,6 +908,11 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = id
 	}
 
+	// M3: Avoid server_id conflict: use master_server_id as base for replica server_ids.
+	mhaMasterSID := 1
+	if masterNode != nil && masterNode.ServerID != 0 {
+		mhaMasterSID = masterNode.ServerID
+	}
 	for i := range replicaNodes {
 		replicaConfig := map[string]interface{}{
 			"deploy_mode": "single",
@@ -916,7 +951,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 				"master_port":    masterNode.MySQLPort,
 				"slave_host":     slaveHost,
 				"slave_port":     replicaNodes[i].MySQLPort,
-				"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
+				"server_id":      defaultInt(replicaNodes[i].ServerID, mhaMasterSID+i+1),
 				"replicate_user": req.Replication.User,
 				"replicate_pass": req.Replication.Password,
 				"mysql_user":     req.MySQL.User,
@@ -1779,7 +1814,7 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 	bootstrapDataDir := defaultString(req.BootstrapNode.DataDir, defaultDataDir)
 	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.BootstrapHostID, Host: req.BootstrapNode.Host, MySQLPort: bootstrapPort, Role: "bootstrap", AgentPort: req.BootstrapNode.AgentPort, DataDir: bootstrapDataDir})
 	for _, hostID := range req.OtherHostIDs {
-		out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: hostID, MySQLPort: defaultPort, Role: "secondary", DataDir: defaultDataDir})
+		out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: hostID, MySQLPort: defaultPort, AgentPort: 9090, Role: "secondary", DataDir: defaultDataDir})
 	}
 	for _, n := range req.OtherNodes {
 		port := n.Port
@@ -1797,6 +1832,9 @@ func pxcRequestCustom(req DeployPXCRequest) map[string]interface{} {
 	if req.WSREPPort > 0 {
 		custom["wsrep_port"] = req.WSREPPort
 	}
+	// M1: SSLEnabled struct field sets the initial value; ConfigParams may
+	// override it, making ConfigParams the single source of truth when both
+	// are provided.
 	if req.SSLEnabled {
 		custom["wsrep_ssl_enabled"] = true
 	}

@@ -122,7 +122,7 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		return nil, fmt.Errorf("unsupported upgrade strategy: %s", req.Strategy)
 	}
 
-	warnings := s.generatePreCheckWarnings(instance, req.Strategy)
+	warnings := s.generatePreCheckWarnings(instance, req.Strategy, sourceVersion, targetVersion)
 	if allowed, reason := IsValidUpgradePath(sourceFlavor, sourceVersion, targetFlavor, targetVersion); !allowed {
 		warnings = append(warnings, "upgrade path check: "+reason)
 	}
@@ -292,6 +292,11 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 
 	recommendations = append(recommendations, "Backup all data before upgrade")
 	recommendations = append(recommendations, "Test upgrade in staging environment first")
+	srcMM := MajorVersion(sourceVersion)
+	dstMM := MajorVersion(targetVersion)
+	if versionLessThan(srcMM, dstMM) {
+		recommendations = append(recommendations, fmt.Sprintf("Review breaking changes between %s and %s before upgrading", srcMM, dstMM))
+	}
 	if !isCompatible {
 		recommendations = append(recommendations, "Resolve compatibility issues before proceeding")
 	}
@@ -385,7 +390,7 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 		return nil, fmt.Errorf("no upgrade steps generated")
 	}
 	// P0: 派发前落 task 表, B8 端点能查, frontend 轮询可见.
-	taskID := s.createAndTrackTask("upgrade_in_place", req.InstanceID, req.PlanID)
+	taskID := s.createAndTrackTask("upgrade_in_place", req.InstanceID, req.PlanID, sourceVersion, targetVersion)
 	s.dispatchAndTrack(req.InstanceID, taskID, instance, "in-place", targetVersion, map[string]interface{}{})
 
 	response := &ExecuteInPlaceUpgradeResponse{
@@ -470,7 +475,7 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表.
-	taskID := s.createAndTrackTask("upgrade_logical", req.InstanceID, req.PlanID)
+	taskID := s.createAndTrackTask("upgrade_logical", req.InstanceID, req.PlanID, sourceVersion, targetVersion)
 	s.dispatchAndTrack(req.InstanceID, taskID, instance, "logical", targetVersion, map[string]interface{}{
 		"parallelism":    req.Parallelism,
 		"batch_size":     req.BatchSize,
@@ -555,7 +560,7 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	clusterInstances = s.hydrateClusterInstances(ctx, clusterInstances)
 	// P0: 派发前落 task, 用集群第一个实例 ID 作为 task.InstanceID (anchor).
 	taskID := s.createAndTrackTask("upgrade_rolling",
-		firstInstanceID(clusterInstances), req.PlanID)
+		firstInstanceID(clusterInstances), req.PlanID, "", req.TargetVersion)
 	instances := make([]RollingUpgradeInstance, 0, len(clusterInstances))
 	for _, inst := range clusterInstances {
 		role := inst.Status.Role
@@ -662,7 +667,7 @@ func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgrad
 	}
 
 	// P0: 派发前落 task, B8 端点能查. 走 fire-and-forget.
-	taskID := s.createAndTrackTask("upgrade_rollback", req.InstanceID, req.PlanID)
+	taskID := s.createAndTrackTask("upgrade_rollback", req.InstanceID, req.PlanID, "", "")
 	s.dispatchAndTrack(req.InstanceID, taskID, instance, "rollback", "", map[string]interface{}{
 		"backup_id": req.BackupID,
 		"force":     req.Force,
@@ -791,15 +796,23 @@ func (s *UpgradeService) GenerateUpgradeReport(ctx context.Context, req Generate
 
 func splitUpgradeTaskMessage(raw string) (string, string) {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "plan:") {
-		return "", raw
+	if raw == "" {
+		return "", ""
 	}
-	parts := strings.SplitN(raw, "\n", 2)
-	planID := strings.TrimSpace(strings.TrimPrefix(parts[0], "plan:"))
-	if len(parts) == 1 {
-		return planID, ""
+	metaAndMsg := strings.SplitN(raw, "\n", 2)
+	meta := metaAndMsg[0]
+	var message string
+	if len(metaAndMsg) > 1 {
+		message = strings.TrimSpace(metaAndMsg[1])
 	}
-	return planID, strings.TrimSpace(parts[1])
+	var planID string
+	for _, part := range strings.Split(meta, "|") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "plan:") {
+			planID = strings.TrimPrefix(part, "plan:")
+		}
+	}
+	return planID, message
 }
 
 // firstInstanceID 拿到集群第一个实例的 ID, 没有则返空串.
@@ -821,7 +834,7 @@ func (s *UpgradeService) lockForInstance(id string) *sync.Mutex {
 // 都没 taskRepo.Create, B8 端点 GET /api/v1/tasks/:id 永远 404.
 // 修: 在派发之前落库, frontend 立刻能 GET /api/v1/tasks/{id} 查状态.
 // 落库失败不阻塞 (业务上 dispatch 还能正常返), 仅记 log.
-func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID string) string {
+func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID, sourceVersion, targetVersion string) string {
 	taskID := uuid.New().String()
 	if s.taskRepo == nil {
 		return taskID
@@ -834,12 +847,20 @@ func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID string)
 		Progress:   0,
 		StartedAt:  time.Now(),
 	}
+	var meta []string
 	if planID != "" {
-		// PlanID 写到 ErrorMessage 字段当占位标记, 后续可以加新列.
-		task.ErrorMessage = "plan:" + planID
+		meta = append(meta, "plan:"+planID)
+	}
+	if sourceVersion != "" {
+		meta = append(meta, "source:"+sourceVersion)
+	}
+	if targetVersion != "" {
+		meta = append(meta, "target:"+targetVersion)
+	}
+	if len(meta) > 0 {
+		task.ErrorMessage = strings.Join(meta, "|")
 	}
 	if err := s.taskRepo.Create(context.Background(), task); err != nil {
-		// 落库失败仅记 log, 业务继续 (不阻塞 dispatch)
 		_ = err
 	}
 	return taskID
@@ -1029,16 +1050,32 @@ func upgradeAuditResultFromBool(ok bool) string {
 }
 
 func (s *UpgradeService) planInPlaceUpgradeSteps(source, target string) []UpgradeStepInfo {
-	return []UpgradeStepInfo{
+	srcMM := MajorVersion(source)
+	dstMM := MajorVersion(target)
+	crossMajor := versionLessThan(srcMM, dstMM)
+
+	steps := []UpgradeStepInfo{
 		{Order: 1, Name: "Pre-upgrade Check", Type: "check", Description: "Validate system requirements and compatibility"},
 		{Order: 2, Name: "Create Backup", Type: "backup", Description: "Full backup of data directory"},
 		{Order: 3, Name: "Stop Instance", Type: "operation", Description: "Stop MySQL service gracefully"},
-		{Order: 4, Name: "Replace Binaries", Type: "operation", Description: "Replace MySQL binaries with new version"},
+		{Order: 4, Name: "Replace Binaries", Type: "operation", Description: fmt.Sprintf("Replace %s binaries with %s", srcMM, dstMM)},
 		{Order: 5, Name: "Start Instance", Type: "operation", Description: "Start MySQL with new binaries"},
-		{Order: 6, Name: "Run Upgrade", Type: "upgrade", Description: "Execute mysql_upgrade procedure"},
-		{Order: 7, Name: "Post-upgrade Check", Type: "check", Description: "Verify upgrade completion and data integrity"},
-		{Order: 8, Name: "Cleanup", Type: "cleanup", Description: "Remove temporary files and old backups"},
 	}
+	order := 6
+	// mysql_upgrade is required when crossing major.minor (e.g. 5.7→8.0).
+	// Within the same major.minor (e.g. 8.0.34→8.0.36) it is not needed.
+	if crossMajor {
+		steps = append(steps, UpgradeStepInfo{
+			Order: order, Name: "Run Upgrade", Type: "upgrade",
+			Description: fmt.Sprintf("Execute mysql_upgrade to migrate system tables from %s to %s", srcMM, dstMM),
+		})
+		order++
+	}
+	steps = append(steps,
+		UpgradeStepInfo{Order: order, Name: "Post-upgrade Check", Type: "check", Description: "Verify upgrade completion and data integrity"},
+		UpgradeStepInfo{Order: order + 1, Name: "Cleanup", Type: "cleanup", Description: "Remove temporary files and old backups"},
+	)
+	return steps
 }
 
 func (s *UpgradeService) planLogicalMigrationSteps(source, target string) []UpgradeStepInfo {
@@ -1070,11 +1107,14 @@ func (s *UpgradeService) planRollingUpgradeSteps(source, target string) []Upgrad
 	}
 }
 
-func (s *UpgradeService) generatePreCheckWarnings(instance *models.Instance, strategy string) []string {
+func (s *UpgradeService) generatePreCheckWarnings(instance *models.Instance, strategy, sourceVersion, targetVersion string) []string {
 	warnings := []string{}
+	dstMM := MajorVersion(targetVersion)
 
 	warnings = append(warnings, "Ensure sufficient disk space for backup")
-	warnings = append(warnings, "Verify all applications are compatible with MySQL 8.0")
+	if dstMM != "" {
+		warnings = append(warnings, fmt.Sprintf("Verify all applications are compatible with %s", dstMM))
+	}
 
 	if strategy == "inplace" {
 		warnings = append(warnings, "In-place upgrade cannot be rolled back automatically")

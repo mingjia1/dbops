@@ -848,7 +848,7 @@ export const upgradeApi = {
   executeLogical: (data: any) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
   executeRolling: (data: any) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
   rollback: (data: any) => api.post('/upgrades/rollback', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  listHistory: () => api.get('/upgrades').then(rejectBusinessError),
+  listHistory: (limit = 100, offset = 0) => api.get(`/upgrades?limit=${limit}&offset=${offset}`).then(rejectBusinessError),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`).then(rejectBusinessError),
   get: (id: string) => api.get(`/upgrades/${id}`).then(rejectBusinessError),
 }
