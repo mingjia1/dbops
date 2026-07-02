@@ -59,6 +59,13 @@ interface DeployResult {
   logs?: string[]
 }
 
+type DeployStepView = NonNullable<DeployResult['steps']>[number] & {
+  id?: string
+  type?: string
+  target_node?: string
+  depends_on?: string[]
+}
+
 const normalizeStatus = (status?: string) => (status || '').trim().toLowerCase()
 
 const getStatusCategory = (status?: string) => {
@@ -102,6 +109,29 @@ const deploymentStepStatus = (status?: string) => {
   return 'process'
 }
 
+const clampProgress = (progress?: number) => {
+  if (typeof progress !== 'number' || Number.isNaN(progress)) return 0
+  return Math.max(0, Math.min(100, Math.round(progress)))
+}
+
+const stepStatusToAntd = (status?: string): 'wait' | 'process' | 'finish' | 'error' => {
+  const norm = normalizeStatus(status)
+  if (['completed', 'success', 'succeeded', 'ok', 'done'].includes(norm)) return 'finish'
+  if (['running', 'processing', 'active'].includes(norm)) return 'process'
+  if (['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(norm)) return 'error'
+  return 'wait'
+}
+
+const stepProgressPercent = (step: DeployStepView, idx: number, steps: DeployStepView[], overallProgress?: number) => {
+  const status = stepStatusToAntd(step.status)
+  if (status === 'finish') return 100
+  if (status === 'error') return clampProgress(overallProgress)
+  if (status === 'wait') return 0
+  const completedBefore = steps.slice(0, idx).filter((item) => stepStatusToAntd(item.status) === 'finish').length
+  const stepSpan = 100 / Math.max(steps.length, 1)
+  return clampProgress(((overallProgress || 0) - completedBefore * stepSpan) / stepSpan * 100)
+}
+
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
@@ -140,6 +170,7 @@ const ClusterDeploy: React.FC = () => {
     }
   }
   const pollRef = useRef<number | null>(null)
+  const historyPollRef = useRef<number | null>(null)
 
   // Plan preview state
   const [planPreviewOpen, setPlanPreviewOpen] = useState(false)
@@ -164,7 +195,26 @@ const ClusterDeploy: React.FC = () => {
 
   useEffect(() => () => {
     if (pollRef.current) window.clearInterval(pollRef.current)
+    if (historyPollRef.current) window.clearInterval(historyPollRef.current)
   }, [])
+
+  useEffect(() => {
+    if (historyPollRef.current) {
+      window.clearInterval(historyPollRef.current)
+      historyPollRef.current = null
+    }
+    const hasRunningDeployment = deployments.some((item) => !isTerminalDeployStatus(item.status))
+    if (!showHistory || !hasRunningDeployment) return
+    historyPollRef.current = window.setInterval(() => {
+      loadDeployments(false)
+    }, 5000)
+    return () => {
+      if (historyPollRef.current) {
+        window.clearInterval(historyPollRef.current)
+        historyPollRef.current = null
+      }
+    }
+  }, [deployments, showHistory])
 
   const hostOptions = hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))
 
@@ -185,8 +235,8 @@ const ClusterDeploy: React.FC = () => {
     logs: Array.isArray(data.logs) ? data.logs : [],
   })
 
-  const loadDeployments = async () => {
-    setHistoryLoading(true)
+  const loadDeployments = async (showLoading = true) => {
+    if (showLoading) setHistoryLoading(true)
     try {
       const res: any = await clusterDeployApi.list(1000, 0)
       const allData = (Array.isArray(res?.data) ? res.data : []).map(normalizeDeployment)
@@ -194,7 +244,7 @@ const ClusterDeploy: React.FC = () => {
     } catch {
       setDeployments([])
     } finally {
-      setHistoryLoading(false)
+      if (showLoading) setHistoryLoading(false)
     }
   }
 
@@ -247,7 +297,11 @@ const ClusterDeploy: React.FC = () => {
 
   const patchDeployment = (dep: DeployResult) => {
     const fresh = { ...dep, _ts: Date.now() }
-    setDeployments((items) => items.map((item) => (item.deployment_id === dep.deployment_id ? fresh : item)))
+    setDeployments((items) => {
+      const exists = items.some((item) => item.deployment_id === dep.deployment_id)
+      if (!exists) return [fresh, ...items]
+      return items.map((item) => (item.deployment_id === dep.deployment_id ? fresh : item))
+    })
     setActiveDeployment((cur) => (cur && cur.deployment_id === dep.deployment_id ? fresh : cur))
   }
 
@@ -273,7 +327,7 @@ const ClusterDeploy: React.FC = () => {
           logs: Array.isArray(data.logs) ? data.logs : dep.logs,
         }
         patchDeployment(next)
-        if (isTerminalDeployStatus(next.status)) loadDeployments()
+        if (isTerminalDeployStatus(next.status)) loadDeployments(false)
         const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
         if (stepIdx >= 0) setCurrentStep(stepIdx)
         if (isTerminalDeployStatus(next.status) || attempts > 600) {
@@ -793,6 +847,45 @@ const ClusterDeploy: React.FC = () => {
     </Form>
   )
 
+  const renderVerticalStepProgress = (steps: DeployStepView[], overallProgress?: number) => (
+    <Steps
+      direction="vertical"
+      size="small"
+      current={steps.findIndex((step) => stepStatusToAntd(step.status) === 'process')}
+      items={steps.map((step, idx) => {
+        const status = stepStatusToAntd(step.status)
+        const percent = stepProgressPercent(step, idx, steps, overallProgress)
+        return {
+          title: (
+            <Space size={4} wrap>
+              <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
+              {step.type && <Tag color="default" style={{ fontSize: 10 }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
+              {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
+            </Space>
+          ),
+          description: (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Progress
+                percent={percent}
+                size="small"
+                status={status === 'error' ? 'exception' : status === 'finish' ? 'success' : 'active'}
+              />
+              <Space size={8} wrap>
+                {step.message && <span style={{ fontSize: 12, color: '#666' }}>{step.message}</span>}
+                {step.depends_on && step.depends_on.length > 0 && (
+                  <span style={{ fontSize: 12, color: '#888' }}>依赖: {step.depends_on.join(', ')}</span>
+                )}
+                {step.started_at && <span style={{ fontSize: 11, color: '#aaa' }}>开始 {new Date(step.started_at).toLocaleTimeString()}</span>}
+                {step.completed_at && <span style={{ fontSize: 11, color: '#aaa' }}>完成 {new Date(step.completed_at).toLocaleTimeString()}</span>}
+              </Space>
+            </Space>
+          ),
+          status,
+        }
+      })}
+    />
+  )
+
   const filteredDeployments = deployments.filter((d) => {
     const statusMatch = statusFilter.length === 0 || statusFilter.includes(getStatusCategory(d.status))
     const archMatch = archFilter === 'all' || d.cluster_type === archFilter
@@ -1076,24 +1169,10 @@ const ClusterDeploy: React.FC = () => {
 
             {/* Steps Timeline */}
             <strong style={{ display: 'block', marginBottom: 8 }}>执行步骤</strong>
-            <Steps
-              direction="vertical"
-              size="small"
-              current={-1}
-              items={(planPreviewData.steps || []).map((step: any, idx: number) => ({
-                title: (
-                  <Space size={4}>
-                    <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
-                    {step.type && <Tag color="default" style={{ fontSize: 10 }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
-                    {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
-                  </Space>
-                ),
-                description: step.depends_on?.length > 0 ? (
-                  <span style={{ fontSize: 12, color: '#888' }}>依赖: {step.depends_on.join(', ')}</span>
-                ) : undefined,
-                status: 'wait' as const,
-              }))}
-            />
+            {renderVerticalStepProgress((planPreviewData.steps || []).map((step: any) => ({
+              ...step,
+              status: step.status || 'planned',
+            })))}
 
             {/* Architecture-specific parameters */}
             {planPreviewData.parameters && Object.keys(planPreviewData.parameters).length > 0 && (
@@ -1325,29 +1404,7 @@ const ClusterDeploy: React.FC = () => {
           {activeDeployment.steps && activeDeployment.steps.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <strong style={{ display: 'block', marginBottom: 8 }}>详细步骤</strong>
-              <Steps direction="vertical" size="small" current={activeDeployment.steps.findIndex((s) => s.status === 'running')}>
-                {activeDeployment.steps.map((step, idx) => (
-                  <Steps.Step
-                    key={idx}
-                    title={
-                      <Space size={8}>
-                        <span>{step.name}</span>
-                        {step.message && (
-                          <span style={{ color: '#888', fontSize: 12 }}>{step.message}</span>
-                        )}
-                      </Space>
-                    }
-                    description={
-                      <div style={{ fontSize: 11, color: '#aaa' }}>
-                        {step.started_at && `${new Date(step.started_at).toLocaleTimeString()}`}
-                        {step.started_at && step.completed_at && ' → '}
-                        {step.completed_at && `${new Date(step.completed_at).toLocaleTimeString()}`}
-                      </div>
-                    }
-                    status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
-                  />
-                ))}
-              </Steps>
+              {renderVerticalStepProgress(activeDeployment.steps, activeDeployment.progress)}
             </div>
           )}
 

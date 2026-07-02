@@ -116,11 +116,14 @@ func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	// B1 (cookie): 优先读 Authorization header, fallback 到 HttpOnly cookie "auth_token".
 	// 这样无 cookie 老前端 / curl 还能用 Bearer, 而启用 cookie 的浏览器请求无需暴露 token.
-	token := ctx.GetHeader("Authorization")
+	headerToken := ctx.GetHeader("Authorization")
+	cookieToken := ""
+	if c, err := ctx.Cookie("auth_token"); err == nil && c != "" {
+		cookieToken = "Bearer " + c
+	}
+	token := headerToken
 	if token == "" {
-		if c, err := ctx.Cookie("auth_token"); err == nil && c != "" {
-			token = "Bearer " + c
-		}
+		token = cookieToken
 	}
 	if token == "" {
 		utils.UnauthorizedResponse(ctx, "Missing authorization token")
@@ -133,6 +136,13 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	}
 
 	claims, err := c.authService.ValidateToken(token)
+	if err != nil && headerToken != "" && cookieToken != "" && headerToken != cookieToken {
+		token = cookieToken
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+		claims, err = c.authService.ValidateToken(token)
+	}
 	if err != nil {
 		utils.UnauthorizedResponse(ctx, "Invalid token")
 		ctx.Abort()

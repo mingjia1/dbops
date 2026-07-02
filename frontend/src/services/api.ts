@@ -5,6 +5,7 @@ import { triggerLogout } from './authEvents'
 declare module 'axios' {
   interface AxiosRequestConfig {
     suppressGlobalError?: boolean
+    suppressAuthLogout?: boolean
   }
 }
 
@@ -75,7 +76,7 @@ api.interceptors.response.use(
     return response.data
   },
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.suppressAuthLogout) {
       // P1: clear both token and user so Dashboard does not render stale user data
       // after the request has already been redirected to /login.
       localStorage.removeItem('token')
@@ -917,7 +918,7 @@ export const clusterDeployApi = {
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMGR: (data: any) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployPXC: (data: any) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  getStatus: (id: string) => api.get(`/deployments/${id}`),
+  getStatus: (id: string) => api.get(`/deployments/${id}`, { suppressGlobalError: true, suppressAuthLogout: true }),
   destroy: (id: string) => api.delete(`/deployments/${id}`),
   changePassword: (clusterId: string, data: { new_password: string; username?: string; user_host?: string }) =>
     api.post(`/deployments/${clusterId}/change-password`, data),
