@@ -68,7 +68,7 @@ const RoleSwitch: React.FC = () => {
   const [form] = Form.useForm()
 
   useEffect(() => {
-    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(() => {})
+    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(e => console.warn('Failed to load instances:', e))
   }, [])
 
   const clusters = useMemo(() => {

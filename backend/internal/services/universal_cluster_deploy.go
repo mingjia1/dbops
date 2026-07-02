@@ -362,53 +362,37 @@ func (s *ClusterDeployService) checkClusterIDConflict(ctx context.Context, clust
 }
 
 func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context, nodes []ClusterDeployNode, currentClusterID string) error {
-	instances, err := s.instRepo.List(ctx, 10000, 0)
-	if err != nil {
+	var hosts []string
+	for _, n := range nodes {
+		h := strings.TrimSpace(n.Host)
+		if h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	if len(hosts) == 0 {
 		return nil
 	}
-	type endpoint struct {
-		host      string
-		port      int
-		dataDir   string
-		instName  string
-		clusterID string
-	}
-	var existing []endpoint
-	for _, inst := range instances {
-		conn, err := s.instRepo.GetConnection(ctx, inst.ID)
-		if err != nil || conn == nil {
-			continue
-		}
-		if conn.Host == "" {
-			continue
-		}
-		existing = append(existing, endpoint{
-			host:      conn.Host,
-			port:      conn.Port,
-			dataDir:   conn.Datadir,
-			instName:  inst.Name,
-			clusterID: inst.ClusterID,
-		})
+	existing, err := s.instRepo.ListEndpointsByHosts(ctx, hosts)
+	if err != nil {
+		return nil
 	}
 	for _, dep := range nodes {
 		host := strings.TrimSpace(dep.Host)
 		for _, ex := range existing {
-			if !sameHost(host, ex.host) {
+			if !sameHost(host, ex.Host) {
 				continue
 			}
-			if ex.clusterID == currentClusterID {
+			if ex.ClusterID == currentClusterID {
 				continue
 			}
-
-			// Skip unassigned instances (empty cluster_id) — they are available for adoption.
-			if ex.clusterID == "" {
+			if ex.ClusterID == "" {
 				continue
 			}
-			if dep.MySQLPort == ex.port {
-				return fmt.Errorf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, dep.MySQLPort, ex.instName, ex.clusterID)
+			if dep.MySQLPort == ex.Port {
+				return fmt.Errorf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, dep.MySQLPort, ex.Name, ex.ClusterID)
 			}
-			if dep.DataDir != "" && dep.DataDir == ex.dataDir {
-				return fmt.Errorf("datadir conflict: %s on %s already in use by instance %q (cluster=%s). Please change data_dir for this node", dep.DataDir, host, ex.instName, ex.clusterID)
+			if dep.DataDir != "" && dep.DataDir == ex.DataDir {
+				return fmt.Errorf("datadir conflict: %s on %s already in use by instance %q (cluster=%s). Please change data_dir for this node", dep.DataDir, host, ex.Name, ex.ClusterID)
 			}
 		}
 	}
@@ -719,7 +703,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 
 	// Replica join steps
 	// Note: master_host uses master's real IP (for replica to connect to),
-	// while slave_host is "127.0.0.1" because the agent runs locally.
+	// slave_host uses the replica's real IP, falling back to 127.0.0.1 only when unset.
 	for i := range replicaNodes {
 		// Step 1: Initialize MySQL on the replica as a single instance
 		initConfig := map[string]interface{}{
@@ -748,11 +732,15 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		})
 
 		// Step 2: Configure replication on the replica
+		slaveHost := replicaNodes[i].Host
+		if slaveHost == "" {
+			slaveHost = "127.0.0.1"
+		}
 		replicaConfig := map[string]interface{}{
 			"deploy_mode":    "ha-replica",
 			"master_host":    masterNode.Host,
 			"master_port":    masterNode.MySQLPort,
-			"slave_host":     "127.0.0.1",
+			"slave_host":     slaveHost,
 			"slave_port":     replicaNodes[i].MySQLPort,
 			"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
 			"replicate_user": req.Replication.User,
@@ -879,11 +867,15 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = installID
 
 		if masterNode != nil {
+			slaveHost := replicaNodes[i].Host
+			if slaveHost == "" {
+				slaveHost = "127.0.0.1"
+			}
 			replicaHAConfig := map[string]interface{}{
 				"deploy_mode":    "ha-replica",
 				"master_host":    masterNode.Host,
 				"master_port":    masterNode.MySQLPort,
-				"slave_host":     "127.0.0.1",
+				"slave_host":     slaveHost,
 				"slave_port":     replicaNodes[i].MySQLPort,
 				"server_id":      defaultInt(replicaNodes[i].ServerID, i+2),
 				"replicate_user": req.Replication.User,
@@ -977,12 +969,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 
 // buildMGRPlanSteps generates MGR-specific deployment steps.
 // Uses a single-step-per-node approach with deploy_mode="single" and install_type="mgr".
-// - host uses the external IP of each node.
-// - The health check initially fails since no root@% user exists yet.
-// - Password is then set via Unix socket (creates root@% with caching_sha2_password).
-// - Retry health check succeeds because root@% now exists with the correct password.
-// - initializeMGR connects via external IP, matching root@% (caching_sha2_password).
-// - local_address uses the external IP for group_replication_local_address (MGR inter-node communication).
+// C2: primary/bootstrap node is sorted to the front so its bootstrap step runs first.
 func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
 	steps := preamblePlanSteps()
 	last := "prepare_credentials"
@@ -994,19 +981,37 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		groupName = randomUniversalGroupName()
 	}
 
-	localPorts := make([]int, len(nodes))
-	for i := range nodes {
-		if lp, ok := nodeIntCustomRaw(nodes[i].Custom, "local_port"); ok {
+	// C2: Sort nodes so primary/bootstrap comes first (bootstrap must run before joins).
+	sortedNodes := make([]PlanNode, len(nodes))
+	copy(sortedNodes, nodes)
+	sort.SliceStable(sortedNodes, func(i, j int) bool {
+		pi := sortedNodes[i].Role == "primary" || sortedNodes[i].Role == "bootstrap"
+		pj := sortedNodes[j].Role == "primary" || sortedNodes[j].Role == "bootstrap"
+		return pi && !pj
+	})
+
+	localPorts := make([]int, len(sortedNodes))
+	for i := range sortedNodes {
+		if lp, ok := nodeIntCustomRaw(sortedNodes[i].Custom, "local_port"); ok {
 			localPorts[i] = lp
 		} else {
 			localPorts[i] = 33061 + i
 		}
 	}
 
-	// Build group seeds (all nodes for the seeds list)
+	// Build group seeds (all nodes for the seeds list).
 	var groupSeeds []string
-	for i := range nodes {
-		groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", nodes[i].Host, localPorts[i]))
+	if gs, ok := stringCustom(req.Custom, "group_seeds"); ok && gs != "" {
+		for _, s := range strings.Split(gs, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				groupSeeds = append(groupSeeds, s)
+			}
+		}
+	}
+	if len(groupSeeds) == 0 {
+		for i := range sortedNodes {
+			groupSeeds = append(groupSeeds, fmt.Sprintf("%s:%d", sortedNodes[i].Host, localPorts[i]))
+		}
 	}
 
 	// Single consolidated step per node: install MySQL + initialize MGR
@@ -1019,34 +1024,34 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	// with caching_sha2_password, which allows TCP connections from the external IP
 	// to authenticate via RSA public key exchange (handled by the mysql client library
 	// with MYSQL_PWD env var).
-	for i := range nodes {
-		isPrimary := nodes[i].Role == "primary" || nodes[i].Role == "bootstrap"
+	for i := range sortedNodes {
+		isPrimary := sortedNodes[i].Role == "primary" || sortedNodes[i].Role == "bootstrap"
 		nodeConfig := map[string]interface{}{
 			"deploy_mode":    "single",
-			"host":           nodes[i].Host,
-			"port":           nodes[i].MySQLPort,
+			"host":           sortedNodes[i].Host,
+			"port":           sortedNodes[i].MySQLPort,
 			"mysql_user":     req.MySQL.User,
 			"mysql_pass":     req.MySQL.Password,
-			"server_id":      defaultInt(nodes[i].ServerID, i+1),
+			"server_id":      defaultInt(sortedNodes[i].ServerID, i+1),
 			"install_type":   "mgr",
 			"is_primary":     isPrimary,
 			"group_name":     groupName,
-			"local_address":  fmt.Sprintf("%s:%d", nodes[i].Host, localPorts[i]),
+			"local_address":  fmt.Sprintf("%s:%d", sortedNodes[i].Host, localPorts[i]),
 			"seeds":          strings.Join(groupSeeds, ","),
 			"replicate_user": req.Replication.User,
 			"replicate_pass": req.Replication.Password,
 		}
-		if nodes[i].DataDir != "" {
-			nodeConfig["data_dir"] = nodes[i].DataDir
-			nodeConfig["datadir"] = nodes[i].DataDir
+		if sortedNodes[i].DataDir != "" {
+			nodeConfig["data_dir"] = sortedNodes[i].DataDir
+			nodeConfig["datadir"] = sortedNodes[i].DataDir
 		}
-		if nodes[i].Basedir != "" {
-			nodeConfig["basedir"] = nodes[i].Basedir
+		if sortedNodes[i].Basedir != "" {
+			nodeConfig["basedir"] = sortedNodes[i].Basedir
 		}
 		mergeCommonDeployConfig(nodeConfig, req)
 
 		// H3: Pass member_weight if configured for this node.
-		if mw, ok := nodeIntCustomRaw(nodes[i].Custom, "member_weight"); ok {
+		if mw, ok := nodeIntCustomRaw(sortedNodes[i].Custom, "member_weight"); ok {
 			nodeConfig["member_weight"] = mw
 		}
 
@@ -1054,10 +1059,10 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		if isPrimary {
 			stepType = "bootstrap"
 		}
-		id := fmt.Sprintf("deploy_mgr_%s", nodes[i].ID)
+		id := fmt.Sprintf("deploy_mgr_%s", sortedNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("部署 MGR 节点 %s (%s)", nodes[i].Host, nodes[i].Role),
-			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			ID: id, Name: fmt.Sprintf("部署 MGR 节点 %s (%s)", sortedNodes[i].Host, sortedNodes[i].Role),
+			Type: stepType, TargetNode: sortedNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: nodeConfig,
 		})
 		last = id
@@ -1082,15 +1087,19 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		sstMethod = sm
 	}
 
-	// Collect all node hosts for the nodes list
-	nodeHosts := make([]string, len(nodes))
-	for i := range nodes {
-		nodeHosts[i] = nodes[i].Host
+	// C2: Sort nodes so bootstrap comes first (bootstrap must run before joins).
+	sortedNodes := make([]PlanNode, len(nodes))
+	copy(sortedNodes, nodes)
+	sort.SliceStable(sortedNodes, func(i, j int) bool {
+		return sortedNodes[i].Role == "bootstrap" && sortedNodes[j].Role != "bootstrap"
+	})
+
+	// Collect all node hosts for the nodes list (bootstrap-first order).
+	nodeHosts := make([]string, len(sortedNodes))
+	for i := range sortedNodes {
+		nodeHosts[i] = sortedNodes[i].Host
 	}
 
-	// Use a fixed default wsrep_port (4567) for PXC cluster communication.
-	// Note: wsrep_sst_port is a separate parameter for SST transfers and
-	// can be passed via req.Custom["wsrep_sst_port"].
 	wsrepPort := 4567
 	if customPort, ok := nodeIntCustomRaw(req.Custom, "wsrep_port"); ok {
 		wsrepPort = customPort
@@ -1098,8 +1107,8 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	wsrepSSTPort, hasWSREPSSTPort := nodeIntCustomRaw(req.Custom, "wsrep_sst_port")
 	wsrepSSLEnabled, hasWSREPSSLEnabled := stringCustom(req.Custom, "wsrep_ssl_enabled")
 
-	for i := range nodes {
-		isBootstrap := nodes[i].Role == "bootstrap"
+	for i := range sortedNodes {
+		isBootstrap := sortedNodes[i].Role == "bootstrap"
 		// PXC agent requires datadir matching /data/mysql/pxc-* pattern
 		nodeDataDir := nodes[i].DataDir
 		if nodeDataDir == "" {
@@ -1114,8 +1123,8 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			"cluster_name":   clusterName,
 			"bootstrap":      isBootstrap,
 			"nodes":          nodeHosts,
-			"node_host":      nodes[i].Host,
-			"mysql_port":     nodes[i].MySQLPort,
+			"node_host":      sortedNodes[i].Host,
+			"mysql_port":     sortedNodes[i].MySQLPort,
 			"wsrep_port":     wsrepPort,
 			"sst_method":     sstMethod,
 			"replicate_user": req.Replication.User,
@@ -1139,10 +1148,10 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		if isBootstrap {
 			stepType = "bootstrap"
 		}
-		id := fmt.Sprintf("%s_%s", stepType, nodes[i].ID)
+		id := fmt.Sprintf("%s_%s", stepType, sortedNodes[i].ID)
 		steps = append(steps, PlanStep{
-			ID: id, Name: fmt.Sprintf("部署 PXC 节点 %s (%s)", nodes[i].Host, nodes[i].Role),
-			Type: stepType, TargetNode: nodes[i].ID, AgentPath: "/agent/tasks/deploy",
+			ID: id, Name: fmt.Sprintf("部署 PXC 节点 %s (%s)", sortedNodes[i].Host, sortedNodes[i].Role),
+			Type: stepType, TargetNode: sortedNodes[i].ID, AgentPath: "/agent/tasks/deploy",
 			DependsOn: []string{last}, Config: nodeConfig,
 		})
 		last = id

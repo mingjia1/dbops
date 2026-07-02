@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -53,6 +54,8 @@ type InstanceRepositoryInterface interface {
 	UpsertTopology(ctx context.Context, instanceID string, topology *models.InstanceTopology) error
 	ListByHostID(ctx context.Context, hostID string, limit, offset int) ([]models.Instance, error)
 	ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error)
+	ListEndpointsByHosts(ctx context.Context, hosts []string) ([]repositories.InstanceEndpoint, error)
+	ListAllEndpoints(ctx context.Context) ([]repositories.InstanceEndpoint, error)
 }
 
 // MockInstanceRepo is a mock implementation for testing
@@ -129,4 +132,14 @@ func (m *MockInstanceRepo) ListByHostID(ctx context.Context, hostID string, limi
 func (m *MockInstanceRepo) ListByClusterID(ctx context.Context, clusterID string) ([]*models.Instance, error) {
 	args := m.Called(ctx, clusterID)
 	return args.Get(0).([]*models.Instance), args.Error(1)
+}
+
+func (m *MockInstanceRepo) ListEndpointsByHosts(ctx context.Context, hosts []string) ([]repositories.InstanceEndpoint, error) {
+	args := m.Called(ctx, hosts)
+	return args.Get(0).([]repositories.InstanceEndpoint), args.Error(1)
+}
+
+func (m *MockInstanceRepo) ListAllEndpoints(ctx context.Context) ([]repositories.InstanceEndpoint, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]repositories.InstanceEndpoint), args.Error(1)
 }

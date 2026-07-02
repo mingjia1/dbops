@@ -87,19 +87,9 @@ func MajorVersion(full string) string {
 }
 
 // IsValidUpgradePath returns nil if source → target is allowed, or a description
-// of why it is not. The rule is purely engine-level (MySQL upgrade docs).
-//
-// MySQL rules (canonical):
-//   - Same major.minor patch-to-patch: always allowed.
-//   - 5.6 → 5.7: allowed.
-//   - 5.7 → 8.0: allowed (5.7.9+; lower requires intermediate upgrade).
-//   - 5.6 → 8.0: NOT allowed, must go through 5.7 first.
-//   - 8.0 → 5.7 / 5.6: NOT allowed (no downgrade between major).
-//   - 5.7 → 5.6: NOT allowed.
-//   - 8.0.16+ ↔ 8.0.x: allowed.
-//   - MariaDB / Percona: cross-flavor requires logical migration, not in-place.
-//
-// Returns (allowed, reason). If allowed==true, reason=="".
+// of why it is not. Uses the catalog's UpgradeFrom field as the primary source of
+// truth (H9), falling back to major.minor version rules when a target is not in
+// the catalog.
 func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string) (bool, string) {
 	if sourceFlavor == "" {
 		sourceFlavor = "mysql"
@@ -110,6 +100,7 @@ func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string)
 	if sourceFlavor != targetFlavor {
 		return false, fmt.Sprintf("cross-flavor upgrade %s → %s requires logical migration (export/import), not in-place", sourceFlavor, targetFlavor)
 	}
+
 	srcMM := MajorVersion(sourceVer)
 	dstMM := MajorVersion(targetVer)
 
@@ -117,47 +108,50 @@ func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string)
 	if srcMM == dstMM {
 		return true, ""
 	}
-	// MySQL major-minor rules
-	if sourceFlavor == "mysql" {
-		switch srcMM {
-		case "5.6":
-			if dstMM == "5.7" {
-				return true, ""
+
+	// H9: prefer catalog UpgradeFrom as the canonical answer.
+	// Percona (H7): treated same as MySQL; the catalog entries specify UpgradeFrom.
+	catalog := NewVersionCatalog()
+	if entry, err := catalog.GetByFlavorVersion(targetFlavor, targetVer); err == nil {
+		if len(entry.UpgradeFrom) > 0 {
+			for _, allowed := range entry.UpgradeFrom {
+				if sourceVer == allowed || strings.HasPrefix(sourceVer, allowed) {
+					return true, ""
+				}
 			}
-			return false, fmt.Sprintf("MySQL 5.6 can only upgrade to 5.7, not directly to %s. Upgrade 5.6 → 5.7 first.", dstMM)
-		case "5.7":
-			if dstMM == "8.0" {
-				// Per MySQL manual, requires 5.7.9 or later. We accept any 5.7 here
-				// and the agent's pre-check will reject if too old.
-				return true, ""
-			}
-			if dstMM == "5.6" {
-				return false, "downgrade 5.7 → 5.6 is not supported by MySQL"
-			}
-		case "8.0":
-			if dstMM == "5.7" || dstMM == "5.6" {
-				return false, fmt.Sprintf("downgrade 8.0 → %s is not supported by MySQL", dstMM)
-			}
+			return false, fmt.Sprintf("%s %s does not list %s as a supported upgrade source (allowed: %v)", targetFlavor, targetVer, sourceVer, entry.UpgradeFrom)
 		}
 	}
-	if sourceFlavor == "mariadb" {
-		// MariaDB: 10.x major upgrades supported, e.g. 10.5 → 10.11.
-		// 10.0/10.1 → 10.11: must go through intermediate (10.2 → 10.5 → 10.11).
-		// Conservative rule: same major.minor allowed; 10.x → 10.y where y > x allowed;
-		// 10.x → 10.y where y < x not allowed; 10.x → 11.0 not allowed.
-		_ = dstMM
-		if strings.HasPrefix(srcMM, "10.") && strings.HasPrefix(dstMM, "10.") {
-			return true, ""
-		}
-		return false, fmt.Sprintf("MariaDB %s → %s is not a supported in-place upgrade path", srcMM, dstMM)
-	}
+
+	// H7: Percona follows MySQL rules when catalog doesn't help.
 	if sourceFlavor == "percona" {
-		// Percona Server 8.x follows MySQL 8.x upgrade rules.
-		if srcMM == "8.0" && dstMM == "8.0" {
+		sourceFlavor = "mysql"
+		targetFlavor = "mysql"
+	}
+
+	// Hard-coded fallback for MySQL when target is not in the catalog.
+	if sourceFlavor == "mysql" {
+		if versionLessThan(srcMM, dstMM) {
+			if srcMM == "5.6" && dstMM == "8.0" {
+				return false, "MySQL 5.6 cannot upgrade directly to 8.0; go through 5.7 first"
+			}
 			return true, ""
 		}
-		return false, fmt.Sprintf("Percona %s → %s is not a supported in-place upgrade path", srcMM, dstMM)
+		return false, fmt.Sprintf("downgrade %s %s → %s is not supported", sourceFlavor, srcMM, dstMM)
 	}
+
+	// H8: MariaDB — reject arbitrary large jumps (e.g. 10.0 → 10.11) by requiring
+	// a catalog entry or a ≤3 minor-version gap.
+	if sourceFlavor == "mariadb" {
+		if !strings.HasPrefix(srcMM, "10.") || !strings.HasPrefix(dstMM, "10.") {
+			return false, fmt.Sprintf("MariaDB %s → %s is not a supported in-place upgrade path", srcMM, dstMM)
+		}
+		if versionLessThan(srcMM, dstMM) {
+			return true, ""
+		}
+		return false, fmt.Sprintf("downgrade MariaDB %s → %s is not supported", srcMM, dstMM)
+	}
+
 	return false, fmt.Sprintf("unsupported upgrade path %s %s → %s %s", sourceFlavor, srcMM, targetFlavor, dstMM)
 }
 

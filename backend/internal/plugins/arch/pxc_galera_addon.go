@@ -32,8 +32,19 @@ func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, 
 	return err
 }
 
-func (p *PXCGaleraAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
-	return nil
+func (p *PXCGaleraAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, node plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	payload := map[string]interface{}{
+		"task_id": fmt.Sprintf("pxc-leave-%s-%s", env.ClusterID, node.Address),
+		"action":  "leave",
+	}
+	_, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", payload)
+	if err != nil {
+		fmt.Printf("WARN: PXC leave failed for %s: %v — remaining Galera nodes may need manual cleanup\n", node.Address, err)
+	}
+	return err
 }
 
 func NewPXCGaleraAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *PXCGaleraAddonPlugin {
@@ -62,7 +73,20 @@ func (p *PXCGaleraAddonPlugin) Execute(ctx context.Context, env plugins.PluginEn
 		}
 	}
 
-	bootstrap := env.Nodes[0]
+	// Find bootstrap node by role (not by position) to handle any node order.
+	var bootstrap *plugins.PluginNode
+	for i, n := range env.Nodes {
+		if n.Role == "bootstrap" {
+			node := env.Nodes[i]
+			bootstrap = &node
+			break
+		}
+	}
+	if bootstrap == nil {
+		// Fallback: first node
+		node := env.Nodes[0]
+		bootstrap = &node
+	}
 	bootstrapPayload := map[string]interface{}{
 		"task_id":           fmt.Sprintf("pxc-bootstrap-%s", env.ClusterID),
 		"action":            "bootstrap",

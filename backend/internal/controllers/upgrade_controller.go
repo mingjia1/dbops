@@ -42,6 +42,8 @@ func (c *UpgradeController) PlanUpgradePath(ctx *gin.Context) {
 		TargetVersion: controllerReq.TargetVersion,
 		TargetFlavor:  controllerReq.TargetFlavor,
 		Strategy:      controllerReq.Strategy,
+		SourceVersion: controllerReq.SourceVersion,
+		FromVersion:   controllerReq.FromVersion,
 	})
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to plan upgrade path", err)

@@ -40,7 +40,7 @@ export const UpgradeWizard: React.FC<UpgradeWizardProps> = ({
   const [upgrading, setUpgrading] = useState(false)
 
   useEffect(() => {
-    api.get('/versions').then(res => setCatalog(res.data?.data || [])).catch(() => {})
+    api.get('/versions').then(res => setCatalog(res.data?.data || [])).catch(e => console.warn('Failed to load version catalog:', e))
   }, [])
 
   const handlePreCheck = async () => {

@@ -826,21 +826,20 @@ func (s *ClusterDeployService) loadInstanceEndpoints(ctx context.Context) []inst
 	if s.instRepo == nil {
 		return nil
 	}
-	instances, err := s.instRepo.List(ctx, 10000, 0)
-	if err != nil {
+	allEndpoints, err := s.instRepo.ListAllEndpoints(ctx)
+	if err != nil || len(allEndpoints) == 0 {
 		return nil
 	}
-	endpoints := make([]instanceEndpoint, 0, len(instances))
-	for _, inst := range instances {
-		conn, connErr := s.instRepo.GetConnection(ctx, inst.ID)
-		if connErr != nil || conn == nil || conn.Host == "" {
+	endpoints := make([]instanceEndpoint, 0, len(allEndpoints))
+	for _, ep := range allEndpoints {
+		if ep.Host == "" {
 			continue
 		}
 		endpoints = append(endpoints, instanceEndpoint{
-			host:      conn.Host,
-			port:      conn.Port,
-			instName:  inst.Name,
-			clusterID: inst.ClusterID,
+			host:      ep.Host,
+			port:      ep.Port,
+			instName:  ep.Name,
+			clusterID: ep.ClusterID,
 		})
 	}
 	return endpoints
@@ -1680,13 +1679,21 @@ func (s *ClusterDeployService) injectMHAStepPasswords(ctx context.Context, plan 
 		}
 	}
 
-	// Validate that we have passwords for all nodes
+	// Validate that we have passwords for all nodes. MHA manager requires SSH
+	// access to every data node, so a missing password is a hard failure.
+	var missing []string
+	seen := map[string]bool{}
 	for _, node := range plan.Nodes {
-		if node.Host != "" {
-			if _, ok := passwords[node.Host]; !ok {
-				log.Printf("WARN: no SSH password found for MHA node %s (%s)", node.ID, node.Host)
-			}
+		if node.Host == "" || seen[node.Host] {
+			continue
 		}
+		seen[node.Host] = true
+		if _, ok := passwords[node.Host]; !ok {
+			missing = append(missing, fmt.Sprintf("%s (%s)", node.ID, node.Host))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("no SSH password could be resolved for MHA node(s): %s — MHA manager requires SSH access to all data nodes", strings.Join(missing, ", "))
 	}
 
 	// Inject into step config
@@ -1806,21 +1813,56 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			}
 		}
 	} else {
-		primaryID := matched[0].ID
-		replicaIDs := make([]string, 0, len(matched)-1)
+		// C1: Find primary by role for HA/MGR/PXC (two-pass, order-independent).
+		var primaryID string
+		var replicaIDs []string
+
+		// Pass 1: identify primary by role
 		for i, inst := range matched {
-			if i > 0 {
+			role := ""
+			if i < len(nodes) {
+				role = nodes[i].Role
+			}
+			if role == "" {
+				if st, err := s.instRepo.GetStatus(ctx, inst.ID); err == nil {
+					role = st.Role
+				}
+			}
+			switch clusterType {
+			case ClusterTypeHA:
+				if role == "master" && primaryID == "" {
+					primaryID = inst.ID
+				}
+			case ClusterTypeMGR:
+				if (role == "primary" || role == "bootstrap") && primaryID == "" {
+					primaryID = inst.ID
+				}
+			case ClusterTypePXC:
+				if role == "bootstrap" && primaryID == "" {
+					primaryID = inst.ID
+				}
+			}
+		}
+		// Safety fallback: if no primary found by role, use first node
+		if primaryID == "" && len(matched) > 0 {
+			primaryID = matched[0].ID
+		}
+
+		// Pass 2: classify remaining nodes as replicas
+		for _, inst := range matched {
+			if inst.ID != primaryID {
 				replicaIDs = append(replicaIDs, inst.ID)
 			}
 		}
+
 		replicaJSON, _ := json.Marshal(replicaIDs)
-		for i, inst := range matched {
+		for _, inst := range matched {
 			topology := &models.InstanceTopology{
 				InstanceID:      inst.ID,
 				ClusterID:       clusterID,
 				ReplicationMode: clusterType,
 			}
-			if i == 0 {
+			if inst.ID == primaryID {
 				topology.SlaveIDs = string(replicaJSON)
 			} else {
 				topology.MasterID = primaryID

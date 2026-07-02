@@ -744,3 +744,75 @@ func sqlxIn(query string, args []interface{}) (string, []interface{}, error) {
 	newQuery := query[:idx] + strings.Join(placeholders, ",") + query[idx+1:]
 	return newQuery, args, nil
 }
+
+// InstanceEndpoint holds denormalised host/port/dataDir info for conflict checks.
+type InstanceEndpoint struct {
+	InstanceID string
+	Name       string
+	Host       string
+	Port       int
+	DataDir    string
+	ClusterID  string
+}
+
+// ListEndpointsByHosts returns instance endpoints whose connection host matches
+// one of the provided host strings. This avoids loading ALL instances when
+// checking port/datadir conflicts for a small set of deployment nodes.
+func (r *InstanceRepository) ListEndpointsByHosts(ctx context.Context, hosts []string) ([]InstanceEndpoint, error) {
+	if r.db == nil || r.db.Pool == nil || len(hosts) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(hosts))
+	for i, h := range hosts {
+		args[i] = h
+	}
+	query, args, err := sqlxIn(
+		`SELECT i.id, i.name, ic.host, ic.port, COALESCE(ic.datadir,''), COALESCE(i.cluster_id,'')
+		 FROM instance_connections ic
+		 JOIN instances i ON i.id = ic.instance_id
+		 WHERE ic.host IN (?)`,
+		args,
+	)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list endpoints by hosts: %w", err)
+	}
+	defer rows.Close()
+	var endpoints []InstanceEndpoint
+	for rows.Next() {
+		var ep InstanceEndpoint
+		if err := rows.Scan(&ep.InstanceID, &ep.Name, &ep.Host, &ep.Port, &ep.DataDir, &ep.ClusterID); err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, ep)
+	}
+	return endpoints, rows.Err()
+}
+
+// ListAllEndpoints returns instance endpoints for all instances in a single
+// JOIN query, replacing the previous N+1 List+GetConnection pattern.
+func (r *InstanceRepository) ListAllEndpoints(ctx context.Context) ([]InstanceEndpoint, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, nil
+	}
+	rows, err := r.db.Pool.QueryContext(ctx,
+		`SELECT i.id, i.name, ic.host, ic.port, COALESCE(ic.datadir,''), COALESCE(i.cluster_id,'')
+		 FROM instance_connections ic
+		 JOIN instances i ON i.id = ic.instance_id`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all endpoints: %w", err)
+	}
+	defer rows.Close()
+	var endpoints []InstanceEndpoint
+	for rows.Next() {
+		var ep InstanceEndpoint
+		if err := rows.Scan(&ep.InstanceID, &ep.Name, &ep.Host, &ep.Port, &ep.DataDir, &ep.ClusterID); err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, ep)
+	}
+	return endpoints, rows.Err()
+}

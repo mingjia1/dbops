@@ -842,15 +842,15 @@ export const alertApi = {
 }
 
 export const upgradeApi = {
-  planPath: (data: any) => api.post('/upgrades/plan', data),
-  checkCompat: (data: any) => api.post('/upgrades/check', data),
+  planPath: (data: any) => api.post('/upgrades/plan', data).then(rejectBusinessError),
+  checkCompat: (data: any) => api.post('/upgrades/check', data).then(rejectBusinessError),
   executeInPlace: (data: any) => api.post('/upgrades/in-place', data).then(rejectBusinessError).then(rejectFailedTaskData),
   executeLogical: (data: any) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
   executeRolling: (data: any) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
   rollback: (data: any) => api.post('/upgrades/rollback', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  listHistory: () => api.get('/upgrades'),
-  getReport: (id: string) => api.get(`/upgrades/${id}/report`),
-  get: (id: string) => api.get(`/upgrades/${id}`),
+  listHistory: () => api.get('/upgrades').then(rejectBusinessError),
+  getReport: (id: string) => api.get(`/upgrades/${id}/report`).then(rejectBusinessError),
+  get: (id: string) => api.get(`/upgrades/${id}`).then(rejectBusinessError),
 }
 
 export interface VersionEntry {
@@ -906,12 +906,11 @@ export const clusterDeployApi = {
   getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
-  precheck: (data: string[] | { host_ids?: string[]; nodes?: any[] }) => {
-    const payload = Array.isArray(data) ? { host_ids: data } : data
-    if (!payload.host_ids?.length && !payload.nodes?.length) {
+  precheck: (data: { host_ids?: string[]; nodes?: Array<{ instance_id: string; host: string; port: number; username: string; password: string }> }) => {
+    if (!data.host_ids?.length && !data.nodes?.length) {
       return Promise.reject({ message: 'host_ids or nodes is required' })
     }
-    return api.post('/deployments/precheck', payload)
+    return api.post('/deployments/precheck', data)
   },
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),

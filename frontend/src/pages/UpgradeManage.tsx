@@ -258,14 +258,6 @@ const UpgradeManage: React.FC = () => {
 
   const detectInstanceVersion = async (instanceId: string) => {
     if (!instanceId || detectingVersions[instanceId]) return
-    // BUG-008: detect-version endpoint requires admin permission
-    try {
-      const storedUser = localStorage.getItem('user')
-      if (!storedUser) return
-      const user = JSON.parse(storedUser)
-      const role = user?.role || user?.roles?.[0] || ''
-      if (role !== 'admin') return
-    } catch { return }
     setDetectingVersions((prev) => ({ ...prev, [instanceId]: true }))
     try {
       const res: any = await instanceApi.detectVersion(instanceId)
@@ -348,10 +340,6 @@ const UpgradeManage: React.FC = () => {
         instance_id: values.instance_id,
         target_version: values.target_version,
         strategy: values.strategy,
-        check_data_exists: !!values.check_data_exists,
-        backup_confirmed: !!values.backup_confirmed,
-        backup_method: values.backup_method,
-        scheduled_time: values.scheduled_time,
       })
       setPlanResult(res?.data)
       message.success('升级路径规划已生成')

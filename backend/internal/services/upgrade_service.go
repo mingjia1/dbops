@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"log"
 	"sync"
 	"time"
 
@@ -17,14 +19,11 @@ import (
 type UpgradeService struct {
 	instanceRepo *repositories.InstanceRepository
 	taskRepo     *repositories.TaskRepository
-	// B3: 之前 4 个 Execute* 是写死返回, 不调 agent. 注入 AgentClient 后
-	// 真正派发到 agent 端 UpgradeExecutor.
-	agentClient *AgentClient
-	auditSvc    *AuditService
-	encKey      string
-	// P0: per-instance mutex 防止两个 admin 同时点同一实例的升级/迁移,
-	// 后跑的 dispatch 会写同 backupDir/同 importDir 互相覆盖.
-	locks sync.Map // map[instanceID]*sync.Mutex
+	agentClient  *AgentClient
+	auditSvc     *AuditService
+	encKey       string
+	locks        sync.Map // map[instanceID]*sync.Mutex
+	plans        sync.Map // map[planID]*models.UpgradePlan  (H3: in-memory plan store)
 }
 
 func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, auditSvc ...*AuditService) *UpgradeService {
@@ -49,6 +48,8 @@ type PlanUpgradePathRequest struct {
 	TargetVersion string `json:"target_version" binding:"required"`
 	TargetFlavor  string `json:"target_flavor"` // optional, defaults to source flavor
 	Strategy      string `json:"strategy" binding:"required"`
+	SourceVersion string `json:"source_version,omitempty"` // optional override
+	FromVersion   string `json:"from_version,omitempty"`   // optional alias
 }
 
 type PlanUpgradePathResponse struct {
@@ -80,9 +81,21 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 	// Read the actual source version from the instance, not a hard-coded value.
 	// If the instance has not been version-detected yet, the caller must run
 	// POST /api/v1/instances/:id/detect-version first.
+	// H5: Allow explicit override from SourceVersion/FromVersion request fields.
 	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
 		return nil, err
+	}
+	override := req.SourceVersion
+	if override == "" {
+		override = req.FromVersion
+	}
+	if override != "" {
+		sourceVersion = override
+		flavor := MajorVersion(override)
+		if flavor != "" {
+			_ = flavor // flavor derivation left to catalog lookup below
+		}
 	}
 	targetVersion := req.TargetVersion
 	targetFlavor := req.TargetFlavor
@@ -125,6 +138,8 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		RiskLevel:     riskLevel,
 		UpgradePath:   s.serializeSteps(steps),
 	}
+	// H3: persist plan in memory so ExecuteInPlaceUpgrade can validate plan_id.
+	s.plans.Store(plan.ID, plan)
 
 	response := &PlanUpgradePathResponse{
 		PlanID:           plan.ID,
@@ -337,6 +352,12 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", "backup confirmation is required before in-place upgrade",
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("backup confirmation is required before in-place upgrade")
+	}
+	// H3: validate plan_id against in-memory plan store when provided.
+	if req.PlanID != "" {
+		if _, ok := s.plans.Load(req.PlanID); !ok {
+			return nil, fmt.Errorf("plan_id %q not found — run POST /upgrades/plan first", req.PlanID)
+		}
 	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
@@ -946,6 +967,8 @@ func (s *UpgradeService) applyUpgradePackageMetadata(cfg map[string]interface{},
 	}
 	entry := findUpgradeCatalogEntry(targetVersion, stringValue(cfg["target_flavor"]))
 	if entry == nil {
+		log.Printf("WARN: target version %s (flavor %v) not found in catalog — package_url and checksum will not be set; agent-side upgrade may fail",
+			targetVersion, cfg["target_flavor"])
 		return
 	}
 	if entry.Version != "" {
@@ -1071,72 +1094,98 @@ func (s *UpgradeService) generatePreCheckWarnings(instance *models.Instance, str
 
 func (s *UpgradeService) checkSQLModeCompatibility(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
+	srcMM := MajorVersion(source)
+	dstMM := MajorVersion(target)
 
-	items = append(items, IncompatibilityItem{
-		Type:        "sql_mode",
-		Level:       "warning",
-		Description: "NO_AUTO_CREATE_USER removed in MySQL 8.0",
-		Impact:      "Queries using this mode will fail",
-		Solution:    "Remove NO_AUTO_CREATE_USER from sql_mode setting",
-	})
+	// NO_AUTO_CREATE_USER was removed in MySQL 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "sql_mode",
+			Level:       "warning",
+			Description: "NO_AUTO_CREATE_USER removed in MySQL 8.0",
+			Impact:      "Queries using this mode will fail",
+			Solution:    "Remove NO_AUTO_CREATE_USER from sql_mode setting",
+		})
+	}
 
-	items = append(items, IncompatibilityItem{
-		Type:        "sql_mode",
-		Level:       "info",
-		Description: "Default sql_mode changed to stricter settings",
-		Impact:      "Existing queries may fail if they rely on implicit defaults",
-		Solution:    "Review and adjust sql_mode or update queries",
-	})
+	// Stricter defaults arrived in 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "sql_mode",
+			Level:       "info",
+			Description: "Default sql_mode changed to stricter settings in 8.0",
+			Impact:      "Existing queries may fail if they rely on implicit defaults",
+			Solution:    "Review and adjust sql_mode or update queries",
+		})
+	}
 
 	return items
 }
 
 func (s *UpgradeService) checkDeprecatedFeatures(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
+	srcMM := MajorVersion(source)
+	dstMM := MajorVersion(target)
 
-	items = append(items, IncompatibilityItem{
-		Type:        "feature",
-		Level:       "warning",
-		Description: "Query cache removed in MySQL 8.0",
-		Impact:      "query_cache_size and related variables ignored",
-		Solution:    "Remove query cache settings from my.cnf",
-	})
+	// Query cache removed in MySQL 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "feature",
+			Level:       "warning",
+			Description: "Query cache removed in MySQL 8.0",
+			Impact:      "query_cache_size and related variables ignored",
+			Solution:    "Remove query cache settings from my.cnf",
+		})
+	}
 
-	items = append(items, IncompatibilityItem{
-		Type:        "feature",
-		Level:       "warning",
-		Description: "JSON_APPEND function deprecated, use JSON_ARRAY_APPEND",
-		Impact:      "Existing queries using JSON_APPEND will fail",
-		Solution:    "Update queries to use JSON_ARRAY_APPEND",
-	})
+	// JSON_APPEND deprecated in 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "feature",
+			Level:       "warning",
+			Description: "JSON_APPEND function deprecated, use JSON_ARRAY_APPEND",
+			Impact:      "Existing queries using JSON_APPEND will fail",
+			Solution:    "Update queries to use JSON_ARRAY_APPEND",
+		})
+	}
 
 	return items
 }
 
 func (s *UpgradeService) checkCharacterSetCompatibility(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
+	srcMM := MajorVersion(source)
+	dstMM := MajorVersion(target)
 
-	items = append(items, IncompatibilityItem{
-		Type:        "charset",
-		Level:       "info",
-		Description: "Default character set changed to utf8mb4",
-		Impact:      "New tables will use utf8mb4 by default",
-		Solution:    "Review character set requirements for applications",
-	})
+	// Default charset changed to utf8mb4 in MySQL 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "charset",
+			Level:       "info",
+			Description: "Default character set changed to utf8mb4 in MySQL 8.0",
+			Impact:      "New tables will use utf8mb4 by default",
+			Solution:    "Review character set requirements for applications",
+		})
+	}
 
 	return items
 }
 
 func (s *UpgradeService) checkAuthenticationPlugin(source, target string) []IncompatibilityItem {
 	var items []IncompatibilityItem
+	srcMM := MajorVersion(source)
+	dstMM := MajorVersion(target)
 
-	items = append(items, IncompatibilityItem{
-		Type:        "auth",
-		Level:       "warning",
-		Description: "Default authentication plugin changed to caching_sha2_password",
-		Impact:      "Clients may need to update authentication method",
-		Solution:    "Update user accounts or configure mysql_native_password",
-	})
+	// Auth plugin changed to caching_sha2_password in MySQL 8.0
+	if versionLessThan(srcMM, "8.0") && !versionLessThan(dstMM, "8.0") {
+		items = append(items, IncompatibilityItem{
+			Type:        "auth",
+			Level:       "warning",
+			Description: "Default authentication plugin changed to caching_sha2_password in 8.0",
+			Impact:      "Clients may need to update authentication method",
+			Solution:    "Update user accounts or configure mysql_native_password",
+		})
+	}
 
 	return items
 }
@@ -1223,4 +1272,26 @@ func (s *UpgradeService) extractMajorVersion(version string) string {
 		return parts[0] + "." + parts[1]
 	}
 	return version
+}
+
+// versionLessThan returns true if a < b where a and b are "X.Y" major.minor strings.
+func versionLessThan(a, b string) bool {
+	av := parseVersionParts(a)
+	bv := parseVersionParts(b)
+	if av[0] != bv[0] {
+		return av[0] < bv[0]
+	}
+	return av[1] < bv[1]
+}
+
+func parseVersionParts(v string) [2]int {
+	var out [2]int
+	parts := strings.Split(v, ".")
+	if len(parts) >= 1 {
+		out[0], _ = strconv.Atoi(parts[0])
+	}
+	if len(parts) >= 2 {
+		out[1], _ = strconv.Atoi(parts[1])
+	}
+	return out
 }
