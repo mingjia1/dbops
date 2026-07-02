@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -404,7 +405,7 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 		if host == "" {
 			continue
 		}
-		key := nodeKey{host: strings.ToLower(host), port: dep.MySQLPort}
+		key := nodeKey{host: normalizeHost(host), port: dep.MySQLPort}
 		if prevIdx, exists := seenNodes[key]; exists {
 			return fmt.Errorf("port conflict within deployment: node %d and node %d both use %s:%d. Please use unique host:port pairs", prevIdx+1, i+1, host, dep.MySQLPort)
 		}
@@ -418,7 +419,7 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 		if dep.DataDir == "" {
 			continue
 		}
-		host := strings.ToLower(strings.TrimSpace(dep.Host))
+		host := normalizeHost(dep.Host)
 		key := hostDataDir{host: host, dataDir: dep.DataDir}
 		if prevIdx, exists := seenDataDirs[key]; exists {
 			return fmt.Errorf("data_dir conflict within deployment: node %d and node %d both use %s on host %s. Please use unique data directories", prevIdx+1, i+1, dep.DataDir, dep.Host)
@@ -1078,12 +1079,27 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		return pi && !pj
 	})
 
+	// H2: Assign local_port values. Start scanning from max existing port+1
+	// to avoid collisions with user-specified or pre-existing seeds.
 	localPorts := make([]int, len(sortedNodes))
+	maxLocalPort := 0
 	for i := range sortedNodes {
 		if lp, ok := nodeIntCustomRaw(sortedNodes[i].Custom, "local_port"); ok {
 			localPorts[i] = lp
-		} else {
-			localPorts[i] = 33061 + i
+			if lp > maxLocalPort {
+				maxLocalPort = lp
+			}
+		}
+	}
+	// Allocate sequential ports for nodes without explicit local_port,
+	// starting after the highest explicitly-set port.
+	if maxLocalPort == 0 {
+		maxLocalPort = 33060
+	}
+	for i := range sortedNodes {
+		if localPorts[i] == 0 {
+			maxLocalPort++
+			localPorts[i] = maxLocalPort
 		}
 	}
 
@@ -1220,6 +1236,10 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			"mysql_user":     req.MySQL.User,
 			"mysql_password": req.MySQL.Password,
 			"data_dir":       nodeDataDir,
+			"datadir":        nodeDataDir,
+		}
+		if nodes[i].Basedir != "" {
+			nodeConfig["basedir"] = nodes[i].Basedir
 		}
 		if hasWSREPSSTPort {
 			nodeConfig["wsrep_sst_port"] = wsrepSSTPort
@@ -1654,6 +1674,11 @@ func stringCustom(custom map[string]interface{}, key string) (string, bool) {
 	}
 }
 
+// normalizeHost returns a lowercased, trimmed host string for consistent comparison.
+func normalizeHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
 func randomUniversalGroupName() string {
 	return uuid.NewString()
 }
@@ -1851,6 +1876,12 @@ func pxcRequestCustom(req DeployPXCRequest) map[string]interface{} {
 	// are provided.
 	if req.SSLEnabled {
 		custom["wsrep_ssl_enabled"] = true
+	}
+	// Warn when both SSLEnabled and ConfigParams set wsrep_ssl_enabled
+	if req.SSLEnabled {
+		if cpVal, ok := req.ConfigParams["wsrep_ssl_enabled"]; ok && strings.TrimSpace(cpVal) != "" {
+			log.Printf("WARN: both SSLEnabled=true and ConfigParams[wsrep_ssl_enabled]=%q set; ConfigParams wins", cpVal)
+		}
 	}
 	for _, key := range []string{
 		"cluster_name",
