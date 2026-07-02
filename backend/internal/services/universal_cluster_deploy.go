@@ -276,7 +276,7 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 		if node.AgentPort == 0 {
 			node.AgentPort = 9090
 		}
-		if node.DataDir == "" {
+		if node.DataDir == "" && node.Role != "manager" {
 			node.DataDir = fmt.Sprintf("/data/mysql/%d", node.MySQLPort)
 		}
 		if node.Custom == nil {
@@ -324,6 +324,19 @@ func (s *ClusterDeployService) checkDeployConflicts(ctx context.Context, req Uni
 		groupName := stringFromMap(req.Custom, "group_name")
 		if groupName != "" {
 			if err := s.checkMgrGroupNameConflict(ctx, groupName, req.ClusterID); err != nil {
+				return err
+			}
+		}
+	}
+	// PXC: check cluster_name and wsrep_port conflicts across active deployments.
+	if req.ClusterType == ClusterTypePXC {
+		if clusterName := stringFromMap(req.Custom, "cluster_name"); clusterName != "" {
+			if err := s.checkPXCClusterNameConflict(ctx, clusterName, req.ClusterID); err != nil {
+				return err
+			}
+		}
+		if wsrepPort, ok := nodeIntCustomRaw(req.Custom, "wsrep_port"); ok && wsrepPort != 0 {
+			if err := s.checkPXCWsrepPortConflict(ctx, wsrepPort, req.ClusterID); err != nil {
 				return err
 			}
 		}
@@ -402,6 +415,83 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	return nil
 }
 
+
+func (s *ClusterDeployService) checkPXCClusterNameConflict(ctx context.Context, clusterName, currentClusterID string) error {
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for _, d := range deployments {
+		if d.Status == "destroyed" || d.Status == "failed" {
+			continue
+		}
+		dcid := extractClusterIDFromRequest(d.RequestJSON)
+		if dcid == currentClusterID {
+			continue
+		}
+		if d.ClusterType != ClusterTypePXC {
+			continue
+		}
+		existingName := extractStringFromCustom(d.RequestJSON, "cluster_name")
+		if existingName == clusterName {
+			return fmt.Errorf("PXC cluster_name %q already in use by deployment %q. Please choose a different cluster name", clusterName, d.Name)
+		}
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) checkPXCWsrepPortConflict(ctx context.Context, wsrepPort int, currentClusterID string) error {
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for _, d := range deployments {
+		if d.Status == "destroyed" || d.Status == "failed" {
+			continue
+		}
+		dcid := extractClusterIDFromRequest(d.RequestJSON)
+		if dcid == currentClusterID {
+			continue
+		}
+		if d.ClusterType != ClusterTypePXC {
+			continue
+		}
+		existingPort := extractIntFromCustom(d.RequestJSON, "wsrep_port")
+		if existingPort == wsrepPort {
+			return fmt.Errorf("PXC wsrep_port %d already in use by deployment %q. Please change wsrep_port", wsrepPort, d.Name)
+		}
+	}
+	return nil
+}
+
+func extractStringFromCustom(requestJSON, key string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(requestJSON), &m) != nil {
+		return ""
+	}
+	if custom, ok := m["custom"].(map[string]interface{}); ok {
+		if v, ok := custom[key].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func extractIntFromCustom(requestJSON, key string) int {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(requestJSON), &m) != nil {
+		return 0
+	}
+	if custom, ok := m["custom"].(map[string]interface{}); ok {
+		switch v := custom[key].(type) {
+		case float64:
+			return int(v)
+		case int:
+			return v
+		}
+	}
+	return 0
+}
 
 func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, groupName, currentClusterID string) error {
 	deployments, err := s.repo.List(ctx, 1000, 0)
@@ -484,7 +574,7 @@ func normalizeDeployRole(clusterType, role string) string {
 		return "replica"
 	}
 	if clusterType == ClusterTypePXC && role == "primary" {
-		return "secondary"
+		return "bootstrap"
 	}
 	return role
 }
@@ -955,6 +1045,11 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		}
 		mergeCommonDeployConfig(nodeConfig, req)
 
+		// H3: Pass member_weight if configured for this node.
+		if mw, ok := nodeIntCustomRaw(nodes[i].Custom, "member_weight"); ok {
+			nodeConfig["member_weight"] = mw
+		}
+
 		stepType := "join"
 		if isPrimary {
 			stepType = "bootstrap"
@@ -1007,8 +1102,12 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		isBootstrap := nodes[i].Role == "bootstrap"
 		// PXC agent requires datadir matching /data/mysql/pxc-* pattern
 		nodeDataDir := nodes[i].DataDir
-		if nodeDataDir == "" || !strings.Contains(nodeDataDir, "pxc") {
+		if nodeDataDir == "" {
 			nodeDataDir = fmt.Sprintf("/data/mysql/pxc-%d", nodes[i].MySQLPort)
+		} else if !strings.Contains(nodeDataDir, "pxc") {
+			// User explicitly set data_dir but it doesn't contain 'pxc' —
+			// still respect it, just append pxc subdirectory hint.
+			nodeDataDir = fmt.Sprintf("%s/pxc", nodeDataDir)
 		}
 		nodeConfig := map[string]interface{}{
 			"deploy_mode":    "pxc",
@@ -1521,7 +1620,11 @@ func TypedMHARequestToUniversal(req DeployMHARequest) UniversalClusterDeployRequ
 			out.Custom[key] = v
 		}
 	}
-	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.ManagerHostID, Host: req.ManagerHost, MySQLPort: req.MasterPort, Role: "manager", AgentPort: req.ManagerAgentPort})
+	managerPort := req.ManagerPort
+	if managerPort == 0 {
+		managerPort = 3306
+	}
+	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.ManagerHostID, Host: req.ManagerHost, MySQLPort: managerPort, Role: "manager", AgentPort: req.ManagerAgentPort})
 	out.Nodes = append(out.Nodes, ClusterDeployNode{
 		HostID: req.MasterHostID, Host: req.MasterHost, MySQLPort: req.MasterPort, Role: "master",
 		DataDir: req.MasterDataDir, Basedir: req.MasterBasedir,
@@ -1637,14 +1740,6 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 		}
 		dataDir := defaultString(n.DataDir, defaultDataDir)
 		out.Nodes = append(out.Nodes, ClusterDeployNode{Host: n.Host, MySQLPort: port, Role: "secondary", AgentPort: n.AgentPort, DataDir: dataDir})
-	}
-	if len(req.ConfigParams) > 0 {
-		out.MySQL.Config = make(map[string]string, len(req.ConfigParams))
-		for k, v := range req.ConfigParams {
-			if allowedMySQLDeployOption(k) {
-				out.MySQL.Config[k] = v
-			}
-		}
 	}
 	return out
 }

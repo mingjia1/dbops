@@ -539,6 +539,7 @@ const ClusterDeploy: React.FC = () => {
       if (values.local_port) custom.local_port = values.local_port
     }
     if (arch === 'pxc') {
+      if (values.wsrep_port) custom.wsrep_port = values.wsrep_port
       if (values.cluster_name) custom.cluster_name = values.cluster_name
       if (values.sst_method) custom.sst_method = values.sst_method
       if (values.wsrep_sst_port) custom.wsrep_sst_port = values.wsrep_sst_port
@@ -561,7 +562,7 @@ const ClusterDeploy: React.FC = () => {
       replication: {
         user: values.repl_user,
         password: values.repl_password,
-        mode: arch === 'mgr' ? 'single-primary' : 'async',
+        mode: arch === 'mgr' ? 'single-primary' : arch === 'pxc' ? 'galera' : 'async',
       },
       nodes,
       custom,
@@ -909,6 +910,31 @@ const ClusterDeploy: React.FC = () => {
                         <InputNumber min={1} max={65535} placeholder="默认同主节点端口" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
+                    <Col span={12}>
+                      <Form.Item name="vip" label="虚拟IP (VIP)" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <Input placeholder="如 192.168.1.100" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="vip_interface" label="VIP网口" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <Input placeholder="如 eth0" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="ssh_user" label="SSH用户" initialValue="root" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <Input placeholder="root" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="ping_interval" label="健康检查间隔(s)" initialValue="3" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <InputNumber min={1} max={60} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="ping_retry" label="重试次数" initialValue="5" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <InputNumber min={1} max={30} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
                   </>,
                   (values) => runDeploy('mha', values),
                 ),
@@ -917,11 +943,18 @@ const ClusterDeploy: React.FC = () => {
                 key: 'mgr',
                 label: 'MGR 部署',
                 children: renderForm('mgr', mgrForm,
-                  <Col span={12}>
-                    <Form.Item name="group_name" label="MGR组名" initialValue={createMgrGroupName()} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
-                      <Input />
-                    </Form.Item>
-                  </Col>,
+                  <>
+                    <Col span={12}>
+                      <Form.Item name="group_name" label="MGR组名" initialValue={createMgrGroupName()} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="local_port" label="组通信端口" initialValue={33061} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                        <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                  </>,
                   (values) => runDeploy('mgr', values),
                 ),
               },
@@ -929,11 +962,33 @@ const ClusterDeploy: React.FC = () => {
                 key: 'pxc',
                 label: 'PXC 部署',
                 children: renderForm('pxc', pxcForm,
-                  <Col span={12}>
-                    <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
-                      <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                    </Form.Item>
-                  </Col>,
+                  <>
+                    <Col span={8}>
+                      <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                        <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="cluster_name" label="集群名称" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                        <Input placeholder="默认使用集群ID" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="sst_method" label="SST方式" initialValue="xtrabackup-v2" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                        <Select options={[{ value: 'xtrabackup-v2', label: 'xtrabackup-v2' }, { value: 'mariabackup', label: 'mariabackup' }]} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="wsrep_sst_port" label="SST端口" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                        <InputNumber min={1} max={65535} placeholder="默认4444" style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                        <Checkbox>启用</Checkbox>
+                      </Form.Item>
+                    </Col>
+                  </>,
                   (values) => runDeploy('pxc', values),
                 ),
               },

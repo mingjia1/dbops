@@ -102,6 +102,10 @@ func (p *MHAAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, par
 			"replicas":    buildReplicaList(replicaNodes),
 			"ssh_user":    env.Credentials.RootUser,
 		}
+		// Pass SSH passwords from plan step config to agent for MHA manager setup.
+		if sshPasswords, ok := params["ssh_passwords"].(map[string]string); ok && len(sshPasswords) > 0 {
+			mhaConfig["ssh_passwords"] = sshPasswords
+		}
 		if _, err := p.agentCaller(ctx, managerNode.Address, managerNode.AgentPort, "/api/v1/mha/setup", mhaConfig); err != nil {
 			return nil, fmt.Errorf("setup MHA manager on %s: %w", managerNode.Address, err)
 		}

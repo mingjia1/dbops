@@ -1459,6 +1459,7 @@ type DeployMHARequest struct {
 	SlaveHosts       []SlaveNode       `json:"slave_hosts"`
 	VIP              string            `json:"vip"`
 	ManagerHost      string            `json:"manager_host"`
+	ManagerPort      int               `json:"manager_port"`
 	ManagerAgentPort int               `json:"manager_agent_port"`
 	MasterDataDir    string            `json:"master_data_dir,omitempty"`
 	MasterBasedir    string            `json:"master_basedir,omitempty"`
