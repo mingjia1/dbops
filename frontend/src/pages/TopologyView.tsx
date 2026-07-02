@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Col, Empty, Row, Select, Space, Spin, Statistic, Table, Tag, Typography } from 'antd'
 import { ApartmentOutlined, DatabaseOutlined, ReloadOutlined } from '@ant-design/icons'
 import { instanceApi, topologyApi, type Instance } from '../services/api'
+import { formatClusterRole, inferArchFromReplicationMode } from '../services/roleDisplay'
 
 const { Text } = Typography
 
@@ -149,7 +150,7 @@ const TopologyView: React.FC = () => {
   const visibleClusterIds = clusterFilter ? [clusterFilter] : clusterIds
   const visibleInstances = clusterFilter ? instances.filter((item) => item.cluster_id === clusterFilter) : instances
 
-  const renderGraphNode = (node: TopologyNode, instanceByID: Map<string, Instance>) => {
+  const renderGraphNode = (node: TopologyNode, instanceByID: Map<string, Instance>, arch?: string) => {
     const instance = instanceByID.get(node.id)
     return (
       <div style={{
@@ -165,7 +166,7 @@ const TopologyView: React.FC = () => {
           <Text strong ellipsis title={node.name || node.id}>{node.name || node.id}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>{endpointOf(instance)}</Text>
           <Space size={4} wrap>
-            <Tag color={roleColor(node.role)}>{node.role || 'unknown'}</Tag>
+            <Tag color={roleColor(node.role)}>{formatClusterRole(arch, node.role) || 'unknown'}</Tag>
             <Tag color={statusColor(node.status)}>{node.status || 'unknown'}</Tag>
           </Space>
         </Space>
@@ -177,6 +178,7 @@ const TopologyView: React.FC = () => {
     nodes: TopologyNode[],
     edges: TopologyEdge[],
     instanceByID: Map<string, Instance>,
+    arch?: string,
   ) => {
     if (nodes.length === 0) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无节点" style={{ margin: '12px 0' }} />
     const nodeByID = new Map(nodes.map((node) => [node.id, node]))
@@ -215,14 +217,14 @@ const TopologyView: React.FC = () => {
                     <span style={{ fontSize: 18, lineHeight: 1 }}>→</span>
                   </div>
                 )}
-                {renderGraphNode(node, instanceByID)}
+                {renderGraphNode(node, instanceByID, arch)}
               </React.Fragment>
             ))}
           </div>
         ))}
         {detached.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 'max-content' }}>
-            {detached.map((node) => renderGraphNode(node, instanceByID))}
+            {detached.map((node) => renderGraphNode(node, instanceByID, arch))}
           </div>
         )}
       </Space>
@@ -280,6 +282,7 @@ const TopologyView: React.FC = () => {
               const otherNodes = nodes.filter((node) => !primaryRoles.has((node.role || '').toLowerCase()) && !replicaRoles.has((node.role || '').toLowerCase()))
               const healthyCount = nodes.filter((node) => ['healthy', 'running', 'success'].includes((node.status || '').toLowerCase())).length
               const clusterHealth = healthyCount === nodes.length ? 'success' : healthyCount > 0 ? 'warning' : 'error'
+              const arch = inferArchFromReplicationMode(graph?.mode || clusterInstances[0]?.status?.replication_status || clusterInstances[0]?.topology?.replication_mode)
 
               return (
                 <Card
@@ -295,7 +298,7 @@ const TopologyView: React.FC = () => {
                     </Space>
                   }
                 >
-                  {renderTopologyGraph(nodes, edges, instanceByID)}
+                  {renderTopologyGraph(nodes, edges, instanceByID, arch)}
                   <Table
                     size="small"
                     pagination={false}

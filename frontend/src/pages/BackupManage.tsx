@@ -22,7 +22,7 @@ import {
 } from 'antd'
 import { DeleteOutlined, FileSearchOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, ScheduleOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { backupApi, instanceApi, type DiscoveredBackup, type Instance } from '../services/api'
+import { backupApi, instanceApi, type Instance } from '../services/api'
 
 interface BackupRecord {
   id: string
@@ -74,9 +74,6 @@ const BackupManage: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false)
   const [policyOpen, setPolicyOpen] = useState(false)
   const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null)
-  const [scanOpen, setScanOpen] = useState(false)
-  const [discovered, setDiscovered] = useState<DiscoveredBackup[]>([])
-  const [scannedAt, setScannedAt] = useState<string>()
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
   const [policyForm] = Form.useForm()
@@ -194,8 +191,6 @@ const BackupManage: React.FC = () => {
       const res: any = await backupApi.scan(selectedInstance)
       const data = res?.data || {}
       const list = data.backups || []
-      setDiscovered(list)
-      setScannedAt(data.scanned_at)
       await fetchRecordsFor(selectedInstance)
       message.success(`扫描完成，发现 ${list.length} 个备份文件`)
     } catch (err: any) {
@@ -563,23 +558,6 @@ const BackupManage: React.FC = () => {
         </Form>
       </Modal>
 
-      {discovered.length > 0 && (
-        <Card style={{ marginTop: 16 }} title={<Space><FileSearchOutlined /><span>扫描发现的备份</span><Tag>{discovered.length} 个</Tag>{scannedAt && <span style={{ fontSize: 12, color: '#8c8c8c' }}>扫描于 {new Date(scannedAt).toLocaleString()}</span>}</Space>}>
-          <Table
-            rowKey="file_path"
-            size="small"
-            pagination={{ pageSize: 10 }}
-            dataSource={discovered}
-            columns={[
-              { title: '文件', dataIndex: 'file_name', key: 'file_name', width: 200, ellipsis: true, render: (name) => <Tag color="blue">{name}</Tag> },
-              { title: '类型', dataIndex: 'backup_type', key: 'backup_type', width: 80, render: (type) => <BackupTypeTag type={type} /> },
-              { title: '大小', dataIndex: 'size_bytes', key: 'size_bytes', width: 100, render: formatSize },
-              { title: '纳管状态', dataIndex: 'already_managed', key: 'already_managed', width: 100, render: (managed) => <Tag color={managed ? 'success' : 'default'}>{managed ? '已纳管' : '未纳管'}</Tag> },
-              { title: '路径', dataIndex: 'file_path', key: 'file_path', ellipsis: true, render: (path) => <Tooltip title={path}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{path || '-'}</span></Tooltip> },
-            ]}
-          />
-        </Card>
-      )}
     </div>
   )
 }

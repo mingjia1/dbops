@@ -6,6 +6,7 @@ import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlin
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
+import { formatClusterRole } from '../services/roleDisplay'
 
 const { Text } = Typography
 
@@ -261,7 +262,7 @@ const ClusterDeploy: React.FC = () => {
           nodes: (dep.nodes || []).map((node) => ({
             host: node.host || '-',
             port: node.port,
-            role: node.role,
+            role: formatClusterRole(dep.cluster_type, node.role),
             username: dep.mysql_user || 'root',
             password: dep.mysql_password || '-',
           })),
@@ -275,7 +276,7 @@ const ClusterDeploy: React.FC = () => {
     if (record.nodes?.length) {
       return record.nodes.map((node) => {
         const endpoint = `${node.host || '-'}:${node.port || '-'}`
-        return `${node.name || node.instance_id || '-'} (${endpoint}, ${node.role || '-'})`
+        return `${node.name || node.instance_id || '-'} (${endpoint}, ${formatClusterRole(record.cluster_type, node.role)})`
       })
     }
     const clusterID = record.cluster_id || record.deployment_id
@@ -283,7 +284,7 @@ const ClusterDeploy: React.FC = () => {
       .filter((inst) => inst.cluster_id === clusterID)
       .map((inst) => {
         const endpoint = `${inst.connection?.host || inst.host || '-'}:${inst.connection?.port || inst.port || '-'}`
-        const role = inst.status?.role || '-'
+        const role = formatClusterRole(record.cluster_type, inst.status?.role)
         return `${inst.name} (${endpoint}, ${role})`
       })
   }
@@ -1155,7 +1156,7 @@ const ClusterDeploy: React.FC = () => {
               size="small"
               columns={[
                 { title: 'Host', dataIndex: 'host', key: 'host', width: 140 },
-                { title: '角色', dataIndex: 'role', key: 'role', width: 100, render: (role: string) => <Tag>{role}</Tag> },
+                { title: '角色', dataIndex: 'role', key: 'role', width: 100, render: (role: string) => <Tag>{formatClusterRole(planPreviewArch, role)}</Tag> },
                 { title: 'MySQL 端口', dataIndex: 'mysql_port', key: 'mysql_port', width: 100 },
                 { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', width: 100 },
                 { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', width: 140, render: (v: string) => v || '-' },
@@ -1234,7 +1235,7 @@ const ClusterDeploy: React.FC = () => {
             columns={[
               { title: '节点', dataIndex: 'host', key: 'host' },
               { title: '端口', dataIndex: 'port', key: 'port' },
-              { title: '角色', dataIndex: 'role', key: 'role' },
+              { title: '角色', dataIndex: 'role', key: 'role', render: (role: string) => formatClusterRole(planPreviewArch, role) },
               { title: '用户名', dataIndex: 'username', key: 'username' },
               {
                 title: '密码',
@@ -1339,7 +1340,7 @@ const ClusterDeploy: React.FC = () => {
               <Space size={4}>
                 {activeDeployment.nodes.map((node, idx) => (
                   <Tag key={idx} color={node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? 'blue' : node.role === 'manager' ? 'purple' : 'default'}>
-                    {node.role || 'unknown'}
+                    {formatClusterRole(activeDeployment.cluster_type, node.role)}
                   </Tag>
                 ))}
               </Space>
@@ -1457,7 +1458,7 @@ const ClusterDeploy: React.FC = () => {
                       }
                       extra={
                         <Tag color={node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? 'blue' : node.role === 'manager' ? 'purple' : 'default'}>
-                          {node.role || '-'}
+                          {formatClusterRole(activeDeployment.cluster_type, node.role)}
                         </Tag>
                       }
                     >

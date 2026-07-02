@@ -5,6 +5,7 @@ import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeIn
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, clusterDeployApi, type Host, type Instance, type VersionEntry } from '../services/api'
 import { isSecondaryPasswordEnabled, isSecondaryPasswordVerified, verifySecondaryPassword } from '../services/sessionSecrets'
+import { formatClusterRole } from '../services/roleDisplay'
 
 const isSuccessfulTaskStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
@@ -106,7 +107,6 @@ const InstanceList: React.FC = () => {
   }
 
   useEffect(() => {
-    fetchInstances()
     fetchHosts()
     fetchClusters()
     versionApi.list().then((res: any) => setVersions(res?.data || [])).catch(() => setVersions([]))
@@ -115,7 +115,7 @@ const InstanceList: React.FC = () => {
   useEffect(() => {
     fetchInstances()
     if (presetHost) form.setFieldsValue({ host_id: presetHost })
-  }, [hostFilter, presetHost, fetchInstances, form])
+  }, [hostFilter, presetHost])
 
   const hostNameById = (id: string | null | undefined) => {
     if (!id) return '-'
@@ -126,6 +126,12 @@ const InstanceList: React.FC = () => {
   const hostAddressById = (id: string | null | undefined) => hosts.find((item) => item.id === id)?.address
 
   const selectedHostAddress = (hostId?: string) => hosts.find((item) => item.id === hostId)?.address
+
+  const archByClusterId = (clusterId?: string) => {
+    if (!clusterId) return undefined
+    const cluster = clusters.find((item: any) => item.cluster_id === clusterId || item.deployment_id === clusterId)
+    return cluster?.arch || cluster?.cluster_type
+  }
 
   const openCreate = () => {
     form.resetFields()
@@ -371,12 +377,13 @@ const InstanceList: React.FC = () => {
       key: 'status',
       render: (_, r) => {
         const role = r.status?.role
+        const displayRole = formatClusterRole(archByClusterId(r.cluster_id), role)
         const health = r.status?.health_status
         const run = r.status?.run_status
         if (run === 'stopped') return <Tag color="error">已停止</Tag>
-        if (health === 'healthy' || health === 'ok') return <Tag color="success">运行中{role ? ` (${role})` : ''}</Tag>
+        if (health === 'healthy' || health === 'ok') return <Tag color="success">运行中{role ? ` (${displayRole})` : ''}</Tag>
         if (health === 'unhealthy' || health === 'failed') return <Tag color="error">异常</Tag>
-        if (run === 'running') return <Tag color="success">运行中{role ? ` (${role})` : ''}</Tag>
+        if (run === 'running') return <Tag color="success">运行中{role ? ` (${displayRole})` : ''}</Tag>
         return <Tag color="default">未检测</Tag>
       },
     },

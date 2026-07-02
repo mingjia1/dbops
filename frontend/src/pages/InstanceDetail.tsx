@@ -33,6 +33,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { useNavigate, useParams } from 'react-router-dom'
 import { instanceApi, clusterDeployApi, type Instance as InstanceModel } from '../services/api'
+import { formatClusterRole, inferArchFromReplicationMode } from '../services/roleDisplay'
 
 interface AdminRow {
   [key: string]: string
@@ -443,7 +444,7 @@ const InstanceDetail: React.FC = () => {
                 <Descriptions.Item label="集群 ID" span={2}>{instance.cluster_id || <Tag>单点</Tag>}</Descriptions.Item>
                 <Descriptions.Item label="运行状态">{instance.status?.run_status || '-'}</Descriptions.Item>
                 <Descriptions.Item label="健康状态">{instance.status?.health_status || '-'}</Descriptions.Item>
-                <Descriptions.Item label="角色">{instance.status?.role || '-'}</Descriptions.Item>
+                <Descriptions.Item label="角色">{formatClusterRole(inferArchFromReplicationMode(instance.status?.replication_status || instance.topology?.replication_mode), instance.status?.role)}</Descriptions.Item>
                 <Descriptions.Item label="复制延迟">{instance.status?.seconds_behind_master ?? '-'}</Descriptions.Item>
                 <Descriptions.Item label="版本">
                   {hasVersion ? <Tag color="blue">{version.flavor} {version.version}</Tag> : '-'}
