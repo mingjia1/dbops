@@ -15,15 +15,27 @@ func (p *MGRAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNod
 	if p.agentCaller == nil {
 		return fmt.Errorf("agent caller not configured")
 	}
-	seeds := []string{fmt.Sprintf("%s:33061", newNode.Address)}
+	localPort := 33061
+	if v, ok := env.Custom["local_port"]; ok {
+		if port, ok := v.(int); ok && port > 0 {
+			localPort = port
+		}
+	}
+	groupName := env.ClusterID
+	if v, ok := env.Custom["group_name"]; ok {
+		if name, ok := v.(string); ok && name != "" {
+			groupName = name
+		}
+	}
+	seeds := []string{fmt.Sprintf("%s:%d", newNode.Address, localPort)}
 	for _, n := range env.Nodes {
-		seeds = append(seeds, fmt.Sprintf("%s:33061", n.Address))
+		seeds = append(seeds, fmt.Sprintf("%s:%d", n.Address, localPort))
 	}
 	payload := map[string]interface{}{
 		"task_id":       fmt.Sprintf("mgr-join-%s-%s", env.ClusterID, newNode.Address),
 		"action":        "join",
-		"group_name":    env.ClusterID,
-		"local_address": fmt.Sprintf("%s:33061", newNode.Address),
+		"group_name":    groupName,
+		"local_address": fmt.Sprintf("%s:%d", newNode.Address, localPort),
 		"group_seeds":   seeds,
 		"bootstrap":     false,
 	}
@@ -62,6 +74,18 @@ func (p *MGRAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, par
 	if p.agentCaller == nil {
 		return nil, fmt.Errorf("agent caller not configured")
 	}
+	localPort := 33061
+	if v, ok := env.Custom["local_port"]; ok {
+		if port, ok := v.(int); ok && port > 0 {
+			localPort = port
+		}
+	}
+	groupName := env.ClusterID
+	if v, ok := env.Custom["group_name"]; ok {
+		if name, ok := v.(string); ok && name != "" {
+			groupName = name
+		}
+	}
 
 	var primary *plugins.PluginNode
 	var members []plugins.PluginNode
@@ -80,14 +104,14 @@ func (p *MGRAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, par
 
 	seeds := make([]string, 0, len(env.Nodes))
 	for _, n := range env.Nodes {
-		seeds = append(seeds, fmt.Sprintf("%s:%d", n.Address, 33061))
+		seeds = append(seeds, fmt.Sprintf("%s:%d", n.Address, localPort))
 	}
 
 	bootstrapPayload := map[string]interface{}{
 		"task_id":       fmt.Sprintf("mgr-bootstrap-%s", env.ClusterID),
 		"action":        "bootstrap",
-		"group_name":    env.ClusterID,
-		"local_address": fmt.Sprintf("%s:33061", primary.Address),
+		"group_name":    groupName,
+		"local_address": fmt.Sprintf("%s:%d", primary.Address, localPort),
 		"group_seeds":   seeds,
 		"bootstrap":     true,
 	}
@@ -99,8 +123,8 @@ func (p *MGRAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, par
 		joinPayload := map[string]interface{}{
 			"task_id":       fmt.Sprintf("mgr-join-%s-%s", env.ClusterID, member.Address),
 			"action":        "join",
-			"group_name":    env.ClusterID,
-			"local_address": fmt.Sprintf("%s:33061", member.Address),
+			"group_name":    groupName,
+			"local_address": fmt.Sprintf("%s:%d", member.Address, localPort),
 			"group_seeds":   seeds,
 			"bootstrap":     false,
 		}
@@ -111,7 +135,7 @@ func (p *MGRAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, par
 
 	return &plugins.PluginResult{
 		Success: true,
-		Message: fmt.Sprintf("MGR cluster assembled: %d nodes in group %s", len(env.Nodes), env.ClusterID),
+		Message: fmt.Sprintf("MGR cluster assembled: %d nodes in group %s", len(env.Nodes), groupName),
 	}, nil
 }
 

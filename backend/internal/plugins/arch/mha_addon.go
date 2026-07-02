@@ -3,6 +3,7 @@ package arch
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 )
@@ -24,8 +25,19 @@ func (p *MHAAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNod
 	return err
 }
 
-func (p *MHAAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
-	return nil
+func (p *MHAAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, node plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	payload := map[string]interface{}{
+		"task_id": fmt.Sprintf("mha-leave-%s-%s", env.ClusterID, node.Address),
+		"action":  "leave",
+	}
+	_, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/replication/teardown", payload)
+	if err != nil {
+		log.Printf("WARN: MHA leave failed for %s: %v — MHA manager config needs manual update", node.Address, err)
+	}
+	return err
 }
 
 func NewMHAAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *MHAAddonPlugin {

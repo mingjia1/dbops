@@ -17,13 +17,13 @@ import (
 func archTypeToPluginName(archType string) string {
 	switch strings.ToLower(strings.TrimSpace(archType)) {
 	case "ha":
-		return "ha-replica"
+		return "replica-addon"
 	case "mha":
-		return "mha-manager"
+		return "mha-addon"
 	case "mgr":
-		return "mgr-group"
+		return "mgr-addon"
 	case "pxc":
-		return "pxc-cluster"
+		return "pxc-galera-addon"
 	default:
 		return archType
 	}
@@ -118,7 +118,13 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			Credentials: *creds,
 		}
 
-		if _, err := s.pluginExec.RunExecute(ctx, archPluginName, joinEnv, nil); err != nil {
+		if err := s.pluginExec.RunJoin(ctx, archPluginName, joinEnv, plugins.PluginNode{
+			HostID:    node.HostID,
+			Address:   node.Address,
+			AgentPort: node.AgentPort,
+			MySQLPort: node.MySQLPort,
+			Role:      "replica",
+		}); err != nil {
 			log.Printf("WARN: arch join failed for %s: %v", node.Address, err)
 		}
 
@@ -170,11 +176,29 @@ func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleI
 
 	if req.ArchType != "" && req.ArchType != "single" {
 		archPluginName := archTypeToPluginName(req.ArchType)
+
+		var leaveNode plugins.PluginNode
+		if s.instRepo != nil {
+			if inst, err := s.instRepo.GetByID(ctx, req.RemoveNodeID); err == nil && inst != nil {
+				leaveNode = plugins.PluginNode{
+					HostID:    inst.ID,
+					Address:   inst.Connection.Host,
+					MySQLPort: inst.Connection.Port,
+				}
+				if inst.HostID != nil {
+					leaveNode.HostID = *inst.HostID
+				}
+			}
+		}
+		if leaveNode.Address == "" {
+			leaveNode.Address = req.RemoveNodeID
+		}
+
 		leaveEnv := plugins.PluginEnv{
 			ClusterID: req.ClusterID,
-			Nodes:     []plugins.PluginNode{{Address: req.RemoveNodeID}},
+			Nodes:     []plugins.PluginNode{leaveNode},
 		}
-		if err := s.pluginExec.RunLeave(ctx, archPluginName, leaveEnv, plugins.PluginNode{}); err != nil {
+		if err := s.pluginExec.RunLeave(ctx, archPluginName, leaveEnv, leaveNode); err != nil {
 			log.Printf("WARN: arch leave failed for %s: %v", req.RemoveNodeID, err)
 		}
 	}

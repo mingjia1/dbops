@@ -26,6 +26,7 @@ type PluginEnv struct {
 	ClusterID   string
 	Nodes       []PluginNode
 	Credentials CredentialSet
+	Custom      map[string]interface{}
 }
 
 type PluginNode struct {

@@ -1516,6 +1516,11 @@ func TypedMHARequestToUniversal(req DeployMHARequest) UniversalClusterDeployRequ
 	if req.VIP != "" {
 		out.Custom["vip"] = req.VIP
 	}
+	for _, key := range []string{"ssh_user", "ssh_private_key", "vip_interface", "ping_interval", "ping_retry"} {
+		if v, ok := req.ConfigParams[key]; ok && v != "" {
+			out.Custom[key] = v
+		}
+	}
 	out.Nodes = append(out.Nodes, ClusterDeployNode{HostID: req.ManagerHostID, Host: req.ManagerHost, MySQLPort: req.MasterPort, Role: "manager", AgentPort: req.ManagerAgentPort})
 	out.Nodes = append(out.Nodes, ClusterDeployNode{
 		HostID: req.MasterHostID, Host: req.MasterHost, MySQLPort: req.MasterPort, Role: "master",

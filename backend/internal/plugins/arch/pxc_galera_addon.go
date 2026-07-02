@@ -15,12 +15,18 @@ func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, 
 	if p.agentCaller == nil {
 		return fmt.Errorf("agent caller not configured")
 	}
+	wsrepPort := 4567
+	if v, ok := env.Custom["wsrep_port"]; ok {
+		if port, ok := v.(int); ok && port > 0 {
+			wsrepPort = port
+		}
+	}
 	bootstrap := env.Nodes[0]
 	payload := map[string]interface{}{
 		"task_id":            fmt.Sprintf("pxc-join-%s-%s", env.ClusterID, newNode.Address),
 		"action":             "join",
-		"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:4567", bootstrap.Address),
-		"node_address":       fmt.Sprintf("%s:4567", newNode.Address),
+		"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort),
+		"node_address":       newNode.Address,
 	}
 	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/pxc/setup", payload)
 	return err
@@ -49,13 +55,19 @@ func (p *PXCGaleraAddonPlugin) Execute(ctx context.Context, env plugins.PluginEn
 	if p.agentCaller == nil {
 		return nil, fmt.Errorf("agent caller not configured")
 	}
+	wsrepPort := 4567
+	if v, ok := env.Custom["wsrep_port"]; ok {
+		if port, ok := v.(int); ok && port > 0 {
+			wsrepPort = port
+		}
+	}
 
 	bootstrap := env.Nodes[0]
 	bootstrapPayload := map[string]interface{}{
 		"task_id":           fmt.Sprintf("pxc-bootstrap-%s", env.ClusterID),
 		"action":            "bootstrap",
 		"wsrep_cluster_addr": "gcomm://",
-		"node_address":      fmt.Sprintf("%s:4567", bootstrap.Address),
+		"node_address":      bootstrap.Address,
 	}
 	if _, err := p.agentCaller(ctx, bootstrap.Address, bootstrap.AgentPort, "/api/v1/pxc/setup", bootstrapPayload); err != nil {
 		return nil, fmt.Errorf("PXC bootstrap on %s: %w", bootstrap.Address, err)
@@ -65,8 +77,8 @@ func (p *PXCGaleraAddonPlugin) Execute(ctx context.Context, env plugins.PluginEn
 		joinPayload := map[string]interface{}{
 			"task_id":           fmt.Sprintf("pxc-join-%s-%s", env.ClusterID, node.Address),
 			"action":            "join",
-			"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:4567", bootstrap.Address),
-			"node_address":      fmt.Sprintf("%s:4567", node.Address),
+			"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort),
+			"node_address":      node.Address,
 		}
 		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", joinPayload); err != nil {
 			return nil, fmt.Errorf("PXC join on %s: %w", node.Address, err)
