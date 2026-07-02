@@ -11,7 +11,7 @@ import (
 )
 
 func newTestTopoPublisherRepo() *repositories.TopologyEventRepository {
-	return repositories.NewTopologyEventRepository(newTestDB())
+	return repositories.NewTopologyEventRepository(newTestDB(t))
 }
 
 func TestTopologyEventPublisher_PublishTopologyChange(t *testing.T) {

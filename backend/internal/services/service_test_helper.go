@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
+	"testing"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
@@ -18,7 +19,8 @@ var testDBCounter uint64
 // 每个测试调用都拿到独立 db, 避免 state leak.
 // 调用者负责在测试结束时 db.Close().
 // 每次调用前删除可能残留的旧文件, 保证从空 schema 启动.
-func newTestDB() *repositories.Database {
+func newTestDB(t *testing.T) *repositories.Database {
+	t.Helper()
 	n := atomic.AddUint64(&testDBCounter, 1)
 	dir := filepath.Join(os.TempDir(), "dbops-test")
 	_ = os.MkdirAll(dir, 0o755)
@@ -28,16 +30,17 @@ func newTestDB() *repositories.Database {
 	_ = os.Remove(dbPath + "-shm")
 	db, err := repositories.NewDatabaseWithMode("", dbPath, "sqlite")
 	if err != nil {
-		panic("failed to open test sqlite: " + err.Error())
+		t.Fatal("failed to open test sqlite: ", err.Error())
 	}
 	if err := repositories.RunMigrations(context.Background(), db); err != nil {
-		panic("failed to run migrations: " + err.Error())
+		t.Fatal("failed to run migrations: ", err.Error())
 	}
 	return db
 }
 
-func newTestHostRepo(tctx context.Context) *repositories.HostRepository {
-	repo := repositories.NewHostRepository(newTestDB())
+func newTestHostRepo(t *testing.T, tctx context.Context) *repositories.HostRepository {
+	t.Helper()
+	repo := repositories.NewHostRepository(newTestDB(t))
 	host := &models.Host{
 		ID:        "host-001",
 		Name:      "test-host",
@@ -50,8 +53,9 @@ func newTestHostRepo(tctx context.Context) *repositories.HostRepository {
 	return repo
 }
 
-func newTestInstanceRepo(tctx context.Context) *repositories.InstanceRepository {
-	repo := repositories.NewInstanceRepository(newTestDB())
+func newTestInstanceRepo(t *testing.T, tctx context.Context) *repositories.InstanceRepository {
+	t.Helper()
+	repo := repositories.NewInstanceRepository(newTestDB(t))
 	hostID := "host-001"
 	inst := &models.Instance{
 		ID:     "instance-001",
@@ -67,10 +71,12 @@ func newTestAgentClient() *AgentClient {
 	}
 }
 
-func newTestMigrationRepo() *repositories.MigrationRepository {
-	return repositories.NewMigrationRepository(newTestDB())
+func newTestMigrationRepo(t *testing.T) *repositories.MigrationRepository {
+	t.Helper()
+	return repositories.NewMigrationRepository(newTestDB(t))
 }
 
-func newTestMigrationService() *MigrationService {
-	return NewMigrationService(newTestMigrationRepo(), newTestInstanceRepo(context.Background()), nil, newTestAgentClient())
+func newTestMigrationService(t *testing.T) *MigrationService {
+	t.Helper()
+	return NewMigrationService(newTestMigrationRepo(t), newTestInstanceRepo(t, context.Background()), nil, newTestAgentClient())
 }

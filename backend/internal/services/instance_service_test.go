@@ -17,7 +17,7 @@ import (
 )
 
 func TestInstanceCreateFillsPackageURLFromVersionCatalog(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	instRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -40,7 +40,7 @@ func TestInstanceCreateFillsPackageURLFromVersionCatalog(t *testing.T) {
 }
 
 func TestInstanceUpdateConnectionInfoPreservesPasswordWhenBlank(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	instRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -85,7 +85,7 @@ func TestInstanceUpdateConnectionInfoPreservesPasswordWhenBlank(t *testing.T) {
 }
 
 func TestInstanceUpdateConnectionInfoUpdatesPasswordWhenProvided(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	instRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -157,7 +157,7 @@ func TestAgentClientDeployInstanceAddsCatalogPackageWithoutUnverifiedChecksum(t 
 
 func newInstanceDeployTestService(t *testing.T, passwordEncrypted string, agent *agentStub) (*InstanceService, *repositories.AuditLogRepository, string) {
 	t.Helper()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -262,7 +262,7 @@ func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
 	agentPort, err := strconv.Atoi(u.Port())
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -308,7 +308,7 @@ func TestInstanceHealthCheckFailedAgentResultMarksUnhealthy(t *testing.T) {
 }
 
 func TestResolveAgentMySQLTargetUsesLocalhostForSameManagedHost(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -331,7 +331,7 @@ func TestResolveAgentMySQLTargetUsesLocalhostForSameManagedHost(t *testing.T) {
 
 func newInstanceAdminServiceWithoutAgent(t *testing.T) (*InstanceService, string) {
 	t.Helper()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)

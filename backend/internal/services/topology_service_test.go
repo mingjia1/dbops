@@ -153,7 +153,7 @@ func TestTopologyService_GetClusterTopologyInfersSinglePrimaryWhenRolesMissing(t
 
 func TestTopologyService_BuildTopologyGraphUsesPersistedStatusAndMode(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	repo := repositories.NewInstanceRepository(db)
 	service := NewTopologyService(repo)
 	clusterID := "cluster-topology-status"
@@ -200,7 +200,7 @@ func TestTopologyService_BuildTopologyGraphUsesPersistedStatusAndMode(t *testing
 
 func TestTopologyService_BuildTopologyGraphParsesCSVSlaveIDs(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	repo := repositories.NewInstanceRepository(db)
 	service := NewTopologyService(repo)
 	clusterID := "cluster-topology-csv"
@@ -232,7 +232,7 @@ func TestTopologyService_BuildTopologyGraphParsesCSVSlaveIDs(t *testing.T) {
 
 func TestTopologyService_GetClusterTopologyUsesClusterQueryBeyondFirstPage(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	repo := repositories.NewInstanceRepository(db)
 	service := NewTopologyService(repo)
 	targetClusterID := "cluster-target-beyond-page"

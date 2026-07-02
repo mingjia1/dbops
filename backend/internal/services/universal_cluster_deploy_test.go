@@ -15,7 +15,7 @@ import (
 
 func TestUniversalClusterDeployBuildsMGRPlan(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	service := NewClusterDeployService(repositories.NewClusterDeployRepository(db), nil, hostRepo, repositories.NewInstanceRepository(db), nil, config.ClusterDefaults{})
 
@@ -84,7 +84,7 @@ func TestUniversalClusterDeployValidateOnlyReturnsPlan(t *testing.T) {
 
 func TestUniversalClusterDeployPseudoHAReusesMetadataSync(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -390,7 +390,7 @@ func TestTypedPXCRequestToUniversalMapsHostIDsAndRuntimeParams(t *testing.T) {
 
 func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -464,7 +464,7 @@ func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 
 func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
 
@@ -499,7 +499,7 @@ func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
 
 func TestExecuteClusterDeployPlan_PseudoModeCreatesMissingManagedInstances(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	// No instances created — management sync will fail
@@ -541,7 +541,7 @@ func TestExecuteClusterDeployPlan_PseudoModeCreatesMissingManagedInstances(t *te
 
 func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
 
@@ -589,7 +589,7 @@ func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {
 
 func TestGetDeployPlan_ReturnsErrorWhenEmpty(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
 

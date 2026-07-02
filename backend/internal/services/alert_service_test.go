@@ -303,7 +303,7 @@ func TestAlertService_GetAlertRuleByID(t *testing.T) {
 }
 
 func TestAlertService_Original_SendNotification(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	ruleRepo := repositories.NewAlertRuleRepository(db)
 	notifRepo := repositories.NewAlertNotificationRepository(db)
 	service := NewAlertService(ruleRepo, notifRepo, nil)
@@ -327,7 +327,7 @@ func TestAlertService_Original_SendNotification(t *testing.T) {
 }
 
 func TestAlertService_Original_GetAlertHistory(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	ruleRepo := repositories.NewAlertRuleRepository(db)
 	notifRepo := repositories.NewAlertNotificationRepository(db)
 	service := NewAlertService(ruleRepo, notifRepo, nil)
@@ -348,7 +348,7 @@ func TestAlertService_Original_GetAlertHistory(t *testing.T) {
 }
 
 func TestAlertService_GetAlertHistoryReturnsRuleName(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	ruleRepo := repositories.NewAlertRuleRepository(db)
 	notifRepo := repositories.NewAlertNotificationRepository(db)
 	service := NewAlertService(ruleRepo, notifRepo, nil)

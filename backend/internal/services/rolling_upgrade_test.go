@@ -54,7 +54,7 @@ func TestRollingUpgradeService_Success(t *testing.T) {
 		return map[string]interface{}{}, nil
 	}
 	_ = registry.Register(arch.NewReplicaAddonPlugin(fakeAgent))
-	repo := newTestInstanceRepo(context.Background())
+	repo := newTestInstanceRepo(t, context.Background())
 	vault := NewCredentialVault(newTestCredentialRepo(), "ru-key-3")
 	orch := NewDeployOrchestrator(registry, vault, repo)
 

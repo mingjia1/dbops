@@ -14,7 +14,7 @@ import (
 
 func TestBatchAgentActionAsyncReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
-	repo := repositories.NewHostRepository(newTestDB())
+	repo := repositories.NewHostRepository(newTestDB(t))
 	host := &models.Host{
 		ID:        "host-async-agent",
 		Name:      "async-agent-host",
@@ -46,7 +46,7 @@ func TestBatchAgentActionAsyncReturnsSubmittedWithoutSSHWait(t *testing.T) {
 
 func TestBatchAgentActionForcesLongRunningActionsAsync(t *testing.T) {
 	ctx := context.Background()
-	repo := repositories.NewHostRepository(newTestDB())
+	repo := repositories.NewHostRepository(newTestDB(t))
 	host := &models.Host{
 		ID:        "host-forced-async-agent",
 		Name:      "forced-async-agent-host",
@@ -77,7 +77,7 @@ func TestBatchAgentActionForcesLongRunningActionsAsync(t *testing.T) {
 
 func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
-	repo := repositories.NewHostRepository(newTestDB())
+	repo := repositories.NewHostRepository(newTestDB(t))
 	host := &models.Host{
 		ID:        "host-single-async-agent",
 		Name:      "single-async-agent-host",
@@ -102,7 +102,7 @@ func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
 
 func TestRegisterScannedInstancesUpdatesPasswordForManagedPort(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	service := NewHostService(hostRepo, "test-encryption-key")

@@ -13,7 +13,7 @@ import (
 // instance.host_id 是外键, 没有 host 行时 insert 会失败.
 func newInstanceRepoWithHost(t *testing.T) (*InstanceRepository, *HostRepository) {
 	t.Helper()
-	db := newRepoTestDB()
+	db := newRepoTestDB(t)
 	hostRepo := NewHostRepository(db)
 	instRepo := NewInstanceRepository(db)
 	require.NoError(t, hostRepo.Create(context.Background(), &models.Host{ID: "host-1", Name: "test-host-1", Address: "127.0.0.1"}))
@@ -22,7 +22,7 @@ func newInstanceRepoWithHost(t *testing.T) (*InstanceRepository, *HostRepository
 }
 
 func TestNewInstanceRepository(t *testing.T) {
-	repo := NewInstanceRepository(newRepoTestDB())
+	repo := NewInstanceRepository(newRepoTestDB(t))
 	assert.NotNil(t, repo)
 	assert.NotNil(t, repo.db)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func newTestApprovalService() (*ApprovalService, *repositories.AuditLogRepository) {
-	db := newTestDB()
+	db := newTestDB(t)
 	approvalRepo := repositories.NewApprovalRequestRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	return NewApprovalService(approvalRepo, auditRepo), auditRepo

@@ -18,7 +18,7 @@ func newTestEnvCheckCtx() (context.Context, context.CancelFunc) {
 }
 
 func newTestEnvCheckService(tctx context.Context) *EnvironmentCheckService {
-	return NewEnvironmentCheckService(newTestHostRepo(tctx), newTestAgentClient(), testEnvCheckKey)
+	return NewEnvironmentCheckService(newTestHostRepo(t, tctx), newTestAgentClient(), testEnvCheckKey)
 }
 
 func TestNewEnvironmentCheckService(t *testing.T) {
@@ -68,7 +68,7 @@ func TestEnvironmentCheck_Execute_MultipleHosts(t *testing.T) {
 
 func TestEnvironmentCheck_ResolveHostIDsUsesStoredCredential(t *testing.T) {
 	ctx := context.Background()
-	repo := newTestHostRepo(ctx)
+	repo := newTestHostRepo(t, ctx)
 	credential, err := utils.Encrypt("stored-password", testEnvCheckKey)
 	require.NoError(t, err)
 	require.NoError(t, repo.Create(ctx, &models.Host{

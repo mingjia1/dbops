@@ -28,7 +28,7 @@ func createAuthTestUser(t *testing.T, ctx context.Context, repo *repositories.Us
 }
 
 func newAuthAuditTestService() (*AuthService, *repositories.UserRepository, *repositories.AuditLogRepository) {
-	db := newTestDB()
+	db := newTestDB(t)
 	userRepo := repositories.NewUserRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
@@ -116,7 +116,7 @@ func TestAuthLoginReturnsPermissions(t *testing.T) {
 }
 
 func TestUserServiceCannotRemoveLastAdminViaUpdate(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	userRepo := repositories.NewUserRepository(db)
 	roleRepo := repositories.NewRoleRepository(db)
 	require.NoError(t, roleRepo.SeedBuiltinRoles(context.Background()))
@@ -138,7 +138,7 @@ func TestUserServiceCannotRemoveLastAdminViaUpdate(t *testing.T) {
 }
 
 func TestUserRepositoryUpdatePasswordReturnsNotFoundForMissingUser(t *testing.T) {
-	repo := repositories.NewUserRepository(newTestDB())
+	repo := repositories.NewUserRepository(newTestDB(t))
 
 	err := repo.UpdatePassword(context.Background(), "missing-user", "hash")
 

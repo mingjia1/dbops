@@ -32,7 +32,7 @@ func newTestBackupService() *BackupService {
 }
 
 func newTestBackupServiceWithAudit() (*BackupService, *repositories.AuditLogRepository) {
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	backupRepo := repositories.NewBackupRepository(db)
@@ -270,7 +270,7 @@ func TestExecuteBackupWritesAuditLogForFailedIncremental(t *testing.T) {
 }
 
 func TestExecuteBackupWithoutAgentClientCreatesFailedRecord(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -321,7 +321,7 @@ func TestExecuteBackup_AgentRunningStatusCreatesRunningRecord(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	assert.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -381,7 +381,7 @@ func TestListBackupsRefreshesActiveRecordFromAgentProgress(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -436,7 +436,7 @@ func TestExecuteBackupUsesPolicyStoragePathAsTargetDir(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -497,7 +497,7 @@ func TestExecuteIncrementalBackupUsesFullBackupReturnedAsSuccess(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -558,7 +558,7 @@ func TestExecuteIncrementalBackupUsesMysqlbinlogForLogicalFullBase(t *testing.T)
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -606,7 +606,7 @@ func TestScanBackupsRegistersDiscoveredRecordsAndAvoidsDuplicates(t *testing.T) 
 	agentPort, err := strconv.Atoi(portText)
 	assert.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -663,7 +663,7 @@ func TestScanBackupsAgentFailedStatusDoesNotCreateRecords(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -692,7 +692,7 @@ func TestScanBackupsAgentFailedStatusDoesNotCreateRecords(t *testing.T) {
 }
 
 func TestScanBackupsWithoutAgentClientReturnsErrorWithoutRecords(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -736,7 +736,7 @@ func TestScanBackupsOnlyRegistersCompleteDiscoveries(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -781,7 +781,7 @@ func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {
 	agentPort, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -829,7 +829,7 @@ func TestRestoreBackupDispatchesAgentAndWritesRestoreRecord(t *testing.T) {
 }
 
 func TestRestoreBackupWithoutAgentClientReturnsFailedResultAndWritesRestoreRecord(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)

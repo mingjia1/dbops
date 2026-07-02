@@ -20,7 +20,7 @@ import (
 
 func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -101,7 +101,7 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	agentPort, err := strconv.Atoi(agentPortText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -188,7 +188,7 @@ func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 
 func TestDestroyClusterWithNoManagedInstancesDestroysMetadata(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "deploy-auditor-002")
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -220,7 +220,7 @@ func TestDestroyClusterWithNoManagedInstancesDestroysMetadata(t *testing.T) {
 
 func TestDestroyClusterResolvesDeploymentByName(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "deploy-auditor-003")
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -249,7 +249,7 @@ func TestDestroyClusterFailsWhenDecommissionFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ctx = context.WithValue(ctx, "user_id", "destroy-user")
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -288,7 +288,7 @@ func TestDestroyClusterFailsWhenDecommissionFails(t *testing.T) {
 
 func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -325,7 +325,7 @@ func TestClearDestroyedClusterManagementMarksInstancesStopped(t *testing.T) {
 
 func TestListDeploymentsIncludesManagedNodes(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -407,7 +407,7 @@ func TestDeployMHAAgentErrorStatusIsPersistedAsFailed(t *testing.T) {
 	agentPort, err := strconv.Atoi(agentPortText)
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -475,7 +475,7 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 	defer server.Close()
 	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -632,7 +632,7 @@ func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db := newTestDB()
+			db := newTestDB(t)
 			hostRepo := repositories.NewHostRepository(db)
 			instRepo := repositories.NewInstanceRepository(db)
 			clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -679,7 +679,7 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
 	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -717,7 +717,7 @@ func TestDeployPXCUsesResolvedAgentPorts(t *testing.T) {
 	bootstrapHost, bootstrapAgentPort := splitTestServerHostPort(t, bootstrapServer.URL)
 	joinHost, joinAgentPort := splitTestServerHostPort(t, joinServer.URL)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -753,7 +753,7 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
 	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -792,7 +792,7 @@ func TestDeployPXCCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 	bootstrapHost, bootstrapAgentPort := splitTestServerHostPort(t, bootstrapServer.URL)
 	joinHost, joinAgentPort := splitTestServerHostPort(t, joinServer.URL)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)

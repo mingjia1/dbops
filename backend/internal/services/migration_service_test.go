@@ -16,7 +16,7 @@ import (
 )
 
 func TestMigrationService_CreateTask(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 
 	ctx := context.Background()
 
@@ -35,7 +35,7 @@ func TestMigrationService_CreateTask(t *testing.T) {
 }
 
 func TestMigrationService_CreateTaskPersistsConfig(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 	ctx := context.Background()
 
 	taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
@@ -54,7 +54,7 @@ func TestMigrationService_CreateTaskPersistsConfig(t *testing.T) {
 }
 
 func TestMigrationService_ExecutePhysicalMigration(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 
 	ctx := context.Background()
 
@@ -65,7 +65,7 @@ func TestMigrationService_ExecutePhysicalMigration(t *testing.T) {
 }
 
 func TestMigrationService_TaskStatusTransition(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 
 	ctx := context.Background()
 
@@ -81,7 +81,7 @@ func TestMigrationService_TaskStatusTransition(t *testing.T) {
 }
 
 func TestMigrationService_SwitchWithoutTask(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 	ctx := context.Background()
 
 	result, err := service.ExecuteSwitch(ctx, "nonexistent-task")
@@ -91,7 +91,7 @@ func TestMigrationService_SwitchWithoutTask(t *testing.T) {
 }
 
 func TestMigrationService_ListTasks(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 	ctx := context.Background()
 
 	tasks, err := service.ListTasks(ctx, "")
@@ -100,7 +100,7 @@ func TestMigrationService_ListTasks(t *testing.T) {
 }
 
 func TestMigrationService_CancelTask(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 	ctx := context.Background()
 
 	err := service.CancelTask(ctx, "nonexistent-task")
@@ -109,7 +109,7 @@ func TestMigrationService_CancelTask(t *testing.T) {
 }
 
 func TestMigrationService_VerifyMigration(t *testing.T) {
-	service := newTestMigrationService()
+	service := newTestMigrationService(t)
 	ctx := context.Background()
 
 	// 不存在的 task 应该返回 error 而不是静默成功.
@@ -141,7 +141,7 @@ func TestResolveAgentHostUsesConnectionHostWhenNoHostRepo(t *testing.T) {
 
 func TestResolveAgentHostUsesManagedHostPort(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	host := &models.Host{
 		ID:        "host-agent",
@@ -162,7 +162,7 @@ func TestResolveAgentHostUsesManagedHostPort(t *testing.T) {
 
 func TestMigrationService_CreateTaskWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "auditor-001")
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	service := NewMigrationService(migrationRepo, repositories.NewInstanceRepository(db), repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
@@ -187,7 +187,7 @@ func TestMigrationService_CreateTaskWritesAuditLog(t *testing.T) {
 
 func TestMigrationService_CancelTaskWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "auditor-002")
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	service := NewMigrationService(migrationRepo, repositories.NewInstanceRepository(db), repositories.NewHostRepository(db), newTestAgentClient(), NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db)))
@@ -212,7 +212,7 @@ func TestMigrationService_CancelTaskWritesAuditLog(t *testing.T) {
 
 func TestMigrationService_ExecuteFailureWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "auditor-003")
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
@@ -266,7 +266,7 @@ func TestMigrationServiceExecuteForwardsStoredConfigToAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
@@ -409,7 +409,7 @@ func TestMigrationServiceSwitchWithoutAgentClientFailsTask(t *testing.T) {
 
 func TestMigrationService_SwitchFailureWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "auditor-004")
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
@@ -603,7 +603,7 @@ func newMigrationServiceWithAgent(t *testing.T, serverURL string) (*MigrationSer
 	agentPort, err := strconv.Atoi(u.Port())
 	require.NoError(t, err)
 
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)
@@ -640,7 +640,7 @@ func newMigrationServiceWithAgent(t *testing.T, serverURL string) (*MigrationSer
 func newMigrationServiceWithoutAgent(t *testing.T) (*MigrationService, *repositories.MigrationRepository, string) {
 	t.Helper()
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	migrationRepo := repositories.NewMigrationRepository(db)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	hostRepo := repositories.NewHostRepository(db)

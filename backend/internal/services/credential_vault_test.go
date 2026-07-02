@@ -11,7 +11,7 @@ import (
 )
 
 func newTestCredentialRepo() *repositories.CredentialRepository {
-	return repositories.NewCredentialRepository(newTestDB())
+	return repositories.NewCredentialRepository(newTestDB(t))
 }
 
 func TestCredentialVault_SetAndGet(t *testing.T) {

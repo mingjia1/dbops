@@ -11,7 +11,7 @@ import (
 
 func TestTaskRepository_UpdateStatusWithMessagePreservesUpgradePlanID(t *testing.T) {
 	ctx := context.Background()
-	db := newRepoTestDB()
+	db := newRepoTestDB(t)
 	instanceRepo := NewInstanceRepository(db)
 	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{
 		ID:   "instance-1",

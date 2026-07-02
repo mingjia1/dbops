@@ -103,7 +103,7 @@ func newTestSwitchService(t *testing.T) (*SwitchService, *agentStub, *repositori
 
 	stub := newAgentStub()
 
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	host := &models.Host{
 		ID:        "host-001",
@@ -153,9 +153,9 @@ func newTestSwitchService(t *testing.T) (*SwitchService, *agentStub, *repositori
 // --- TDD: SwitchService constructor ---
 func TestNewSwitchService(t *testing.T) {
 	tctx := context.Background()
-	hostRepo := newTestHostRepo(tctx)
-	instRepo := newTestInstanceRepo(tctx)
-	clusterRepo := repositories.NewClusterDeployRepository(newTestDB())
+	hostRepo := newTestHostRepo(t, tctx)
+	instRepo := newTestInstanceRepo(t, tctx)
+	clusterRepo := repositories.NewClusterDeployRepository(newTestDB(t))
 	agent := newTestAgentClient()
 
 	svc := NewSwitchService(hostRepo, instRepo, clusterRepo, agent, nil)
@@ -234,7 +234,7 @@ func TestSwitchRoleWithinClusterAgentFailedStatusDoesNotComplete(t *testing.T) {
 
 func TestSwitchRoleWithinClusterWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "switch-auditor-001")
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -266,7 +266,7 @@ func TestSwitchRoleWithinClusterWritesAuditLog(t *testing.T) {
 
 func TestClusterArchitectureSwitchWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "switch-auditor-002")
-	db := newTestDB()
+	db := newTestDB(t)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostRepo := repositories.NewHostRepository(db)
@@ -299,7 +299,7 @@ func TestClusterArchitectureSwitchWritesAuditLog(t *testing.T) {
 
 func TestClusterArchitectureSwitchWithoutAgentClientFails(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -318,7 +318,7 @@ func TestClusterArchitectureSwitchWithoutAgentClientFails(t *testing.T) {
 
 func TestMultiInstanceSwitchToMGRUpdatesClusterMetadata(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	stub := newAgentStub()
 	defer stub.Close()
 	hostRepo := repositories.NewHostRepository(db)
@@ -401,7 +401,7 @@ func TestMultiInstanceSwitchUpdatesClusterMetadataForPXCAndMHA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			db := newTestDB()
+			db := newTestDB(t)
 			stub := newAgentStub()
 			defer stub.Close()
 			hostRepo := repositories.NewHostRepository(db)
@@ -458,7 +458,7 @@ func TestMultiInstanceSwitchUpdatesClusterMetadataForPXCAndMHA(t *testing.T) {
 // --- TDD: MGR primary promotion ---
 func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -490,7 +490,7 @@ func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 
 func TestSwitchRoleWithinClusterPromoteWithoutAgentClientFailsAndRecordsHistory(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -524,7 +524,7 @@ func TestSwitchRoleWithinClusterPromoteWithoutAgentClientFailsAndRecordsHistory(
 // --- TDD: PXC demote primary -> secondary ---
 func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -551,7 +551,7 @@ func TestSwitchRoleWithinCluster_DemotePXCPrimaryToSecondary(t *testing.T) {
 
 func TestSwitchRoleWithinClusterDemoteWithoutAgentClientFailsAndRecordsHistory(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -581,7 +581,7 @@ func TestSwitchRoleWithinClusterDemoteWithoutAgentClientFailsAndRecordsHistory(t
 // --- TDD: skip when current role == target role ---
 func TestSwitchRoleWithinCluster_SkipWhenAlreadyInTargetRole(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -644,7 +644,7 @@ func TestSwitchRoleWithinCluster_ClusterNotFound(t *testing.T) {
 // --- TDD: instance not in specified cluster ---
 func TestSwitchRoleWithinCluster_InstanceNotInCluster(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -687,7 +687,7 @@ func TestSwitchRoleWithinCluster_InstanceNotFound(t *testing.T) {
 // --- TDD: instance without host ---
 func TestSwitchRoleWithinCluster_InstanceWithoutHost(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -710,7 +710,7 @@ func TestSwitchRoleWithinCluster_InstanceWithoutHost(t *testing.T) {
 // --- TDD: agent failure during promote ---
 func TestSwitchRoleWithinCluster_AgentPromoteFails(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -743,7 +743,7 @@ func TestSwitchRoleWithinCluster_AgentPromoteFails(t *testing.T) {
 // --- TDD: agent failure during demote-old-master ---
 func TestSwitchRoleWithinCluster_AgentDemoteOldMasterFails(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -776,7 +776,7 @@ func TestSwitchRoleWithinCluster_AgentDemoteOldMasterFails(t *testing.T) {
 // --- TDD: agent failure during demote (instance is current primary) ---
 func TestSwitchRoleWithinCluster_AgentDemoteFails(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -816,7 +816,7 @@ func TestListRoleSwitchHistory_Empty(t *testing.T) {
 // --- TDD: ListRoleSwitchHistory records and sorts by recency ---
 func TestListRoleSwitchHistory_Limit(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -953,7 +953,7 @@ func TestRoleSwitchRecord_Fields(t *testing.T) {
 // --- TDD: demote old master (MHA primary, no slaves) ---
 func TestSwitchRoleWithinCluster_DemoteOnlyPrimary(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -981,7 +981,7 @@ func TestSwitchRoleWithinCluster_DemoteOnlyPrimary(t *testing.T) {
 // --- TDD: no old master id given; uses inst.Topology.MasterID ---
 func TestSwitchRoleWithinCluster_UsesTopologyMasterID(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -1013,7 +1013,7 @@ func TestSwitchRoleWithinCluster_UsesTopologyMasterID(t *testing.T) {
 // --- TDD: ambiguous old master id (current instance is primary AND target is primary, different ids) ---
 func TestSwitchRoleWithinCluster_AmbiguousOldMaster(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -1047,7 +1047,7 @@ func TestSwitchRoleWithinCluster_AmbiguousOldMaster(t *testing.T) {
 // --- TDD: nil pointer for inst.HostID returns error ---
 func TestSwitchRoleWithinCluster_NilHostID(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
@@ -1070,7 +1070,7 @@ func TestSwitchRoleWithinCluster_NilHostID(t *testing.T) {
 // --- TDD: host repo missing host ---
 func TestSwitchRoleWithinCluster_HostRepoMissing(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)

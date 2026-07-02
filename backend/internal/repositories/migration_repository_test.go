@@ -11,7 +11,7 @@ import (
 
 func TestMigrationRepositoryStatusUpdatesSetLifecycleTimes(t *testing.T) {
 	ctx := context.Background()
-	repo := NewMigrationRepository(newRepoTestDB())
+	repo := NewMigrationRepository(newRepoTestDB(t))
 	task := &models.MigrationTask{
 		Name:             "migration lifecycle",
 		SourceInstanceID: "source-001",

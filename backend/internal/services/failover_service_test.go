@@ -100,7 +100,7 @@ func TestPrioritizeManualCandidate(t *testing.T) {
 }
 
 func TestStopReplicationOnSlavesReturnsMissingSlaveConnection(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	svc := &FailoverService{
 		db:            db,
@@ -117,7 +117,7 @@ func TestStopReplicationOnSlavesReturnsMissingSlaveConnection(t *testing.T) {
 }
 
 func TestRecordFailoverHistoryPersistsResult(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	svc := &FailoverService{
 		db: db,
@@ -207,7 +207,7 @@ func TestNonPrimaryInfosExcludesRealMGRPrimaryWhenPlatformPrimaryMissing(t *test
 
 func TestGetClusterStatusSupportsPXCBootstrapRoles(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 
 	key := "test-encryption-key"

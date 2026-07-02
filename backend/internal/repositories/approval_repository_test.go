@@ -10,7 +10,7 @@ import (
 )
 
 func TestApprovalRequestRepositoryUpdateDeleteMissingReturnsError(t *testing.T) {
-	db := newRepoTestDB()
+	db := newRepoTestDB(t)
 	repo := NewApprovalRequestRepository(db)
 	ctx := context.Background()
 

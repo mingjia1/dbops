@@ -269,7 +269,7 @@ func TestUpgradeService_Original_ValidateUpgradePath_Invalid(t *testing.T) {
 }
 
 func TestUpgradeService_ExecuteRollingUpgradeEmptyClusterFailsWithoutTask(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -290,7 +290,7 @@ func TestUpgradeService_ExecuteRollingUpgradeEmptyClusterFailsWithoutTask(t *tes
 }
 
 func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -316,7 +316,7 @@ func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
 }
 
 func TestUpgradeService_ExecuteRollingUpgrade_HydratesRolesAndNodeIDs(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	instanceRepo := repositories.NewInstanceRepository(db)
@@ -344,7 +344,7 @@ func TestUpgradeService_ExecuteRollingUpgrade_HydratesRolesAndNodeIDs(t *testing
 }
 
 func TestUpgradeService_ExecuteInPlaceRequiresBackupConfirmation(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -366,7 +366,7 @@ func TestUpgradeService_ExecuteInPlaceRequiresBackupConfirmation(t *testing.T) {
 }
 
 func TestUpgradeService_ExecuteLogicalRequiresBackupConfirmation(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	defer db.Close()
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
@@ -389,7 +389,7 @@ func TestUpgradeService_ExecuteLogicalRequiresBackupConfirmation(t *testing.T) {
 
 func TestUpgradeService_Original_GenerateUpgradeReport(t *testing.T) {
 	// B3: GenerateUpgradeReport 现在真用 taskRepo.GetByID. 共享 sqlite test DB.
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
@@ -419,7 +419,7 @@ func TestUpgradeService_Original_extractMajorVersion(t *testing.T) {
 
 func TestUpgradeService_PlanUpgradePathWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-001")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-plan", "")
@@ -443,7 +443,7 @@ func TestUpgradeService_PlanUpgradePathWritesAuditLog(t *testing.T) {
 
 func TestUpgradeService_CheckCompatibilityWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-002")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-check", "")
@@ -464,7 +464,7 @@ func TestUpgradeService_CheckCompatibilityWritesAuditLog(t *testing.T) {
 
 func TestUpgradeService_ExecuteInPlaceWithoutBackupWritesFailedAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-003")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 
@@ -487,7 +487,7 @@ func TestUpgradeService_ExecuteInPlaceWithoutBackupWritesFailedAuditLog(t *testi
 
 func TestUpgradeService_ExecuteInPlaceWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-004")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-execute", "")
@@ -511,7 +511,7 @@ func TestUpgradeService_ExecuteInPlaceWritesAuditLog(t *testing.T) {
 
 func TestUpgradeService_ExecuteLogicalWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-005")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-logical", "")
@@ -538,7 +538,7 @@ func TestUpgradeService_ExecuteLogicalWritesAuditLog(t *testing.T) {
 
 func TestUpgradeService_RollbackWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-006")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-rollback", "")
@@ -562,7 +562,7 @@ func TestUpgradeService_RollbackWritesAuditLog(t *testing.T) {
 
 func TestUpgradeService_ExecuteRollingWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-007")
-	db := newTestDB()
+	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-cluster-inst-1", "upgrade-cluster-audit")
@@ -587,7 +587,7 @@ func TestUpgradeService_ExecuteRollingWritesAuditLog(t *testing.T) {
 }
 
 func TestUpgradeDispatchAddsCatalogPackageMetadata(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	service := NewUpgradeService(repositories.NewInstanceRepository(db), repositories.NewTaskRepository(db), nil)
 	config := map[string]interface{}{}
 
@@ -600,7 +600,7 @@ func TestUpgradeDispatchAddsCatalogPackageMetadata(t *testing.T) {
 }
 
 func TestUpgradeDispatchKeepsExplicitPackageURL(t *testing.T) {
-	db := newTestDB()
+	db := newTestDB(t)
 	service := NewUpgradeService(repositories.NewInstanceRepository(db), repositories.NewTaskRepository(db), nil)
 	explicitURL := "https://mirror.example/mysql.tar.gz"
 	explicitChecksum := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

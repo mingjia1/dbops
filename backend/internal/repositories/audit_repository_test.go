@@ -10,7 +10,7 @@ import (
 )
 
 func TestAuditLogRepositoryListFiltered(t *testing.T) {
-	db := newRepoTestDB()
+	db := newRepoTestDB(t)
 	repo := NewAuditLogRepository(db)
 	ctx := context.Background()
 
