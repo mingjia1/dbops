@@ -4,13 +4,7 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins: [
-          ['import', { libraryName: 'antd', libraryDirectory: 'es', style: false }, 'antd'],
-        ],
-      },
-    }),
+    react(),
   ],
   resolve: {
     alias: {
