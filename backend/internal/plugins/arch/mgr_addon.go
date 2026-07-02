@@ -15,10 +15,12 @@ func (p *MGRAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNod
 	if p.agentCaller == nil {
 		return fmt.Errorf("agent caller not configured")
 	}
-	localPort := 33061
+	// H2: During ScaleOut, derive per-node local_port from node count
+	// to avoid port conflicts. Existing nodes' ports are in env.Custom.
+	localPort := 33061 + len(env.Nodes)
 	if v, ok := env.Custom["local_port"]; ok {
 		if port, ok := v.(int); ok && port > 0 {
-			localPort = port
+			localPort = port + len(env.Nodes)
 		}
 	}
 	groupName := env.ClusterID

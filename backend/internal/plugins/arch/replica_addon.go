@@ -39,8 +39,31 @@ func (p *ReplicaAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, ne
 	return err
 }
 
-func (p *ReplicaAddonPlugin) Leave(_ context.Context, _ plugins.PluginEnv, _ plugins.PluginNode) error {
-	return nil
+func (p *ReplicaAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, node plugins.PluginNode) error {
+	if p.agentCaller == nil {
+		return fmt.Errorf("agent caller not configured")
+	}
+	// Find the primary node to provide as master info
+	var primary *plugins.PluginNode
+	for _, n := range env.Nodes {
+		if n.Role == "primary" || n.Role == "master" {
+			p := n
+			primary = &p
+			break
+		}
+	}
+	if primary == nil {
+		return fmt.Errorf("no primary node found for leave")
+	}
+	payload := map[string]interface{}{
+		"task_id":      fmt.Sprintf("leave-%s-%s", env.ClusterID, node.Address),
+		"master_host":  primary.Address,
+		"master_port":  primary.MySQLPort,
+		"replica_host": node.Address,
+		"replica_port": node.MySQLPort,
+	}
+	_, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/replication/teardown", payload)
+	return err
 }
 
 func NewReplicaAddonPlugin(agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)) *ReplicaAddonPlugin {

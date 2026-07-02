@@ -147,12 +147,35 @@ func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string)
 			return false, fmt.Sprintf("MariaDB %s → %s is not a supported in-place upgrade path", srcMM, dstMM)
 		}
 		if versionLessThan(srcMM, dstMM) {
+			srcMinor := minorPart(srcMM)
+			dstMinor := minorPart(dstMM)
+			if dstMinor-srcMinor > 3 {
+				return false, fmt.Sprintf("MariaDB %s → %s spans %d minor versions (max 3); upgrade through intermediate LTS releases first (e.g. %s → 10.%d → %s)",
+					srcMM, dstMM, dstMinor-srcMinor, srcMM, srcMinor+3, dstMM)
+			}
 			return true, ""
 		}
 		return false, fmt.Sprintf("downgrade MariaDB %s → %s is not supported", srcMM, dstMM)
 	}
 
 	return false, fmt.Sprintf("unsupported upgrade path %s %s → %s %s", sourceFlavor, srcMM, targetFlavor, dstMM)
+}
+
+// minorPart extracts the integer minor version from a "X.Y" major.minor string.
+func minorPart(mm string) int {
+	parts := strings.SplitN(mm, ".", 2)
+	if len(parts) < 2 {
+		return 0
+	}
+	n := 0
+	for _, c := range parts[1] {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		} else {
+			break
+		}
+	}
+	return n
 }
 
 // catalogEntries is the curated, version-agnostic version catalog.

@@ -892,7 +892,6 @@ const ClusterDeploy: React.FC = () => {
                 children: renderForm('ha', haForm,
                   null,
                   (values) => runDeploy('ha', values),
-                  { simpleReplica: true },
                 ),
               },
               {

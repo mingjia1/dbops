@@ -137,6 +137,10 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		EstimatedTime: estimatedTime,
 		RiskLevel:     riskLevel,
 		UpgradePath:   s.serializeSteps(steps),
+		PreCheckResult: func() string {
+			data, _ := json.Marshal(warnings)
+			return string(data)
+		}(),
 	}
 	// H3: persist plan in memory so ExecuteInPlaceUpgrade can validate plan_id.
 	s.plans.Store(plan.ID, plan)
@@ -306,10 +310,8 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 		CheckedAt:           time.Now(),
 	}
 
-	_ = check
-
 	response := &CheckCompatibilityResponse{
-		CheckID:           uuid.New().String(),
+		CheckID:           check.ID,
 		InstanceID:        req.InstanceID,
 		SourceVersion:     sourceVersion,
 		SourceFlavor:      sourceFlavor,
