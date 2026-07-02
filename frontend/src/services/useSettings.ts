@@ -2,10 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 
 const API_BASE = '/api/v1'
 
-async function fetchSettings(): Promise<Record<string, string>> {
+const buildAuthHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function fetchSettings(): Promise<Record<string, string>> {
   const res = await fetch(`${API_BASE}/settings`, {
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+    headers: buildAuthHeaders(),
   })
   if (!res.ok) return {}
   const json = await res.json()
@@ -13,10 +18,10 @@ async function fetchSettings(): Promise<Record<string, string>> {
 }
 
 async function saveSetting(key: string, value: string): Promise<void> {
-  const token = localStorage.getItem('token')
   await fetch(`${API_BASE}/settings/${key}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
     body: JSON.stringify({ value }),
   })
 }

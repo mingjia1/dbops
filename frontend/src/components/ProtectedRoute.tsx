@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Spin } from 'antd'
+import Spin from 'antd/es/spin'
 import { Navigate, useLocation } from 'react-router-dom'
 import { authApi } from '../services/api'
 
@@ -9,7 +9,6 @@ interface ProtectedRouteProps {
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const location = useLocation()
-  const token = localStorage.getItem('token')
   const [checking, setChecking] = useState(true)
   const [valid, setValid] = useState(false)
 
@@ -27,7 +26,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   useEffect(() => {
-    if (!token || !isLikelyToken(token)) {
+    const token = localStorage.getItem('token')
+    if (token && !isLikelyToken(token)) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
       setChecking(false)
       setValid(false)
       return
@@ -43,11 +45,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       })
       .catch(() => setValid(false))
       .finally(() => setChecking(false))
-  }, [token])
-
-  if (!token || !isLikelyToken(token)) {
-    return <Navigate to="/login" state={{ from: location }} replace />
-  }
+  }, [])
 
   if (checking) {
     return <div style={{ padding: 32, textAlign: 'center' }}><Spin size="large" /></div>

@@ -5,6 +5,7 @@ import {
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
+import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
 
 const { Text } = Typography
 
@@ -122,13 +123,7 @@ const ClusterDeploy: React.FC = () => {
     mysql_password: string
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
-  const [credential, setCredential] = useState<{ username: string; password: string }>(() => {
-    try {
-      const stored = localStorage.getItem('dbops_default_mysql_credential')
-      if (stored) return JSON.parse(stored)
-    } catch { /* ignore */ }
-    return { username: 'root', password: '' }
-  })
+  const [credential, setCredential] = useState<{ username: string; password: string }>(() => getDefaultMySQLCredential())
   const [mysqlPasswordModalOpen, setMysqlPasswordModalOpen] = useState(false)
   const [mysqlPasswordForm] = Form.useForm()
 
@@ -137,7 +132,7 @@ const ClusterDeploy: React.FC = () => {
       const values = await mysqlPasswordForm.validateFields()
       const newCredential = { username: values.username || 'root', password: values.password }
       setCredential(newCredential)
-      localStorage.setItem('dbops_default_mysql_credential', JSON.stringify(newCredential))
+      setDefaultMySQLCredential(newCredential)
       setMysqlPasswordModalOpen(false)
       message.success('MySQL root 密码已保存')
     } catch {

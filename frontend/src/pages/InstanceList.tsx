@@ -4,6 +4,7 @@ import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal,
 import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, clusterDeployApi, type Host, type Instance, type VersionEntry } from '../services/api'
+import { isSecondaryPasswordEnabled, isSecondaryPasswordVerified, verifySecondaryPassword } from '../services/sessionSecrets'
 
 const isSuccessfulTaskStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
@@ -292,20 +293,12 @@ const InstanceList: React.FC = () => {
     }
   }
 
-  const isSecondaryPasswordEnabled = () => !!localStorage.getItem('dbops_credential_password')
-
-  const verifySecondaryPassword = (input: string) => {
-    const stored = localStorage.getItem('dbops_credential_password')
-    if (!stored) return true // not enabled
-    return input === stored
-  }
-
   const togglePasswordVisible = async (instanceId: string) => {
     if (visiblePasswords.has(instanceId)) {
       setVisiblePasswords((prev) => { const next = new Set(prev); next.delete(instanceId); return next })
     } else {
       // Check if secondary password is enabled and not yet verified in this session
-      if (isSecondaryPasswordEnabled() && !sessionStorage.getItem('dbops_credential_verified')) {
+      if (isSecondaryPasswordEnabled() && !isSecondaryPasswordVerified()) {
         setPendingCredentialId(instanceId)
         secondaryAuthForm.resetFields()
         setSecondaryAuthOpen(true)
@@ -318,11 +311,10 @@ const InstanceList: React.FC = () => {
 
   const handleSecondaryAuth = async () => {
     const values = await secondaryAuthForm.validateFields()
-    if (!verifySecondaryPassword(values.secondary_password)) {
+    if (!(await verifySecondaryPassword(values.secondary_password))) {
       message.error('二级密码错误')
       return
     }
-    sessionStorage.setItem('dbops_credential_verified', '1')
     setSecondaryAuthOpen(false)
     if (pendingCredentialId) {
       await fetchCredential(pendingCredentialId)

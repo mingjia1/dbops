@@ -2,57 +2,81 @@ import React, { useState, useEffect } from 'react'
 import { Button, Card, Col, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 import { hostApi } from '../services/api'
+import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordEnabled, setDefaultMySQLCredential, setSecondaryPassword } from '../services/sessionSecrets'
 import { usePlatformSettings } from '../services/useSettings'
 
 const { Text } = Typography
-const token = () => localStorage.getItem('token') || ''
+const buildAuthHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 // ─── 安全设置 ─────────────────────────────────────────────────────────────
 
 const SecurityTab: React.FC = () => {
-  const [enabled, setEnabled] = useState(false)
+  const [enabled, setEnabled] = useState(isSecondaryPasswordEnabled())
   const [form] = Form.useForm()
-  const { settings, save } = usePlatformSettings()
-  const CRED_KEY = 'dbops_credential_password'
-  useEffect(() => {
-    const s = settings.credential_password || localStorage.getItem(CRED_KEY)
-    if (s) { setEnabled(true); form.setFieldsValue({ password: s, confirm_password: s }) }
-  }, [settings])
+
   const handleSave = async () => {
-    const v = await form.validateFields()
-    if (v.password !== v.confirm_password) { message.error('两次密码不一致'); return }
-    localStorage.setItem(CRED_KEY, v.password)
-    await save('credential_password', v.password)
-    setEnabled(true); message.success('二级密码已设置')
+    const values = await form.validateFields()
+    if (values.password !== values.confirm_password) {
+      message.error('Passwords do not match')
+      return
+    }
+    await setSecondaryPassword(values.password)
+    setEnabled(true)
+    form.resetFields()
+    message.success('Secondary password enabled for this browser session')
   }
+
   const handleDisable = () => {
-    localStorage.removeItem(CRED_KEY); sessionStorage.removeItem('dbops_credential_verified')
-    save('credential_password', ''); setEnabled(false); form.resetFields(); message.success('已关闭')
+    clearSecondaryPassword()
+    setEnabled(false)
+    form.resetFields()
+    message.success('Secondary password disabled')
   }
+
   return (
     <Row gutter={16}>
       <Col span={12}>
-        <Card type="inner" title="查看密码保护" size="small">
+        <Card type="inner" title="Credential Guard" size="small">
           <Space align="center" style={{ marginBottom: 8 }}>
-            <Switch checked={enabled} onChange={(c) => {
-              if (c) { handleSave().catch(() => { message.warning('请先填写密码'); setEnabled(false) }) }
-              else { handleDisable() }
-            }} />
-            <Tag color={enabled ? 'success' : 'default'}>{enabled ? '已开启' : '未开启'}</Tag>
+            <Switch
+              checked={enabled}
+              onChange={(checked) => {
+                if (checked) {
+                  handleSave().catch(() => {
+                    message.warning('Enter and confirm the secondary password first')
+                    setEnabled(false)
+                  })
+                  return
+                }
+                handleDisable()
+              }}
+            />
+            <Tag color={enabled ? 'success' : 'default'}>{enabled ? 'Enabled' : 'Disabled'}</Tag>
           </Space>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>开启后查看实例密码需输入二级密码验证（浏览器会话内有效）。</Text>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+            The secondary password is stored only as a salted hash in session state. It is not written to platform settings or local storage.
+          </Text>
           <Form form={form} layout="vertical" size="small">
-            <Form.Item name="password" label="二级密码" rules={[{ required: true }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
-            <Form.Item name="confirm_password" label="确认" rules={[{ required: true }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Form.Item name="password" label="Secondary Password" rules={[{ required: true }]}>
+              <Input.Password size="small" autoComplete="new-password" />
+            </Form.Item>
+            <Form.Item name="confirm_password" label="Confirm Password" rules={[{ required: true }]}>
+              <Input.Password size="small" autoComplete="new-password" />
+            </Form.Item>
             <Form.Item>
-              <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleSave}>{enabled ? '更新' : '保存'}</Button>
-              {enabled && <Button size="small" danger style={{ marginLeft: 8 }} onClick={handleDisable}>关闭</Button>}
+              <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleSave}>
+                {enabled ? 'Rotate' : 'Enable'}
+              </Button>
+              {enabled && <Button size="small" danger style={{ marginLeft: 8 }} onClick={handleDisable}>Disable</Button>}
             </Form.Item>
           </Form>
         </Card>
       </Col>
       <Col span={12}>
-        <Card type="inner" title="密码策略" size="small"><PasswordPolicyForm /></Card>
+        <Card type="inner" title="Password Policy" size="small"><PasswordPolicyForm /></Card>
       </Col>
     </Row>
   )
@@ -90,7 +114,6 @@ const PasswordPolicyForm: React.FC = () => {
 // ─── 监控指标 ─────────────────────────────────────────────────────────────
 
 const METRICS_KEY = 'dbops_metrics_thresholds'
-const CRED_KEY2 = 'dbops_default_mysql_credential'
 const defaultMetrics = {
   connection_warn: 80, connection_critical: 95, qps_warn: 5000, qps_critical: 10000,
   slow_query_warn: 5, slow_query_critical: 20, repl_lag_warn: 10, repl_lag_critical: 60,
@@ -102,55 +125,77 @@ const MetricsTab: React.FC = () => {
   const [form] = Form.useForm()
   const [credForm] = Form.useForm()
   const { settings, save } = usePlatformSettings()
+
   useEffect(() => {
     const raw = settings.metrics_thresholds || localStorage.getItem(METRICS_KEY)
-    if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultMetrics) }
-    const rawC = settings.mysql_credential || localStorage.getItem(CRED_KEY2)
-    if (rawC) { try { const c = typeof rawC === 'string' ? JSON.parse(rawC) : rawC; credForm.setFieldsValue({ mysql_user: c.username || 'root', mysql_password: c.password || '' }) } catch {} }
-  }, [settings])
-  const saveMetrics = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(METRICS_KEY, j); save('metrics_thresholds', j); message.success('监控阈值已保存') }
-  const saveCred = async () => { const v = await credForm.validateFields(); const j = JSON.stringify({ username: v.mysql_user, password: v.mysql_password }); localStorage.setItem(CRED_KEY2, j); save('mysql_credential', j); message.success('MySQL 账号已保存') }
+    if (raw) {
+      try {
+        form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw)
+      } catch {
+        form.setFieldsValue(defaultMetrics)
+      }
+    } else {
+      form.setFieldsValue(defaultMetrics)
+    }
+    const credential = getDefaultMySQLCredential()
+    credForm.setFieldsValue({ mysql_user: credential.username || 'root', mysql_password: credential.password || '' })
+  }, [settings, form, credForm])
+
+  const saveMetrics = () => {
+    const v = form.getFieldsValue()
+    const j = JSON.stringify(v)
+    localStorage.setItem(METRICS_KEY, j)
+    save('metrics_thresholds', j)
+    message.success('Metrics thresholds saved')
+  }
+
+  const saveCred = async () => {
+    const v = await credForm.validateFields()
+    setDefaultMySQLCredential({ username: v.mysql_user || 'root', password: v.mysql_password })
+    message.success('MySQL credential cached only for the current app session')
+  }
+
   const F = ({ name, label }: { name: string; label: string }) => (
     <Col span={6}><Form.Item name={name} label={label} style={{ marginBottom: 8 }}><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
   )
+
   return (
     <Row gutter={16}>
       <Col span={5}>
-        <Card type="inner" title="MySQL 账号" size="small">
+        <Card type="inner" title="MySQL Session Credential" size="small">
           <Form form={credForm} layout="vertical" size="small" initialValues={{ mysql_user: 'root' }}>
-            <Form.Item name="mysql_user" label="用户名" rules={[{ required: true }]}><Input size="small" /></Form.Item>
-            <Form.Item name="mysql_password" label="密码" rules={[{ required: true, min: 8 }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
-            <Button size="small" type="primary" onClick={saveCred}>保存</Button>
+            <Form.Item name="mysql_user" label="Username" rules={[{ required: true }]}><Input size="small" /></Form.Item>
+            <Form.Item name="mysql_password" label="Password" rules={[{ required: true, min: 8 }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>Stored only in runtime memory for this app session.</Text>
+            <Button size="small" type="primary" onClick={saveCred}>Save</Button>
           </Form>
         </Card>
       </Col>
       <Col span={19}>
-        <Card type="inner" title="监控指标阈值" size="small">
+        <Card type="inner" title="Metric Thresholds" size="small">
           <Form form={form} layout="horizontal" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }} size="small">
-            <Text strong style={{ fontSize: 12 }}>通用</Text>
+            <Text strong style={{ fontSize: 12 }}>General</Text>
             <Row gutter={8} style={{ marginBottom: 4 }}>
-              <F name="connection_warn" label="连接数警告%" /><F name="qps_warn" label="QPS警告" /><F name="slow_query_warn" label="慢查询/秒" /><F name="repl_lag_warn" label="延迟警告(秒)" />
+              <F name="connection_warn" label="Connections warn" /><F name="qps_warn" label="QPS warn" /><F name="slow_query_warn" label="Slow query warn" /><F name="repl_lag_warn" label="Lag warn" />
             </Row>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="connection_critical" label="连接数严重%" /><F name="qps_critical" label="QPS严重" /><F name="slow_query_critical" label="慢查询严重" /><F name="repl_lag_critical" label="延迟严重(秒)" />
+              <F name="connection_critical" label="Connections critical" /><F name="qps_critical" label="QPS critical" /><F name="slow_query_critical" label="Slow query critical" /><F name="repl_lag_critical" label="Lag critical" />
             </Row>
             <Text strong style={{ fontSize: 12 }}>MySQL 8.0+</Text>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="buffer_pool_warn" label="BufferPool%" /><F name="deadlock_warn_per_hour" label="死锁/小时" /><F name="tmp_table_warn" label="临时表(MB)" /><F name="thread_running_warn" label="活跃线程" />
+              <F name="buffer_pool_warn" label="Buffer pool %" /><F name="deadlock_warn_per_hour" label="Deadlocks/hour" /><F name="tmp_table_warn" label="Tmp table MB" /><F name="thread_running_warn" label="Threads running" />
             </Row>
-            <Text strong style={{ fontSize: 12 }}>资源</Text>
+            <Text strong style={{ fontSize: 12 }}>Resources</Text>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="disk_warn" label="磁盘警告%" /><F name="disk_critical" label="磁盘严重%" /><F name="mem_warn" label="内存警告%" /><F name="cpu_warn" label="CPU警告%" />
+              <F name="disk_warn" label="Disk warn %" /><F name="disk_critical" label="Disk critical %" /><F name="mem_warn" label="Memory warn %" /><F name="cpu_warn" label="CPU warn %" />
             </Row>
-            <Button size="small" type="primary" onClick={saveMetrics}>保存阈值</Button>
+            <Button size="small" type="primary" onClick={saveMetrics}>Save thresholds</Button>
           </Form>
         </Card>
       </Col>
     </Row>
   )
 }
-
-// ─── 平台参数 ─────────────────────────────────────────────────────────────
 
 const PARAMS_KEY = 'dbops_platform_params'
 const defaultParams = {
@@ -262,7 +307,7 @@ const PackageTab: React.FC = () => {
   const handleScanRelay = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ path: '' }) })
+      const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: '' }) })
       const json = await res.json()
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
@@ -274,7 +319,7 @@ const PackageTab: React.FC = () => {
     if (!relayHostId) { message.warning('请先选择中继主机'); return }
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
+      const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
       const json = await res.json()
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
@@ -290,7 +335,7 @@ const PackageTab: React.FC = () => {
       // 从远程主机拉取到中继服务器
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '拉取中...' }))
       try {
-        const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
+        const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
         const json = await res.json()
         if (json?.code === 200) { message.success(`${c.fn} 已拉取`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`拉取失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
@@ -300,7 +345,7 @@ const PackageTab: React.FC = () => {
       // 从镜像下载
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '下载中...' }))
       try {
-        const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
+        const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
         const json = await res.json()
         if (json?.code === 200) { message.success(`${c.fn} 下载完成`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`下载失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
@@ -312,7 +357,7 @@ const PackageTab: React.FC = () => {
   const handleUpload = async (file: File) => {
     const fd = new FormData(); fd.append('file', file)
     try {
-      const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd })
+      const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { ...buildAuthHeaders() }, body: fd })
       const json = await res.json()
       if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanRelay() } else message.error(`上传失败: ${json?.message}`)
     } catch (e: any) { message.error(`上传失败: ${e?.message}`) }
@@ -320,7 +365,7 @@ const PackageTab: React.FC = () => {
 
   const handleDelete = async (fn: string) => {
     try {
-      const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: JSON.stringify({ path: fn }) })
+      const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: fn }) })
       const json = await res.json()
       if (json?.code === 200) { message.success('已删除'); handleScanRelay() } else message.error(`删除失败: ${json?.message}`)
     } catch (e: any) { message.error(`删除失败: ${e?.message}`) }
