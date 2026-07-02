@@ -242,7 +242,7 @@ func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, gin.H{
 		"deployment_id": deploymentID,
 		"cluster_type":  dep.ClusterType,
-		"cluster_id":    dep.Name,
+		"cluster_id":    dep.ClusterID,
 		"action":        "scale-out",
 		"node_count":    req.NodeCount,
 		"status":        "awaiting_hosts",

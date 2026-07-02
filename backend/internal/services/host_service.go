@@ -148,7 +148,7 @@ type BatchHostAgentActionResult struct {
 
 func IsLongRunningAgentAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "restart":
+	case "install", "restart", "add", "update", "modify":
 		return true
 	default:
 		return false

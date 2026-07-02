@@ -32,8 +32,12 @@ func (r *ClusterDeployRepository) createInDB(ctx context.Context, dep *models.Cl
 		dep.ID = uuid.New().String()
 	}
 	now := time.Now()
-	dep.CreatedAt = now
-	dep.UpdatedAt = now
+	if dep.CreatedAt.IsZero() {
+		dep.CreatedAt = now
+	}
+	if dep.UpdatedAt.IsZero() {
+		dep.UpdatedAt = dep.CreatedAt
+	}
 
 	query := `INSERT INTO cluster_deployments (id, cluster_type, name, status, request_json, plan_json, custom_json, started_at, finished_at, error_message, cluster_id, display_name, arch, nodes, mysql_version, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := r.db.Pool.ExecContext(ctx, query, dep.ID, dep.ClusterType, dep.Name, dep.Status, dep.RequestJSON, dep.PlanJSON, dep.CustomJSON, dep.StartedAt, dep.FinishedAt, dep.ErrorMessage, dep.ClusterID, dep.DisplayName, dep.Arch, dep.Nodes, dep.MySQLVersion, dep.ConfigJSON, dep.CreatedAt, dep.UpdatedAt)
@@ -236,14 +240,18 @@ func (r *ClusterDeployRepository) ListClusters(ctx context.Context) ([]models.Cl
 		       d.started_at, d.finished_at, d.error_message, d.cluster_id, d.display_name, d.arch,
 		       d.nodes, d.mysql_version, d.config_json, d.created_at, d.updated_at
 		FROM cluster_deployments d
-		INNER JOIN (
-			SELECT cluster_id, MAX(created_at) AS latest_created_at
-			FROM cluster_deployments
-			WHERE cluster_id != '' AND status IN ('completed','success','running','in_progress')
-			GROUP BY cluster_id
-		) latest ON latest.cluster_id = d.cluster_id AND latest.latest_created_at = d.created_at
-		WHERE d.cluster_id != '' AND d.status IN ('completed','success','running','in_progress')
-		ORDER BY d.created_at DESC`
+		WHERE d.cluster_id != ''
+		  AND d.status IN ('completed','success','running','in_progress')
+		  AND d.id = (
+			SELECT latest.id
+			FROM cluster_deployments latest
+			WHERE latest.cluster_id = d.cluster_id
+			  AND latest.cluster_id != ''
+			  AND latest.status IN ('completed','success','running','in_progress')
+			ORDER BY latest.created_at DESC, latest.id DESC
+			LIMIT 1
+		  )
+		ORDER BY d.created_at DESC, d.id DESC`
 	rows, err := r.db.Pool.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %w", err)

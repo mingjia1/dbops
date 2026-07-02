@@ -303,6 +303,17 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 			if !hadExplicitAgentPort && resolved.AgentPort != 0 {
 				node.AgentPort = resolved.AgentPort
 			}
+		} else if !hadExplicitAgentPort && strings.TrimSpace(node.Host) != "" {
+			resolved, err := s.resolveHostRef(ctx, "", node.Host)
+			if err != nil {
+				return req, err
+			}
+			if resolved.Address != "" {
+				node.Host = resolved.Address
+			}
+			if resolved.AgentPort != 0 {
+				node.AgentPort = resolved.AgentPort
+			}
 		}
 		if strings.TrimSpace(node.Host) == "" {
 			return req, fmt.Errorf("node %d host or host_id is required", i+1)
@@ -1945,9 +1956,6 @@ func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 		DataDir:   req.MasterDataDir,
 		Basedir:   req.MasterBasedir,
 		ServerID:  req.MasterServerID,
-	}
-	if masterNode.AgentPort == 0 {
-		masterNode.AgentPort = 9090
 	}
 	out.Nodes = append(out.Nodes, masterNode)
 	// Handle plural ReplicaHosts (new format)

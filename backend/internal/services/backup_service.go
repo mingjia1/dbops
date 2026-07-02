@@ -571,10 +571,10 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 	}
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, inst)
 	if err != nil {
-		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: fmt.Sprintf("cannot resolve agent: %v", err)}, nil
+		return nil, fmt.Errorf("cannot resolve agent: %w", err)
 	}
 	if s.agentClient == nil {
-		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: "agent client not configured"}, nil
+		return nil, fmt.Errorf("agent client not configured")
 	}
 
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup-scan", map[string]interface{}{
@@ -585,17 +585,17 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 		},
 	})
 	if err != nil {
-		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: fmt.Sprintf("agent unreachable: %v", err)}, nil
+		return nil, fmt.Errorf("agent unreachable: %w", err)
 	}
 	if result == nil {
-		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: "agent returned empty result"}, nil
+		return nil, fmt.Errorf("agent returned empty result")
 	}
 	if normalizeBackupAgentStatus(result.Status) == "failed" {
 		msg := "agent backup scan failed"
 		if result.Message != "" {
 			msg = result.Message
 		}
-		return &BackupScanResult{Backups: []DiscoveredBackup{}, ScannedAt: time.Now(), Warning: msg}, nil
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	discovered := dedupeDiscoveredBackups(decodeDiscoveredBackups(result.Data))

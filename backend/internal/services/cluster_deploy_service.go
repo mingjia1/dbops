@@ -256,10 +256,10 @@ func (s *ClusterDeployService) ensureAgentReady(ctx context.Context, host string
 	}
 	// Agent returned 401 — token mismatch. Try to fix via SSH.
 	if s.hostService == nil {
-		return fmt.Errorf("agent token mismatch on %s and no HostService available for auto-fix", host)
+		return fmt.Errorf("agent token mismatch on %s:%d and no HostService available for auto-fix", host, agentPort)
 	}
 	if hostID == "" {
-		return fmt.Errorf("agent token mismatch on %s: host_id unknown, cannot auto-fix", host)
+		return fmt.Errorf("agent token mismatch on %s:%d: host_id unknown, cannot auto-fix", host, agentPort)
 	}
 	log.Printf("WARN: agent token mismatch on %s, attempting SSH reinstall", host)
 	result, installErr := s.hostService.AgentAction(ctx, hostID, HostAgentActionRequest{Action: "install", AgentPort: agentPort})
@@ -963,6 +963,7 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 	stage, progress, message := deploymentFallbackProgress(dep.ClusterType, dep.Status)
 	resp := &DeployResponse{
 		DeploymentID: dep.ID,
+		ClusterID:    dep.ClusterID,
 		ClusterType:  dep.ClusterType,
 		Name:         dep.Name,
 		Status:       normalizeDeployStatus(dep.Status),
@@ -1029,6 +1030,7 @@ func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offse
 		}
 		responses = append(responses, DeployResponse{
 			DeploymentID: dep.ID,
+			ClusterID:    dep.ClusterID,
 			ClusterType:  dep.ClusterType,
 			Name:         dep.Name,
 			Status:       normalizeDeployStatus(dep.Status),
@@ -1570,6 +1572,7 @@ type PXCNode struct {
 
 type DeployResponse struct {
 	DeploymentID  string       `json:"deployment_id"`
+	ClusterID     string       `json:"cluster_id,omitempty"`
 	ClusterType   string       `json:"cluster_type"`
 	Name          string       `json:"name"`
 	Status        string       `json:"status"`
@@ -1609,6 +1612,20 @@ type DeployStep struct {
 
 func (s *ClusterDeployService) resolveHostRef(ctx context.Context, hostID, fallbackAddress string) (deploymentHost, error) {
 	if hostID == "" {
+		if s.hostRepo != nil && strings.TrimSpace(fallbackAddress) != "" {
+			hosts, err := s.hostRepo.List(ctx, 1000, 0)
+			if err == nil {
+				for _, host := range hosts {
+					if strings.EqualFold(strings.TrimSpace(host.Address), strings.TrimSpace(fallbackAddress)) {
+						port := host.AgentPort
+						if port == 0 {
+							port = 9090
+						}
+						return deploymentHost{Address: host.Address, AgentPort: port}, nil
+					}
+				}
+			}
+		}
 		return deploymentHost{Address: fallbackAddress, AgentPort: 9090}, nil
 	}
 	if s.hostRepo == nil {

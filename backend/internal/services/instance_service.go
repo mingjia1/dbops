@@ -346,7 +346,10 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 		return nil, err
 	}
 	// PasswordEncrypted 是 AES-GCM 密文, agent 端自己解密再连 MySQL.
-	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	targetHost := conn.Host
+	if strings.TrimSpace(targetHost) == "" {
+		targetHost = s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	}
 	cfg := map[string]interface{}{
 		"target_host": targetHost,
 		"target_port": port,
@@ -655,7 +658,10 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if err != nil {
 		return nil, err
 	}
-	targetHost := s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	targetHost := conn.Host
+	if strings.TrimSpace(targetHost) == "" {
+		targetHost = s.resolveAgentMySQLTarget(ctx, instance, conn, agentHost)
+	}
 	connectionData := healthCheckConnectionData(nil, conn, agentHost, agentPort, targetHost)
 	if s.agentClient == nil {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
@@ -1172,9 +1178,15 @@ func validateInstanceAdminMetadata(conn *models.InstanceConnection, req Instance
 	if verb == "" {
 		verb = "status"
 	}
+	if strings.TrimSpace(conn.Datadir) == "" {
+		return fmt.Errorf("service control requires instance datadir metadata")
+	}
 	if verb == "start" || verb == "restart" {
 		if conn.Port <= 0 {
 			return fmt.Errorf("service control %s requires instance port metadata", verb)
+		}
+		if strings.TrimSpace(conn.Basedir) == "" {
+			return fmt.Errorf("service control %s requires instance basedir metadata", verb)
 		}
 	}
 	return nil
@@ -1191,15 +1203,6 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	}
 	if err := validateInstanceAdminMetadata(conn, req); err != nil {
 		return failedInstanceAdminResult(err.Error()), nil
-	}
-	// MVP: auto-discover datadir/basedir/os_user from running MySQL when missing.
-	// Without these, the agent cannot locate the PID file or my.cnf for service control.
-	if req.Action == "service_control" && strings.TrimSpace(conn.Datadir) == "" {
-		if metaErr := s.discoverInstanceMetadata(ctx, id, instance, conn); metaErr != nil {
-			return failedInstanceAdminResult(fmt.Sprintf(
-				"service control requires datadir metadata but auto-discovery failed: %v. "+
-					"Please edit the instance and set datadir/basedir manually.", metaErr)), nil
-		}
 	}
 	// When MySQL password is missing, try to discover it via socket.
 	password, _ := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
@@ -1474,21 +1477,17 @@ func resolveInstanceConfigPath(conn *models.InstanceConnection, requested string
 		return "/etc/my.cnf"
 	}
 
-	// If datadir is known, try datadir/my.cnf first
-	if strings.TrimSpace(conn.Datadir) != "" {
-		candidate := filepath.Join(conn.Datadir, "my.cnf")
-		if candidate != "" {
-			return candidate
-		}
-	}
-
 	// PXC: managed config
 	if strings.Contains(conn.Datadir, "/pxc-") && conn.Port > 0 {
 		return fmt.Sprintf("/etc/dbops-pxc/dbops-pxc-%d.cnf", conn.Port)
 	}
 
-	// Let agent auto-discover via configPathCandidates
-	return ""
+	// MHA deployments use a manager-side application config instead of datadir/my.cnf.
+	if strings.Contains(conn.Datadir, "/mha-") {
+		return "/etc/mha/app1.cnf"
+	}
+
+	return "/etc/my.cnf"
 }
 
 // discoverAndFixPassword tries to fix an empty password by:
@@ -2248,6 +2247,16 @@ func (s *InstanceService) resolveAgentEndpoint(ctx context.Context, instance *mo
 func (s *InstanceService) resolveAgentMySQLTarget(ctx context.Context, instance *models.Instance, conn *models.InstanceConnection, agentHost string) string {
 	if conn == nil || strings.TrimSpace(conn.Host) == "" {
 		return "127.0.0.1"
+	}
+	if strings.TrimSpace(agentHost) != "" && strings.EqualFold(strings.TrimSpace(conn.Host), strings.TrimSpace(agentHost)) {
+		return "127.0.0.1"
+	}
+	if instance != nil && instance.HostID != nil && s.hostRepo != nil {
+		if host, err := s.hostRepo.GetByID(ctx, *instance.HostID); err == nil && host != nil {
+			if strings.EqualFold(strings.TrimSpace(host.Address), strings.TrimSpace(agentHost)) {
+				return "127.0.0.1"
+			}
+		}
 	}
 	return conn.Host
 }

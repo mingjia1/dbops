@@ -2,11 +2,9 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"strings"
 	"time"
@@ -373,7 +371,10 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 		return false, "", "", nil
 	}
 	username = "admin"
-	plainPassword = "admin123"
+	plainPassword, err = GenerateSecurePassword(24)
+	if err != nil {
+		return false, "", "", fmt.Errorf("generate admin bootstrap password: %w", err)
+	}
 	hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
 	if hashErr != nil {
 		return false, "", "", hashErr
@@ -418,22 +419,6 @@ func (s *AuthService) CurrentUser(ctx context.Context, userID string) (*UserInfo
 		Roles:       roles,
 		Permissions: permissions,
 	}, nil
-}
-
-func generateRandomPassword(n int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, n)
-	max := big.NewInt(int64(len(charset)))
-	for i := range b {
-		idx, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			// fallback: 时间戳派生 (不会 panic)
-			b[i] = charset[int(time.Now().UnixNano()+int64(i))%len(charset)]
-			continue
-		}
-		b[i] = charset[idx.Int64()]
-	}
-	return string(b)
 }
 
 func (s *AuthService) permissionsForUser(ctx context.Context, user *models.User) ([]string, []string) {

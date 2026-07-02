@@ -829,16 +829,26 @@ func TestDeployPXCCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 func clusterDeployOKHandler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)
+		status := "completed"
+		message := "deployed"
+		switch r.URL.Path {
+		case "/agent/tasks/deploy":
+		case "/agent/tasks/health-check":
+			message = "healthy"
+		default:
+			require.Failf(t, "unexpected agent path", "path=%s", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"code":    200,
 			"message": "success",
 			"data": map[string]interface{}{
 				"task_id":  "cluster-deploy-test",
-				"status":   "completed",
+				"status":   status,
 				"progress": 100,
-				"message":  "deployed",
+				"message":  message,
 			},
 		})
 	}

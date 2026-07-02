@@ -360,12 +360,6 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("backup confirmation is required before in-place upgrade")
 	}
-	// H3: validate plan_id against in-memory plan store when provided.
-	if req.PlanID != "" {
-		if _, ok := s.plans.Load(req.PlanID); !ok {
-			return nil, fmt.Errorf("plan_id %q not found — run POST /upgrades/plan first", req.PlanID)
-		}
-	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),

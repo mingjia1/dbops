@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
@@ -37,7 +38,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	if resp != nil && resp.Token != "" {
 		// 7 天, 与现有 auth_service token expiry 对齐.
 		ctx.SetSameSite(http.SameSiteLaxMode)
-		ctx.SetCookie("auth_token", resp.Token, 7*24*3600, "/", "", true, true)
+		ctx.SetCookie("auth_token", resp.Token, 7*24*3600, "/", "", shouldUseSecureCookie(ctx), true)
 	}
 
 	utils.SuccessResponse(ctx, resp)
@@ -71,7 +72,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 // Logout 清 HttpOnly cookie. 客户端收到 200 后清 localStorage user 信息即可.
 func (c *AuthController) Logout(ctx *gin.Context) {
 	ctx.SetSameSite(http.SameSiteLaxMode)
-	ctx.SetCookie("auth_token", "", -1, "/", "", true, true)
+	ctx.SetCookie("auth_token", "", -1, "/", "", shouldUseSecureCookie(ctx), true)
 	ctx.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
 }
 
@@ -143,4 +144,11 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	ctx.Set("role", claims.Role)
 	ctx.Set("permissions", claims.Permissions)
 	ctx.Next()
+}
+
+func shouldUseSecureCookie(ctx *gin.Context) bool {
+	if ctx.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(ctx.GetHeader("X-Forwarded-Proto"), "https")
 }

@@ -294,27 +294,38 @@ func agentSystemResults(data map[string]interface{}) []CheckResult {
 	// Deployment readiness checks
 	readinessChecks := []struct {
 		key      string
+		aliases  []string
 		name     string
 		passCond func(string) bool
 		suggest  string
 	}{
-		{"dep_numactl", "numactl", func(v string) bool { return v == "installed" }, "yum install -y numactl 或 apt-get install -y numactl"},
-		{"dep_ncurses", "ncurses", func(v string) bool { return v == "installed" }, "yum install -y ncurses-libs 或 apt-get install -y libncurses5"},
-		{"prep_mysql_user", "mysql 用户", func(v string) bool { return v == "exists" }, "useradd -r -s /sbin/nologin mysql"},
-		{"prep_datadir_perm", "数据目录", func(v string) bool { return v == "ready" }, "mkdir -p /data/mysql && chown -R mysql:mysql /data/mysql"},
-		{"prep_disk_space", "磁盘空间", func(v string) bool { return v == "sufficient" }, "磁盘可用空间不足 50G，建议清理或扩容"},
-		{"prep_port_available", "3306 端口", func(v string) bool { return v == "available" }, "端口 3306 已被占用，请释放或使用其他端口"},
+		{"dep_numactl", []string{"numactl"}, "numactl", func(v string) bool { return v == "installed" }, "yum install -y numactl 或 apt-get install -y numactl"},
+		{"dep_ncurses", []string{"ncurses"}, "ncurses", func(v string) bool { return v == "installed" }, "yum install -y ncurses-libs 或 apt-get install -y libncurses5"},
+		{"prep_mysql_user", []string{"mysql_user"}, "mysql 用户", func(v string) bool { return v == "exists" }, "useradd -r -s /sbin/nologin mysql"},
+		{"prep_datadir_perm", []string{"datadir"}, "数据目录", func(v string) bool { return v == "ready" }, "mkdir -p /data/mysql && chown -R mysql:mysql /data/mysql"},
+		{"prep_disk_space", []string{"disk_space"}, "磁盘空间", func(v string) bool {
+			trimmed := strings.TrimSpace(strings.ToLower(v))
+			return trimmed == "sufficient" || strings.Contains(trimmed, "available")
+		}, "磁盘可用空间不足 50G，建议清理或扩容"},
+		{"prep_port_available", []string{"port_3306"}, "3306 端口", func(v string) bool { return v == "available" }, "端口 3306 已被占用，请释放或使用其他端口"},
 	}
 	for _, rc := range readinessChecks {
 		val := stringMapValue(data, rc.key)
+		if val == "" {
+			for _, alias := range rc.aliases {
+				val = stringMapValue(data, alias)
+				if val != "" {
+					break
+				}
+			}
+		}
+		if val == "" {
+			continue
+		}
 		passed := rc.passCond(val)
 		status := "passed"
 		suggestion := ""
-		if val == "" {
-			val = "not_checked"
-			status = "unknown"
-			passed = false
-		} else if !passed {
+		if !passed {
 			status = "failed"
 			suggestion = rc.suggest
 		}

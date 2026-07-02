@@ -115,7 +115,7 @@ func IsValidUpgradePath(sourceFlavor, sourceVer, targetFlavor, targetVer string)
 	if entry, err := catalog.GetByFlavorVersion(targetFlavor, targetVer); err == nil {
 		if len(entry.UpgradeFrom) > 0 {
 			for _, allowed := range entry.UpgradeFrom {
-				if sourceVer == allowed || strings.HasPrefix(sourceVer, allowed) {
+				if sourceVer == allowed || strings.HasPrefix(sourceVer, allowed) || MajorVersion(sourceVer) == MajorVersion(allowed) {
 					return true, ""
 				}
 			}
