@@ -46,6 +46,25 @@ func TestUniversalClusterDeployBuildsMGRPlan(t *testing.T) {
 	require.Contains(t, stepIDs(plan.Steps), "sync_metadata")
 }
 
+func TestUniversalClusterDeployRejectsMGRMySQL57(t *testing.T) {
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	_, err := service.ValidateClusterDeploy(context.Background(), UniversalClusterDeployRequest{
+		ClusterID:   "mgr57",
+		ClusterType: "mgr",
+		MySQL:       MySQLDeployOptions{Version: "5.7.44"},
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", Role: "primary", MySQLPort: 3308},
+			{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3308},
+			{Host: "10.0.0.13", Role: "secondary", MySQLPort: 3308},
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires MySQL 8.0+")
+	require.Contains(t, err.Error(), "5.7.44")
+}
+
 func TestUniversalClusterDeployRejectsForbiddenMySQLConfig(t *testing.T) {
 	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
 

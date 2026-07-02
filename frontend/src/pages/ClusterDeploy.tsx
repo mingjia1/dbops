@@ -126,11 +126,21 @@ const stepStatusToAntd = (status?: string): 'wait' | 'process' | 'finish' | 'err
 const stepProgressPercent = (step: DeployStepView, idx: number, steps: DeployStepView[], overallProgress?: number) => {
   const status = stepStatusToAntd(step.status)
   if (status === 'finish') return 100
-  if (status === 'error') return clampProgress(overallProgress)
+  if (status === 'error') return Math.max(5, clampProgress(overallProgress))
   if (status === 'wait') return 0
   const completedBefore = steps.slice(0, idx).filter((item) => stepStatusToAntd(item.status) === 'finish').length
   const stepSpan = 100 / Math.max(steps.length, 1)
   return clampProgress(((overallProgress || 0) - completedBefore * stepSpan) / stepSpan * 100)
+}
+
+const majorVersion = (version?: string) => {
+  const major = Number(String(version || '').split('.')[0])
+  return Number.isFinite(major) ? major : 0
+}
+
+const versionSupportsArch = (arch: ArchType, version?: string) => {
+  if (arch === 'mgr') return majorVersion(version) >= 8
+  return true
 }
 
 const ClusterDeploy: React.FC = () => {
@@ -346,6 +356,10 @@ const ClusterDeploy: React.FC = () => {
       message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
       return
     }
+    if (!versionSupportsArch(arch, values.mysql_version)) {
+      message.error('MGR 部署需要选择 MySQL 8.0+ 版本，MySQL 5.7 不支持 Group Replication')
+      return
+    }
     const payload = buildDeployPayload(arch, values)
     setPlanPreviewLoading(true)
     setPlanPreviewArch(arch)
@@ -375,6 +389,10 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const runPrecheck = async (arch: ArchType, values: any) => {
+    if (!versionSupportsArch(arch, values.mysql_version)) {
+      message.error('MGR 部署需要选择 MySQL 8.0+ 版本，MySQL 5.7 不支持 Group Replication')
+      return
+    }
     const payload = buildDeployPayload(arch, values)
     const nodes = payload.nodes || []
     const hostIDs: string[] = nodes.map((node: any) => node.host_id).filter(Boolean)
@@ -417,8 +435,8 @@ const ClusterDeploy: React.FC = () => {
     setSubmitting(true)
     setCurrentStep(0)
     setActiveDeployment(null)
+    const payload = buildDeployPayload(arch, values)
     try {
-      const payload = buildDeployPayload(arch, values)
       await clusterDeployApi.validateCluster(payload)
       const res: any = await clusterDeployApi.deployCluster(payload)
       if (!res?.data?.deployment_id && !res?.data?.id) {
@@ -431,12 +449,16 @@ const ClusterDeploy: React.FC = () => {
         cluster_id: data?.cluster_id || values.cluster_id || data?.deployment_id || data?.id,
         cluster_type: data?.cluster_type || arch,
         status,
-        progress: deploymentProgress(status),
+        progress: deploymentProgress(status, data?.progress),
         stage: isCompletedDeployStatus(status) ? STAGE_ORDER[4] : STAGE_ORDER[0],
         message: data?.message || '部署已提交，等待后端开始执行',
         mysql_user: data?.mysql_user,
         mysql_password: data?.mysql_password,
-        started_at: new Date().toISOString(),
+        started_at: data?.started_at || new Date().toISOString(),
+        finished_at: data?.finished_at,
+        nodes: Array.isArray(data?.nodes) ? data.nodes : [],
+        steps: Array.isArray(data?.steps) ? data.steps : [],
+        logs: Array.isArray(data?.logs) ? data.logs : [],
       }
       setActiveDeployment(dep)
       await loadDeployments()
@@ -447,6 +469,21 @@ const ClusterDeploy: React.FC = () => {
       }
       startPolling(dep)
     } catch (err: any) {
+      const failedData = err?.response?.data?.data
+      if (failedData?.deployment_id || failedData?.id) {
+        const dep = normalizeDeployment({
+          ...failedData,
+          cluster_id: failedData.cluster_id || values.cluster_id || payload.cluster_id,
+          cluster_type: failedData.cluster_type || arch,
+          message: failedData.error_message || failedData.message || err?.message,
+        })
+        patchDeployment(dep)
+        const failedStepIdx = dep.steps?.findIndex((step) => isFailedDeployStatus(step.status)) ?? -1
+        if (failedStepIdx >= 0) setCurrentStep(Math.min(failedStepIdx, STAGE_ORDER.length - 1))
+        await loadDeployments(false)
+        showDeploymentResultMessage(dep)
+        return
+      }
       message.error(`提交部署失败: ${err?.response?.data?.message || err?.message}`)
     } finally {
       setSubmitting(false)
@@ -705,6 +742,7 @@ const ClusterDeploy: React.FC = () => {
               optionFilterProp="label"
               options={versions
                 .slice()
+                .filter((v) => versionSupportsArch(arch, v.version))
                 .sort((a, b) => {
                   if (a.flavor !== b.flavor) return a.flavor.localeCompare(b.flavor)
                   return b.release_date.localeCompare(a.release_date)

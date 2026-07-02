@@ -262,6 +262,9 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if err := validateUniversalClusterType(req.ClusterType); err != nil {
 		return req, err
 	}
+	if err := validateVersionArchitectureCompatibility(req.ClusterType, req.MySQL.Version); err != nil {
+		return req, err
+	}
 	if req.Mode != DeployModeReal && req.Mode != DeployModePseudo && req.Mode != DeployModeValidateOnly {
 		return req, fmt.Errorf("unsupported deploy mode %q", req.Mode)
 	}
@@ -404,9 +407,12 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	existing, err := s.instRepo.ListEndpointsByHosts(ctx, hosts)
 	if err != nil {
 		return nil
-	}	// M4: Check for duplicate host:port within the same deployment request.
+	} // M4: Check for duplicate host:port within the same deployment request.
 	// Skip manager nodes — they don't run MySQL, so their MySQLPort is unused.
-	type nodeKey struct{ host string; port int }
+	type nodeKey struct {
+		host string
+		port int
+	}
 	seenNodes := map[nodeKey]int{} // index of first node with this key
 	for i, dep := range nodes {
 		if dep.Role == "manager" {
@@ -459,7 +465,6 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 	}
 	return nil
 }
-
 
 func (s *ClusterDeployService) checkPXCClusterNameConflict(ctx context.Context, clusterName, currentClusterID string) error {
 	deployments, err := s.repo.List(ctx, 1000, 0)
@@ -627,6 +632,27 @@ func validateUniversalClusterType(clusterType string) error {
 	default:
 		return fmt.Errorf("unsupported cluster_type %q", clusterType)
 	}
+}
+
+func validateVersionArchitectureCompatibility(clusterType, version string) error {
+	major, _ := majorMinorParts(version)
+	if clusterType == ClusterTypeMGR && (major < 8 || major == 0) {
+		return fmt.Errorf("mgr deployment requires MySQL 8.0+; selected version %q uses the MySQL 5.7 template and does not support Group Replication", version)
+	}
+	return nil
+}
+
+func majorMinorParts(version string) (int, int) {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) == 0 || parts[0] == "" {
+		return 0, 0
+	}
+	major, _ := strconv.Atoi(parts[0])
+	minor := 0
+	if len(parts) > 1 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	return major, minor
 }
 
 func normalizeDeployRole(clusterType, role string) string {
