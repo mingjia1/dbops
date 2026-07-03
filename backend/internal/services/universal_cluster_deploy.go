@@ -853,15 +853,11 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		})
 
 		// Step 2: Configure replication on the replica
-		slaveHost := replicaNodes[i].Host
-		if slaveHost == "" {
-			slaveHost = "127.0.0.1"
-		}
 		replicaConfig := map[string]interface{}{
 			"deploy_mode":    "ha-replica",
 			"master_host":    masterNode.Host,
 			"master_port":    masterNode.MySQLPort,
-			"slave_host":     slaveHost,
+			"slave_host":     replicaNodes[i].Host,
 			"slave_port":     replicaNodes[i].MySQLPort,
 			"server_id":      defaultInt(replicaNodes[i].ServerID, masterSID+i+1),
 			"replicate_user": req.Replication.User,
@@ -993,15 +989,11 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = installID
 
 		if masterNode != nil {
-			slaveHost := replicaNodes[i].Host
-			if slaveHost == "" {
-				slaveHost = "127.0.0.1"
-			}
 			replicaHAConfig := map[string]interface{}{
 				"deploy_mode":    "ha-replica",
 				"master_host":    masterNode.Host,
 				"master_port":    masterNode.MySQLPort,
-				"slave_host":     slaveHost,
+				"slave_host":     replicaNodes[i].Host,
 				"slave_port":     replicaNodes[i].MySQLPort,
 				"server_id":      defaultInt(replicaNodes[i].ServerID, mhaMasterSID+i+1),
 				"replicate_user": req.Replication.User,
