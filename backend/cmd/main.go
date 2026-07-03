@@ -208,7 +208,7 @@ func main() {
 	rebuildSvc := services.NewRebuildService(pluginExec, credentialVault, instanceRepo)
 	clusterDeployService.SetRebuildService(rebuildSvc)
 	deployOrchestrator := services.NewDeployOrchestrator(pluginRegistry, credentialVault, instanceRepo)
-	scaleSvc := services.NewScaleService(deployOrchestrator, instanceRepo, pluginExec)
+	scaleSvc := services.NewScaleService(deployOrchestrator, instanceRepo, pluginExec, auditService)
 	clusterDeployService.SetScaleService(scaleSvc)
 
 	settingsRepo := repositories.NewPlatformSettingsRepository(db)

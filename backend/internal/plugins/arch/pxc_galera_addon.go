@@ -2,6 +2,7 @@ package arch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
@@ -119,6 +120,24 @@ func (p *PXCGaleraAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv) 
 	return nil
 }
 
-func (p *PXCGaleraAddonPlugin) Teardown(_ context.Context, _ plugins.PluginEnv) error {
-	return nil
+func (p *PXCGaleraAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) error {
+	if p.agentCaller == nil {
+		return nil
+	}
+	// Best-effort: ask each non-bootstrap node to leave the Galera cluster.
+	// Bootstrap node cannot be removed while it's the last seed node.
+	var errs []error
+	for _, node := range env.Nodes {
+		if node.Role == "bootstrap" {
+			continue
+		}
+		payload := map[string]interface{}{
+			"task_id": fmt.Sprintf("pxc-teardown-%s-%s", env.ClusterID, node.Address),
+			"action":  "leave",
+		}
+		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", payload); err != nil {
+			errs = append(errs, fmt.Errorf("leave %s: %w", node.Address, err))
+		}
+	}
+	return errors.Join(errs...)
 }

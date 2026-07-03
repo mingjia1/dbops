@@ -16,13 +16,19 @@ func (p *MGRAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNod
 	if p.agentCaller == nil {
 		return fmt.Errorf("agent caller not configured")
 	}
-	// H2: During ScaleOut, derive per-node local_port from node count
-	// to avoid port conflicts. Existing nodes' ports are in env.Custom.
-	localPort := 33061 + len(env.Nodes)
+	// H2: Derive per-node local_port from base + node index.
+	// env.Nodes must include all existing cluster nodes so that
+	// each new node gets a unique local_port.
+	basePort := 33061
 	if v, ok := env.Custom["local_port"]; ok {
 		if port, ok := v.(int); ok && port > 0 {
-			localPort = port + len(env.Nodes)
+			basePort = port
 		}
+	}
+	// The new node is the last element in env.Nodes; its index is len-1.
+	localPort := basePort + len(env.Nodes) - 1
+	if localPort <= 0 {
+		localPort = basePort
 	}
 	groupName := env.ClusterID
 	if v, ok := env.Custom["group_name"]; ok {
@@ -30,9 +36,10 @@ func (p *MGRAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNod
 			groupName = name
 		}
 	}
-	seeds := []string{fmt.Sprintf("%s:%d", newNode.Address, localPort)}
-	for _, n := range env.Nodes {
-		seeds = append(seeds, fmt.Sprintf("%s:%d", n.Address, localPort))
+	// Build seeds with each node's correct local_port.
+	seeds := make([]string, 0, len(env.Nodes))
+	for i, n := range env.Nodes {
+		seeds = append(seeds, fmt.Sprintf("%s:%d", n.Address, basePort+i))
 	}
 	payload := map[string]interface{}{
 		"task_id":       fmt.Sprintf("mgr-join-%s-%s", env.ClusterID, newNode.Address),

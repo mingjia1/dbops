@@ -33,14 +33,19 @@ type ScaleService struct {
 	orchestrator *DeployOrchestrator
 	instRepo     InstanceRepositoryInterface
 	pluginExec   *plugins.Executor
+	auditSvc     *AuditService
 }
 
-func NewScaleService(orchestrator *DeployOrchestrator, instRepo InstanceRepositoryInterface, pluginExec *plugins.Executor) *ScaleService {
-	return &ScaleService{
+func NewScaleService(orchestrator *DeployOrchestrator, instRepo InstanceRepositoryInterface, pluginExec *plugins.Executor, auditSvc ...*AuditService) *ScaleService {
+	s := &ScaleService{
 		orchestrator: orchestrator,
 		instRepo:     instRepo,
 		pluginExec:   pluginExec,
 	}
+	if len(auditSvc) > 0 && auditSvc[0] != nil {
+		s.auditSvc = auditSvc[0]
+	}
+	return s
 }
 
 type ScaleOutRequest struct {
@@ -76,6 +81,30 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 	kernelPluginName := req.Flavor + "-core"
 	var instIDs []string
 
+	// H2: Fetch existing cluster instances so that arch plugins (e.g. MGR)
+	// can derive per-node local_port from the total node count.
+	var existingNodes []plugins.PluginNode
+	if s.instRepo != nil {
+		if existingInstances, listErr := s.instRepo.ListByClusterID(ctx, req.ClusterID); listErr == nil {
+			for _, inst := range existingInstances {
+				if inst == nil {
+					continue
+				}
+				pn := plugins.PluginNode{HostID: inst.ID}
+				if inst.HostID != nil {
+					pn.HostID = *inst.HostID
+				}
+				if conn, connErr := s.instRepo.GetConnection(ctx, inst.ID); connErr == nil && conn != nil {
+					pn.Address = conn.Host
+					pn.MySQLPort = conn.Port
+					pn.DataDir = conn.Datadir
+					pn.Basedir = conn.Basedir
+				}
+				existingNodes = append(existingNodes, pn)
+			}
+		}
+	}
+
 	for _, node := range req.NewNodes {
 		env := plugins.PluginEnv{
 			ClusterID: req.ClusterID,
@@ -102,19 +131,23 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 		}
 
 		archPluginName := archTypeToPluginName(req.ArchType)
+		// H2: Include existing nodes in joinEnv so plugins can derive
+		// unique per-node local_port from len(Nodes).
+		newPluginNode := plugins.PluginNode{
+			HostID:    node.HostID,
+			Address:   node.Address,
+			AgentPort: node.AgentPort,
+			MySQLPort: node.MySQLPort,
+			Role:      "replica",
+			DataDir:   node.DataDir,
+			Basedir:   node.Basedir,
+		}
+		joinNodes := make([]plugins.PluginNode, 0, len(existingNodes)+1)
+		joinNodes = append(joinNodes, existingNodes...)
+		joinNodes = append(joinNodes, newPluginNode)
 		joinEnv := plugins.PluginEnv{
-			ClusterID: req.ClusterID,
-			Nodes: []plugins.PluginNode{
-				{
-					HostID:    node.HostID,
-					Address:   node.Address,
-					AgentPort: node.AgentPort,
-					MySQLPort: node.MySQLPort,
-					Role:      "replica",
-					DataDir:   node.DataDir,
-					Basedir:   node.Basedir,
-				},
-			},
+			ClusterID:   req.ClusterID,
+			Nodes:       joinNodes,
 			Credentials: *creds,
 		}
 
@@ -128,6 +161,10 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			log.Printf("WARN: arch join failed for %s: %v", node.Address, err)
 		}
 
+		// H2: Track newly added node so subsequent iterations see it
+		// in existingNodes and get a unique local_port.
+		existingNodes = append(existingNodes, newPluginNode)
+
 		instID := uuid.New().String()
 		if s.instRepo != nil {
 			inst := &models.Instance{
@@ -140,6 +177,19 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			}
 		}
 		instIDs = append(instIDs, instID)
+	}
+
+	// L3: Record audit log for scale-out operation
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Operation:    "scale_out",
+			ResourceType: "cluster",
+			ResourceID:   req.ClusterID,
+			Action:       fmt.Sprintf("add %d node(s)", len(req.NewNodes)),
+			Details:      fmt.Sprintf("arch=%s nodes=%d", req.ArchType, len(req.NewNodes)),
+			Result:       "success",
+		})
 	}
 
 	return &ScaleOutResult{
@@ -209,6 +259,19 @@ func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleI
 		}
 	}
 
+	// L3: Record audit log for scale-in operation
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Operation:    "scale_in",
+			ResourceType: "cluster",
+			ResourceID:   req.ClusterID,
+			Action:       fmt.Sprintf("remove node %s", req.RemoveNodeID),
+			Details:      fmt.Sprintf("arch=%s removed=%s", req.ArchType, req.RemoveNodeID),
+			Result:       "success",
+		})
+	}
+
 	return &ScaleInResult{
 		ClusterID: req.ClusterID,
 		RemovedID: req.RemoveNodeID,
@@ -271,6 +334,19 @@ func (s *ScaleService) RebuildNode(ctx context.Context, req RebuildRequest) (*Re
 			Message:    fmt.Sprintf("rebuild failed: %v", err),
 			DurationMs: time.Since(start).Milliseconds(),
 		}, err
+	}
+
+	// L3: Record audit log for rebuild operation
+	if s.auditSvc != nil {
+		_, _ = s.auditSvc.CreateAuditLog(ctx, CreateAuditLogRequest{
+			UserID:       userIDFromCtx(ctx),
+			Operation:    "rebuild",
+			ResourceType: "instance",
+			ResourceID:   req.InstanceID,
+			Action:       fmt.Sprintf("rebuild node %s", req.Node.Address),
+			Details:      fmt.Sprintf("arch=%s duration_ms=%d", req.ArchType, time.Since(start).Milliseconds()),
+			Result:       "success",
+		})
 	}
 
 	return &RebuildResult{
