@@ -689,8 +689,11 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	defer primaryServer.Close()
 	secondaryServer := httptest.NewServer(clusterDeployOKHandler(t))
 	defer secondaryServer.Close()
+	thirdServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer thirdServer.Close()
 	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
 	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
+	thirdHost, thirdAgentPort := splitTestServerHostPort(t, thirdServer.URL)
 
 	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
@@ -699,8 +702,10 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-primary-host", Name: "mgr-primary-host", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-secondary-host", Name: "mgr-secondary-host", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-third-host", Name: "mgr-third-host", Address: thirdHost, SSHPort: 22, SSHUser: "root", AgentPort: thirdAgentPort}))
 	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-primary-inst", "mgr-primary-host", primaryHost, 3306)
 	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-secondary-inst", "mgr-secondary-host", secondaryHost, 3307)
+	createClusterDeployManagedInstance(t, ctx, instRepo, "mgr-third-inst", "mgr-third-host", thirdHost, 3308)
 
 	resp, err := service.DeployMGR(ctx, DeployMGRRequest{
 		ClusterID:        "mgr-agent-port",
@@ -708,10 +713,12 @@ func TestDeployMGRUsesResolvedAgentPorts(t *testing.T) {
 		PrimaryHost:      primaryHost,
 		PrimaryPort:      3306,
 		PrimaryAgentPort: primaryAgentPort,
-		SecondaryHosts:   []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
-		MySQLUser:        "root",
-		MySQLPassword:    "rootpass",
-		PseudoMode:       true,
+		SecondaryHosts: []SecondaryNode{
+			{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort},
+			{Host: thirdHost, Port: 3308, AgentPort: thirdAgentPort},
+		},
+		MySQLUser:     "root",
+		MySQLPassword: "rootpass",
 	})
 
 	require.NoError(t, err)
@@ -764,8 +771,11 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 	defer primaryServer.Close()
 	secondaryServer := httptest.NewServer(clusterDeployOKHandler(t))
 	defer secondaryServer.Close()
+	thirdServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer thirdServer.Close()
 	primaryHost, primaryAgentPort := splitTestServerHostPort(t, primaryServer.URL)
 	secondaryHost, secondaryAgentPort := splitTestServerHostPort(t, secondaryServer.URL)
+	thirdHost, thirdAgentPort := splitTestServerHostPort(t, thirdServer.URL)
 
 	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
@@ -774,6 +784,7 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-primary", Name: "mgr-unsynced-primary", Address: primaryHost, SSHPort: 22, SSHUser: "root", AgentPort: primaryAgentPort}))
 	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-secondary", Name: "mgr-unsynced-secondary", Address: secondaryHost, SSHPort: 22, SSHUser: "root", AgentPort: secondaryAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "mgr-unsynced-third", Name: "mgr-unsynced-third", Address: thirdHost, SSHPort: 22, SSHUser: "root", AgentPort: thirdAgentPort}))
 
 	resp, err := service.DeployMGR(ctx, DeployMGRRequest{
 		ClusterID:        "mgr-unsynced",
@@ -781,10 +792,12 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 		PrimaryHost:      primaryHost,
 		PrimaryPort:      3306,
 		PrimaryAgentPort: primaryAgentPort,
-		SecondaryHosts:   []SecondaryNode{{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort}},
-		MySQLUser:        "root",
-		MySQLPassword:    "rootpass",
-		PseudoMode:       true,
+		SecondaryHosts: []SecondaryNode{
+			{Host: secondaryHost, Port: 3307, AgentPort: secondaryAgentPort},
+			{Host: thirdHost, Port: 3308, AgentPort: thirdAgentPort},
+		},
+		MySQLUser:     "root",
+		MySQLPassword: "rootpass",
 	})
 
 	require.NoError(t, err)
@@ -795,7 +808,7 @@ func TestDeployMGRCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T)
 	require.Equal(t, "success", status.Status)
 	instances, err := instRepo.ListByClusterID(ctx, "mgr-unsynced")
 	require.NoError(t, err)
-	require.Len(t, instances, 2)
+	require.Len(t, instances, 3)
 }
 
 func TestDeployPXCCreatesManagedInstancesWhenManagementSyncMissing(t *testing.T) {
