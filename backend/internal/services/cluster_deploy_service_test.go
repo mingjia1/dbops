@@ -18,8 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testing.T) {
+func TestDeployPXC_WithPreExistingInstancesSyncsManagementAndAudit(t *testing.T) {
 	ctx := context.Background()
+	bootstrapServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer bootstrapServer.Close()
+	joinServer := httptest.NewServer(clusterDeployOKHandler(t))
+	defer joinServer.Close()
+	bootstrapHost, bootstrapAgentPort := splitTestServerHostPort(t, bootstrapServer.URL)
+	joinHost, joinAgentPort := splitTestServerHostPort(t, joinServer.URL)
+
 	db := newTestDB(t)
 	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -27,10 +34,11 @@ func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testin
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditSvc := NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
 	ctx = context.WithValue(ctx, "user_id", "deploy-auditor-001")
-	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, newTestAgentClient(), config.ClusterDefaults{}, auditSvc)
+	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, NewAgentClient(""), config.ClusterDefaults{}, auditSvc)
+	service.SetEncryptionKey("test-encryption-key")
 
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-a", Name: "host-a", Address: "10.0.0.11", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
-	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-b", Name: "host-b", Address: "10.0.0.12", SSHPort: 22, SSHUser: "root", AgentPort: 9090}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-a", Name: "host-a", Address: bootstrapHost, SSHPort: 22, SSHUser: "root", AgentPort: bootstrapAgentPort}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-b", Name: "host-b", Address: joinHost, SSHPort: 22, SSHUser: "root", AgentPort: joinAgentPort}))
 
 	password, err := utils.Encrypt("rootpass", "test-encryption-key")
 	require.NoError(t, err)
@@ -44,15 +52,16 @@ func TestDeployPXC_PseudoModeResolvesReplicaHostIDsOverEmptyOtherNodes(t *testin
 			PasswordEncrypted: password,
 		}))
 	}
-	createManagedInstance("inst-a", "pxc-a", "host-a", "10.0.0.11", 3306)
-	createManagedInstance("inst-b", "pxc-b", "host-b", "10.0.0.12", 3307)
+	createManagedInstance("inst-a", "pxc-a", "host-a", bootstrapHost, 3306)
+	createManagedInstance("inst-b", "pxc-b", "host-b", joinHost, 3307)
 
 	resp, err := service.DeployPXC(ctx, DeployPXCRequest{
 		ClusterID:     "pxc-ui",
 		Name:          "pxc-ui",
-		BootstrapNode: BootstrapNode{Host: "10.0.0.11", Port: 3306},
-		OtherNodes:    []PXCNode{{Host: "10.0.0.12", Port: 3307}},
-		PseudoMode:    true,
+		BootstrapNode: BootstrapNode{Host: bootstrapHost, Port: 3306, AgentPort: bootstrapAgentPort},
+		OtherNodes:    []PXCNode{{Host: joinHost, Port: 3307, AgentPort: joinAgentPort}},
+		MySQLUser:     "root",
+		MySQLPassword: "rootpass",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)

@@ -382,11 +382,11 @@ func (s *ClusterDeployService) loadNodesFromDB(ctx context.Context, deploymentID
 }
 
 func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, plan *ClusterDeployPlan, req UniversalClusterDeployRequest) (finalResp *DeployResponse, finalErr error) {
-	// This execution engine supports all modes:
-	// - pseudo: metadata-only (no agent calls)
-	// - validate_only: plan only, no execution
-	// - real: full deployment, calling agent for each deploy step
-	isReal := plan.Mode == DeployModeReal
+	// validate_only requests are handled before this execution engine is called.
+	// All execution here is real deployment via agent calls.
+	if plan.Mode != DeployModeReal {
+		return nil, fmt.Errorf("unsupported execution mode %q", plan.Mode)
+	}
 
 	clusterID := plan.DeploymentID
 	clusterType := plan.ClusterType
@@ -430,16 +430,14 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	s.updateProgress(clusterID, "初始化", "部署计划已创建", 5)
 
 	// Pre-flight: ensure agents on all nodes are reachable with correct token.
-	if isReal {
-		for _, node := range plan.Nodes {
-			if err := s.ensureAgentReady(ctx, node.Host, node.AgentPort, node.HostID); err != nil {
-				s.addStep(clusterID, "Pre-flight agent check", "running")
-				errMsg := fmt.Sprintf("agent pre-flight failed on %s: %v", node.Host, err)
-				s.updateStepStatus(clusterID, "Pre-flight agent check", "failed", errMsg)
-				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-				finish := time.Now()
-				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
-			}
+	for _, node := range plan.Nodes {
+		if err := s.ensureAgentReady(ctx, node.Host, node.AgentPort, node.HostID); err != nil {
+			s.addStep(clusterID, "Pre-flight agent check", "running")
+			errMsg := fmt.Sprintf("agent pre-flight failed on %s: %v", node.Host, err)
+			s.updateStepStatus(clusterID, "Pre-flight agent check", "failed", errMsg)
+			s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+			finish := time.Now()
+			return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 		}
 	}
 
@@ -471,57 +469,51 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
 
-			if isReal {
-				// Real mode: call the agent
-				if s.agentClient == nil {
-					errMsg := "agent client not configured"
-					s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
-					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-					finish := time.Now()
-					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
-				}
-
-				// Build agent payload from step.Config
-				agentPayload := map[string]interface{}{
-					"task_id":     clusterID,
-					"instance_id": "",
-					"config":      step.Config,
-				}
-
-				nodeMsg := fmt.Sprintf("正在部署 %s 于 %s:%d", targetNode.Role, targetNode.Host, targetNode.AgentPort)
-				s.updateProgress(clusterID, step.Name, nodeMsg, progressPct)
-
-				result, err := s.agentClient.DeployCluster(ctx, targetNode.Host, targetNode.AgentPort, agentPayload)
-				if err != nil {
-					errMsg := fmt.Sprintf("agent call failed on %s: %v", targetNode.Host, err)
-					s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
-					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-					finish := time.Now()
-					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
-				}
-
-				if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
-					errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
-					s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
-					// Mark whole deployment as failed for critical steps
-					// Secondary/join failures are marked as partial (some nodes may still be OK)
-					isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
-					if isCritical {
-						s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-					} else {
-						s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
-					}
-					finish := time.Now()
-					return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
-				}
-
-				nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
-				s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
-			} else {
-				// Pseudo mode: mark as completed without calling agent
-				nodeMsg := fmt.Sprintf("节点 %s (%s) 步骤完成（演练模式）", targetNode.Host, targetNode.Role)
-				s.updateStepStatus(clusterID, step.Name, "completed", nodeMsg)
+			// Real mode: call the agent
+			if s.agentClient == nil {
+				errMsg := "agent client not configured"
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
+
+			// Build agent payload from step.Config
+			agentPayload := map[string]interface{}{
+				"task_id":     clusterID,
+				"instance_id": "",
+				"config":      step.Config,
+			}
+
+			nodeMsg := fmt.Sprintf("正在部署 %s 于 %s:%d", targetNode.Role, targetNode.Host, targetNode.AgentPort)
+			s.updateProgress(clusterID, step.Name, nodeMsg, progressPct)
+
+			result, err := s.agentClient.DeployCluster(ctx, targetNode.Host, targetNode.AgentPort, agentPayload)
+			if err != nil {
+				errMsg := fmt.Sprintf("agent call failed on %s: %v", targetNode.Host, err)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+			}
+
+			if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+				errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
+				s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
+				// Mark whole deployment as failed for critical steps
+				// Secondary/join failures are marked as partial (some nodes may still be OK)
+				isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
+				if isCritical {
+					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				} else {
+					s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				}
+				finish := time.Now()
+				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
+			}
+
+			nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
+			s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
 
 		case "verify":
 			s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
@@ -605,11 +597,6 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	}
 	finalResp = resp
 	return resp, nil
-}
-
-// syncPseudoClusterManagement syncs cluster metadata for plan-based pseudo deployments.
-func (s *ClusterDeployService) syncPseudoClusterManagement(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode) error {
-	return s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, planNodes, UniversalClusterDeployRequest{})
 }
 
 func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode, req UniversalClusterDeployRequest) error {

@@ -407,6 +407,31 @@ func TestTypedPXCRequestToUniversalMapsHostIDsAndRuntimeParams(t *testing.T) {
 	require.Equal(t, "true", steps[4].Config["force"])
 }
 
+func TestBuildPXCPlanStepsPreservesSortedNodeConfig(t *testing.T) {
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "pxc-sorted-config",
+		ClusterType: "pxc",
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "sstuser", Password: "sstpass"},
+	}
+
+	nodes := []PlanNode{
+		{ID: "secondary", Host: "10.0.0.12", Role: "secondary", MySQLPort: 3307, DataDir: "/data/mysql/pxc-secondary", Basedir: "/opt/pxc-secondary"},
+		{ID: "bootstrap", Host: "10.0.0.11", Role: "bootstrap", MySQLPort: 3306, DataDir: "/data/mysql/pxc-bootstrap", Basedir: "/opt/pxc-bootstrap"},
+	}
+
+	steps := buildPXCPlanSteps(nodes, req)
+	bootstrapStep := findStepByID(steps, "bootstrap_bootstrap")
+	require.NotNil(t, bootstrapStep)
+	require.Equal(t, "/data/mysql/pxc-bootstrap", bootstrapStep.Config["data_dir"])
+	require.Equal(t, "/opt/pxc-bootstrap", bootstrapStep.Config["basedir"])
+
+	joinStep := findStepByID(steps, "join_secondary")
+	require.NotNil(t, joinStep)
+	require.Equal(t, "/data/mysql/pxc-secondary", joinStep.Config["data_dir"])
+	require.Equal(t, "/opt/pxc-secondary", joinStep.Config["basedir"])
+}
+
 func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

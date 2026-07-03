@@ -696,7 +696,7 @@ const ClusterDeploy: React.FC = () => {
       cluster_id: values.cluster_id,
       name: values.cluster_id,
       cluster_type: arch,
-      mode: values.pseudo_mode ? 'pseudo' : 'real',
+      mode: 'real',
       mysql: {
         version: values.mysql_version || '8.0',
         user: credential.username,
@@ -789,9 +789,6 @@ const ClusterDeploy: React.FC = () => {
     options?: { simpleReplica?: boolean },
   ) => (
     <Form form={form} layout="horizontal" onFinish={onFinish}>
-      <Form.Item name="pseudo_mode" valuePropName="checked" initialValue={false} hidden>
-        <Checkbox />
-      </Form.Item>
       <Row gutter={16}>
         <Col span={12}>
           <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
@@ -1232,7 +1229,7 @@ const ClusterDeploy: React.FC = () => {
             {/* Mode warning for new deployments */}
             {pendingDeployPayload && (
               <Alert
-                type={pendingDeployValues?.pseudo_mode ? 'info' : 'warning'}
+                type="warning"
                 message={pendingDeployValues?.pseudo_mode
                   ? '伪集群演练只写入平台纳管关系和拓扑，不会修改目标主机上的数据库服务。'
                   : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。'}

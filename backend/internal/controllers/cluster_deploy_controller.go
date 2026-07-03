@@ -18,10 +18,29 @@ func NewClusterDeployController(service *services.ClusterDeployService) *Cluster
 	return &ClusterDeployController{service: service}
 }
 
+func rejectPseudoUniversalMode(ctx *gin.Context, mode string) bool {
+	if strings.EqualFold(strings.TrimSpace(mode), "pseudo") {
+		utils.BadRequestResponse(ctx, "Pseudo deploy mode has been removed. Use validate_only for plan preview or omit mode for real deployment")
+		return true
+	}
+	return false
+}
+
+func rejectPseudoTypedMode(ctx *gin.Context, enabled bool) bool {
+	if enabled {
+		utils.BadRequestResponse(ctx, "Pseudo deploy mode has been removed. Submit a real deployment request instead")
+		return true
+	}
+	return false
+}
+
 func (c *ClusterDeployController) DeployCluster(ctx *gin.Context) {
 	var req services.UniversalClusterDeployRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	if rejectPseudoUniversalMode(ctx, req.Mode) {
 		return
 	}
 
@@ -38,6 +57,9 @@ func (c *ClusterDeployController) ValidateClusterDeploy(ctx *gin.Context) {
 	var req services.UniversalClusterDeployRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	if rejectPseudoUniversalMode(ctx, req.Mode) {
 		return
 	}
 
@@ -88,6 +110,9 @@ func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
+	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
+		return
+	}
 
 	universalReq := services.TypedMHARequestToUniversal(req)
 	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
@@ -103,6 +128,9 @@ func (c *ClusterDeployController) DeployMGR(ctx *gin.Context) {
 	var req services.DeployMGRRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 
@@ -122,6 +150,9 @@ func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
 		return
 	}
+	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
+		return
+	}
 
 	universalReq := services.TypedPXCRequestToUniversal(req)
 	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
@@ -137,6 +168,9 @@ func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
 	var req services.DeployHARequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return
+	}
+	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 
