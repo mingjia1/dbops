@@ -585,6 +585,24 @@ var InitialSchema = []string{
 		INDEX idx_licenses_active (active)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
+	// H10: persist compatibility check results for history viewing.
+	`CREATE TABLE IF NOT EXISTS compatibility_checks (
+		id VARCHAR(64) PRIMARY KEY,
+		instance_id VARCHAR(64) NOT NULL,
+		source_version VARCHAR(64) NOT NULL,
+		target_version VARCHAR(64) NOT NULL,
+		check_type VARCHAR(32) NOT NULL DEFAULT 'full',
+		status VARCHAR(32) NOT NULL DEFAULT 'completed',
+		is_compatible TINYINT(1) DEFAULT 1,
+		warning_count INT DEFAULT 0,
+		error_count INT DEFAULT 0,
+		incompatibility_list TEXT,
+		checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_compatibility_checks_instance (instance_id),
+		INDEX idx_compatibility_checks_compatible (is_compatible)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
 	// Phase 4: Extend cluster_deployments with full request/plan/status payload.
 	`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ('')`,
 	`ALTER TABLE cluster_deployments ADD COLUMN plan_json TEXT DEFAULT ('')`,
@@ -1312,6 +1330,24 @@ var schemaSQLite = []string{
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 	`CREATE INDEX IF NOT EXISTS idx_licenses_active ON licenses(active)`,
+
+	// H10: persist compatibility check results for history viewing.
+	`CREATE TABLE IF NOT EXISTS compatibility_checks (
+		id TEXT PRIMARY KEY,
+		instance_id TEXT NOT NULL,
+		source_version TEXT NOT NULL,
+		target_version TEXT NOT NULL,
+		check_type TEXT NOT NULL DEFAULT 'full',
+		status TEXT NOT NULL DEFAULT 'completed',
+		is_compatible INTEGER DEFAULT 1,
+		warning_count INTEGER DEFAULT 0,
+		error_count INTEGER DEFAULT 0,
+		incompatibility_list TEXT,
+		checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_compatibility_checks_instance ON compatibility_checks(instance_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_compatibility_checks_compatible ON compatibility_checks(is_compatible)`,
 
 	// Phase 4: Extend cluster_deployments with full request/plan/status payload.
 	`ALTER TABLE cluster_deployments ADD COLUMN request_json TEXT DEFAULT ''`,

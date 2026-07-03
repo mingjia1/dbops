@@ -235,6 +235,7 @@ func main() {
 	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient, auditService)
 	upgradeService.SetEncryptionKey(cfg.EncryptionKey)
 	upgradeService.SetPlanRepository(repositories.NewUpgradePlanRepository(db))
+	upgradeService.SetCheckRepository(repositories.NewCompatibilityCheckRepository(db))
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
 	versionCatalog := services.NewVersionCatalog()

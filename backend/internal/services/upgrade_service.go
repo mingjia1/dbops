@@ -20,6 +20,7 @@ type UpgradeService struct {
 	instanceRepo *repositories.InstanceRepository
 	taskRepo     *repositories.TaskRepository
 	planRepo     *repositories.UpgradePlanRepository
+	checkRepo    *repositories.CompatibilityCheckRepository
 	agentClient  *AgentClient
 	auditSvc     *AuditService
 	encKey       string
@@ -46,6 +47,10 @@ func (s *UpgradeService) SetEncryptionKey(key string) {
 
 func (s *UpgradeService) SetPlanRepository(repo *repositories.UpgradePlanRepository) {
 	s.planRepo = repo
+}
+
+func (s *UpgradeService) SetCheckRepository(repo *repositories.CompatibilityCheckRepository) {
+	s.checkRepo = repo
 }
 
 type PlanUpgradePathRequest struct {
@@ -361,6 +366,13 @@ func (s *UpgradeService) CheckCompatibility(ctx context.Context, req CheckCompat
 		Incompatibilities: incompatibilities,
 		Recommendations:   recommendations,
 	}
+	// H10: persist the compatibility check result for history viewing.
+	if s.checkRepo != nil {
+		if err := s.checkRepo.Create(ctx, check); err != nil {
+			log.Printf("WARN: failed to persist compatibility check %s: %v", check.ID, err)
+		}
+	}
+
 	s.auditUpgrade(ctx, "check_upgrade_compatibility", "check", "compatibility_check", response.CheckID, upgradeAuditResultFromBool(isCompatible), "",
 		fmt.Sprintf("instance_id=%s source=%s %s target=%s %s compatible=%t errors=%d warnings=%d",
 			req.InstanceID, sourceFlavor, sourceVersion, targetFlavor, targetVersion, isCompatible, errorCount, warningCount))
