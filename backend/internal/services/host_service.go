@@ -788,32 +788,6 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	return nil
 }
 
-func findAgentBinary() (string, error) {
-	candidates := []string{
-		// start-agent.sh 编译产物 (通用命名)
-		filepath.Join("agent", "bin", "agent"),
-		filepath.Join("..", "agent", "bin", "agent"),
-		filepath.Join("..", "..", "agent", "bin", "agent"),
-		// 平台预编译产物
-		filepath.Join("agent", "bin", "mysql-ops-agent-linux"),
-		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux"),
-		filepath.Join("agent", "bin", "mysql-ops-agent-linux-amd64"),
-		filepath.Join("..", "agent", "bin", "mysql-ops-agent-linux-amd64"),
-		filepath.Join("agent", "bin", "agent-linux-amd64"),
-		filepath.Join("..", "agent", "bin", "agent-linux-amd64"),
-		filepath.Join("agent", "bin", "agent_linux"),
-		filepath.Join("..", "agent", "bin", "agent_linux"),
-		filepath.Join("agent", "bin", "dbops-agent-linux"),
-		filepath.Join("..", "agent", "bin", "dbops-agent-linux"),
-	}
-	for _, candidate := range candidates {
-		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("agent binary not found; expected agent/bin/mysql-ops-agent-linux-amd64")
-}
-
 func runSSH(client *ssh.Client, command string) (string, error) {
 	session, err := client.NewSession()
 	if err != nil {

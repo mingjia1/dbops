@@ -50,6 +50,8 @@ $LogDir      = Join-Path $ProjectRoot "logs"
 
 $BackendExe  = Join-Path $BackendDir "bin\platform.exe"
 $AgentExe    = Join-Path $AgentDir "bin\agent.exe"
+$AgentLinuxExe = Join-Path $AgentDir "bin\agent-linux-amd64"
+$AgentWindowsExe = Join-Path $AgentDir "bin\agent-windows-amd64.exe"
 $BackendPidFile = Join-Path $LogDir "backend.pid"
 $AgentPidFile   = Join-Path $LogDir "agent.pid"
 $WebPidFile     = Join-Path $LogDir "frontend.pid"
@@ -286,10 +288,18 @@ try {
 
     # ---------- 6. 重新编译 Agent ----------
     if (-not $SkipBuild -and ($StartAll -or $Component -eq "agent")) {
-        $needAgent = Test-NeedRebuild -SourceDir $AgentDir -ExePath $AgentExe
+        $needAgent = (Test-NeedRebuild -SourceDir $AgentDir -ExePath $AgentExe) -or
+            (-not (Test-Path -LiteralPath $AgentLinuxExe)) -or
+            (-not (Test-Path -LiteralPath $AgentWindowsExe))
         if ($needAgent) {
             Invoke-Build -Title "6. 编译 Agent (Go)" -WorkingDir $AgentDir `
                 -Command "go build -o bin\agent.exe .\cmd\main.go"
+            Invoke-Build -Title "6.1 编译 Linux Agent (Go)" -WorkingDir $AgentDir `
+                -Command "set CGO_ENABLED=0&& set GOOS=linux&& set GOARCH=amd64&& go build -trimpath -o bin\agent-linux-amd64 .\cmd\main.go"
+            Copy-Item -LiteralPath (Join-Path $AgentDir "bin\agent-linux-amd64") -Destination (Join-Path $AgentDir "bin\agent") -Force
+            Copy-Item -LiteralPath (Join-Path $AgentDir "bin\agent-linux-amd64") -Destination (Join-Path $AgentDir "bin\mysql-ops-agent-linux") -Force
+            Invoke-Build -Title "6.2 编译 Windows Agent (Go)" -WorkingDir $AgentDir `
+                -Command "set CGO_ENABLED=0&& set GOOS=windows&& set GOARCH=amd64&& go build -trimpath -o bin\agent-windows-amd64.exe .\cmd\main.go"
         } else {
             Write-Step "6. 编译 Agent (Go) - 跳过 (源码未变化)"
             Write-Info "[信息] 现有产物已是最新: $AgentExe"

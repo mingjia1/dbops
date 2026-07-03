@@ -44,6 +44,15 @@ func main() {
 
 	logInstance := logger.New(cfg.LogLevel)
 	logInstance.Info("Starting MySQL Ops Platform API Server")
+	if strings.EqualFold(os.Getenv("DBOPS_SKIP_AGENT_BINARY_BUILD"), "true") {
+		logInstance.Warn("Skipping agent binary build because DBOPS_SKIP_AGENT_BINARY_BUILD=true")
+	} else {
+		report, err := services.EnsureAgentBinaries()
+		if err != nil {
+			logInstance.Fatal("Failed to ensure agent binaries: " + err.Error())
+		}
+		logInstance.Info(fmt.Sprintf("Agent binaries ready: linux=%s windows=%s", report.LinuxPath, report.WindowsPath))
+	}
 
 	// Force use old database file
 	sqlitePath := cfg.SQLitePath
