@@ -3,13 +3,13 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
-	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,30 +101,10 @@ func TestUniversalClusterDeployValidateOnlyReturnsPlan(t *testing.T) {
 	require.NotEmpty(t, resp.Steps)
 }
 
-func TestUniversalClusterDeployPseudoHAReusesMetadataSync(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	hostRepo := repositories.NewHostRepository(db)
-	instRepo := repositories.NewInstanceRepository(db)
-	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, nil, config.ClusterDefaults{})
+func TestUniversalClusterDeployRejectsPseudoMode(t *testing.T) {
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
 
-	password, err := utils.Encrypt("rootpass", "test-encryption-key")
-	require.NoError(t, err)
-	createInstance := func(id, host string, port int) {
-		require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, Name: id}))
-		require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
-			InstanceID:        id,
-			Host:              host,
-			Port:              port,
-			Username:          "root",
-			PasswordEncrypted: password,
-		}))
-	}
-	createInstance("ha-master", "10.0.0.11", 3306)
-	createInstance("ha-replica", "10.0.0.12", 3306)
-
-	resp, err := service.DeployCluster(ctx, UniversalClusterDeployRequest{
+	_, err := service.DeployCluster(context.Background(), UniversalClusterDeployRequest{
 		ClusterID:   "ha-pseudo-universal",
 		ClusterType: "ha",
 		Mode:        "pseudo",
@@ -134,12 +114,9 @@ func TestUniversalClusterDeployPseudoHAReusesMetadataSync(t *testing.T) {
 		},
 	})
 
-	require.NoError(t, err)
-	require.Equal(t, "success", resp.Status)
-	master, err := instRepo.GetByID(ctx, "ha-master")
-	require.NoError(t, err)
-	require.Equal(t, "ha-pseudo-universal", master.ClusterID)
-	require.Equal(t, "master", master.Status.Role)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "removed")
+	require.Contains(t, err.Error(), "validate_only")
 }
 
 func TestUniversalClusterDeployMapsCustomParametersToHARequest(t *testing.T) {
@@ -432,40 +409,27 @@ func TestBuildPXCPlanStepsPreservesSortedNodeConfig(t *testing.T) {
 	require.Equal(t, "/opt/pxc-secondary", joinStep.Config["basedir"])
 }
 
-func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
+func TestExecuteClusterDeployPlan_RealHA(t *testing.T) {
 	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
 	db := newTestDB(t)
-	hostRepo := repositories.NewHostRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, nil, hostRepo, instRepo, nil, config.ClusterDefaults{})
-
-	password, err := utils.Encrypt("rootpass", "test-encryption-key")
-	require.NoError(t, err)
-	createInstance := func(id, host string, port int) {
-		require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: id, Name: id}))
-		require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
-			InstanceID:        id,
-			Host:              host,
-			Port:              port,
-			Username:          "root",
-			PasswordEncrypted: password,
-		}))
-	}
-	createInstance("ha-master", "10.0.0.11", 3306)
-	createInstance("ha-replica", "10.0.0.12", 3307)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 
 	plan := &ClusterDeployPlan{
 		DeploymentID: "execute-plan-ha",
 		ClusterType:  "ha",
-		Mode:         "pseudo",
+		Mode:         "real",
 		Nodes: []PlanNode{
-			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090},
-			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica", AgentPort: 9090},
+			{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "master", AgentPort: agentPort},
+			{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "replica", AgentPort: agentPort},
 		},
 		Steps: buildUniversalPlanSteps("ha", []PlanNode{
-			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master"},
-			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica"},
+			{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "master", AgentPort: agentPort},
+			{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "replica", AgentPort: agentPort},
 		}, UniversalClusterDeployRequest{
 			ClusterID: "execute-plan-ha", ClusterType: "ha",
 			Replication: ReplicationOptions{User: "repl", Password: "replpass"},
@@ -476,9 +440,11 @@ func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	req := UniversalClusterDeployRequest{
 		ClusterID:   "execute-plan-ha",
 		ClusterType: "ha",
-		Mode:        "pseudo",
+		Mode:        "real",
 		Name:        "execute-plan-ha",
-		Nodes:       []ClusterDeployNode{{Host: "10.0.0.11", Role: "master", MySQLPort: 3306}, {Host: "10.0.0.12", Role: "replica", MySQLPort: 3307}},
+		Nodes:       []ClusterDeployNode{{Host: agentHost, AgentPort: agentPort, Role: "master", MySQLPort: 3306}, {Host: agentHost, AgentPort: agentPort, Role: "replica", MySQLPort: 3307}},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
 	}
 
 	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
@@ -494,16 +460,9 @@ func TestExecuteClusterDeployPlan_PseudoHA(t *testing.T) {
 	require.NotEmpty(t, dep.RequestJSON)
 
 	// Verify instances were synced
-	master, err := instRepo.GetByID(ctx, "ha-master")
+	instances, err := instRepo.ListByClusterID(ctx, "execute-plan-ha")
 	require.NoError(t, err)
-	require.Equal(t, "execute-plan-ha", master.ClusterID)
-	require.Equal(t, "master", master.Status.Role)
-
-	replica, err := instRepo.GetByID(ctx, "ha-replica")
-	require.NoError(t, err)
-	require.Equal(t, "execute-plan-ha", replica.ClusterID)
-	require.Equal(t, "replica", replica.Status.Role)
-	require.Equal(t, "ha-master", replica.Topology.MasterID)
+	require.Len(t, instances, 2)
 }
 
 func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
@@ -543,25 +502,29 @@ func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
 
 func TestExecuteClusterDeployPlan_PersistsExplicitMGRGroupName(t *testing.T) {
 	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
 	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
-	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 
 	groupName := "8380d9b5-52b4-4aa7-b9e6-625439d9e4e6"
 	nodes := []PlanNode{
-		{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary", AgentPort: 9090},
-		{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary", AgentPort: 9090},
-		{ID: "node-3", Host: "10.0.0.13", MySQLPort: 3308, Role: "secondary", AgentPort: 9090},
+		{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "primary", AgentPort: agentPort},
+		{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "secondary", AgentPort: agentPort},
+		{ID: "node-3", Host: agentHost, MySQLPort: 3308, Role: "secondary", AgentPort: agentPort},
 	}
 	req := UniversalClusterDeployRequest{
 		ClusterID:   "mgr-persist-group-name",
 		ClusterType: "mgr",
-		Mode:        "pseudo",
+		Mode:        "real",
 		Name:        "mgr-persist-group-name",
 		Nodes: []ClusterDeployNode{
-			{Host: "10.0.0.11", AgentPort: 9090, Role: "primary", MySQLPort: 3306},
-			{Host: "10.0.0.12", AgentPort: 9090, Role: "secondary", MySQLPort: 3307},
-			{Host: "10.0.0.13", AgentPort: 9090, Role: "secondary", MySQLPort: 3308},
+			{Host: agentHost, AgentPort: agentPort, Role: "primary", MySQLPort: 3306},
+			{Host: agentHost, AgentPort: agentPort, Role: "secondary", MySQLPort: 3307},
+			{Host: agentHost, AgentPort: agentPort, Role: "secondary", MySQLPort: 3308},
 		},
 		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass", Version: "8.0.36"},
 		Replication: ReplicationOptions{User: "repl", Password: "replpass", Mode: "single-primary"},
@@ -577,7 +540,7 @@ func TestExecuteClusterDeployPlan_PersistsExplicitMGRGroupName(t *testing.T) {
 
 	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
 	require.NoError(t, err)
-	require.Contains(t, []string{"success", "partial"}, resp.Status)
+	require.Equal(t, "success", resp.Status)
 
 	dep, err := clusterRepo.GetByID(ctx, req.ClusterID)
 	require.NoError(t, err)
@@ -587,46 +550,57 @@ func TestExecuteClusterDeployPlan_PersistsExplicitMGRGroupName(t *testing.T) {
 	require.Equal(t, groupName, persisted.Custom["group_name"])
 }
 
-func TestExecuteClusterDeployPlan_PseudoModeCreatesMissingManagedInstances(t *testing.T) {
+func TestExecuteClusterDeployPlan_RealModeCreatesMissingManagedInstances(t *testing.T) {
 	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
 	db := newTestDB(t)
 	clusterRepo := repositories.NewClusterDeployRepository(db)
 	instRepo := repositories.NewInstanceRepository(db)
 	// No instances created — management sync will fail
-	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, nil, config.ClusterDefaults{})
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
 
 	plan := &ClusterDeployPlan{
-		DeploymentID: "pseudo-sync-fail",
+		DeploymentID: "real-sync-create",
 		ClusterType:  "mgr",
-		Mode:         "pseudo",
+		Mode:         "real",
 		Nodes: []PlanNode{
-			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary", AgentPort: 9090},
-			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary", AgentPort: 9090},
+			{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "primary", AgentPort: agentPort},
+			{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "secondary", AgentPort: agentPort},
+			{ID: "node-3", Host: agentHost, MySQLPort: 3308, Role: "secondary", AgentPort: agentPort},
 		},
 		Steps: buildUniversalPlanSteps("mgr", []PlanNode{
-			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary"},
-			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary"},
+			{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "primary", AgentPort: agentPort},
+			{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "secondary", AgentPort: agentPort},
+			{ID: "node-3", Host: agentHost, MySQLPort: 3308, Role: "secondary", AgentPort: agentPort},
 		}, UniversalClusterDeployRequest{
-			ClusterID: "pseudo-sync-fail", ClusterType: "mgr",
-			Replication: ReplicationOptions{User: "repl", Password: "replpass"},
-			MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+			ClusterID: "real-sync-create", ClusterType: "mgr", Mode: "real",
+			Replication: ReplicationOptions{User: "repl", Password: "replpass", Mode: "single-primary"},
+			MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass", Version: "8.0.36"},
 		}),
 	}
 
 	req := UniversalClusterDeployRequest{
-		ClusterID:   "pseudo-sync-fail",
+		ClusterID:   "real-sync-create",
 		ClusterType: "mgr",
-		Mode:        "pseudo",
-		Name:        "pseudo-sync-fail",
-		Nodes:       []ClusterDeployNode{{Host: "10.0.0.11", Role: "primary", MySQLPort: 3306}, {Host: "10.0.0.12", Role: "secondary", MySQLPort: 3307}},
+		Mode:        "real",
+		Name:        "real-sync-create",
+		Nodes: []ClusterDeployNode{
+			{Host: agentHost, AgentPort: agentPort, Role: "primary", MySQLPort: 3306},
+			{Host: agentHost, AgentPort: agentPort, Role: "secondary", MySQLPort: 3307},
+			{Host: agentHost, AgentPort: agentPort, Role: "secondary", MySQLPort: 3308},
+		},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass", Version: "8.0.36"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass", Mode: "single-primary"},
 	}
 
 	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
-	instances, err := instRepo.ListByClusterID(ctx, "pseudo-sync-fail")
+	instances, err := instRepo.ListByClusterID(ctx, "real-sync-create")
 	require.NoError(t, err)
-	require.Len(t, instances, 2)
+	require.Len(t, instances, 3)
 }
 
 func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {
@@ -639,7 +613,7 @@ func TestGetDeployPlan_ReturnsDeserializedPlan(t *testing.T) {
 	plan := &ClusterDeployPlan{
 		DeploymentID: "plan-test-001",
 		ClusterType:  "ha",
-		Mode:         "pseudo",
+		Mode:         "real",
 		Nodes: []PlanNode{
 			{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090, ServerID: 1},
 			{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "replica", AgentPort: 9090, ServerID: 2},

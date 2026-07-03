@@ -424,7 +424,7 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 
 	result := s.buildResultSkeleton(req, clusterType, inst, hostInfo, currentRole, oldMasterID, startedAt)
 	if inst.Status.ReplicationStatus == "pseudo" {
-		return s.switchPseudoRole(ctx, req, result, clusterType, currentRole)
+		return s.switchMetadataOnlyRole(ctx, req, result, clusterType, currentRole)
 	}
 
 	demotingFromMaster := isPrimaryRole(currentRole)
@@ -925,13 +925,13 @@ func (s *SwitchService) listClusterInstances(ctx context.Context, clusterID stri
 	return instances, nil
 }
 
-func (s *SwitchService) switchPseudoRole(ctx context.Context, req RoleSwitchRequest, result *RoleSwitchResult, clusterType, currentRole string) (*RoleSwitchResult, error) {
+func (s *SwitchService) switchMetadataOnlyRole(ctx context.Context, req RoleSwitchRequest, result *RoleSwitchResult, clusterType, currentRole string) (*RoleSwitchResult, error) {
 	instances, err := s.listClusterInstances(ctx, req.ClusterID)
 	if err != nil {
-		return s.failedResultFromSkeleton(result, fmt.Sprintf("load pseudo cluster instances failed: %v", err)), nil
+		return s.failedResultFromSkeleton(result, fmt.Sprintf("load metadata-only cluster instances failed: %v", err)), nil
 	}
 	if len(instances) == 0 {
-		return s.failedResultFromSkeleton(result, "pseudo cluster has no managed instances"), nil
+		return s.failedResultFromSkeleton(result, "metadata-only cluster has no managed instances"), nil
 	}
 
 	newMasterID := result.OldMasterID
@@ -964,10 +964,10 @@ func (s *SwitchService) switchPseudoRole(ctx context.Context, req RoleSwitchRequ
 			RunStatus:           defaultString(inst.Status.RunStatus, "running"),
 			HealthStatus:        defaultString(inst.Status.HealthStatus, "healthy"),
 			Role:                role,
-			ReplicationStatus:   "pseudo",
+			ReplicationStatus:   clusterType,
 			SecondsBehindMaster: 0,
 		}); err != nil {
-			return s.failedResultFromSkeleton(result, fmt.Sprintf("update pseudo instance status failed: %v", err)), nil
+			return s.failedResultFromSkeleton(result, fmt.Sprintf("update metadata-only instance status failed: %v", err)), nil
 		}
 		if err := s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
 			InstanceID:      inst.ID,
@@ -976,7 +976,7 @@ func (s *SwitchService) switchPseudoRole(ctx context.Context, req RoleSwitchRequ
 			SlaveIDs:        slaveIDText,
 			ReplicationMode: clusterType,
 		}); err != nil {
-			return s.failedResultFromSkeleton(result, fmt.Sprintf("update pseudo topology failed: %v", err)), nil
+			return s.failedResultFromSkeleton(result, fmt.Sprintf("update metadata-only topology failed: %v", err)), nil
 		}
 	}
 
@@ -986,7 +986,7 @@ func (s *SwitchService) switchPseudoRole(ctx context.Context, req RoleSwitchRequ
 	if isPrimaryRole(req.TargetRole) {
 		result.RebuiltReplicas = replicaIDs
 	}
-	result.Message = fmt.Sprintf("pseudo role switched within %s cluster: %s -> %s", clusterType, currentRole, req.TargetRole)
+	result.Message = fmt.Sprintf("metadata-only role switch completed within %s cluster: %s -> %s", clusterType, currentRole, req.TargetRole)
 	s.recordHistory(ctx, result)
 	return result, nil
 }

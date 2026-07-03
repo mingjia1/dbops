@@ -21,7 +21,6 @@ const (
 
 	DeployModeReal         = "real"
 	DeployModeValidateOnly = "validate_only"
-	DeployModePseudo       = "pseudo"
 )
 
 type UniversalClusterDeployRequest struct {
@@ -1508,7 +1507,6 @@ func universalToHARequest(req UniversalClusterDeployRequest) DeployHARequest {
 		ReplPassword:  req.Replication.Password,
 		MySQLUser:     req.MySQL.User,
 		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
 		ConfigParams:  universalCommonConfigParams(req),
 	}
 	for _, node := range req.Nodes {
@@ -1542,7 +1540,6 @@ func universalToMHARequest(req UniversalClusterDeployRequest) DeployMHARequest {
 		ReplPassword:  req.Replication.Password,
 		MySQLUser:     req.MySQL.User,
 		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
 		ConfigParams:  universalCommonConfigParams(req),
 	}
 	if vip, ok := stringCustom(req.Custom, "vip"); ok {
@@ -1582,7 +1579,6 @@ func universalToMGRRequest(req UniversalClusterDeployRequest) DeployMGRRequest {
 		GroupMode:     req.Replication.Mode,
 		MySQLUser:     req.MySQL.User,
 		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
 		ConfigParams:  universalCommonConfigParams(req),
 	}
 	out.ConfigParams["replicate_user"] = req.Replication.User
@@ -1621,7 +1617,6 @@ func universalToPXCRequest(req UniversalClusterDeployRequest) DeployPXCRequest {
 		ClusterID:     req.ClusterID,
 		MySQLUser:     req.MySQL.User,
 		MySQLPassword: req.MySQL.Password,
-		PseudoMode:    req.Mode == DeployModePseudo,
 		ConfigParams:  universalCommonConfigParams(req),
 	}
 	for _, key := range []string{"cluster_name", "sst_method", "wsrep_sst_port", "wsrep_ssl_enabled", "wsrep_provider_options", "pxc_encrypt_cluster_traffic"} {

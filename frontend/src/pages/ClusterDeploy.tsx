@@ -1230,9 +1230,7 @@ const ClusterDeploy: React.FC = () => {
             {pendingDeployPayload && (
               <Alert
                 type="warning"
-                message={pendingDeployValues?.pseudo_mode
-                  ? '伪集群演练只写入平台纳管关系和拓扑，不会修改目标主机上的数据库服务。'
-                  : '真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。'}
+                message="真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。"
                 style={{ marginBottom: 16 }}
                 showIcon
               />

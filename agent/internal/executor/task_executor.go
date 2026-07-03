@@ -5442,12 +5442,19 @@ func repairMySQLComponentConfig(config map[string]interface{}) (string, error) {
 		data, _ := json.Marshal(check)
 		return string(data), fmt.Errorf(check.Message)
 	}
+	canReextract := strings.TrimSpace(configString(config, "relay_url")) != "" || strings.TrimSpace(configString(config, "package_url")) != ""
 	// Case 1: Plugin .so file is missing - re-extract MySQL package
 	if check.PluginPath == "" {
+		if len(check.Issues) > 0 && !canReextract {
+			return disableStaleComponentConfig(check, config)
+		}
 		return reinstallMySQLPackage(config)
 	}
 		// Case 3: Plugin exists but has missing shared library dependencies - re-extract MySQL package
 		if check.MissingDeps {
+			if len(check.Issues) > 0 && !canReextract {
+				return disableStaleComponentConfig(check, config)
+			}
 			return reinstallMySQLPackage(config)
 		}
 		// Case 4: Plugin exists at non-default location - create symlink so default plugin_dir works
@@ -5495,6 +5502,35 @@ func repairMySQLComponentConfig(config map[string]interface{}) (string, error) {
 	}
 	after := inspectMySQLComponentConfig(config)
 	after.Passed = len(after.Issues) == 0 || after.PluginPath != ""
+	after.Fixable = !after.Passed && len(after.Issues) > 0
+	if after.Passed {
+		after.Message = fmt.Sprintf("disabled %d stale %s component config line(s)", changed, check.Component)
+	} else {
+		after.Message = fmt.Sprintf("repair attempted, but %d stale %s config line(s) remain", len(after.Issues), check.Component)
+	}
+	data, err := json.Marshal(after)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func disableStaleComponentConfig(check mysqlComponentConfigCheck, config map[string]interface{}) (string, error) {
+	changed := 0
+	seen := map[string]bool{}
+	for _, issue := range check.Issues {
+		if seen[issue.Path] {
+			continue
+		}
+		seen[issue.Path] = true
+		n, err := commentMissingComponentLines(issue.Path, check.Component)
+		if err != nil {
+			return "", err
+		}
+		changed += n
+	}
+	after := inspectMySQLComponentConfig(config)
+	after.Passed = len(after.Issues) == 0
 	after.Fixable = !after.Passed && len(after.Issues) > 0
 	if after.Passed {
 		after.Message = fmt.Sprintf("disabled %d stale %s component config line(s)", changed, check.Component)
@@ -5610,13 +5646,13 @@ func inspectMySQLComponentConfig(config map[string]interface{}) mysqlComponentCo
 	}
 	// Case 1: Plugin .so file is missing
 	if pluginPath == "" {
+		if len(issues) == 0 {
+			result.Message = fmt.Sprintf("%s component is not configured and no stale config references were found", component)
+			return result
+		}
 		result.Passed = false
 		result.Fixable = true
-		if len(issues) > 0 {
-			result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮重新提取 MySQL 安装包", component, component)
-		} else {
-			result.Message = fmt.Sprintf("目标 MySQL 插件目录缺少 %s.so；可点击修复按钮重新提取 MySQL 安装包", component)
-		}
+		result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮重新提取 MySQL 安装包", component, component)
 		return result
 	}
 	// Case 2: Plugin exists but config has stale references

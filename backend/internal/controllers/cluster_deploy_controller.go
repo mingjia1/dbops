@@ -1,7 +1,10 @@
 package controllers
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 
@@ -26,8 +29,18 @@ func rejectPseudoUniversalMode(ctx *gin.Context, mode string) bool {
 	return false
 }
 
-func rejectPseudoTypedMode(ctx *gin.Context, enabled bool) bool {
-	if enabled {
+func rejectPseudoModeFromBody(ctx *gin.Context) bool {
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		return true
+	}
+	ctx.Request.Body = io.NopCloser(bytes.NewReader(body))
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false
+	}
+	if enabled, ok := raw["pseudo_mode"].(bool); ok && enabled {
 		utils.BadRequestResponse(ctx, "Pseudo deploy mode has been removed. Submit a real deployment request instead")
 		return true
 	}
@@ -105,12 +118,12 @@ func (c *ClusterDeployController) RepairPreCheck(ctx *gin.Context) {
 }
 
 func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
+	if rejectPseudoModeFromBody(ctx) {
+		return
+	}
 	var req services.DeployMHARequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
-		return
-	}
-	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 
@@ -125,12 +138,12 @@ func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 }
 
 func (c *ClusterDeployController) DeployMGR(ctx *gin.Context) {
+	if rejectPseudoModeFromBody(ctx) {
+		return
+	}
 	var req services.DeployMGRRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
-		return
-	}
-	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 
@@ -145,12 +158,12 @@ func (c *ClusterDeployController) DeployMGR(ctx *gin.Context) {
 }
 
 func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
+	if rejectPseudoModeFromBody(ctx) {
+		return
+	}
 	var req services.DeployPXCRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
-		return
-	}
-	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 
@@ -165,12 +178,12 @@ func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
 }
 
 func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
+	if rejectPseudoModeFromBody(ctx) {
+		return
+	}
 	var req services.DeployHARequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request parameters")
-		return
-	}
-	if rejectPseudoTypedMode(ctx, req.PseudoMode) {
 		return
 	}
 

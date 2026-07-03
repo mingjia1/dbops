@@ -1606,7 +1606,6 @@ type DeployMHARequest struct {
 	ReplPassword     string            `json:"repl_password"`
 	MySQLUser        string            `json:"mysql_user"`
 	MySQLPassword    string            `json:"mysql_password"`
-	PseudoMode       bool              `json:"pseudo_mode"`
 	ConfigParams     map[string]string `json:"config_params"`
 }
 
@@ -1623,7 +1622,6 @@ type DeployMGRRequest struct {
 	GroupMode        string            `json:"group_mode"`
 	MySQLUser        string            `json:"mysql_user"`
 	MySQLPassword    string            `json:"mysql_password"`
-	PseudoMode       bool              `json:"pseudo_mode"`
 	ConfigParams     map[string]string `json:"config_params"`
 }
 
@@ -1638,7 +1636,6 @@ type DeployPXCRequest struct {
 	WSREPPort       int               `json:"wsrep_port"`
 	MySQLUser       string            `json:"mysql_user"`
 	MySQLPassword   string            `json:"mysql_password"`
-	PseudoMode      bool              `json:"pseudo_mode"`
 	ConfigParams    map[string]string `json:"config_params"`
 }
 
@@ -1658,7 +1655,6 @@ type DeployHARequest struct {
 	ReplPassword    string            `json:"repl_password"`
 	MySQLUser       string            `json:"mysql_user"`
 	MySQLPassword   string            `json:"mysql_password"`
-	PseudoMode      bool              `json:"pseudo_mode"`
 	ConfigParams    map[string]string `json:"config_params"`
 }
 
