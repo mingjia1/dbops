@@ -782,8 +782,22 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, clusterType string,
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
+	// Build set of active cluster IDs (skip failed/partial/destroyed deployments)
+	activeClusters := map[string]bool{}
+	if deps, err := s.repo.List(ctx, 1000, 0); err == nil {
+		for _, d := range deps {
+			if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
+				continue
+			}
+			if d.ClusterID != "" {
+				activeClusters[d.ClusterID] = true
+			}
+		}
+	}
 	// S2: Load instance endpoints scoped to deployment hosts only.
 	endpoints := s.loadInstanceEndpointsByHosts(ctx, hostIDs)
+	// Filter endpoints to only include instances from active clusters
+	endpoints = s.filterActiveEndpoints(endpoints, activeClusters)
 	results := make([]PreCheckResult, 0, len(hostIDs))
 	for _, hostID := range hostIDs {
 		host, err := s.hostRepo.GetByID(ctx, hostID)
@@ -796,7 +810,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, clusterType string,
 			agentPort = 9090
 		}
 		r := PreCheckResult{HostID: hostID, Host: host.Address, Status: "pass", Details: []PreCheckItem{}}
-		s.appendPreCheckPortResults(ctx, &r, host.Address, nodeByHostID[hostID], endpoints)
+		s.appendPreCheckPortResults(ctx, &r, host.Address, nodeByHostID[hostID], endpoints, activeClusters)
 
 		// 1. Agent connectivity
 		if s.agentClient == nil {
@@ -1010,12 +1024,12 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode, instanceEndpoints []instanceEndpoint) {
+func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode, instanceEndpoints []instanceEndpoint, activeClusters map[string]bool) {
 	for _, node := range nodes {
 		if node.MySQLPort == 0 {
 			continue
 		}
-		if conflict := findManagedPortConflictInEndpoints(host, node.MySQLPort, "", instanceEndpoints); conflict != "" {
+		if conflict := findManagedPortConflictInEndpoints(host, node.MySQLPort, "", instanceEndpoints, activeClusters); conflict != "" {
 			result.Status = "fail"
 			result.Details = append(result.Details, PreCheckItem{
 				Name:    fmt.Sprintf("MySQL Port %d", node.MySQLPort),
@@ -1070,12 +1084,31 @@ func (s *ClusterDeployService) loadInstanceEndpointsByHosts(ctx context.Context,
 	return endpoints
 }
 
-func findManagedPortConflictInEndpoints(host string, port int, currentClusterID string, endpoints []instanceEndpoint) string {
+// filterActiveEndpoints removes endpoints whose cluster has been destroyed, failed, or is partial.
+func (s *ClusterDeployService) filterActiveEndpoints(endpoints []instanceEndpoint, activeClusters map[string]bool) []instanceEndpoint {
+	if len(activeClusters) == 0 {
+		// No active cluster info available — keep all endpoints as-is (safe default)
+		return endpoints
+	}
+	result := make([]instanceEndpoint, 0, len(endpoints))
+	for _, ep := range endpoints {
+		if ep.clusterID == "" || activeClusters[ep.clusterID] {
+			result = append(result, ep)
+		}
+	}
+	return result
+}
+
+func findManagedPortConflictInEndpoints(host string, port int, currentClusterID string, endpoints []instanceEndpoint, activeClusters map[string]bool) string {
 	for _, ep := range endpoints {
 		if !sameHost(ep.host, host) || ep.port != port {
 			continue
 		}
 		if ep.clusterID == "" || ep.clusterID == currentClusterID {
+			continue
+		}
+		// Skip instances from inactive (failed/partial/destroyed) clusters
+		if !activeClusters[ep.clusterID] {
 			continue
 		}
 		return fmt.Sprintf("port conflict: %s:%d already in use by instance %q (cluster=%s). Please change mysql_port for this node", host, port, ep.instName, ep.clusterID)
