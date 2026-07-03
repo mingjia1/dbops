@@ -83,7 +83,10 @@ func TestUniversalClusterDeployRejectsForbiddenMySQLConfig(t *testing.T) {
 }
 
 func TestUniversalClusterDeployValidateOnlyReturnsPlan(t *testing.T) {
-	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	nodeRepo := repositories.NewClusterDeployNodeRepository(db)
+	service := NewClusterDeployService(clusterRepo, nodeRepo, nil, nil, nil, config.ClusterDefaults{})
 
 	resp, err := service.DeployCluster(context.Background(), UniversalClusterDeployRequest{
 		ClusterID:   "ha-validate",
@@ -99,6 +102,10 @@ func TestUniversalClusterDeployValidateOnlyReturnsPlan(t *testing.T) {
 	require.Equal(t, "validated", resp.Status)
 	require.Len(t, resp.Nodes, 2)
 	require.NotEmpty(t, resp.Steps)
+
+	nodes, err := nodeRepo.ListByDeploymentID(context.Background(), "ha-validate")
+	require.NoError(t, err)
+	require.Empty(t, nodes)
 }
 
 func TestUniversalClusterDeployRejectsPseudoMode(t *testing.T) {

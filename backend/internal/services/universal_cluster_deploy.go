@@ -109,7 +109,6 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 		if err != nil {
 			return nil, err
 		}
-		s.syncNodesFromPlan(ctx, plan.DeploymentID, plan)
 		return &DeployResponse{
 			DeploymentID: plan.DeploymentID,
 			ClusterType:  plan.ClusterType,
