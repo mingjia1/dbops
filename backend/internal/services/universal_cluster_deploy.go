@@ -378,7 +378,7 @@ func (s *ClusterDeployService) checkClusterIDConflict(ctx context.Context, clust
 		return nil
 	}
 	for _, d := range deployments {
-		if d.Status == "destroyed" || d.Status == "failed" {
+		if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
 			continue
 		}
 		dcid := extractClusterIDFromRequest(d.RequestJSON)
@@ -439,6 +439,19 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 		}
 		seenDataDirs[key] = i
 	}
+	// Build set of active cluster IDs (skip failed/partial/destroyed deployments)
+	activeClusters := map[string]bool{}
+	if deps, err := s.repo.List(ctx, 1000, 0); err == nil {
+		for _, d := range deps {
+			if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
+				continue
+			}
+			if d.ClusterID != "" {
+				activeClusters[d.ClusterID] = true
+			}
+		}
+	}
+
 	for _, dep := range nodes {
 		host := strings.TrimSpace(dep.Host)
 		for _, ex := range existing {
@@ -449,6 +462,9 @@ func (s *ClusterDeployService) checkNodePortDataDirConflicts(ctx context.Context
 				continue
 			}
 			if ex.ClusterID == "" {
+				continue
+			}
+			if !activeClusters[ex.ClusterID] {
 				continue
 			}
 			if dep.MySQLPort == ex.Port {
@@ -468,7 +484,7 @@ func (s *ClusterDeployService) checkPXCClusterNameConflict(ctx context.Context, 
 		return nil
 	}
 	for _, d := range deployments {
-		if d.Status == "destroyed" || d.Status == "failed" {
+		if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
 			continue
 		}
 		dcid := extractClusterIDFromRequest(d.RequestJSON)
@@ -492,7 +508,7 @@ func (s *ClusterDeployService) checkPXCWsrepPortConflict(ctx context.Context, ws
 		return nil
 	}
 	for _, d := range deployments {
-		if d.Status == "destroyed" || d.Status == "failed" {
+		if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
 			continue
 		}
 		dcid := extractClusterIDFromRequest(d.RequestJSON)
@@ -545,7 +561,7 @@ func (s *ClusterDeployService) checkMgrGroupNameConflict(ctx context.Context, gr
 		return nil
 	}
 	for _, d := range deployments {
-		if d.Status == "destroyed" || d.Status == "failed" {
+		if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
 			continue
 		}
 		dcid := extractClusterIDFromRequest(d.RequestJSON)
@@ -569,7 +585,7 @@ func (s *ClusterDeployService) checkMHAVIPConflict(ctx context.Context, vip, cur
 		return nil
 	}
 	for _, d := range deployments {
-		if d.Status == "destroyed" || d.Status == "failed" {
+		if d.Status == "destroyed" || d.Status == "failed" || d.Status == "partial" {
 			continue
 		}
 		dcid := extractClusterIDFromRequest(d.RequestJSON)
