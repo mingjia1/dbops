@@ -117,9 +117,10 @@ const AgentManage: React.FC = () => {
       return { status: s, label, tip: live.message }
     }
     const dbStatus = host.status
-    if (dbStatus === 'active') return { status: 'success', label: '可用', tip: undefined }
-    if (dbStatus === 'failed' || dbStatus === 'inactive') return { status: 'failed', label: '不可用', tip: undefined }
-    return { status: dbStatus, label: dbStatus || 'unknown', tip: undefined }
+    const tip = host.agent_last_message || undefined
+    if (dbStatus === 'active') return { status: 'success', label: '可用', tip }
+    if (dbStatus === 'failed' || dbStatus === 'inactive') return { status: 'failed', label: '不可用', tip }
+    return { status: dbStatus, label: dbStatus || 'unknown', tip }
   }
 
   const columns: ColumnsType<Host> = [
@@ -128,6 +129,22 @@ const AgentManage: React.FC = () => {
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', render: (v) => v || 9090 },
     { title: 'Agent 版本', dataIndex: 'agent_version', key: 'agent_version', render: (v) => v || '-' },
+    {
+      title: '最近操作',
+      key: 'agent_last_action',
+      render: (_, r) => {
+        if (!r.agent_last_action && !r.agent_last_result) return '-'
+        const time = r.agent_last_at ? new Date(r.agent_last_at).toLocaleString() : '-'
+        return (
+          <Space size={4} direction="vertical">
+            <span>{r.agent_last_action || '-'}</span>
+            <Tag color={tagColor(r.agent_last_result)} title={`${r.agent_last_message || '-'}\n${time}`}>
+              {r.agent_last_result || 'unknown'}
+            </Tag>
+          </Space>
+        )
+      },
+    },
     {
       title: '主机状态',
       key: 'status',

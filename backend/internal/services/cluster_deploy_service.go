@@ -186,6 +186,66 @@ func (s *ClusterDeployService) ScaleInCluster(ctx context.Context, deploymentID,
 	return result, nil
 }
 
+func (s *ClusterDeployService) ScaleOutCluster(ctx context.Context, deploymentID string, hostIDs []string) (*ScaleOutResult, error) {
+	if s.scaleSvc == nil {
+		return nil, fmt.Errorf("scale service not configured")
+	}
+	if len(hostIDs) == 0 {
+		return nil, fmt.Errorf("host_ids is required")
+	}
+	dep, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("deployment not found: %w", err)
+	}
+	existing, err := s.instRepo.ListByClusterID(ctx, dep.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("list cluster instances: %w", err)
+	}
+	if len(existing) == 0 {
+		return nil, fmt.Errorf("cluster %s has no managed instances", dep.ClusterID)
+	}
+	sampleConn, err := s.instRepo.GetConnection(ctx, existing[0].ID)
+	if err != nil {
+		return nil, fmt.Errorf("sample instance connection not found: %w", err)
+	}
+	existingHostIDs := map[string]bool{}
+	for _, inst := range existing {
+		if inst != nil && inst.HostID != nil && *inst.HostID != "" {
+			existingHostIDs[*inst.HostID] = true
+		}
+	}
+	newNodes := make([]OrchestratorNode, 0, len(hostIDs))
+	for _, hostID := range dedupeStrings(hostIDs) {
+		if existingHostIDs[hostID] {
+			return nil, fmt.Errorf("host %s already belongs to cluster %s", hostID, dep.ClusterID)
+		}
+		host, err := s.hostRepo.GetByID(ctx, hostID)
+		if err != nil {
+			return nil, fmt.Errorf("host %s not found: %w", hostID, err)
+		}
+		agentPort := host.AgentPort
+		if agentPort == 0 {
+			agentPort = 9090
+		}
+		newNodes = append(newNodes, OrchestratorNode{
+			HostID:    host.ID,
+			Address:   host.Address,
+			AgentPort: agentPort,
+			MySQLPort: sampleConn.Port,
+			DataDir:   sampleConn.Datadir,
+			Basedir:   sampleConn.Basedir,
+		})
+	}
+	flavor := mysqlFlavorFromVersion(dep.MySQLVersion)
+	return s.scaleSvc.ScaleOut(ctx, ScaleOutRequest{
+		ClusterID: dep.ClusterID,
+		Flavor:    flavor,
+		ArchType:  dep.ClusterType,
+		EncKey:    s.encKey,
+		NewNodes:  newNodes,
+	})
+}
+
 func (s *ClusterDeployService) RebuildClusterNode(ctx context.Context, deploymentID, nodeID string) (*RebuildServiceResult, error) {
 	if s.rebuildSvc == nil {
 		return nil, fmt.Errorf("rebuild service not configured")

@@ -835,7 +835,7 @@ const ClusterDeploy: React.FC = () => {
                 })
                 .map((v) => ({
                   value: v.version,
-                  label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.min_glibc ? ` (glibc>=${v.min_glibc})` : ''}`,
+                  label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.local_available ? ' [存在]' : ' [下载]'}${v.min_glibc ? ` (glibc>=${v.min_glibc})` : ''}`,
                 }))}
             />
           </Form.Item>

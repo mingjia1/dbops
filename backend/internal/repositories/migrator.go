@@ -54,6 +54,7 @@ var migrateTables = []string{
 	"parameter_template_versions",
 	"parameter_template_parameters",
 	"migration_tasks",
+	"upgrade_plans",
 	"cluster_deployments",
 	"cluster_credentials",
 	"topology_events",

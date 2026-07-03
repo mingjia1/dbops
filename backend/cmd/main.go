@@ -225,10 +225,11 @@ func main() {
 
 	upgradeService := services.NewUpgradeService(instanceRepo, taskRepo, agentClient, auditService)
 	upgradeService.SetEncryptionKey(cfg.EncryptionKey)
+	upgradeService.SetPlanRepository(repositories.NewUpgradePlanRepository(db))
 	upgradeController := controllers.NewUpgradeController(upgradeService, taskRepo)
 
 	versionCatalog := services.NewVersionCatalog()
-	versionController := controllers.NewVersionController(versionCatalog)
+	versionController := controllers.NewVersionController(versionCatalog, cfg.DataDir)
 	clusterDeployService.SetVersionCatalog(versionCatalog)
 
 	migrationRepo := repositories.NewMigrationRepository(db)

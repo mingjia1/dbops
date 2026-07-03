@@ -1,9 +1,9 @@
 import React, { useState } from 'react'
-import { Card, Button, Space, Modal, Select, InputNumber, message, Popconfirm } from 'antd'
+import { Card, Button, Space, Modal, Select, message, Popconfirm } from 'antd'
 import {
   PlusOutlined, MinusOutlined, ReloadOutlined, DeleteOutlined,
 } from '@ant-design/icons'
-import api from '../services/api'
+import api, { hostApi, type Host } from '../services/api'
 
 interface NodeInfo {
   instance_id: string
@@ -28,7 +28,8 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
   const [scaleInOpen, setScaleInOpen] = useState(false)
   const [rebuildOpen, setRebuildOpen] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
-  const [newNodeCount, setNewNodeCount] = useState(1)
+  const [hosts, setHosts] = useState<Host[]>([])
+  const [scaleOutHostIDs, setScaleOutHostIDs] = useState<string[]>([])
   const [removeNodeId, setRemoveNodeId] = useState<string>('')
   const [rebuildNodeId, setRebuildNodeId] = useState<string>('')
 
@@ -39,11 +40,29 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
       message.success(`${action} 成功`)
       onActionComplete?.(action, res.data)
     } catch (err: any) {
-      message.error(`${action} 失败: ${err.message}`)
+      message.error(`${action} 失败: ${err?.response?.data?.message || err.message}`)
     } finally {
       setLoading(null)
     }
   }
+
+  const loadHostsForScaleOut = async () => {
+    if (hosts.length > 0) return
+    try {
+      const res: any = await hostApi.list(1000, 0)
+      setHosts(res?.data || [])
+    } catch (err: any) {
+      message.error(`加载主机失败: ${err?.response?.data?.message || err.message}`)
+    }
+  }
+
+  const existingNodeHosts = new Set(nodes.map((n) => n.host).filter(Boolean))
+  const availableHostOptions = hosts
+    .filter((host) => !existingNodeHosts.has(host.address))
+    .map((host) => ({
+      label: `${host.name} (${host.address})`,
+      value: host.id,
+    }))
 
   return (
     <Card title={`集群操作: ${clusterName || clusterID}`} size="small">
@@ -51,7 +70,10 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
         <Button
           type="primary"
           icon={<PlusOutlined />}
-          onClick={() => setScaleOutOpen(true)}
+          onClick={() => {
+            loadHostsForScaleOut()
+            setScaleOutOpen(true)
+          }}
           loading={loading === 'scale-out'}
         >
           扩容
@@ -84,22 +106,37 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
       </Space>
 
       <Modal
-        title="扩容 — 添加节点"
+        title="扩容 - 添加节点"
         open={scaleOutOpen}
-        onCancel={() => setScaleOutOpen(false)}
-        onOk={() => {
-          handleAction('scale-out', { node_count: newNodeCount })
+        onCancel={() => {
           setScaleOutOpen(false)
+          setScaleOutHostIDs([])
+        }}
+        onOk={() => {
+          if (scaleOutHostIDs.length === 0) {
+            message.warning('请选择要加入集群的主机')
+            return
+          }
+          handleAction('scale-out', { node_count: scaleOutHostIDs.length, host_ids: scaleOutHostIDs })
+          setScaleOutOpen(false)
+          setScaleOutHostIDs([])
         }}
       >
         <Space direction="vertical" style={{ width: '100%' }}>
-          <span>添加副本节点数量：</span>
-          <InputNumber min={1} max={10} value={newNodeCount} onChange={v => setNewNodeCount(v || 1)} />
+          <span>选择新增节点主机：</span>
+          <Select
+            mode="multiple"
+            style={{ width: '100%' }}
+            placeholder="选择要扩容的主机"
+            value={scaleOutHostIDs}
+            onChange={setScaleOutHostIDs}
+            options={availableHostOptions}
+          />
         </Space>
       </Modal>
 
       <Modal
-        title="缩容 — 移除节点"
+        title="缩容 - 移除节点"
         open={scaleInOpen}
         onCancel={() => setScaleInOpen(false)}
         onOk={() => {
@@ -113,16 +150,16 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
         }}
       >
         <Space direction="vertical" style={{ width: '100%' }}>
-          <span>选择要移除的副本节点（主节点不可移除，需先执行角色切换）：</span>
+          <span>选择要移除的副本节点（主节点不可移除，需要先执行角色切换）：</span>
           <Select
             style={{ width: '100%' }}
             placeholder="选择节点"
             value={removeNodeId || undefined}
             onChange={setRemoveNodeId}
             options={nodes
-              .filter(n => n.role === 'replica' || n.role === 'secondary')
-              .map(n => ({
-                label: `${n.name || n.instance_id} (${n.host || ''}) — ${n.role}`,
+              .filter((n) => n.role === 'replica' || n.role === 'secondary')
+              .map((n) => ({
+                label: `${n.name || n.instance_id} (${n.host || ''}) - ${n.role}`,
                 value: n.instance_id,
               }))}
           />
@@ -130,7 +167,7 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
       </Modal>
 
       <Modal
-        title="重建 — 重建节点"
+        title="重建 - 重建节点"
         open={rebuildOpen}
         onCancel={() => setRebuildOpen(false)}
         onOk={() => {
@@ -150,8 +187,8 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
             placeholder="选择节点"
             value={rebuildNodeId || undefined}
             onChange={setRebuildNodeId}
-            options={nodes.map(n => ({
-              label: `${n.name || n.instance_id} (${n.host || ''}) — ${n.role}`,
+            options={nodes.map((n) => ({
+              label: `${n.name || n.instance_id} (${n.host || ''}) - ${n.role}`,
               value: n.instance_id,
             }))}
           />

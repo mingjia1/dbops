@@ -480,7 +480,7 @@ const InstanceList: React.FC = () => {
               allowClear
               showSearch
               placeholder="可留空，后续部署或升级时再选择"
-              options={versions.map((v) => ({ value: v.id, label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}` }))}
+              options={versions.map((v) => ({ value: v.id, label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}${v.local_available ? ' [存在]' : ' [下载]'}` }))}
             />
           </Form.Item>
           <Form.Item name="basedir" label="basedir"><Input placeholder="/opt/mysql-8.0.36" /></Form.Item>

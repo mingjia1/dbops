@@ -9,6 +9,7 @@ interface VersionEntry {
   version: string
   is_lts: boolean
   eol_date: string
+  local_available?: boolean
 }
 
 interface CompatibilityResult {
@@ -147,7 +148,7 @@ export const UpgradeWizard: React.FC<UpgradeWizardProps> = ({
               value={targetVersion || undefined}
               onChange={setTargetVersion}
               options={filtered.map((v) => ({
-                label: `${v.flavor} ${v.version}${v.is_lts ? ' (LTS)' : ''} - EOL: ${v.eol_date}`,
+                label: `${v.flavor} ${v.version}${v.is_lts ? ' (LTS)' : ''}${v.local_available ? ' [Exists]' : ' [Download]'} - EOL: ${v.eol_date}`,
                 value: v.version,
               }))}
             />

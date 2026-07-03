@@ -1,27 +1,61 @@
 package controllers
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
 type VersionController struct {
-	catalog *services.VersionCatalog
+	catalog      *services.VersionCatalog
+	packagesRoot string
 }
 
-func NewVersionController(catalog *services.VersionCatalog) *VersionController {
-	return &VersionController{catalog: catalog}
+func NewVersionController(catalog *services.VersionCatalog, packagesRoot ...string) *VersionController {
+	root := ""
+	if len(packagesRoot) > 0 {
+		root = packagesRoot[0]
+	}
+	return &VersionController{catalog: catalog, packagesRoot: root}
+}
+
+func (c *VersionController) decorateEntries(entries []services.VersionEntry) []services.VersionEntry {
+	out := make([]services.VersionEntry, 0, len(entries))
+	for _, entry := range entries {
+		entry.LocalAvailable = c.hasLocalPackage(entry)
+		out = append(out, entry)
+	}
+	return out
+}
+
+func (c *VersionController) hasLocalPackage(entry services.VersionEntry) bool {
+	if c.packagesRoot == "" {
+		return false
+	}
+	versionDir := filepath.Join(c.packagesRoot, entry.Flavor, entry.Version)
+	items, err := os.ReadDir(versionDir)
+	if err != nil {
+		return false
+	}
+	for _, item := range items {
+		if !item.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // List returns the full version catalog. Optional ?flavor= filter.
 func (c *VersionController) List(ctx *gin.Context) {
 	flavor := ctx.Query("flavor")
 	if flavor != "" {
-		utils.SuccessResponse(ctx, c.catalog.ByFlavor(flavor))
+		utils.SuccessResponse(ctx, c.decorateEntries(c.catalog.ByFlavor(flavor)))
 		return
 	}
-	utils.SuccessResponse(ctx, c.catalog.List())
+	utils.SuccessResponse(ctx, c.decorateEntries(c.catalog.List()))
 }
 
 // GetOne returns a single version entry by id "mysql-8.0.36" or "mysql/8.0.36".
@@ -32,6 +66,7 @@ func (c *VersionController) GetOne(ctx *gin.Context) {
 		utils.NotFoundResponse(ctx, err.Error())
 		return
 	}
+	v.LocalAvailable = c.hasLocalPackage(*v)
 	utils.SuccessResponse(ctx, v)
 }
 
@@ -48,6 +83,7 @@ func (c *VersionController) ListSupported(ctx *gin.Context) {
 	out := make([]services.VersionEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.Status == "active" && e.PackageURL != "" {
+			e.LocalAvailable = c.hasLocalPackage(e)
 			out = append(out, e)
 		}
 	}

@@ -82,6 +82,13 @@ func (s *HostService) SetInstanceRepo(repo *repositories.InstanceRepository) {
 	s.instanceRepo = repo
 }
 
+func (s *HostService) getAgentClient() *AgentClient {
+	if s.agentClient != nil {
+		return s.agentClient
+	}
+	return NewAgentClient(s.agentToken)
+}
+
 type CreateHostRequest struct {
 	Name          string `json:"name" binding:"required"`
 	Address       string `json:"address" binding:"required"`
@@ -180,12 +187,22 @@ func (s *HostService) SubmitAgentAction(ctx context.Context, hostID string, req 
 		Status:    "submitted",
 		Message:   "agent action submitted; refresh host status later",
 	}
+	s.persistAgentActionResult(result)
 	go func(id string, port int) {
 		actionCtx, cancel := context.WithTimeout(context.Background(), agentActionTimeout)
 		defer cancel()
 		row, err := s.AgentAction(actionCtx, id, HostAgentActionRequest{Action: action, AgentPort: port})
 		if err != nil {
-			_ = s.repo.UpdateStatus(context.Background(), id, "failed")
+			failRow := &HostAgentActionResult{
+				HostID:    host.ID,
+				HostName:  host.Name,
+				Address:   host.Address,
+				AgentPort: port,
+				Action:    action,
+				Status:    "failed",
+				Message:   err.Error(),
+			}
+			s.updateAgentActionHostStatus(failRow)
 			return
 		}
 		s.updateAgentActionHostStatus(row)
@@ -317,11 +334,13 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		Action:    action,
 		Status:    "failed",
 	}
+	defer s.persistAgentActionResult(result)
+	agentClient := s.getAgentClient()
 
 	if action == "status" {
 		if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 			_ = s.repo.UpdateStatus(ctx, host.ID, "active")
-			ver, _ := s.agentClient.GetAgentVersion(ctx, host.Address, port)
+			ver, _ := agentClient.GetAgentVersion(ctx, host.Address, port)
 			now := time.Now().UTC()
 			_ = s.repo.UpdateAgentMeta(ctx, host.ID, ver, "running", &now)
 			result.Status = "success"
@@ -340,7 +359,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	}
 
 	if action == "check-environment" {
-		data, err := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, port)
+		data, err := agentClient.CheckEnvironmentDirect(ctx, host.Address, port)
 		if err != nil {
 			result.Message = "check-environment failed: " + err.Error()
 			return result, nil
@@ -463,7 +482,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 	if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 		result.Status = "success"
 		result.Message = msg
-		ver, _ := s.agentClient.GetAgentVersion(ctx, host.Address, port)
+		ver, _ := agentClient.GetAgentVersion(ctx, host.Address, port)
 		if ver != "" {
 			result.Message = msg + " (agent version: " + ver + ")"
 			if action == "install" || action == "add" || action == "update" {
@@ -514,6 +533,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 					Status:  "failed",
 					Message: err.Error(),
 				})
+				s.persistAgentActionResult(&result.Rows[len(result.Rows)-1])
 				continue
 			}
 			result.Success++
@@ -590,6 +610,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 					Status:  "failed",
 					Message: fmt.Sprintf("agent %s timed out after %s", req.Action, agentBatchTimeout),
 				})
+				s.updateAgentActionHostStatus(&result.Rows[len(result.Rows)-1])
 			}
 			return result, nil
 		case <-ctx.Done():
@@ -604,6 +625,7 @@ func (s *HostService) BatchAgentAction(ctx context.Context, req BatchHostAgentAc
 					Status:  "failed",
 					Message: ctx.Err().Error(),
 				})
+				s.updateAgentActionHostStatus(&result.Rows[len(result.Rows)-1])
 			}
 			return result, nil
 		}
@@ -618,8 +640,26 @@ func (s *HostService) updateAgentActionHostStatus(row *HostAgentActionResult) {
 	status := "failed"
 	if row.Status == "success" {
 		status = "success"
+	} else if row.Status == "submitted" || row.Status == "running" || row.Status == "pending" {
+		status = "pending"
 	}
 	_ = s.repo.UpdateStatus(context.Background(), row.HostID, status)
+	s.persistAgentActionResult(row)
+}
+
+func (s *HostService) persistAgentActionResult(row *HostAgentActionResult) {
+	if row == nil || row.HostID == "" {
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(row.Action))
+	if action == "" {
+		action = "status"
+	}
+	result := strings.ToLower(strings.TrimSpace(row.Status))
+	if result == "" {
+		result = "unknown"
+	}
+	_ = s.repo.UpdateAgentActionResult(context.Background(), row.HostID, action, result, row.Message, time.Now().UTC())
 }
 
 func (s *HostService) agentHTTPHealth(ctx context.Context, host string, port int) (bool, string) {

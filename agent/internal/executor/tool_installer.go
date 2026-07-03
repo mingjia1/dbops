@@ -1920,14 +1920,13 @@ func (t *ToolInstaller) initPXCSingleNode(ctx context.Context, config PXCConfig)
 	if config.DataDir == "" {
 		return fmt.Errorf("PXC data directory is required")
 	}
+	if !isSafePXCDataDir(config.DataDir) {
+		return fmt.Errorf("refuse unsafe PXC datadir: %s", config.DataDir)
+	}
 
 	bootCmd := exec.CommandContext(ctx, "bash", "-c", fmt.Sprintf(`
 set -euo pipefail
 datadir=%s
-case "$datadir" in
-  /data/mysql/pxc-*|/tmp/dbops-pxc*|/var/lib/mysql/pxc-*) ;;
-  *) echo "refuse unsafe PXC datadir: $datadir"; exit 1 ;;
-esac
 mkdir -p "$datadir" /var/log/dbops-pxc
 if [ -d "$datadir/mysql" ] && [ ! -f "$datadir/mysql.ibd" ]; then
   find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +

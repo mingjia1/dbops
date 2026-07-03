@@ -272,3 +272,15 @@ func TestBuildPXCConfigContent_Basic(t *testing.T) {
 	assert.Contains(t, content, "10.0.0.2:4567")
 	assert.Contains(t, content, "xtrabackup-v2")
 }
+
+func TestIsSafePXCDataDir(t *testing.T) {
+	assert.True(t, isSafePXCDataDir("/data/mysql/pxc-3306"))
+	assert.True(t, isSafePXCDataDir("/data/mysql/3309/pxc"))
+	assert.True(t, isSafePXCDataDir("/var/lib/mysql/pxc-3306"))
+	assert.True(t, isSafePXCDataDir("/tmp/dbops-pxc-3306"))
+
+	assert.False(t, isSafePXCDataDir("/data/mysql/3309"))
+	assert.False(t, isSafePXCDataDir("/data/mysql/3309/pxc/extra"))
+	assert.False(t, isSafePXCDataDir("/data/mysql/unsafe/pxc"))
+	assert.False(t, isSafePXCDataDir("/root/mysql/pxc-3306"))
+}

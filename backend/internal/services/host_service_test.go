@@ -100,6 +100,61 @@ func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	assert.Equal(t, host.ID, result.HostID)
 }
 
+func TestAgentActionResultPersistsOnHost(t *testing.T) {
+	ctx := context.Background()
+	repo := repositories.NewHostRepository(newTestDB(t))
+	host := &models.Host{
+		ID:        "host-agent-result",
+		Name:      "agent-result-host",
+		Address:   "10.255.255.1",
+		SSHPort:   22,
+		SSHUser:   "root",
+		AgentPort: 9090,
+	}
+	require.NoError(t, repo.Create(ctx, host))
+
+	service := NewHostService(repo, "test-encryption-key")
+	service.updateAgentActionHostStatus(&HostAgentActionResult{
+		HostID:  host.ID,
+		Action:  "restart",
+		Status:  "failed",
+		Message: "restart failed for test",
+	})
+
+	updated, err := repo.GetByID(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "restart", updated.AgentLastAction)
+	assert.Equal(t, "failed", updated.AgentLastResult)
+	assert.Equal(t, "restart failed for test", updated.AgentLastMessage)
+	require.NotNil(t, updated.AgentLastAt)
+	assert.Equal(t, "failed", updated.Status)
+}
+
+func TestAgentStatusWithoutConfiguredClientDoesNotPanic(t *testing.T) {
+	ctx := context.Background()
+	repo := repositories.NewHostRepository(newTestDB(t))
+	host := &models.Host{
+		ID:        "host-agent-no-client",
+		Name:      "agent-no-client-host",
+		Address:   "127.0.0.1",
+		SSHPort:   22,
+		SSHUser:   "root",
+		AgentPort: 1,
+	}
+	require.NoError(t, repo.Create(ctx, host))
+
+	service := NewHostService(repo, "test-encryption-key")
+	result, err := service.AgentAction(ctx, host.ID, HostAgentActionRequest{Action: "status"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	updated, err := repo.GetByID(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "status", updated.AgentLastAction)
+	assert.Equal(t, "failed", updated.AgentLastResult)
+}
+
 func TestRegisterScannedInstancesUpdatesPasswordForManagedPort(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

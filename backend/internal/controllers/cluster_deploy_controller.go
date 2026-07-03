@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -288,19 +287,27 @@ func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 	deploymentID := ctx.Param("id")
 	var req struct {
 		NodeCount int `json:"node_count"`
+		HostIDs   []string `json:"host_ids"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "Invalid request")
 		return
 	}
-
-	dep, err := c.service.GetDeploymentStatus(ctx.Request.Context(), deploymentID)
-	if err != nil {
-		utils.NotFoundResponse(ctx, "Deployment not found")
+	if len(req.HostIDs) == 0 {
+		utils.BadRequestResponse(ctx, "host_ids is required")
+		return
+	}
+	if req.NodeCount > 0 && req.NodeCount != len(req.HostIDs) {
+		utils.BadRequestResponse(ctx, "node_count must match the number of host_ids")
 		return
 	}
 
-	utils.ErrorResponse(ctx, 501, fmt.Sprintf("Scale-out for deployment %s requires host selection workflow and is not implemented via this endpoint", dep.DeploymentID), nil)
+	result, err := c.service.ScaleOutCluster(ctx.Request.Context(), deploymentID, req.HostIDs)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Scale-out failed", err)
+		return
+	}
+	utils.SuccessResponse(ctx, result)
 }
 
 func (c *ClusterDeployController) ScaleIn(ctx *gin.Context) {

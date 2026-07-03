@@ -24,6 +24,7 @@ type VersionEntry struct {
 	MinGlibc         string            `json:"min_glibc"`    // e.g. "2.17"
 	OSFamily         []string          `json:"os_family"`    // ["linux"]
 	Status           string            `json:"status"`       // "active" | "deprecated" | "eol"
+	LocalAvailable   bool              `json:"local_available,omitempty"`
 	UpgradeFrom      []string          `json:"upgrade_from"` // e.g. ["5.7.44","5.7.43",...]
 	UpgradeNotes     string            `json:"upgrade_notes,omitempty"`
 	ConfigHints      map[string]string `json:"config_hints,omitempty"`

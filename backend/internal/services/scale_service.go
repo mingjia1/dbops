@@ -80,6 +80,7 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 
 	kernelPluginName := req.Flavor + "-core"
 	var instIDs []string
+	roleForNewNode := scaleOutReplicaRole(req.ArchType)
 
 	// H2: Fetch existing cluster instances so that arch plugins (e.g. MGR)
 	// can derive per-node local_port from the total node count.
@@ -114,7 +115,7 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 					Address:   node.Address,
 					AgentPort: node.AgentPort,
 					MySQLPort: node.MySQLPort,
-					Role:      "replica",
+					Role:      roleForNewNode,
 					DataDir:   node.DataDir,
 					Basedir:   node.Basedir,
 				},
@@ -138,7 +139,7 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			Address:   node.Address,
 			AgentPort: node.AgentPort,
 			MySQLPort: node.MySQLPort,
-			Role:      "replica",
+			Role:      roleForNewNode,
 			DataDir:   node.DataDir,
 			Basedir:   node.Basedir,
 		}
@@ -156,7 +157,7 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 			Address:   node.Address,
 			AgentPort: node.AgentPort,
 			MySQLPort: node.MySQLPort,
-			Role:      "replica",
+			Role:      roleForNewNode,
 		}); err != nil {
 			log.Printf("WARN: arch join failed for %s: %v", node.Address, err)
 		}
@@ -169,15 +170,35 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 		if s.instRepo != nil {
 			inst := &models.Instance{
 				ID:        instID,
-				Name:      fmt.Sprintf("replica-%s", node.Address),
+				Name:      fmt.Sprintf("%s-%s", roleForNewNode, node.Address),
 				ClusterID: req.ClusterID,
+			}
+			if node.HostID != "" {
+				inst.HostID = &node.HostID
 			}
 			if err := s.instRepo.Create(ctx, inst); err != nil {
 				log.Printf("WARN: failed to persist instance: %v", err)
+			} else {
+				_ = s.instRepo.CreateConnection(ctx, &models.InstanceConnection{
+					InstanceID: instID,
+					Host:       node.Address,
+					Port:       node.MySQLPort,
+					Username:   "root",
+					Basedir:    node.Basedir,
+					Datadir:    node.DataDir,
+				})
+				_ = s.instRepo.UpsertStatus(ctx, instID, &models.InstanceStatus{
+					InstanceID:        instID,
+					RunStatus:         "running",
+					HealthStatus:      "healthy",
+					Role:              roleForNewNode,
+					ReplicationStatus: req.ArchType,
+				})
 			}
 		}
 		instIDs = append(instIDs, instID)
 	}
+	s.refreshClusterTopology(ctx, req.ClusterID, req.ArchType)
 
 	// L3: Record audit log for scale-out operation
 	if s.auditSvc != nil {
@@ -198,6 +219,89 @@ func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*Scal
 		Status:     "completed",
 		Message:    fmt.Sprintf("%d new nodes added to cluster", len(req.NewNodes)),
 	}, nil
+}
+
+func scaleOutReplicaRole(archType string) string {
+	switch strings.ToLower(strings.TrimSpace(archType)) {
+	case "mgr", "pxc":
+		return "secondary"
+	default:
+		return "replica"
+	}
+}
+
+func scaleOutPrimaryRoles(archType string) []string {
+	switch strings.ToLower(strings.TrimSpace(archType)) {
+	case "mgr":
+		return []string{"primary"}
+	case "pxc":
+		return []string{"primary", "bootstrap"}
+	default:
+		return []string{"master", "primary"}
+	}
+}
+
+func (s *ScaleService) refreshClusterTopology(ctx context.Context, clusterID, archType string) {
+	if s.instRepo == nil {
+		return
+	}
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil || len(instances) == 0 {
+		return
+	}
+	primaryRoles := scaleOutPrimaryRoles(archType)
+	primaryID := ""
+	replicaIDs := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(inst.Status.Role))
+		for _, primaryRole := range primaryRoles {
+			if role == primaryRole {
+				primaryID = inst.ID
+				break
+			}
+		}
+	}
+	if primaryID == "" && len(instances) > 0 && instances[0] != nil {
+		primaryID = instances[0].ID
+	}
+	for _, inst := range instances {
+		if inst == nil || inst.ID == primaryID {
+			continue
+		}
+		replicaIDs = append(replicaIDs, inst.ID)
+	}
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if inst.ID == primaryID {
+			_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+				InstanceID:      inst.ID,
+				ClusterID:       clusterID,
+				MasterID:        "",
+				SlaveIDs:        mustJSONString(replicaIDs),
+				ReplicationMode: archType,
+			})
+			continue
+		}
+		_ = s.instRepo.UpsertTopology(ctx, inst.ID, &models.InstanceTopology{
+			InstanceID:      inst.ID,
+			ClusterID:       clusterID,
+			MasterID:        primaryID,
+			SlaveIDs:        "",
+			ReplicationMode: archType,
+		})
+	}
+}
+
+func mustJSONString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[\"%s\"]", strings.Join(values, "\",\""))
 }
 
 type ScaleInRequest struct {

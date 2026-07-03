@@ -11,6 +11,17 @@ const isFailedAgentStatus = (status?: string) => {
   const normalized = (status || '').toLowerCase()
   return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
 }
+const isOkAgentStatus = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  return ['success', 'succeeded', 'completed', 'ok'].includes(normalized)
+}
+const agentResultColor = (status?: string) => {
+  const normalized = (status || '').toLowerCase()
+  if (isOkAgentStatus(normalized)) return 'success'
+  if (isFailedAgentStatus(normalized)) return 'error'
+  if (['submitted', 'pending', 'running'].includes(normalized)) return 'processing'
+  return 'default'
+}
 
 const summarizeAgentRows = (rows: any[]) =>
   rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
@@ -376,6 +387,23 @@ const HostList: React.FC = () => {
         const colorMap: Record<string, string> = { running: 'success', stopped: 'error', removed: 'default', unknown: 'default' }
         const textMap: Record<string, string> = { running: '运行中', stopped: '已停止', removed: '已移除', unknown: '未知' }
         return <Tag color={colorMap[s] || 'default'}>{textMap[s] || s}</Tag>
+      },
+    },
+    {
+      title: '最近 Agent 操作',
+      key: 'agent_last_action',
+      width: 220,
+      render: (_, r) => {
+        if (!r.agent_last_action && !r.agent_last_result) return '-'
+        const time = r.agent_last_at ? new Date(r.agent_last_at).toLocaleString() : '-'
+        return (
+          <Tooltip title={`${r.agent_last_message || '-'}\n${time}`}>
+            <Space size={4} direction="vertical">
+              <span>{r.agent_last_action || '-'}</span>
+              <Tag color={agentResultColor(r.agent_last_result)}>{r.agent_last_result || 'unknown'}</Tag>
+            </Space>
+          </Tooltip>
+        )
       },
     },
     { title: '最后检测', dataIndex: 'last_check_at', key: 'last_check_at', render: (t) => (t ? new Date(t).toLocaleString() : '-') },

@@ -19,6 +19,7 @@ import (
 type UpgradeService struct {
 	instanceRepo *repositories.InstanceRepository
 	taskRepo     *repositories.TaskRepository
+	planRepo     *repositories.UpgradePlanRepository
 	agentClient  *AgentClient
 	auditSvc     *AuditService
 	encKey       string
@@ -41,6 +42,10 @@ func NewUpgradeService(instanceRepo *repositories.InstanceRepository, taskRepo *
 
 func (s *UpgradeService) SetEncryptionKey(key string) {
 	s.encKey = key
+}
+
+func (s *UpgradeService) SetPlanRepository(repo *repositories.UpgradePlanRepository) {
+	s.planRepo = repo
 }
 
 type PlanUpgradePathRequest struct {
@@ -70,6 +75,31 @@ type UpgradeStepInfo struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Description string `json:"description"`
+}
+
+func (s *UpgradeService) requireKnownPlan(planID, instanceID, strategy string) (*models.UpgradePlan, error) {
+	value, ok := s.plans.Load(planID)
+	if !ok && s.planRepo != nil {
+		if persisted, err := s.planRepo.GetByID(context.Background(), planID); err == nil && persisted != nil {
+			s.plans.Store(planID, persisted)
+			value = persisted
+			ok = true
+		}
+	}
+	if !ok {
+		return nil, fmt.Errorf("upgrade plan %s not found; generate a new plan first", planID)
+	}
+	plan, ok := value.(*models.UpgradePlan)
+	if !ok || plan == nil {
+		return nil, fmt.Errorf("upgrade plan %s is invalid", planID)
+	}
+	if instanceID != "" && plan.InstanceID != "" && plan.InstanceID != instanceID {
+		return nil, fmt.Errorf("upgrade plan %s does not belong to instance %s", planID, instanceID)
+	}
+	if strategy != "" && plan.Strategy != "" && plan.Strategy != strategy {
+		return nil, fmt.Errorf("upgrade plan %s was created for strategy %s, not %s", planID, plan.Strategy, strategy)
+	}
+	return plan, nil
 }
 
 func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePathRequest) (*PlanUpgradePathResponse, error) {
@@ -144,6 +174,9 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 	}
 	// H3: persist plan in memory so ExecuteInPlaceUpgrade can validate plan_id.
 	s.plans.Store(plan.ID, plan)
+	if s.planRepo != nil {
+		_ = s.planRepo.Create(ctx, plan)
+	}
 
 	response := &PlanUpgradePathResponse{
 		PlanID:           plan.ID,
@@ -360,6 +393,11 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("backup confirmation is required before in-place upgrade")
 	}
+	if _, err := s.requireKnownPlan(req.PlanID, req.InstanceID, "inplace"); err != nil {
+		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
@@ -440,6 +478,11 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 		s.auditUpgrade(ctx, "execute_logical_upgrade", "execute", "upgrade_task", req.PlanID, "failed", "backup confirmation is required before logical upgrade migration",
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("backup confirmation is required before logical upgrade migration")
+	}
+	if _, err := s.requireKnownPlan(req.PlanID, req.InstanceID, "logical"); err != nil {
+		s.auditUpgrade(ctx, "execute_logical_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
+		return nil, err
 	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
@@ -531,6 +574,11 @@ type RollingUpgradeInstance struct {
 }
 
 func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteRollingUpgradeRequest) (*ExecuteRollingUpgradeResponse, error) {
+	if _, err := s.requireKnownPlan(req.PlanID, "", "rolling"); err != nil {
+		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	if req.MaxInParallel == 0 {
 		req.MaxInParallel = 1
 	}
@@ -646,6 +694,11 @@ type RollbackUpgradeResponse struct {
 }
 
 func (s *UpgradeService) RollbackUpgrade(ctx context.Context, req RollbackUpgradeRequest) (*RollbackUpgradeResponse, error) {
+	if _, err := s.requireKnownPlan(req.PlanID, req.InstanceID, ""); err != nil {
+		s.auditUpgrade(ctx, "rollback_upgrade", "rollback", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s backup_id=%s force=%t", req.InstanceID, req.PlanID, req.BackupID, req.Force))
+		return nil, err
+	}
 	instance, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		s.auditUpgrade(ctx, "rollback_upgrade", "rollback", "upgrade_task", req.PlanID, "failed", err.Error(),

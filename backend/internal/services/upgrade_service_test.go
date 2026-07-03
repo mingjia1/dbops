@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
@@ -274,6 +275,7 @@ func TestUpgradeService_ExecuteRollingUpgradeEmptyClusterFailsWithoutTask(t *tes
 	instanceRepo := repositories.NewInstanceRepository(db)
 	taskRepo := repositories.NewTaskRepository(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	registerUpgradePlan(service, "plan-001", "", "rolling")
 
 	resp, err := service.ExecuteRollingUpgrade(context.Background(), ExecuteRollingUpgradeRequest{
 		ClusterID:     "cluster-001",
@@ -296,6 +298,7 @@ func TestUpgradeService_ExecuteRollingUpgrade_TaskIDIsPersisted(t *testing.T) {
 	taskRepo := repositories.NewTaskRepository(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
 	createUpgradeTestInstance(t, context.Background(), instanceRepo, "cluster-history-inst-1", "cluster-history")
+	registerUpgradePlan(service, "plan-history", "cluster-history-inst-1", "rolling")
 
 	resp, err := service.ExecuteRollingUpgrade(context.Background(), ExecuteRollingUpgradeRequest{
 		ClusterID:     "cluster-history",
@@ -324,6 +327,7 @@ func TestUpgradeService_ExecuteRollingUpgrade_HydratesRolesAndNodeIDs(t *testing
 	service := NewUpgradeService(instanceRepo, taskRepo, nil)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "cluster-node-1", "cluster-hydrate")
 	createUpgradeTestInstance(t, ctx, instanceRepo, "cluster-node-2", "cluster-hydrate")
+	registerUpgradePlan(service, "plan-hydrate", "cluster-node-1", "rolling")
 	require.NoError(t, instanceRepo.UpsertStatus(ctx, "cluster-node-1", &models.InstanceStatus{Role: "primary", HealthStatus: "healthy"}))
 	require.NoError(t, instanceRepo.UpsertStatus(ctx, "cluster-node-2", &models.InstanceStatus{Role: "secondary", HealthStatus: "healthy"}))
 
@@ -491,6 +495,7 @@ func TestUpgradeService_ExecuteInPlaceWritesAuditLog(t *testing.T) {
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-execute", "")
+	registerUpgradePlan(service, "plan-execute", "upgrade-inst-execute", "inplace")
 
 	resp, err := service.ExecuteInPlaceUpgrade(ctx, ExecuteInPlaceUpgradeRequest{
 		InstanceID:    "upgrade-inst-execute",
@@ -509,12 +514,61 @@ func TestUpgradeService_ExecuteInPlaceWritesAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].Details, "plan_id=plan-execute")
 }
 
+func TestUpgradeService_ExecuteInPlaceRejectsUnknownPlan(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instanceRepo, taskRepo, _, _ := newUpgradeAuditTestRepos(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-missing-plan", "")
+
+	resp, err := service.ExecuteInPlaceUpgrade(ctx, ExecuteInPlaceUpgradeRequest{
+		InstanceID:    "upgrade-inst-missing-plan",
+		PlanID:        "missing-plan",
+		TargetVersion: "8.0.36",
+		BackupEnabled: true,
+	})
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "generate a new plan first")
+}
+
+func TestUpgradeService_ExecuteInPlaceLoadsPlanFromRepository(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instanceRepo, taskRepo, _, _ := newUpgradeAuditTestRepos(db)
+	planRepo := repositories.NewUpgradePlanRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	service.SetPlanRepository(planRepo)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-persisted-plan", "")
+
+	planResp, err := service.PlanUpgradePath(ctx, PlanUpgradePathRequest{
+		InstanceID:    "upgrade-inst-persisted-plan",
+		TargetVersion: "8.0.36",
+		Strategy:      "inplace",
+	})
+	require.NoError(t, err)
+	service.plans = sync.Map{}
+
+	resp, err := service.ExecuteInPlaceUpgrade(ctx, ExecuteInPlaceUpgradeRequest{
+		InstanceID:    "upgrade-inst-persisted-plan",
+		PlanID:        planResp.PlanID,
+		TargetVersion: "8.0.36",
+		BackupEnabled: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, planResp.PlanID, resp.PlanID)
+}
+
 func TestUpgradeService_ExecuteLogicalWritesAuditLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "user_id", "upgrade-auditor-005")
 	db := newTestDB(t)
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-logical", "")
+	registerUpgradePlan(service, "plan-logical", "upgrade-inst-logical", "logical")
 
 	resp, err := service.ExecuteLogicalMigration(ctx, ExecuteLogicalMigrationRequest{
 		InstanceID:    "upgrade-inst-logical",
@@ -542,6 +596,7 @@ func TestUpgradeService_RollbackWritesAuditLog(t *testing.T) {
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-inst-rollback", "")
+	registerUpgradePlan(service, "plan-rollback", "upgrade-inst-rollback", "inplace")
 
 	resp, err := service.RollbackUpgrade(ctx, RollbackUpgradeRequest{
 		InstanceID: "upgrade-inst-rollback",
@@ -566,6 +621,7 @@ func TestUpgradeService_ExecuteRollingWritesAuditLog(t *testing.T) {
 	instanceRepo, taskRepo, auditRepo, auditSvc := newUpgradeAuditTestRepos(db)
 	service := NewUpgradeService(instanceRepo, taskRepo, nil, auditSvc)
 	createUpgradeTestInstance(t, ctx, instanceRepo, "upgrade-cluster-inst-1", "upgrade-cluster-audit")
+	registerUpgradePlan(service, "plan-rolling", "upgrade-cluster-inst-1", "rolling")
 
 	resp, err := service.ExecuteRollingUpgrade(ctx, ExecuteRollingUpgradeRequest{
 		ClusterID:           "upgrade-cluster-audit",
@@ -680,4 +736,13 @@ func createUpgradeTestInstance(t *testing.T, ctx context.Context, repo *reposito
 		Version:     "5.7.40",
 		FullVersion: "5.7.40",
 	}))
+}
+
+func registerUpgradePlan(service *UpgradeService, planID, instanceID, strategy string) {
+	service.plans.Store(planID, &models.UpgradePlan{
+		ID:         planID,
+		InstanceID: instanceID,
+		Strategy:   strategy,
+		Status:     "planned",
+	})
 }

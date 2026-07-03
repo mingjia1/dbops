@@ -351,6 +351,10 @@ export interface Host {
   agent_status?: string
   agent_installed_at?: string | null
   agent_last_heartbeat?: string | null
+  agent_last_action?: string
+  agent_last_result?: string
+  agent_last_message?: string
+  agent_last_at?: string | null
   os_type: string
   description: string
   tags: string
@@ -868,6 +872,7 @@ export interface VersionEntry {
   min_glibc: string
   os_family: string[]
   status: 'active' | 'deprecated' | 'eol'
+  local_available?: boolean
   upgrade_from: string[]
   upgrade_notes?: string
 }

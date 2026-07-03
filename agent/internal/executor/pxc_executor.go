@@ -621,14 +621,13 @@ func safeNodeName(host string) string {
 
 func preparePXCDataDir(ctx context.Context, config PXCConfig, rawConfig map[string]interface{}) error {
 	forceClean := config.Bootstrap || configBool(rawConfig, "force")
+	if !isSafePXCDataDir(config.DataDir) {
+		return fmt.Errorf("refuse to prepare unsafe PXC datadir: %s", config.DataDir)
+	}
 	cmd := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
 	set -euo pipefail
 	datadir=%s
 	force_clean=%s
-	case "$datadir" in
-	  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
-	  *) echo "refuse to prepare unsafe PXC datadir: $datadir"; exit 1 ;;
-	esac
 	mkdir -p "$datadir" /var/log/dbops-pxc /etc/dbops-pxc
 	chmod o+x "$(dirname "$datadir")" 2>/dev/null || true
 	if [ "$force_clean" = "true" ]; then
@@ -649,13 +648,12 @@ func preparePXCDataDir(ctx context.Context, config PXCConfig, rawConfig map[stri
 }
 
 func initializePXCBootstrapDataDir(ctx context.Context, config PXCConfig) error {
+	if !isSafePXCDataDir(config.DataDir) {
+		return fmt.Errorf("refuse to clean unsafe PXC datadir: %s", config.DataDir)
+	}
 	clean := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf(`
 set -euo pipefail
 datadir=%s
-case "$datadir" in
-  /data/mysql/pxc-*|/tmp/dbops-pxc*) ;;
-  *) echo "refuse to clean unsafe PXC datadir: $datadir"; exit 1 ;;
-esac
 if [ -d "$datadir/mysql" ] && [ ! -f "$datadir/mysql.ibd" ]; then
   find "$datadir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 fi
@@ -676,6 +674,36 @@ fi
 		return fmt.Errorf("%v, output: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func isSafePXCDataDir(datadir string) bool {
+	normalized := strings.TrimSpace(filepath.ToSlash(datadir))
+	if normalized == "" {
+		return false
+	}
+	if strings.HasPrefix(normalized, "/tmp/dbops-pxc") {
+		return true
+	}
+	if strings.HasPrefix(normalized, "/var/lib/mysql/pxc-") {
+		return true
+	}
+	if strings.HasPrefix(normalized, "/data/mysql/pxc-") {
+		return true
+	}
+	if strings.HasPrefix(normalized, "/data/mysql/") && strings.HasSuffix(normalized, "/pxc") {
+		rest := strings.TrimPrefix(normalized, "/data/mysql/")
+		portPart := strings.TrimSuffix(rest, "/pxc")
+		if portPart == "" || strings.Contains(portPart, "/") {
+			return false
+		}
+		for _, ch := range portPart {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func writePXCInitConfig(ctx context.Context, config PXCConfig) error {

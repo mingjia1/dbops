@@ -243,7 +243,7 @@ const UpgradeManage: React.FC = () => {
       })
       .map((v) => ({
         value: v.id,
-        label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}`,
+        label: `${v.flavor} ${v.version}${v.is_lts ? ' [LTS]' : ''}${v.status === 'eol' ? ' [EOL]' : ''}${v.local_available ? ' [存在]' : ' [下载]'}`,
       })),
     [versions],
   )

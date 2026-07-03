@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 	"github.com/jackcode/mysql-ops-platform/internal/plugins/arch"
 	"github.com/stretchr/testify/assert"
@@ -46,6 +48,66 @@ func TestScaleService_ScaleOut(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "completed", result.Status)
 	assert.Len(t, result.NewInstIDs, 1)
+}
+
+func TestScaleService_ScaleOut_PersistsConnectionAndTopology(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	registry := newTestLifecycleRegistry()
+	vault := NewCredentialVault(newTestCredentialRepo(t), "test-key")
+	orch := NewDeployOrchestrator(registry, vault, repo)
+	pluginExec := plugins.NewExecutor(registry)
+	svc := NewScaleService(orch, repo, pluginExec)
+
+	hostID := "host-primary"
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: hostID, Name: hostID, Address: "10.0.0.1", AgentPort: 9090}))
+	require.NoError(t, hostRepo.Create(ctx, &models.Host{ID: "host-secondary", Name: "host-secondary", Address: "10.0.0.2", AgentPort: 9090}))
+	require.NoError(t, repo.Create(ctx, &models.Instance{
+		ID:        "primary-001",
+		Name:      "primary-001",
+		ClusterID: "scale-out-cluster",
+		HostID:    &hostID,
+	}))
+	require.NoError(t, repo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID: "primary-001",
+		Host:       "10.0.0.1",
+		Port:       3306,
+		Username:   "root",
+		Basedir:    "/opt/mysql",
+		Datadir:    "/data/mysql/3306",
+	}))
+	require.NoError(t, repo.UpsertStatus(ctx, "primary-001", &models.InstanceStatus{
+		InstanceID:        "primary-001",
+		RunStatus:         "running",
+		HealthStatus:      "healthy",
+		Role:              "primary",
+		ReplicationStatus: "mgr",
+	}))
+
+	result, err := svc.ScaleOut(ctx, ScaleOutRequest{
+		ClusterID: "scale-out-cluster",
+		Flavor:    "mysql",
+		ArchType:  "mgr",
+		EncKey:    "test-key",
+		NewNodes: []OrchestratorNode{
+			{HostID: "host-secondary", Address: "10.0.0.2", AgentPort: 9090, MySQLPort: 3306, DataDir: "/data/mysql/3306", Basedir: "/opt/mysql"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.NewInstIDs, 1)
+
+	conn, err := repo.GetConnection(ctx, result.NewInstIDs[0])
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.2", conn.Host)
+	assert.Equal(t, 3306, conn.Port)
+
+	inst, err := repo.GetByID(ctx, result.NewInstIDs[0])
+	require.NoError(t, err)
+	assert.Equal(t, "scale-out-cluster", inst.ClusterID)
+	assert.Equal(t, "secondary", inst.Status.Role)
+	assert.Equal(t, "primary-001", inst.Topology.MasterID)
 }
 
 func TestScaleService_ScaleOut_NoNodes(t *testing.T) {
