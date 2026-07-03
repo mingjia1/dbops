@@ -34,6 +34,7 @@ type ClusterDeployService struct {
 	progress    map[string]*DeploymentProgress
 	scaleSvc    *ScaleService
 	rebuildSvc  *RebuildService
+	messageBus  *MessageBus
 }
 
 type ClusterDestroyOperationError struct {
@@ -160,6 +161,10 @@ func (s *ClusterDeployService) SetRebuildService(svc *RebuildService) {
 	s.rebuildSvc = svc
 }
 
+func (s *ClusterDeployService) SetMessageBus(bus *MessageBus) {
+	s.messageBus = bus
+}
+
 func (s *ClusterDeployService) ScaleInCluster(ctx context.Context, deploymentID, removeNodeID string) (*ScaleInResult, error) {
 	if s.scaleSvc == nil {
 		return nil, fmt.Errorf("scale service not configured")
@@ -194,7 +199,20 @@ func (s *ClusterDeployService) RebuildClusterNode(ctx context.Context, deploymen
 		return nil, fmt.Errorf("instance connection not found: %w", err)
 	}
 	var agentPort int
-	if conn.Host != "" {
+	inst, err := s.instRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	hostID := ""
+	if inst.HostID != nil {
+		hostID = *inst.HostID
+	}
+	if hostID != "" && s.hostRepo != nil {
+		if host, hostErr := s.hostRepo.GetByID(ctx, hostID); hostErr == nil && host != nil {
+			agentPort = host.AgentPort
+		}
+	}
+	if agentPort == 0 && conn.Host != "" && s.hostRepo != nil {
 		hosts, _ := s.hostRepo.List(ctx, 1000, 0)
 		for _, h := range hosts {
 			if h.Address == conn.Host {
@@ -211,7 +229,7 @@ func (s *ClusterDeployService) RebuildClusterNode(ctx context.Context, deploymen
 		ArchType:   dep.ClusterType,
 		EncKey:     s.encKey,
 		Node: OrchestratorNode{
-			HostID:    conn.Host,
+			HostID:    hostID,
 			Address:   conn.Host,
 			AgentPort: agentPort,
 			MySQLPort: conn.Port,
@@ -293,6 +311,10 @@ func (s *ClusterDeployService) updateProgress(deploymentID, stage, message strin
 	p.Progress = progressPct
 	p.Message = message
 	p.Logs = append(p.Logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), message))
+	if s.messageBus != nil {
+		s.messageBus.PublishProgress(deploymentID, progressPct, stage, "running")
+		s.messageBus.PublishLog(deploymentID, message)
+	}
 }
 
 func (s *ClusterDeployService) addStep(deploymentID, name, status string) {
@@ -316,12 +338,18 @@ func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, mess
 		if p.Steps[i].Name == name {
 			p.Steps[i].Status = status
 			p.Steps[i].Message = message
-			if status == "completed" || status == "failed" {
-				p.Steps[i].CompletedAt = &now
+				if status == "completed" || status == "failed" {
+					p.Steps[i].CompletedAt = &now
+				}
+				if s.messageBus != nil {
+					s.messageBus.PublishStatus(deploymentID, status)
+					if message != "" {
+						s.messageBus.PublishLog(deploymentID, fmt.Sprintf("%s: %s", name, message))
+					}
+				}
+				return
 			}
-			return
 		}
-	}
 }
 
 func (s *ClusterDeployService) getOrCreateProgress(deploymentID string) *DeploymentProgress {

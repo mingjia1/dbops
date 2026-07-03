@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -299,17 +300,7 @@ func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 		return
 	}
 
-	// Scale-out requires additional host selection via the deployment UI.
-	// Return the deployment context so the frontend can prompt the user for new hosts.
-	utils.SuccessResponse(ctx, gin.H{
-		"deployment_id": deploymentID,
-		"cluster_type":  dep.ClusterType,
-		"cluster_id":    dep.ClusterID,
-		"action":        "scale-out",
-		"node_count":    req.NodeCount,
-		"status":        "awaiting_hosts",
-		"message":       "Please select hosts for the new nodes via the deployment page",
-	})
+	utils.ErrorResponse(ctx, 501, fmt.Sprintf("Scale-out for deployment %s requires host selection workflow and is not implemented via this endpoint", dep.DeploymentID), nil)
 }
 
 func (c *ClusterDeployController) ScaleIn(ctx *gin.Context) {

@@ -7,6 +7,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
 import { formatClusterRole } from '../services/roleDisplay'
+import { useTaskSSE, type TaskEvent } from '../services/useTaskSSE'
 
 const { Text } = Typography
 
@@ -325,6 +326,35 @@ const ClusterDeploy: React.FC = () => {
     })
     setActiveDeployment((cur) => (cur && cur.deployment_id === dep.deployment_id ? fresh : cur))
   }
+
+  const patchActiveDeploymentFromSSE = (event: TaskEvent) => {
+    setActiveDeployment((current) => {
+      if (!current || current.deployment_id !== event.task_id) return current
+      const next: DeployResult = {
+        ...current,
+        status: event.status || current.status,
+        stage: event.stage || current.stage,
+        progress: typeof event.progress === 'number' ? event.progress : current.progress,
+        message: event.log_line || current.message,
+        logs: event.log_line ? [...(current.logs || []), event.log_line] : current.logs,
+      }
+      setDeployments((items) => items.map((item) => (item.deployment_id === next.deployment_id ? { ...next, _ts: Date.now() } : item)))
+      return next
+    })
+  }
+
+  useTaskSSE({
+    taskID: activeDeployment?.deployment_id || '',
+    enabled: !!activeDeployment && !isTerminalDeployStatus(activeDeployment.status),
+    onProgress: patchActiveDeploymentFromSSE,
+    onLog: patchActiveDeploymentFromSSE,
+    onStatus: (event) => {
+      patchActiveDeploymentFromSSE(event)
+      if (event.status && ['completed', 'success', 'failed', 'error', 'partial', 'partial_success', 'destroyed'].includes(event.status.toLowerCase())) {
+        loadDeployments(false)
+      }
+    },
+  })
 
   const startPolling = (dep: DeployResult) => {
     if (isTerminalDeployStatus(dep.status)) return
