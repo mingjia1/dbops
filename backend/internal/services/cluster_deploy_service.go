@@ -648,10 +648,14 @@ type PreCheckResult struct {
 }
 
 type PreCheckItem struct {
-	Name    string `json:"name"`
-	Passed  bool   `json:"passed"`
-	Value   string `json:"value,omitempty"`
-	Message string `json:"message,omitempty"`
+	Name      string         `json:"name"`
+	Passed    bool           `json:"passed"`
+	Value     string         `json:"value,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Fixable   bool           `json:"fixable,omitempty"`
+	FixAction string         `json:"fix_action,omitempty"`
+	Port      int            `json:"port,omitempty"`
+	Payload   map[string]any `json:"payload,omitempty"`
 }
 
 type ClusterDeployCheckNode struct {
@@ -660,6 +664,9 @@ type ClusterDeployCheckNode struct {
 	Role      string `json:"role,omitempty"`
 	MySQLPort int    `json:"mysql_port,omitempty"`
 	DataDir   string `json:"data_dir,omitempty"`
+	Basedir   string `json:"basedir,omitempty"`
+	PackageURL string `json:"package_url,omitempty"`
+	RelayURL   string `json:"relay_url,omitempty"`
 }
 
 type instanceEndpoint struct {
@@ -669,20 +676,34 @@ type instanceEndpoint struct {
 	clusterID string
 }
 
-func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, nodes []ClusterDeployCheckNode) ([]PreCheckResult, error) {
+type ClusterDeployPrecheckRepairRequest struct {
+	HostID     string `json:"host_id"`
+	Port       int    `json:"port"`
+	Action     string `json:"action"`
+	Component  string `json:"component,omitempty"`
+	Basedir    string `json:"basedir,omitempty"`
+	DataDir    string `json:"data_dir,omitempty"`
+	PackageURL string `json:"package_url,omitempty"`
+	RelayURL   string `json:"relay_url,omitempty"`
+	Command    string `json:"command,omitempty"`
+}
+
+func (s *ClusterDeployService) PreCheck(ctx context.Context, clusterType string, hostIDs []string, nodes []ClusterDeployCheckNode) ([]PreCheckResult, error) {
 	if s.hostRepo == nil {
 		return nil, fmt.Errorf("host repository not configured")
 	}
-	nodeByHostID := map[string][]ClusterDeployCheckNode{}
-	for _, node := range nodes {
-		if node.MySQLPort == 0 {
-			node.MySQLPort = 3306
+	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
+		nodeByHostID := map[string][]ClusterDeployCheckNode{}
+		for _, node := range nodes {
+			if node.MySQLPort == 0 {
+				node.MySQLPort = 3306
+			}
+			if node.HostID != "" {
+				nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
+				hostIDs = append(hostIDs, node.HostID)
+			}
 		}
-		if node.HostID != "" {
-			nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
-		}
-	}
-	hostIDs = dedupeStrings(hostIDs)
+		hostIDs = dedupeStrings(hostIDs)
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
@@ -717,6 +738,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 			continue
 		}
 		r.Details = append(r.Details, PreCheckItem{Name: "Agent", Passed: true, Value: healthResult.Status})
+		s.appendComponentConfigPrecheck(ctx, &r, host.Address, agentPort, clusterType, nodeByHostID[hostID])
 
 		// 2. Check mysql client availability via agent environment check
 		envData, envErr := s.agentClient.CheckEnvironmentDirect(ctx, host.Address, agentPort)
@@ -784,6 +806,120 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, hostIDs []string, n
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+func (s *ClusterDeployService) RepairPreCheck(ctx context.Context, req ClusterDeployPrecheckRepairRequest) (*AgentTaskResult, error) {
+	if s.hostRepo == nil {
+		return nil, fmt.Errorf("host repository not configured")
+	}
+	if s.agentClient == nil {
+		return nil, fmt.Errorf("agent client not configured")
+	}
+	if req.HostID == "" {
+		return nil, fmt.Errorf("host_id is required")
+	}
+	if req.Port <= 0 {
+		return nil, fmt.Errorf("port is required")
+	}
+	action := strings.TrimSpace(req.Action)
+	if action == "" {
+		action = "repair_component_config"
+	}
+	if action != "repair_component_config" && action != "run_shell" {
+		return nil, fmt.Errorf("unsupported precheck repair action: %s", action)
+	}
+	host, err := s.hostRepo.GetByID(ctx, req.HostID)
+	if err != nil {
+		return nil, err
+	}
+	agentPort := host.AgentPort
+	if agentPort == 0 {
+		agentPort = 9090
+	}
+	component := strings.TrimSpace(req.Component)
+	if component == "" {
+		component = "component_reference_cache"
+	}
+	config := map[string]interface{}{
+		"action":      action,
+		"target_port": req.Port,
+		"component":   component,
+		"basedir":     req.Basedir,
+		"datadir":     req.DataDir,
+		"package_url": req.PackageURL,
+		"relay_url":   req.RelayURL,
+	}
+	if action == "run_shell" && req.Command != "" {
+		config["command"] = req.Command
+	}
+	return s.agentClient.ExecuteInstanceAdmin(ctx, host.Address, agentPort, config)
+}
+
+func (s *ClusterDeployService) appendComponentConfigPrecheck(ctx context.Context, result *PreCheckResult, host string, agentPort int, clusterType string, nodes []ClusterDeployCheckNode) {
+	if clusterType != ClusterTypeMGR || s.agentClient == nil {
+		return
+	}
+	for _, node := range nodes {
+		if node.MySQLPort == 0 || node.Role == "manager" {
+			continue
+		}
+		config := map[string]interface{}{
+			"action":      "check_component_config",
+			"target_port": node.MySQLPort,
+			"component":   "component_reference_cache",
+			"basedir":     node.Basedir,
+			"datadir":     node.DataDir,
+			"package_url": node.PackageURL,
+			"relay_url":   node.RelayURL,
+		}
+		taskResult, err := s.agentClient.ExecuteInstanceAdmin(ctx, host, agentPort, config)
+		item := PreCheckItem{
+			Name:    fmt.Sprintf("MGR component config %d", node.MySQLPort),
+			Passed:  false,
+			Port:    node.MySQLPort,
+			Message: "could not check MySQL component config via agent",
+		}
+		if err != nil {
+			item.Message = err.Error()
+			if result.Status == "pass" {
+				result.Status = "warn"
+			}
+			result.Details = append(result.Details, item)
+			continue
+		}
+		data := taskResult.Data
+		passed, _ := data["passed"].(bool)
+		fixable, _ := data["fixable"].(bool)
+		message, _ := data["message"].(string)
+		pluginPath, _ := data["plugin_path"].(string)
+		component, _ := data["component"].(string)
+		diagnostics, _ := data["diagnostics"].(string)
+		item.Passed = passed
+		item.Fixable = fixable
+		item.FixAction = "repair_component_config"
+		item.Value = pluginPath
+		item.Message = message
+		item.Payload = map[string]any{
+			"component":   component,
+			"basedir":     node.Basedir,
+			"data_dir":    node.DataDir,
+			"package_url": node.PackageURL,
+			"relay_url":   node.RelayURL,
+		}
+		if diagnostics != "" {
+			item.Payload["diagnostics"] = diagnostics
+			if !passed {
+				item.Message = message + "\n\n" + diagnostics
+			}
+		}
+		if item.Passed {
+			item.Value = firstNonEmpty(pluginPath, "ok")
+			item.Message = ""
+		} else {
+			result.Status = "fail"
+		}
+		result.Details = append(result.Details, item)
+	}
 }
 
 func dedupeStrings(values []string) []string {
@@ -1520,11 +1656,11 @@ type DeployPXCRequest struct {
 }
 
 type DeployHARequest struct {
-	Name           string          `json:"name"`
-	ClusterID      string          `json:"cluster_id"`
-	MasterHostID   string          `json:"master_host_id"`
-	MasterHost     string          `json:"master_host"`
-	ReplicaHosts   []SecondaryNode `json:"replica_hosts"`
+	Name            string            `json:"name"`
+	ClusterID       string            `json:"cluster_id"`
+	MasterHostID    string            `json:"master_host_id"`
+	MasterHost      string            `json:"master_host"`
+	ReplicaHosts    []SecondaryNode   `json:"replica_hosts"`
 	MasterPort      int               `json:"master_port"`
 	ReplicaPort     int               `json:"replica_port"`
 	MasterAgentPort int               `json:"master_agent_port"`

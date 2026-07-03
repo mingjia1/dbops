@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,6 +46,14 @@ func TestMysqlHasGetServerPublicKey_MySQL80(t *testing.T) {
 func TestMysqlHasGetServerPublicKey_Empty(t *testing.T) {
 	// Empty defaults to 8.0+
 	assert.True(t, mysqlHasGetServerPublicKey(""))
+}
+
+func TestMysqlSupportsGroupReplication(t *testing.T) {
+	assert.False(t, mysqlSupportsGroupReplication("5.7"))
+	assert.False(t, mysqlSupportsGroupReplication("5.7.44"))
+	assert.True(t, mysqlSupportsGroupReplication("8.0"))
+	assert.True(t, mysqlSupportsGroupReplication("8.4"))
+	assert.True(t, mysqlSupportsGroupReplication(""))
 }
 
 // --- MGRConfig: MySQLVersion parsing ---
@@ -104,3 +114,38 @@ func TestMySQLVersionDefaultInDeployFlow(t *testing.T) {
 	assert.Equal(t, "8.4", extractVersion(map[string]interface{}{"mysql_version": "8.4"}))
 }
 
+func TestComponentConfigCheckDetectsMissingPlugin(t *testing.T) {
+	dir := t.TempDir()
+	cnf := filepath.Join(dir, "my.cnf")
+	assert.NoError(t, os.WriteFile(cnf, []byte("[mysqld]\ncomponent_load_add=file://component_reference_cache\n"), 0o600))
+
+	result := inspectMySQLComponentConfig(map[string]interface{}{
+		"path":        cnf,
+		"target_port": 3308,
+		"basedir":     filepath.Join(dir, "mysql"),
+	})
+
+	assert.False(t, result.Passed)
+	assert.True(t, result.Fixable)
+	assert.Len(t, result.Issues, 1)
+	assert.Contains(t, result.Message, "component_reference_cache")
+}
+
+func TestComponentConfigRepairCommentsMissingPluginLine(t *testing.T) {
+	dir := t.TempDir()
+	cnf := filepath.Join(dir, "my.cnf")
+	assert.NoError(t, os.WriteFile(cnf, []byte("[mysqld]\ncomponent_load_add=file://component_reference_cache\n"), 0o600))
+
+	output, err := repairMySQLComponentConfig(map[string]interface{}{
+		"path":        cnf,
+		"target_port": 3308,
+		"basedir":     filepath.Join(dir, "mysql"),
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "disabled")
+	data, readErr := os.ReadFile(cnf)
+	assert.NoError(t, readErr)
+	assert.Contains(t, string(data), "# dbops-disabled-missing-component: component_load_add=file://component_reference_cache")
+	assert.True(t, inspectMySQLComponentConfig(map[string]interface{}{"path": cnf}).Passed)
+}

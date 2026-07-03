@@ -30,10 +30,10 @@ func NewAgentClient(agentToken string) *AgentClient {
 		httpClient: &http.Client{
 			Timeout: agentDefaultTimeout,
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				DisableKeepAlives:   false,
+				MaxIdleConns:           100,
+				MaxIdleConnsPerHost:    10,
+				IdleConnTimeout:        90 * time.Second,
+				DisableKeepAlives:      false,
 				MaxResponseHeaderBytes: 8192,
 			},
 		},
@@ -157,6 +157,14 @@ func (c *AgentClient) ExecuteHealthCheck(ctx context.Context, hostAddr string, a
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/health-check", payload)
 }
 
+func (c *AgentClient) ExecuteInstanceAdmin(ctx context.Context, hostAddr string, agentPort int, config map[string]interface{}) (*AgentTaskResult, error) {
+	payload := DeployTaskPayload{
+		TaskID: fmt.Sprintf("instance-admin-%d", time.Now().UnixNano()),
+		Config: config,
+	}
+	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/instance-admin", payload)
+}
+
 func (c *AgentClient) ExecuteMySQLHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID:     "health-check-" + instanceID,
@@ -251,7 +259,7 @@ func (c *AgentClient) GetAgentVersion(ctx context.Context, hostAddr string, agen
 		return "", fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 	var result struct {
-		Code int    `json:"code"`
+		Code int `json:"code"`
 		Data struct {
 			Version string `json:"version"`
 		} `json:"data"`

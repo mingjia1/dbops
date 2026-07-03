@@ -141,14 +141,14 @@ type BackupConfig struct {
 }
 
 type RestoreConfig struct {
-	BackupPath      string `json:"backup_path"`
-	BackupType      string `json:"backup_type"`
-	DataDir         string `json:"datadir"`
-	MySQLHost       string `json:"mysql_host"`
-	MySQLPort       int    `json:"mysql_port"`
-	MySQLUser       string `json:"mysql_user"`
-	MySQLPass       string `json:"mysql_pass"`
-	ConfirmOverwrite bool  `json:"confirm_overwrite"`
+	BackupPath       string `json:"backup_path"`
+	BackupType       string `json:"backup_type"`
+	DataDir          string `json:"datadir"`
+	MySQLHost        string `json:"mysql_host"`
+	MySQLPort        int    `json:"mysql_port"`
+	MySQLUser        string `json:"mysql_user"`
+	MySQLPass        string `json:"mysql_pass"`
+	ConfirmOverwrite bool   `json:"confirm_overwrite"`
 }
 
 type BackupScanFile struct {
@@ -477,6 +477,13 @@ func mysqlHasGetServerPublicKey(mysqlVersion string) bool {
 	return !strings.HasPrefix(mysqlVersion, "5.")
 }
 
+func mysqlSupportsGroupReplication(mysqlVersion string) bool {
+	if mysqlVersion == "" {
+		return true
+	}
+	return !strings.HasPrefix(mysqlVersion, "5.")
+}
+
 func findMySQLSocket(port int) string {
 	candidates := []string{
 		filepath.Join("/data/mysql", fmt.Sprintf("%d", port), "mysql.sock"),
@@ -629,6 +636,15 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	if mysqlVersion == "" {
 		mysqlVersion = "8.0"
 	}
+	if installType == "mgr" && !mysqlSupportsGroupReplication(mysqlVersion) {
+		return &TaskResult{
+			TaskID:    req.TaskID,
+			Status:    "failed",
+			Progress:  0,
+			Message:   fmt.Sprintf("MGR deployment requires MySQL 8.0+; selected version %s uses the MySQL 5.7 template and does not support Group Replication", mysqlVersion),
+			Timestamp: time.Now(),
+		}, nil
+	}
 
 	if host == "" {
 		host = "127.0.0.1"
@@ -700,7 +716,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 
 	// Version-agnostic path: download + extract the requested tarball.
-	// Priority: 1) relay_url  2) package_url  3) yum/apt system install  4) PATH
+	// Priority: 1) relay_url  2) package_url  3) basedir/bin/mysqld (if exists)  4) yum/apt system install  5) PATH
 	var mysqld string
 	relayURL, _ := req.Config["relay_url"].(string)
 	if relayURL != "" {
@@ -720,6 +736,12 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	relayUploadURL, _ := req.Config["relay_upload_url"].(string)
 	if mysqld == "" && packageURL != "" {
 		mysqld, _ = InstallFromURLWithRelay(ctx, packageURL, checksum, basedir, osUser, relayUploadURL)
+	}
+	if mysqld == "" && basedir != "" {
+		candidate := filepath.Join(basedir, "bin", "mysqld")
+		if fileExists(candidate) {
+			mysqld = candidate
+		}
 	}
 	if mysqld == "" {
 		// Fallback: try system package manager (yum/apt)
@@ -756,6 +778,14 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		killMGR := exec.CommandContext(ctx, "sh", "-c",
 			fmt.Sprintf("fuser -k %d/tcp 2>/dev/null || true", mp))
 		killMGR.Run()
+	}
+
+	// Ensure basedir has correct ownership and library cache before starting
+	if basedir != "" {
+		uid, gid := lookupUserIDs(osUser)
+		_ = chownRecursive(basedir, uid, gid)
+		// Update ldconfig cache so component dependencies can be resolved
+		_ = runLdconfig(ctx, basedir)
 	}
 
 	// Only run initialization if the data directory hasn't been initialized yet.
@@ -832,12 +862,48 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 
 	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
+	if basedir != "" {
+		startCmd.Env = append(os.Environ(),
+			"LD_LIBRARY_PATH="+
+				filepath.Join(basedir, "lib")+":"+
+				filepath.Join(basedir, "lib", "mysql")+":"+
+				filepath.Join(basedir, "lib64")+":"+
+				filepath.Join(basedir, "lib", "private")+":"+
+				filepath.Join(basedir, "lib", "mysql", "private")+":"+
+				filepath.Join(basedir, "lib64", "private")+
+				":/usr/lib64:/usr/lib",
+		)
+	}
+	// Diagnostic: gather info about mysqld binary and component .so before starting
+	var diag strings.Builder
+	if basedir != "" {
+		componentSO := filepath.Join(basedir, "lib", "mysql", "plugin", "component_reference_cache.so")
+		lsPlugin := exec.CommandContext(ctx, "ls", "-la", filepath.Join(basedir, "lib", "mysql", "plugin"))
+		if pOut, err := lsPlugin.CombinedOutput(); err == nil {
+			diag.WriteString("PLUGIN_DIR: " + strings.TrimSpace(string(pOut)) + "\n")
+		}
+		lsMysqld := exec.CommandContext(ctx, "ls", "-la", mysqld)
+		if mOut, err := lsMysqld.CombinedOutput(); err == nil {
+			diag.WriteString("MYSQLD_BIN: " + strings.TrimSpace(string(mOut)) + "\n")
+		}
+		if _, err := os.Stat(componentSO); err == nil {
+			lddCmd := exec.CommandContext(ctx, "ldd", componentSO)
+			lddCmd.Env = startCmd.Env
+			if lddOut, lddErr := lddCmd.CombinedOutput(); lddErr == nil {
+				diag.WriteString("LDD: " + strings.TrimSpace(string(lddOut)) + "\n")
+			} else {
+				diag.WriteString("LDD_ERR: " + lddErr.Error() + " " + strings.TrimSpace(string(lddOut)) + "\n")
+			}
+		} else {
+			diag.WriteString("COMPONENT_SO_MISSING: " + componentSO + "\n")
+		}
+	}
 	if out, err := startCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
 			Progress:  50,
-			Message:   fmt.Sprintf("MySQL start failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Message:   fmt.Sprintf("MySQL start failed: %v, output: %s\nDIAG: %s", err, strings.TrimSpace(string(out)), diag.String()),
 			Timestamp: time.Now(),
 		}, nil
 	}
@@ -1427,7 +1493,7 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 	// Try REPLICA syntax first (MySQL 8.4+), fall back to SLAVE for older versions
 	replicaOut, replicaErr := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP REPLICA; RESET REPLICA ALL;")
 	replicaText := string(replicaOut)
-		if replicaErr == nil || strings.Contains(replicaText, "not configured as replica") || strings.Contains(replicaText, "not configured as slave") || strings.Contains(replicaErr.Error(), "not configured as replica") || strings.Contains(replicaErr.Error(), "not configured as slave") {
+	if replicaErr == nil || strings.Contains(replicaText, "not configured as replica") || strings.Contains(replicaText, "not configured as slave") || strings.Contains(replicaErr.Error(), "not configured as replica") || strings.Contains(replicaErr.Error(), "not configured as slave") {
 		return replicaOut, nil
 	}
 	// Check both output and error for ERROR 1064 to handle the case where
@@ -1440,7 +1506,7 @@ func resetReplication(ctx context.Context, config MasterSlaveConfig) ([]byte, er
 	}
 	legacyOut, legacyErr := mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, "STOP SLAVE; RESET SLAVE ALL;")
 	legacyText := string(legacyOut)
-		if legacyErr == nil || strings.Contains(legacyText, "not configured as slave") || strings.Contains(legacyText, "not configured as replica") || strings.Contains(legacyErr.Error(), "not configured as slave") || strings.Contains(legacyErr.Error(), "not configured as replica") {
+	if legacyErr == nil || strings.Contains(legacyText, "not configured as slave") || strings.Contains(legacyText, "not configured as replica") || strings.Contains(legacyErr.Error(), "not configured as slave") || strings.Contains(legacyErr.Error(), "not configured as replica") {
 		return legacyOut, nil
 	}
 	return legacyOut, legacyErr
@@ -1515,8 +1581,8 @@ func (e *TaskExecutor) verifyReplication(ctx context.Context, config MasterSlave
 	}
 
 	// Fallback: try SHOW SLAVE STATUS (tabular, no \G) for MySQL 5.7
-		for _, query := range []string{"SHOW SLAVE STATUS", "SHOW REPLICA STATUS"} {
-			output, err = mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, query)
+	for _, query := range []string{"SHOW SLAVE STATUS", "SHOW REPLICA STATUS"} {
+		output, err = mysqlExecWithSocketFallback(ctx, config.SlaveHost, config.SlavePort, config.MySQLUser, config.MySQLPass, query)
 		if err == nil && len(output) > 0 {
 			yesCount := strings.Count(string(output), "Yes")
 			if yesCount >= 2 {
@@ -2989,10 +3055,10 @@ type RoleSwitchConfig struct {
 	ReplicationPass string `json:"replication_pass"`
 	Force           bool   `json:"force"`
 	GracePeriodSec  int    `json:"grace_period_sec"`
-	TargetHost string `json:"target_host"`
-	TargetPort int    `json:"target_port"`
-	TargetUser string `json:"target_user"`
-	TargetPass string `json:"target_pass"`
+	TargetHost      string `json:"target_host"`
+	TargetPort      int    `json:"target_port"`
+	TargetUser      string `json:"target_user"`
+	TargetPass      string `json:"target_pass"`
 	// MGR promote 真正需要的: 新主 server_uuid, 不是 THISUUID.
 	NewMasterServerUUID string `json:"new_master_server_uuid"`
 	// Replica-rebuild 需要新主 host:port:user:pass, 之前用 NewMasterID (UUID) 拼 MASTER_HOST.
@@ -3873,6 +3939,10 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		}
 		err = os.WriteFile(path, []byte(content), 0o600)
 		output = "config written: " + path
+	case "check_component_config":
+		output, err = checkMySQLComponentConfig(req.Config)
+	case "repair_component_config":
+		output, err = repairMySQLComponentConfig(req.Config)
 	case "service_control":
 		verb, _ := req.Config["verb"].(string)
 		verb = strings.ToLower(strings.TrimSpace(verb))
@@ -3903,6 +3973,31 @@ func (e *TaskExecutor) ExecuteInstanceAdmin(ctx context.Context, req DeployTaskR
 		output, err = recoverCluster(ctx, req.Config)
 	case "repair_replication":
 		output, err = repairReplication(ctx, req.Config)
+	case "run_shell":
+		// Diagnostic-only: run a limited set of safe shell commands
+		cmd, _ := req.Config["command"].(string)
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			return adminFailed(req.TaskID, "command is required"), nil
+		}
+		// Whitelist: only allow safe diagnostic commands
+		allowed := false
+		for _, prefix := range []string{"ls ", "ls -", "cat ", "file ", "stat ", "ldd ", "readelf ", "strings ", "ldconfig", "echo ", "which ", "find ", "df ", "du "} {
+			if strings.HasPrefix(cmd, prefix) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return adminFailed(req.TaskID, "command not in whitelist: "+cmd), nil
+		}
+		c := exec.CommandContext(ctx, "sh", "-c", cmd)
+		out, cmdErr := c.CombinedOutput()
+		if cmdErr != nil {
+			output = fmt.Sprintf("CMD_ERROR: %v\n%s", cmdErr, string(out))
+		} else {
+			output = string(out)
+		}
 	default:
 		return adminFailed(req.TaskID, "unsupported action: "+action), nil
 	}
@@ -5273,7 +5368,362 @@ func adminFailed(taskID, msg string) *TaskResult {
 	return &TaskResult{TaskID: taskID, Status: "failed", Progress: 100, Message: msg, Timestamp: time.Now()}
 }
 
+type mysqlComponentConfigIssue struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+type mysqlComponentConfigCheck struct {
+	Passed      bool                        `json:"passed"`
+	Fixable     bool                        `json:"fixable"`
+	MissingDeps bool                        `json:"missing_deps,omitempty"`
+	Component   string                      `json:"component"`
+	Port        int                         `json:"port"`
+	PluginPath  string                      `json:"plugin_path,omitempty"`
+	ConfigPaths []string                    `json:"config_paths,omitempty"`
+	Issues      []mysqlComponentConfigIssue `json:"issues,omitempty"`
+	Message     string                      `json:"message"`
+	Diagnostics string                      `json:"diagnostics,omitempty"`
+}
+
+func checkMySQLComponentConfig(config map[string]interface{}) (string, error) {
+	result := inspectMySQLComponentConfig(config)
+	data, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func repairMySQLComponentConfig(config map[string]interface{}) (string, error) {
+	check := inspectMySQLComponentConfig(config)
+	if check.Passed {
+		check.Message = "component configuration is already valid"
+		data, _ := json.Marshal(check)
+		return string(data), nil
+	}
+	if !check.Fixable {
+		data, _ := json.Marshal(check)
+		return string(data), fmt.Errorf(check.Message)
+	}
+	// Case 1: Plugin .so file is missing - re-extract MySQL package
+	if check.PluginPath == "" {
+		return reinstallMySQLPackage(config)
+	}
+	// Case 3: Plugin exists but has missing shared library dependencies - re-extract MySQL package
+	if check.MissingDeps {
+		return reinstallMySQLPackage(config)
+	}
+	// Case 2: Plugin exists but config has stale references - comment out config lines
+	changed := 0
+	seen := map[string]bool{}
+	for _, issue := range check.Issues {
+		if seen[issue.Path] {
+			continue
+		}
+		seen[issue.Path] = true
+		n, err := commentMissingComponentLines(issue.Path, check.Component)
+		if err != nil {
+			return "", err
+		}
+		changed += n
+	}
+	after := inspectMySQLComponentConfig(config)
+	after.Passed = len(after.Issues) == 0 || after.PluginPath != ""
+	after.Fixable = !after.Passed && len(after.Issues) > 0
+	if after.Passed {
+		after.Message = fmt.Sprintf("disabled %d stale %s component config line(s)", changed, check.Component)
+	} else {
+		after.Message = fmt.Sprintf("repair attempted, but %d stale %s config line(s) remain", len(after.Issues), check.Component)
+	}
+	data, err := json.Marshal(after)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func reinstallMySQLPackage(config map[string]interface{}) (string, error) {
+	port := configInt(config, "target_port")
+	if port <= 0 {
+		port = configInt(config, "mysql_port")
+	}
+	if port <= 0 {
+		port = 3306
+	}
+	basedir := strings.TrimSpace(configString(config, "basedir"))
+	if basedir == "" {
+		basedir = fmt.Sprintf("/usr/local/mysql-%d", port)
+	}
+	packageURL := strings.TrimSpace(configString(config, "package_url"))
+	relayURL := strings.TrimSpace(configString(config, "relay_url"))
+	relayUploadURL := strings.TrimSpace(configString(config, "relay_upload_url"))
+	checksum := strings.TrimSpace(configString(config, "checksum"))
+	osUser := strings.TrimSpace(configString(config, "os_user"))
+	if osUser == "" {
+		osUser = "mysql"
+	}
+	if relayURL == "" && packageURL == "" {
+		return "", fmt.Errorf("缺少 package_url 或 relay_url，无法重新提取 MySQL 安装包")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	var mysqld string
+	if relayURL != "" {
+		downloader := NewRelayDownloader()
+		relayCfg := RelayDownloadConfig{
+			RelayURL: relayURL,
+			Branch:   "mysql",
+			Version:  "",
+			Basedir:  basedir,
+			OSUser:   osUser,
+			Checksum: checksum,
+		}
+		mysqld, _ = downloader.DownloadFromRelay(ctx, relayCfg)
+	}
+	if mysqld == "" && packageURL != "" {
+		mysqld, _ = InstallFromURLWithRelay(ctx, packageURL, checksum, basedir, osUser, relayUploadURL)
+	}
+	if mysqld == "" || !fileExists(mysqld) {
+		return "", fmt.Errorf("重新提取 MySQL 安装包失败：mysqld 二进制文件未找到")
+	}
+	// Run ldconfig to update library cache after re-extraction
+	_ = runLdconfig(context.Background(), basedir)
+	after := inspectMySQLComponentConfig(config)
+	after.Passed = after.PluginPath != "" && !after.MissingDeps
+	after.Fixable = !after.Passed
+	if after.Passed {
+		after.Message = fmt.Sprintf("已重新提取 MySQL 安装包，%s.so 及其依赖库已恢复", after.Component)
+	} else if after.MissingDeps {
+		after.Message = fmt.Sprintf("重新提取 MySQL 安装包后 %s.so 依赖库仍缺失，请检查系统共享库", after.Component)
+	} else {
+		after.Message = fmt.Sprintf("重新提取 MySQL 安装包后仍未找到 %s.so", after.Component)
+	}
+	data, err := json.Marshal(after)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func inspectMySQLComponentConfig(config map[string]interface{}) mysqlComponentConfigCheck {
+	component := strings.TrimSpace(configString(config, "component"))
+	if component == "" {
+		component = "component_reference_cache"
+	}
+	port := configInt(config, "target_port")
+	if port <= 0 {
+		port = configInt(config, "mysql_port")
+	}
+	if port <= 0 {
+		port = 3306
+	}
+	configPaths := mysqlComponentConfigCandidates(config, port)
+	issues := findComponentConfigIssues(configPaths, component)
+	pluginPath := findMySQLComponentPlugin(config, port, component)
+	result := mysqlComponentConfigCheck{
+		Passed:      true,
+		Fixable:     false,
+		Component:   component,
+		Port:        port,
+		PluginPath:  pluginPath,
+		ConfigPaths: configPaths,
+		Issues:      issues,
+		Message:     fmt.Sprintf("%s component config is valid", component),
+	}
+	// Case 1: Plugin .so file is missing
+	if pluginPath == "" {
+		result.Passed = false
+		result.Fixable = true
+		if len(issues) > 0 {
+			result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮重新提取 MySQL 安装包", component, component)
+		} else {
+			result.Message = fmt.Sprintf("目标 MySQL 插件目录缺少 %s.so；可点击修复按钮重新提取 MySQL 安装包", component)
+		}
+		return result
+	}
+	// Case 2: Plugin exists but config has stale references
+	if len(issues) > 0 {
+		result.Passed = false
+		result.Fixable = true
+		result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮注释过期 component_load 配置", component, component)
+	}
+	// Collect diagnostics when plugin exists but might have dependency issues
+	if pluginPath != "" {
+		// Extract basedir from pluginPath: pluginPath = basedir/lib/mysql/plugin/xxx.so
+		basedir := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(pluginPath))))
+		ldEnv := append(os.Environ(),
+			"LD_LIBRARY_PATH="+
+				filepath.Join(basedir, "lib")+":"+
+				filepath.Join(basedir, "lib", "mysql")+":"+
+				filepath.Join(basedir, "lib64")+":"+
+				filepath.Join(basedir, "lib", "private")+":"+
+				filepath.Join(basedir, "lib", "mysql", "private")+":"+
+				filepath.Join(basedir, "lib64", "private")+
+				":/usr/lib64:/usr/lib",
+		)
+		// Run ldd with LD_LIBRARY_PATH to check for missing shared library dependencies
+		lddCmd := exec.Command("ldd", pluginPath)
+		lddCmd.Env = ldEnv
+		lddOut, _ := lddCmd.CombinedOutput()
+		// Run ls to show file details
+		lsCmd := exec.Command("ls", "-la", pluginPath)
+		lsOut, _ := lsCmd.CombinedOutput()
+		// Run file to check ELF details
+		fileCmd := exec.Command("file", pluginPath)
+		fileOut, _ := fileCmd.CombinedOutput()
+		// Check for not found entries in ldd output
+		if strings.Contains(string(lddOut), "not found") {
+			result.Passed = false
+			result.Fixable = true
+			result.MissingDeps = true
+			result.Message = fmt.Sprintf("%s.so 存在但缺少共享库依赖，MySQL 无法加载该组件。可点击修复按钮重新提取 MySQL 安装包恢复依赖库", component)
+		}
+		result.Diagnostics = fmt.Sprintf("ldd:\n%s\nls:\n%s\nfile:\n%s", string(lddOut), string(lsOut), string(fileOut))
+	}
+	return result
+}
+
+func mysqlComponentConfigCandidates(config map[string]interface{}, port int) []string {
+	candidates := make([]string, 0, 12)
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			candidates = append(candidates, path)
+		}
+	}
+	if path := configString(config, "path"); path != "" {
+		add(path)
+	}
+	if datadir := configString(config, "datadir"); datadir != "" {
+		add(filepath.Join(datadir, "my.cnf"))
+		add(filepath.Join(datadir, "mysql.cnf"))
+	}
+	if port > 0 {
+		add(fmt.Sprintf("/etc/my.cnf.d/mysqld_%d.cnf", port))
+		add(fmt.Sprintf("/etc/mysql/conf.d/mysqld_%d.cnf", port))
+		add(fmt.Sprintf("/etc/mysql/mysql.conf.d/mysqld_%d.cnf", port))
+		add(fmt.Sprintf("/data/mysql/%d/my.cnf", port))
+	}
+	add("/etc/my.cnf")
+	add("/etc/mysql/my.cnf")
+	return candidates
+}
+
+func findComponentConfigIssues(paths []string, component string) []mysqlComponentConfigIssue {
+	issues := make([]mysqlComponentConfigIssue, 0)
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for idx, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+				continue
+			}
+			if !strings.Contains(trimmed, component) {
+				continue
+			}
+			issues = append(issues, mysqlComponentConfigIssue{Path: path, Line: idx + 1, Text: trimmed})
+		}
+	}
+	return issues
+}
+
+func findMySQLComponentPlugin(config map[string]interface{}, port int, component string) string {
+	pluginCandidates := []string{
+		filepath.Join("lib", "mysql", "plugin", component+".so"),
+		filepath.Join("lib64", "mysql", "plugin", component+".so"),
+		filepath.Join("lib", "plugin", component+".so"),
+		filepath.Join("plugin", component+".so"),
+	}
+	if specificBasedir := strings.TrimSpace(configString(config, "basedir")); specificBasedir != "" {
+		for _, rel := range pluginCandidates {
+			path := filepath.Join(specificBasedir, rel)
+			if st, err := os.Stat(path); err == nil && !st.IsDir() {
+				return path
+			}
+		}
+		return ""
+	}
+	for _, basedir := range mysqlBasedirCandidates(config, port) {
+		for _, rel := range pluginCandidates {
+			path := filepath.Join(basedir, rel)
+			if st, err := os.Stat(path); err == nil && !st.IsDir() {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+func mysqlBasedirCandidates(config map[string]interface{}, port int) []string {
+	candidates := make([]string, 0, 8)
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+	add(configString(config, "basedir"))
+	if port > 0 {
+		add(fmt.Sprintf("/usr/local/mysql-%d", port))
+		add(fmt.Sprintf("/opt/mysql-%d", port))
+	}
+	add("/usr/local/mysql")
+	add("/opt/mysql")
+	return candidates
+}
+
+func commentMissingComponentLines(path string, component string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	backupPath := path + ".bak." + time.Now().Format("20060102150405")
+	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
+		return 0, err
+	}
+	lines := strings.Split(string(data), "\n")
+	changed := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") || !strings.Contains(trimmed, component) {
+			continue
+		}
+		lines[i] = "# dbops-disabled-missing-component: " + line
+		changed++
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	return changed, os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+}
+
 func parseAdminOutput(action, output string, config map[string]interface{}) any {
+	if action == "check_component_config" || action == "repair_component_config" {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(output), &parsed); err == nil {
+			return parsed
+		}
+		return map[string]string{"output": output}
+	}
 	if action == "read_config" {
 		path, _ := config["resolved_path"].(string)
 		return map[string]string{"path": path, "content": output, "output": output}

@@ -52,19 +52,34 @@ func (c *ClusterDeployController) ValidateClusterDeploy(ctx *gin.Context) {
 
 func (c *ClusterDeployController) PreCheck(ctx *gin.Context) {
 	var req struct {
-		HostIDs []string                          `json:"host_ids"`
-		Nodes   []services.ClusterDeployCheckNode `json:"nodes"`
+		ClusterType string                            `json:"cluster_type"`
+		HostIDs     []string                          `json:"host_ids"`
+		Nodes       []services.ClusterDeployCheckNode `json:"nodes"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.BadRequestResponse(ctx, "invalid precheck request")
 		return
 	}
-	results, err := c.service.PreCheck(ctx.Request.Context(), req.HostIDs, req.Nodes)
+	results, err := c.service.PreCheck(ctx.Request.Context(), req.ClusterType, req.HostIDs, req.Nodes)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Pre-check failed", err)
 		return
 	}
 	utils.SuccessResponse(ctx, results)
+}
+
+func (c *ClusterDeployController) RepairPreCheck(ctx *gin.Context) {
+	var req services.ClusterDeployPrecheckRepairRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "invalid precheck repair request")
+		return
+	}
+	result, err := c.service.RepairPreCheck(ctx.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "Pre-check repair failed", err)
+		return
+	}
+	utils.SuccessResponse(ctx, result)
 }
 
 func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {

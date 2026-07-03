@@ -907,12 +907,14 @@ export const clusterDeployApi = {
   getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
   deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
   validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
-  precheck: (data: { host_ids?: string[]; nodes?: Array<{ instance_id: string; host: string; port: number; username: string; password: string }> }) => {
+  precheck: (data: { cluster_type?: string; host_ids?: string[]; nodes?: any[] }) => {
     if (!data.host_ids?.length && !data.nodes?.length) {
       return Promise.reject({ message: 'host_ids or nodes is required' })
     }
     return api.post('/deployments/precheck', data)
   },
+  repairPrecheck: (data: { host_id: string; port: number; action?: string; component?: string; basedir?: string; data_dir?: string; package_url?: string; relay_url?: string }) =>
+    api.post('/deployments/precheck/repair', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
   deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),

@@ -518,6 +518,7 @@ func main() {
 				deployments.POST("", middleware.RequirePermission("admin"), clusterDeployController.DeployCluster)
 				deployments.POST("/validate", middleware.RequirePermission("admin"), clusterDeployController.ValidateClusterDeploy)
 				deployments.POST("/precheck", middleware.RequirePermission("admin"), clusterDeployController.PreCheck)
+				deployments.POST("/precheck/repair", middleware.RequirePermission("admin"), clusterDeployController.RepairPreCheck)
 				deployments.POST("/mha", middleware.RequirePermission("admin"), clusterDeployController.DeployMHA)
 				deployments.POST("/mgr", middleware.RequirePermission("admin"), clusterDeployController.DeployMGR)
 				deployments.POST("/pxc", middleware.RequirePermission("admin"), clusterDeployController.DeployPXC)

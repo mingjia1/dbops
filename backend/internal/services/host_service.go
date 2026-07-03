@@ -42,7 +42,7 @@ type HostService struct {
 	agentToken   string
 	agentClient  *AgentClient
 
-	dataDir     string
+	dataDir string
 
 	taskMu      sync.RWMutex
 	testResults map[string]*HostTestResult
@@ -728,26 +728,12 @@ func (s *HostService) uploadAgentBinary(client *ssh.Client) error {
 	// 3. Upload via SCP-like protocol (more reliable than cat pipe for large binaries)
 	//    Uses base64 to avoid shell escaping issues, then decodes on remote side.
 	encoded := base64.StdEncoding.EncodeToString(data)
-	// Split into chunks to avoid SSH command line length limits (usually 2MB per command)
-	const maxChunkArgs = 768 * 1024 // ~750KB base64 text per chunk (~560KB binary)
-	totalChunks := (len(encoded) + maxChunkArgs - 1) / maxChunkArgs
 	// Prepare remote: clean slate
 	if out, err := runSSH(client, "rm -f /opt/dbops-agent/agent.b64 /opt/dbops-agent/agent.new; : ok"); err != nil {
 		return fmt.Errorf("prepare remote temp dir failed: %v\n%s", err, out)
 	}
-	for i := 0; i < totalChunks; i++ {
-		start := i * maxChunkArgs
-		end := start + maxChunkArgs
-		if end > len(encoded) {
-			end = len(encoded)
-		}
-		chunk := encoded[start:end]
-		// Use printf + append to build the base64 file safely
-		cmd := fmt.Sprintf("printf '%%s' %s >> /opt/dbops-agent/agent.b64",
-			shellEscape(chunk))
-		if out, err := runSSH(client, cmd); err != nil {
-			return fmt.Errorf("upload chunk %d/%d failed: %v\n%s", i+1, totalChunks, err, out)
-		}
+	if out, err := runSSHWithInput(client, "cat > /opt/dbops-agent/agent.b64", encoded); err != nil {
+		return fmt.Errorf("upload agent payload failed: %v\n%s", err, out)
 	}
 	// 4. Decode base64 and install binary
 	installCmd := `base64 -d < /opt/dbops-agent/agent.b64 > /opt/dbops-agent/agent.new && chmod +x /opt/dbops-agent/agent.new && mv -f /opt/dbops-agent/agent.new /opt/dbops-agent/agent && rm -f /opt/dbops-agent/agent.b64`
@@ -800,6 +786,37 @@ func runSSH(client *ssh.Client, command string) (string, error) {
 	done := make(chan error, 1)
 	go func() {
 		done <- session.Run(command)
+	}()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(agentSSHCommandTimeout):
+		_ = session.Close()
+		return out.String(), fmt.Errorf("ssh command timed out after %s", agentSSHCommandTimeout)
+	}
+}
+
+func runSSHWithInput(client *ssh.Client, command, input string) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	var out bytes.Buffer
+	session.Stdout = &out
+	session.Stderr = &out
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := session.Start(command); err != nil {
+		return out.String(), err
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _ = io.WriteString(stdin, input)
+		_ = stdin.Close()
+		done <- session.Wait()
 	}()
 	select {
 	case err := <-done:

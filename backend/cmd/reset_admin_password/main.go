@@ -7,11 +7,20 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "mysql" {
+		runMySQL()
+		return
+	}
+	runSQLite()
+}
+
+func runSQLite() {
 	dbPath := "data/dbops.db"
 	if len(os.Args) > 1 {
 		dbPath = os.Args[1]
@@ -28,6 +37,26 @@ func main() {
 	}
 	defer db.Close()
 
+	resetPassword(db)
+}
+
+func runMySQL() {
+	dsn := "root:123456@tcp(10.1.81.42:23306)/dbops_platform?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("Failed to connect to MySQL: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Failed to ping MySQL: %v", err)
+	}
+	fmt.Println("Connected to MySQL successfully")
+
+	resetPassword(db)
+}
+
+func resetPassword(db *sql.DB) {
 	// List existing users
 	rows, err := db.Query("SELECT id, username, role, email, status FROM users ORDER BY username")
 	if err != nil {

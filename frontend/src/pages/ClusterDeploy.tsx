@@ -156,6 +156,7 @@ const ClusterDeploy: React.FC = () => {
   const [showHistory, setShowHistory] = useState(true)
   const [precheckResults, setPrecheckResults] = useState<any[] | null>(null)
   const [precheckLoading, setPrecheckLoading] = useState(false)
+  const [precheckContext, setPrecheckContext] = useState<{ arch: ArchType; values: any } | null>(null)
   const [activeDeployment, setActiveDeployment] = useState<DeployResult | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
   const [credentialModalResult, setCredentialModalResult] = useState<{
@@ -164,6 +165,7 @@ const ClusterDeploy: React.FC = () => {
     mysql_password: string
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
+  const [deployErrorDetail, setDeployErrorDetail] = useState<DeployResult | null>(null)
   const [credential, setCredential] = useState<{ username: string; password: string }>(() => getDefaultMySQLCredential())
   const [mysqlPasswordModalOpen, setMysqlPasswordModalOpen] = useState(false)
   const [mysqlPasswordForm] = Form.useForm()
@@ -279,7 +281,10 @@ const ClusterDeploy: React.FC = () => {
         })
       }
     } else if (isPartialDeployStatus(dep.status)) message.warning(`${arch} 集群部署部分完成: ${dep.message || dep.status}`)
-    else if (isFailedDeployStatus(dep.status)) message.error(`${arch} 集群部署失败: ${dep.message || dep.status}`)
+    else if (isFailedDeployStatus(dep.status)) {
+      setDeployErrorDetail(dep)
+      message.error(`${arch} 集群部署失败: ${dep.message || dep.status}`)
+    }
   }
 
   const deploymentNodes = (record: DeployResult) => {
@@ -403,7 +408,8 @@ const ClusterDeploy: React.FC = () => {
     setPrecheckLoading(true)
     setPrecheckResults(null)
     try {
-      const res: any = await clusterDeployApi.precheck({ host_ids: hostIDs, nodes })
+      setPrecheckContext({ arch, values })
+      const res: any = await clusterDeployApi.precheck({ cluster_type: arch, host_ids: hostIDs, nodes })
       setPrecheckResults(res?.data || [])
       const failed = (res?.data || []).filter((r: any) => r.status === 'fail')
       if (failed.length > 0) {
@@ -490,6 +496,34 @@ const ClusterDeploy: React.FC = () => {
     }
   }
 
+  const repairPrecheckItem = async (record: any, detail: any) => {
+    if (!record?.host_id || !detail?.port) {
+      message.error('缺少修复所需的主机或端口信息')
+      return
+    }
+    setPrecheckLoading(true)
+    try {
+      await clusterDeployApi.repairPrecheck({
+        host_id: record.host_id,
+        port: detail.port,
+        action: detail.fix_action || 'repair_component_config',
+        component: detail.payload?.component,
+        basedir: detail.payload?.basedir,
+        data_dir: detail.payload?.data_dir,
+        package_url: detail.payload?.package_url,
+        relay_url: detail.payload?.relay_url,
+      })
+      message.success('修复完成，正在重新执行环境预检')
+      if (precheckContext) {
+        await runPrecheck(precheckContext.arch, precheckContext.values)
+      }
+    } catch (err: any) {
+      message.error(`修复失败: ${err?.response?.data?.message || err?.message}`)
+    } finally {
+      setPrecheckLoading(false)
+    }
+  }
+
   const destroyDeployment = (record: DeployResult) => {
     Modal.confirm({
       title: `销毁集群 ${record.deployment_id}?`,
@@ -555,6 +589,8 @@ const ClusterDeploy: React.FC = () => {
         basedir: extra?.basedir,
         server_id: extra?.server_id,
         custom: extra?.custom,
+        package_url: extra?.package_url,
+        relay_url: extra?.relay_url,
       })
     }
 
@@ -613,6 +649,14 @@ const ClusterDeploy: React.FC = () => {
         custom.relay_upload_url = window.location.origin + '/api/v1/relay/upload'
       }
     } catch { /* ignore */ }
+
+    // Propagate relay_url to each node for precheck repair
+    if (custom.relay_url) {
+      for (const node of nodes) {
+        if (!node.relay_url) node.relay_url = custom.relay_url
+      }
+    }
+
     if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled
     if (arch === 'mha') {
       if (values.vip) custom.vip = values.vip
@@ -867,13 +911,24 @@ const ClusterDeploy: React.FC = () => {
                 title: '详情',
                 dataIndex: 'details',
                 key: 'details',
-                render: (details: any[]) => (
+                render: (details: any[], record: any) => (
                   <Space direction="vertical" size={2}>
                     {(details || []).map((d, i) => (
                       <span key={i} style={{ fontSize: 12 }}>
                         <Tag color={d.passed ? 'success' : 'error'} style={{ fontSize: 10 }}>{d.name}</Tag>
                         {d.value && <span style={{ color: '#888' }}>{d.value} </span>}
                         {d.message && <span style={{ color: '#ff4d4f' }}>{d.message}</span>}
+                        {!d.passed && d.fixable && (
+                          <Button
+                            size="small"
+                            type="link"
+                            loading={precheckLoading}
+                            onClick={() => repairPrecheckItem(record, d)}
+                            style={{ padding: '0 4px', height: 20 }}
+                          >
+                            修复
+                          </Button>
+                        )}
                       </span>
                     ))}
                   </Space>
@@ -1285,6 +1340,44 @@ const ClusterDeploy: React.FC = () => {
             dataSource={credentialModalResult.nodes}
             rowKey={(row) => `${row.host}:${row.port}`}
           />
+        )}
+      </Modal>
+
+      <Modal
+        title="部署失败详情"
+        open={!!deployErrorDetail}
+        onCancel={() => setDeployErrorDetail(null)}
+        footer={<Button type="primary" onClick={() => setDeployErrorDetail(null)}>关闭</Button>}
+        width={820}
+      >
+        {deployErrorDetail && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert
+              type="error"
+              showIcon
+              message={`${deployErrorDetail.cluster_type?.toUpperCase?.() || '集群'} 部署失败`}
+              description={<pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{deployErrorDetail.message || deployErrorDetail.status}</pre>}
+            />
+            {deployErrorDetail.steps && deployErrorDetail.steps.length > 0 && (
+              <Table
+                size="small"
+                pagination={false}
+                rowKey={(row, index) => `${row.name}-${index}`}
+                dataSource={deployErrorDetail.steps}
+                columns={[
+                  { title: '步骤', dataIndex: 'name', key: 'name', width: 220 },
+                  {
+                    title: '状态',
+                    dataIndex: 'status',
+                    key: 'status',
+                    width: 90,
+                    render: (status: string) => <Tag color={isFailedDeployStatus(status) ? 'error' : stepStatusToAntd(status) === 'finish' ? 'success' : 'default'}>{status}</Tag>,
+                  },
+                  { title: '信息', dataIndex: 'message', key: 'message', render: (text: string) => text ? <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{text}</pre> : '-' },
+                ]}
+              />
+            )}
+          </Space>
         )}
       </Modal>
 

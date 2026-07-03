@@ -198,17 +198,27 @@ func extractTarball(ctx context.Context, tarball, dest string) error {
 // findMysqldBinary walks dest looking for bin/mysqld.
 // runLdconfig 更新动态链接库缓存。如果 basedir 包含 lib/ 目录，先加入 ldconfig 缓存。
 func runLdconfig(ctx context.Context, basedir string) error {
-	// 检查 basedir 下是否有 lib 目录
-	libDir := filepath.Join(basedir, "lib")
-	if st, err := os.Stat(libDir); err == nil && st.IsDir() {
-		// 将该 lib 目录添加到 ldconfig 缓存
-		cmd := exec.CommandContext(ctx, "ldconfig", "-n", libDir)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			// ldconfig 失败不是致命错误，仅记录
-			_ = out
+	// Write persistent ldconfig config for MySQL libraries
+	confDir := "/etc/ld.so.conf.d"
+	libDirs := []string{
+		filepath.Join(basedir, "lib"),
+		filepath.Join(basedir, "lib", "mysql"),
+		filepath.Join(basedir, "lib64"),
+		filepath.Join(basedir, "lib", "private"),
+		filepath.Join(basedir, "lib", "mysql", "private"),
+		filepath.Join(basedir, "lib64", "private"),
+	}
+	var existing string
+	for _, d := range libDirs {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			existing += d + "\n"
 		}
 	}
-	// 全局 ldconfig 刷新缓存
+	if existing == "" {
+		return nil
+	}
+	confFile := filepath.Join(confDir, "mysql-custom-ldconfig.conf")
+	_ = os.WriteFile(confFile, []byte(existing), 0644)
 	cmd := exec.CommandContext(ctx, "ldconfig")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ldconfig failed: %v: %s", err, string(out))
