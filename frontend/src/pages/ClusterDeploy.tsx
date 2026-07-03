@@ -212,6 +212,11 @@ const ClusterDeploy: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (mgrForm.getFieldValue('group_name')) return
+    mgrForm.setFieldValue('group_name', createMgrGroupName())
+  }, [mgrForm])
+
+  useEffect(() => {
     if (historyPollRef.current) {
       window.clearInterval(historyPollRef.current)
       historyPollRef.current = null
@@ -365,7 +370,12 @@ const ClusterDeploy: React.FC = () => {
       message.error('MGR 部署需要选择 MySQL 8.0+ 版本，MySQL 5.7 不支持 Group Replication')
       return
     }
-    const payload = buildDeployPayload(arch, values)
+    const nextValues = { ...values }
+    if (arch === 'mgr' && !nextValues.group_name) {
+      nextValues.group_name = createMgrGroupName()
+      mgrForm.setFieldValue('group_name', nextValues.group_name)
+    }
+    const payload = buildDeployPayload(arch, nextValues)
     setPlanPreviewLoading(true)
     setPlanPreviewArch(arch)
     clusterDeployApi.validateCluster(payload).then((res: any) => {
@@ -373,7 +383,7 @@ const ClusterDeploy: React.FC = () => {
       setPlanPreviewData(plan)
       setPendingDeployPayload(payload)
       setPendingDeployArch(arch)
-      setPendingDeployValues(values)
+      setPendingDeployValues(nextValues)
       setPlanPreviewOpen(true)
     }).catch((err: any) => {
       message.error(`计划验证失败: ${err?.response?.data?.message || err?.message}`)
@@ -383,9 +393,9 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const doConfirmDeploy = () => {
-    if (!pendingDeployPayload || !pendingDeployArch) return
+    if (!pendingDeployPayload || !pendingDeployArch || !pendingDeployValues) return
     setPlanPreviewOpen(false)
-    doDeploy(pendingDeployArch, pendingDeployValues)
+    doDeploy(pendingDeployArch, pendingDeployValues, pendingDeployPayload)
   }
 
   const runDeploy = (arch: ArchType, values: any) => {
@@ -398,7 +408,12 @@ const ClusterDeploy: React.FC = () => {
       message.error('MGR 部署需要选择 MySQL 8.0+ 版本，MySQL 5.7 不支持 Group Replication')
       return
     }
-    const payload = buildDeployPayload(arch, values)
+    const nextValues = { ...values }
+    if (arch === 'mgr' && !nextValues.group_name) {
+      nextValues.group_name = createMgrGroupName()
+      mgrForm.setFieldValue('group_name', nextValues.group_name)
+    }
+    const payload = buildDeployPayload(arch, nextValues)
     const nodes = payload.nodes || []
     const hostIDs: string[] = nodes.map((node: any) => node.host_id).filter(Boolean)
     if (hostIDs.length === 0) {
@@ -408,7 +423,7 @@ const ClusterDeploy: React.FC = () => {
     setPrecheckLoading(true)
     setPrecheckResults(null)
     try {
-      setPrecheckContext({ arch, values })
+      setPrecheckContext({ arch, values: nextValues })
       const res: any = await clusterDeployApi.precheck({ cluster_type: arch, host_ids: hostIDs, nodes })
       setPrecheckResults(res?.data || [])
       const failed = (res?.data || []).filter((r: any) => r.status === 'fail')
@@ -437,11 +452,11 @@ const ClusterDeploy: React.FC = () => {
     }
   }
 
-  const doDeploy = async (arch: ArchType, values: any) => {
+  const doDeploy = async (arch: ArchType, values: any, payloadOverride?: any) => {
     setSubmitting(true)
     setCurrentStep(0)
     setActiveDeployment(null)
-    const payload = buildDeployPayload(arch, values)
+    const payload = payloadOverride || buildDeployPayload(arch, values)
     try {
       await clusterDeployApi.validateCluster(payload)
       const res: any = await clusterDeployApi.deployCluster(payload)
@@ -1126,7 +1141,7 @@ const ClusterDeploy: React.FC = () => {
                 children: renderForm('mgr', mgrForm,
                   <>
                     <Col span={12}>
-                      <Form.Item name="group_name" label="MGR组名" initialValue={createMgrGroupName()} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
+                      <Form.Item name="group_name" label="MGR组名" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input />
                       </Form.Item>
                     </Col>

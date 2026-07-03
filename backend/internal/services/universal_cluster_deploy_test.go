@@ -516,6 +516,52 @@ func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
 	require.Contains(t, resp.Message, "agent client not configured")
 }
 
+func TestExecuteClusterDeployPlan_PersistsExplicitMGRGroupName(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	groupName := "8380d9b5-52b4-4aa7-b9e6-625439d9e4e6"
+	nodes := []PlanNode{
+		{ID: "node-1", Host: "10.0.0.11", MySQLPort: 3306, Role: "primary", AgentPort: 9090},
+		{ID: "node-2", Host: "10.0.0.12", MySQLPort: 3307, Role: "secondary", AgentPort: 9090},
+		{ID: "node-3", Host: "10.0.0.13", MySQLPort: 3308, Role: "secondary", AgentPort: 9090},
+	}
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "mgr-persist-group-name",
+		ClusterType: "mgr",
+		Mode:        "pseudo",
+		Name:        "mgr-persist-group-name",
+		Nodes: []ClusterDeployNode{
+			{Host: "10.0.0.11", AgentPort: 9090, Role: "primary", MySQLPort: 3306},
+			{Host: "10.0.0.12", AgentPort: 9090, Role: "secondary", MySQLPort: 3307},
+			{Host: "10.0.0.13", AgentPort: 9090, Role: "secondary", MySQLPort: 3308},
+		},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass", Version: "8.0.36"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass", Mode: "single-primary"},
+		Custom:      map[string]interface{}{"group_name": groupName},
+	}
+	plan := &ClusterDeployPlan{
+		DeploymentID: req.ClusterID,
+		ClusterType:  req.ClusterType,
+		Mode:         req.Mode,
+		Nodes:        nodes,
+		Steps:        buildUniversalPlanSteps("mgr", nodes, req),
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+	require.NoError(t, err)
+	require.Contains(t, []string{"success", "partial"}, resp.Status)
+
+	dep, err := clusterRepo.GetByID(ctx, req.ClusterID)
+	require.NoError(t, err)
+
+	var persisted UniversalClusterDeployRequest
+	require.NoError(t, json.Unmarshal([]byte(dep.RequestJSON), &persisted))
+	require.Equal(t, groupName, persisted.Custom["group_name"])
+}
+
 func TestExecuteClusterDeployPlan_PseudoModeCreatesMissingManagedInstances(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
