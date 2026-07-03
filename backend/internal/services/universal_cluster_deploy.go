@@ -20,8 +20,8 @@ const (
 	ClusterTypePXC = "pxc"
 
 	DeployModeReal         = "real"
-	DeployModePseudo       = "pseudo"
 	DeployModeValidateOnly = "validate_only"
+	DeployModePseudo       = "pseudo"
 )
 
 type UniversalClusterDeployRequest struct {
@@ -128,11 +128,6 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 		return nil, err
 	}
 
-	// For pseudo mode, use plan-based execution directly.
-	if normalized.Mode == DeployModePseudo {
-		return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
-	}
-
 	// For real mode: inject architecture-specific credentials before execution.
 	if normalized.Mode == DeployModeReal && normalized.ClusterType == ClusterTypeMHA {
 		if err := s.injectMHAStepPasswords(ctx, plan, normalized); err != nil {
@@ -214,6 +209,9 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if req.Mode == "" {
 		req.Mode = DeployModeReal
 	}
+	if req.Mode == "pseudo" {
+		return req, fmt.Errorf("deploy mode %q has been removed; use %q for plan preview or %q for deployment", req.Mode, DeployModeValidateOnly, DeployModeReal)
+	}
 	if req.ClusterID == "" {
 		req.ClusterID = defaultString(req.Name, fmt.Sprintf("%s-%d", req.ClusterType, time.Now().Unix()))
 	}
@@ -265,7 +263,7 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if err := validateVersionArchitectureCompatibility(req.ClusterType, req.MySQL.Version); err != nil {
 		return req, err
 	}
-	if req.Mode != DeployModeReal && req.Mode != DeployModePseudo && req.Mode != DeployModeValidateOnly {
+	if req.Mode != DeployModeReal && req.Mode != DeployModeValidateOnly {
 		return req, fmt.Errorf("unsupported deploy mode %q", req.Mode)
 	}
 	if len(req.Nodes) == 0 {
@@ -695,11 +693,10 @@ func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode, mode 
 		if counts["primary"]+counts["bootstrap"] != 1 {
 			return fmt.Errorf("mgr deployment requires exactly one primary or bootstrap node")
 		}
-		// H7: Enforce minimum 3 nodes for split-brain protection in real mode.
-		// Pseudo mode is for testing and allows 2 nodes.
-		if mode != DeployModePseudo && len(nodes) < 3 {
-			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection (set mode to \"pseudo\" for 2-node testing)")
-		}
+			// Enforce minimum 3 nodes for split-brain protection.
+			if len(nodes) < 3 {
+				return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection")
+			}
 	case ClusterTypePXC:
 		if counts["bootstrap"] != 1 {
 			return fmt.Errorf("pxc deployment requires exactly one bootstrap node")
@@ -1243,9 +1240,9 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 	for i := range sortedNodes {
 		isBootstrap := sortedNodes[i].Role == "bootstrap"
 		// PXC agent requires datadir matching /data/mysql/pxc-* pattern
-		nodeDataDir := nodes[i].DataDir
+		nodeDataDir := sortedNodes[i].DataDir
 		if nodeDataDir == "" {
-			nodeDataDir = fmt.Sprintf("/data/mysql/pxc-%d", nodes[i].MySQLPort)
+			nodeDataDir = fmt.Sprintf("/data/mysql/pxc-%d", sortedNodes[i].MySQLPort)
 		} else if !strings.Contains(nodeDataDir, "pxc") {
 			// User explicitly set data_dir but it doesn't contain 'pxc' —
 			// still respect it, just append pxc subdirectory hint.
@@ -1267,8 +1264,8 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			"data_dir":       nodeDataDir,
 			"datadir":        nodeDataDir,
 		}
-		if nodes[i].Basedir != "" {
-			nodeConfig["basedir"] = nodes[i].Basedir
+		if sortedNodes[i].Basedir != "" {
+			nodeConfig["basedir"] = sortedNodes[i].Basedir
 		}
 		if hasWSREPSSTPort {
 			nodeConfig["wsrep_sst_port"] = wsrepSSTPort
@@ -1760,9 +1757,6 @@ func TypedMHARequestToUniversal(req DeployMHARequest) UniversalClusterDeployRequ
 		},
 		Custom: map[string]interface{}{},
 	}
-	if req.PseudoMode {
-		out.Mode = DeployModePseudo
-	}
 	if req.VIP != "" {
 		out.Custom["vip"] = req.VIP
 	}
@@ -1799,9 +1793,6 @@ func TypedMGRRequestToUniversal(req DeployMGRRequest) UniversalClusterDeployRequ
 			User:     req.MySQLUser,
 			Password: req.MySQLPassword,
 		},
-	}
-	if req.PseudoMode {
-		out.Mode = DeployModePseudo
 	}
 	// Propagate package_url / package_checksum from ConfigParams (same as HA/PXC typed converters)
 	if v, ok := req.ConfigParams["package_url"]; ok {
@@ -1855,9 +1846,6 @@ func TypedPXCRequestToUniversal(req DeployPXCRequest) UniversalClusterDeployRequ
 			User:     req.MySQLUser,
 			Password: req.MySQLPassword,
 		},
-	}
-	if req.PseudoMode {
-		out.Mode = DeployModePseudo
 	}
 	out.Custom = pxcRequestCustom(req)
 	if v, ok := req.ConfigParams["package_url"]; ok {
@@ -1945,9 +1933,6 @@ func TypedHARequestToUniversal(req DeployHARequest) UniversalClusterDeployReques
 			User:     req.MySQLUser,
 			Password: req.MySQLPassword,
 		},
-	}
-	if req.PseudoMode {
-		out.Mode = DeployModePseudo
 	}
 	if v, ok := req.ConfigParams["package_url"]; ok {
 		out.MySQL.PackageURL = v
