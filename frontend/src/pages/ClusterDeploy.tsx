@@ -8,6 +8,7 @@ import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Ins
 import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
 import { formatClusterRole } from '../services/roleDisplay'
 import { useTaskSSE, type TaskEvent } from '../services/useTaskSSE'
+import { processStepEvent } from '../services/deployStepHelper'
 
 const { Text } = Typography
 
@@ -347,33 +348,10 @@ const ClusterDeploy: React.FC = () => {
     onLog: patchActiveDeploymentFromSSE,
     onStep: (event) => {
       const stepName = event.metadata?.step_name
-      const stepStatus = event.metadata?.step_status
-      const stepMessage = event.metadata?.step_message
       if (!stepName) return
-      setActiveDeployment((current) => {
-        if (!current || current.deployment_id !== event.task_id) return current
-        const steps = [...(current.steps || [])]
-        const idx = steps.findIndex((s) => s.name === stepName)
-        const now = new Date().toISOString()
-        if (idx >= 0) {
-          steps[idx] = {
-            ...steps[idx],
-            status: stepStatus || steps[idx].status,
-            message: stepMessage || steps[idx].message,
-            ...((stepStatus === 'running' || !steps[idx].started_at) ? { started_at: steps[idx].started_at || now } : {}),
-            ...((stepStatus === 'completed' || stepStatus === 'failed') ? { completed_at: now } : {}),
-          }
-        } else {
-          // New step from backend
-          steps.push({
-            name: stepName,
-            status: stepStatus || 'pending',
-            message: stepMessage,
-            started_at: now,
-          })
-        }
-        return { ...current, steps }
-      })
+      setActiveDeployment((current) =>
+        processStepEvent(current, event.task_id, stepName, event.metadata?.step_status, event.metadata?.step_message)
+      )
     },
     onStatus: (event) => {
       patchActiveDeploymentFromSSE(event)
