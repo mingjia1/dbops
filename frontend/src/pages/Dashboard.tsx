@@ -1,14 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { Avatar, Dropdown, Form, Input, Layout, Menu, message, Modal, Space, Switch, Tooltip, Typography } from 'antd'
-import {
-  AlertOutlined, ApartmentOutlined, AuditOutlined, BarChartOutlined, BulbFilled, BulbOutlined,
-  CloudOutlined, ClusterOutlined, DashboardOutlined, DatabaseOutlined, DesktopOutlined,
-  FileTextOutlined, HddOutlined, HeartOutlined, LogoutOutlined, PartitionOutlined,
-  AppstoreOutlined, RetweetOutlined, SafetyOutlined, SettingOutlined, SwapOutlined, UserOutlined,
-} from '@ant-design/icons'
+import { BulbFilled, BulbOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { getStoredThemeMode, type ThemeMode } from '../appTheme'
 import { authApi } from '../services/api'
+import { useTheme } from '../hooks/useTheme'
+import { getDashboardMenuItems, findSelectedKey, findOpenKeys, mapMenuItemsWithNavigate } from '../services/dashboardMenu'
 import './Dashboard.css'
 
 const { Header, Content, Sider } = Layout
@@ -18,7 +14,7 @@ const Dashboard: React.FC = () => {
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
   const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([])
-  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode)
+  const { themeMode, toggleTheme } = useTheme()
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [passwordForm] = Form.useForm()
@@ -32,12 +28,6 @@ const Dashboard: React.FC = () => {
       // ignore invalid local storage
     }
   }, [])
-
-  const toggleTheme = (checked: boolean) => {
-    const next: ThemeMode = checked ? 'dark' : 'light'
-    setThemeMode(next)
-    window.dispatchEvent(new CustomEvent<ThemeMode>('app:theme-change', { detail: next }))
-  }
 
   const handleLogout = () => {
     localStorage.removeItem('token')
@@ -78,64 +68,9 @@ const Dashboard: React.FC = () => {
     return permissions.includes('*') || permissions.includes(permission)
   }
 
-  const menuItems = [
-    { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
-    { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
-    {
-      key: '/dashboard/resources',
-      icon: <DesktopOutlined />,
-      label: '主机与实例',
-      children: [
-        { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
-        { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
-      ],
-    },
-    { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
-    { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
-    { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
-    { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
-    { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
-    { key: '/dashboard/upgrade', icon: <SwapOutlined />, label: '升级管理' },
-    { key: '/dashboard/migration', icon: <PartitionOutlined />, label: '数据迁移' },
-    { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
-    { key: '/dashboard/approvals', icon: <SafetyOutlined />, label: '审批管理' },
-    { key: '/dashboard/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
-    {
-      key: '/dashboard/system',
-      icon: <SettingOutlined />,
-      label: '系统管理',
-      children: [
-        { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
-        { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: 'Agent 管理' },
-        { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
-        ...(hasPermission('user:manage') ? [{ key: '/dashboard/users', icon: <UserOutlined />, label: '用户与认证' }] : []),
-        { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
-        { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
-        { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '系统设置' },
-      ],
-    },
-  ]
-
-  const selectedKey = (() => {
-    for (const item of menuItems) {
-      if ('children' in item && item.children) {
-        const hit = item.children.find((child) => location.pathname.startsWith(child.key))
-        if (hit) return hit.key
-      }
-      if (location.pathname.startsWith(item.key)) return item.key
-    }
-    return '/dashboard/home'
-  })()
-
-  const routeOpenKeys = (() => {
-    for (const item of menuItems) {
-      if ('children' in item && item.children) {
-        const hit = item.children.find((child) => location.pathname.startsWith(child.key))
-        if (hit) return [item.key]
-      }
-    }
-    return ['/dashboard/resources']
-  })()
+  const menuItems = getDashboardMenuItems(hasPermission('user:manage'))
+  const selectedKey = findSelectedKey(location.pathname, menuItems)
+  const routeOpenKeys = findOpenKeys(location.pathname, menuItems)
 
   useEffect(() => {
     setManualOpenKeys(routeOpenKeys)
@@ -184,35 +119,14 @@ const Dashboard: React.FC = () => {
         </div>
       </Header>
       <Layout>
-        <Sider width={220} className="dashboard-sider" theme={themeMode}>
-          <Menu
-            mode="inline"
-            theme={themeMode}
-            selectedKeys={[selectedKey]}
-            openKeys={manualOpenKeys}
-            onOpenChange={(keys) => setManualOpenKeys(keys)}
-            items={menuItems.map((item) => {
-              if ('children' in item && item.children) {
-                return {
-                  key: item.key,
-                  icon: item.icon,
-                  label: item.label,
-                  children: item.children.map((child) => ({
-                    key: child.key,
-                    icon: child.icon,
-                    label: child.label,
-                    onClick: () => navigate(child.key),
-                  })),
-                }
-              }
-              return {
-                key: item.key,
-                icon: item.icon,
-                label: item.label,
-                onClick: () => navigate(item.key),
-              }
-            })}
-          />
+        <Sider width={220} className="dashboard-sider" theme={themeMode}>              <Menu
+                mode="inline"
+                theme={themeMode}
+                selectedKeys={[selectedKey]}
+                openKeys={manualOpenKeys}
+                onOpenChange={(keys) => setManualOpenKeys(keys)}
+                items={mapMenuItemsWithNavigate(menuItems, (path) => navigate(path))}
+              />
         </Sider>
         <Content className="dashboard-content">
           <Outlet />

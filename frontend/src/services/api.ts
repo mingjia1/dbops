@@ -598,6 +598,20 @@ export interface ParameterTemplateParameter {
   category?: string
 }
 
+export interface ParameterTemplateCreateRequest {
+  name: string
+  category: string
+  description?: string
+  parameters: string
+}
+
+export interface ParameterTemplateUpdateRequest {
+  name?: string
+  category?: string
+  description?: string
+  parameters?: string | ParameterTemplateParameter[]
+}
+
 export interface ApprovalRequest {
   id: string
   requester: string
@@ -838,20 +852,10 @@ export const parameterTemplateApi = {
   get: (id: string) =>
     api.get(`/parameter-templates/${id}`).then(normalizeParameterTemplateResponse),
   
-  create: (data: {
-    name: string
-    category: string
-    description?: string
-    parameters: string
-  }) =>
+  create: (data: ParameterTemplateCreateRequest) =>
     api.post('/parameter-templates', buildParameterTemplatePayload(data)).then(normalizeParameterTemplateResponse),
   
-  update: (id: string, data: {
-    name?: string
-    category?: string
-    description?: string
-    parameters?: string | ParameterTemplateParameter[]
-  }) =>
+  update: (id: string, data: ParameterTemplateUpdateRequest) =>
     api.put(`/parameter-templates/${id}`, buildParameterTemplatePayload(data)).then(normalizeParameterTemplateResponse),
   
   delete: (id: string) =>
