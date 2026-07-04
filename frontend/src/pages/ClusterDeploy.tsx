@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Alert, Button, Card, Checkbox, Col, Descriptions, Empty, Form, Input, InputNumber, message, Modal, Progress, Row, Select, Space, Steps, Table, Tabs, Tag, Typography,
+  Button, Card, Checkbox, Col, Empty, Form, Input, InputNumber, message, Modal, Progress, Row, Select, Space, Table, Tabs, Tag, Typography,
 } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -10,15 +10,19 @@ import { formatClusterRole } from '../services/roleDisplay'
 import { useTaskSSE, type TaskEvent } from '../services/useTaskSSE'
 import { processStepEvent } from '../services/deployStepHelper'
 import {
-  ArchType, DeployStepView, DeployNodeProgress, DeployResult,
+  ArchType, DeployResult,
   normalizeStatus, getStatusCategory,
   isCompletedDeployStatus, isFailedDeployStatus, isPartialDeployStatus, isDestroyedDeployStatus, isTerminalDeployStatus,
-  deploymentProgress, deploymentProgressStatus, deploymentStepStatus, clampProgress,
-  stepStatusToAntd, stepProgressPercent,
+  deploymentProgress, deploymentProgressStatus,
   majorVersion, versionSupportsArch,
-  createMgrGroupName, parseMySQLConfig, normalizeDeployment,
-  STAGE_ORDER, STEP_TYPE_CN, DEPLOY_SUBSTEPS,
+  createMgrGroupName, normalizeDeployment, buildDeployPayload,
+  STAGE_ORDER,
 } from '../services/deployHelpers'
+import PlanPreviewModal from '../components/PlanPreviewModal'
+import DeployCredentialsModal from '../components/DeployCredentialsModal'
+import DeployErrorModal from '../components/DeployErrorModal'
+import MySQLPasswordModal from '../components/MySQLPasswordModal'
+import ClusterDeployProgress from '../components/ClusterDeployProgress'
 
 const { Text } = Typography
 
@@ -256,6 +260,8 @@ const ClusterDeploy: React.FC = () => {
     }, 2000)
   }
 
+  const cred = { username: credential.username, password: credential.password }
+
   const doPreview = (arch: ArchType, values: any) => {
     if (!credential.password) {
       message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
@@ -270,7 +276,7 @@ const ClusterDeploy: React.FC = () => {
       nextValues.group_name = createMgrGroupName()
       mgrForm.setFieldValue('group_name', nextValues.group_name)
     }
-    const payload = buildDeployPayload(arch, nextValues)
+    const payload = buildDeployPayload(arch, nextValues, cred)
     setPlanPreviewLoading(true)
     setPlanPreviewArch(arch)
     clusterDeployApi.validateCluster(payload).then((res: any) => {
@@ -298,7 +304,7 @@ const ClusterDeploy: React.FC = () => {
       nextValues.group_name = createMgrGroupName()
       mgrForm.setFieldValue('group_name', nextValues.group_name)
     }
-    const payload = buildDeployPayload(arch, nextValues)
+    const payload = buildDeployPayload(arch, nextValues, cred)
     const nodes = payload.nodes || []
     const hostIDs: string[] = nodes.map((node: any) => node.host_id).filter(Boolean)
     if (hostIDs.length === 0) {
@@ -340,7 +346,7 @@ const ClusterDeploy: React.FC = () => {
     setSubmitting(true)
     setCurrentStep(0)
     setActiveDeployment(null)
-    const payload = payloadOverride || buildDeployPayload(arch, values)
+    const payload = payloadOverride || buildDeployPayload(arch, values, cred)
     try {
       await clusterDeployApi.validateCluster(payload)
       const res: any = await clusterDeployApi.deployCluster(payload)
@@ -461,130 +467,6 @@ const ClusterDeploy: React.FC = () => {
         }
       },
     })
-  }
-
-  const buildDeployPayload = (arch: ArchType, values: any) => {
-    const replicaHostIDs = values.replica_host_ids || (values.replica_host_id ? [values.replica_host_id] : [])
-    const nodes: any[] = []
-    const addNode = (hostID: string, role: string, port?: number, extra?: Record<string, any>) => {
-      if (!hostID) return
-      nodes.push({
-        host_id: hostID,
-        role,
-        mysql_port: port || values.mysql_port || 3306,
-        data_dir: extra?.data_dir,
-        basedir: extra?.basedir,
-        server_id: extra?.server_id,
-        custom: extra?.custom,
-        package_url: extra?.package_url,
-        relay_url: extra?.relay_url,
-      })
-    }
-
-    if (arch === 'ha') {
-      addNode(values.master_host_id, 'master', values.mysql_port, { data_dir: values.master_data_dir, server_id: values.master_server_id })
-      replicaHostIDs.forEach((hostID: string, index: number) => addNode(hostID, 'replica', values.replica_port || values.mysql_port || 3306, {
-        data_dir: values.replica_data_dir,
-        server_id: values.replica_server_id || (values.master_server_id ? Number(values.master_server_id) + index + 1 : undefined),
-      }))
-    } else if (arch === 'mha') {
-      addNode(values.manager_host_id, 'manager', values.manager_port || values.mysql_port)
-      addNode(values.master_host_id, 'master', values.mysql_port)
-      replicaHostIDs.forEach((hostID: string) => addNode(hostID, 'replica', values.replica_port || values.mysql_port || 3306))
-    } else if (arch === 'mgr') {
-      addNode(values.master_host_id, 'primary', values.mysql_port, { server_id: values.master_server_id, custom: { local_port: values.local_port } })
-      replicaHostIDs.forEach((hostID: string, index: number) => addNode(hostID, 'secondary', values.replica_port || values.mysql_port || 3306, {
-        data_dir: values.replica_data_dir,
-        server_id: values.replica_server_id || (values.master_server_id ? Number(values.master_server_id) + index + 1 : undefined),
-        custom: values.local_port ? { local_port: Number(values.local_port) + index + 1 } : undefined,
-      }))
-    } else {
-      addNode(values.master_host_id, 'bootstrap', values.mysql_port, { data_dir: values.master_data_dir })
-      replicaHostIDs.forEach((hostID: string) => addNode(hostID, 'secondary', values.replica_port || values.mysql_port || 3306, { data_dir: values.replica_data_dir }))
-    }
-
-    const custom: Record<string, any> = {}
-    // Auto-inject relay_url from system settings if configured
-    try {
-      const relayCfg = localStorage.getItem('dbops_relay_server')
-      if (relayCfg) {
-        const parsed = JSON.parse(relayCfg)
-        const platformIp = window.location.hostname || '10.3.67.52'
-        const defaultVersion = parsed.default_version || values.mysql_version || '8.0.36'
-        const resolveVars = (url: string) => {
-          const parts = defaultVersion.split('.')
-          const majorMinor = parts.length >= 2 ? `${parts[0]}.${parts[1]}` : defaultVersion
-          return url
-            .replace(/\$\{platform_ip\}/g, platformIp)
-            .replace(/\$\{version\}/g, defaultVersion)
-            .replace(/\$\{major_minor\}/g, majorMinor)
-            .replace(/\$\{major\}/g, parts[0] || defaultVersion)
-            .replace(/\$\{minor\}/g, parts[1] || '')
-        }
-        // Build relay_url from sources (new format) or legacy relay_url (old format)
-        let relayUrl = ''
-        if (parsed.sources && parsed.sources.length > 0) {
-          const firstEnabled = parsed.sources.find((s: any) => s.enabled && s.url)
-          if (firstEnabled) relayUrl = resolveVars(firstEnabled.url).replace(/\/+$/, '')
-        } else if (parsed.relay_url) {
-          relayUrl = resolveVars(parsed.relay_url).replace(/\/+$/, '')
-        }
-        if (relayUrl && parsed.relay_path) {
-          relayUrl += '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
-        }
-        if (relayUrl) custom.relay_url = relayUrl
-        custom.relay_upload_url = window.location.origin + '/api/v1/relay/upload'
-      }
-    } catch { /* ignore */ }
-
-    // Propagate relay_url to each node for precheck repair
-    if (custom.relay_url) {
-      for (const node of nodes) {
-        if (!node.relay_url) node.relay_url = custom.relay_url
-      }
-    }
-
-    if (arch === 'ha' && values.semi_sync_enabled !== undefined) custom.semi_sync_enabled = !!values.semi_sync_enabled
-    if (arch === 'mha') {
-      if (values.vip) custom.vip = values.vip
-      if (values.vip_interface) custom.vip_interface = values.vip_interface
-      if (values.ping_interval) custom.ping_interval = values.ping_interval
-      if (values.ping_retry) custom.ping_retry = values.ping_retry
-      if (values.ssh_user) custom.ssh_user = values.ssh_user
-    }
-    if (arch === 'mgr') {
-      if (values.group_name) custom.group_name = values.group_name
-      if (values.local_port) custom.local_port = values.local_port
-    }
-    if (arch === 'pxc') {
-      if (values.wsrep_port) custom.wsrep_port = values.wsrep_port
-      if (values.cluster_name) custom.cluster_name = values.cluster_name
-      if (values.sst_method) custom.sst_method = values.sst_method
-      if (values.wsrep_sst_port) custom.wsrep_sst_port = values.wsrep_sst_port
-      if (values.wsrep_ssl_enabled !== undefined) custom.wsrep_ssl_enabled = !!values.wsrep_ssl_enabled
-    }
-
-    return {
-      cluster_id: values.cluster_id,
-      name: values.cluster_id,
-      cluster_type: arch,
-      mode: 'real',
-      mysql: {
-        version: values.mysql_version || '8.0',
-        user: credential.username,
-        password: credential.password,
-        package_url: values.package_url,
-        package_checksum: values.package_checksum,
-        config: parseMySQLConfig(values.mysql_config_text),
-      },
-      replication: {
-        user: values.repl_user,
-        password: values.repl_password,
-        mode: arch === 'mgr' ? 'single-primary' : arch === 'pxc' ? 'galera' : 'async',
-      },
-      nodes,
-      custom,
-    }
   }
 
   const columns: ColumnsType<DeployResult> = [
@@ -825,64 +707,6 @@ const ClusterDeploy: React.FC = () => {
     </Form>
   )
 
-  const renderVerticalStepProgress = (steps: DeployStepView[], overallProgress?: number) => (
-    <Steps
-      direction="vertical"
-      size="small"
-      current={steps.findIndex((step) => stepStatusToAntd(step.status) === 'process')}
-      items={steps.map((step, idx) => {
-        const status = stepStatusToAntd(step.status)
-        const percent = stepProgressPercent(step, idx, steps, overallProgress)
-        return {
-          title: (
-            <Space size={4} wrap>
-              <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
-              {step.type && <Tag color="default" style={{ fontSize: 10 }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
-              {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
-            </Space>
-          ),
-          description: (
-            <Space direction="vertical" size={4} style={{ width: '100%' }}>
-              <Progress
-                percent={percent}
-                size="small"
-                status={status === 'error' ? 'exception' : status === 'finish' ? 'success' : 'active'}
-              />
-              <Space size={8} wrap>
-                {step.message && <span style={{ fontSize: 12, color: '#666' }}>{step.message}</span>}
-                {step.depends_on && step.depends_on.length > 0 && (
-                  <span style={{ fontSize: 12, color: '#888' }}>依赖: {step.depends_on.join(', ')}</span>
-                )}
-                {step.started_at && <span style={{ fontSize: 11, color: '#aaa' }}>开始 {new Date(step.started_at).toLocaleTimeString()}</span>}
-                {step.completed_at && <span style={{ fontSize: 11, color: '#aaa' }}>完成 {new Date(step.completed_at).toLocaleTimeString()}</span>}
-              </Space>
-            </Space>
-          ),
-          status,
-        }
-      })}
-    />
-  )
-
-  const renderPreviewSteps = (steps: DeployStepView[]) => (
-    <Steps
-      direction="vertical"
-      size="small"
-      current={-1}
-      items={steps.map((step, idx) => ({
-        title: (
-          <Space size={4} style={{ fontSize: 13 }}>
-            <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
-            {step.type && <Tag color="default" style={{ fontSize: 10, lineHeight: '16px' }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
-            {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
-          </Space>
-        ),
-        description: step.message ? <span style={{ fontSize: 12, color: '#666' }}>{step.message}</span> : undefined,
-        status: 'wait',
-      }))}
-    />
-  )
-
   const filteredDeployments = deployments.filter((d) => {
     const statusMatch = statusFilter.length === 0 || statusFilter.includes(getStatusCategory(d.status))
     const archMatch = archFilter === 'all' || d.cluster_type === archFilter
@@ -1081,494 +905,47 @@ const ClusterDeploy: React.FC = () => {
         )}
       </Card>
 
-        <Modal
-        title={
-          <Space>
-            <EyeOutlined />
-            <span>部署计划预览 - {planPreviewArch?.toUpperCase()}</span>
-          </Space>
-        }
+      <PlanPreviewModal
         open={planPreviewOpen}
-        onCancel={() => {
+        arch={planPreviewArch}
+        data={planPreviewData}
+        onClose={() => {
           setPlanPreviewOpen(false)
           setPlanPreviewData(null)
         }}
-        width={720}
-        footer={
-          <Button onClick={() => {
-            setPlanPreviewOpen(false)
-            setPlanPreviewData(null)
-          }}>关闭</Button>
-        }
-        destroyOnClose
-        styles={{ body: { padding: '16px 20px' } }}
-      >
-        {planPreviewData ? (
-          <div>
-            {/* Plan Summary - compact */}
-            <Descriptions size="small" column={3} bordered style={{ marginBottom: 12 }}>
-              <Descriptions.Item label="部署ID" span={2}>{planPreviewData.deployment_id || planPreviewData.id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="架构">
-                <Tag color={planPreviewData.cluster_type === 'ha' ? 'cyan' : planPreviewData.cluster_type === 'mha' ? 'blue' : planPreviewData.cluster_type === 'mgr' ? 'green' : 'orange'} style={{ margin: 0 }}>
-                  {(planPreviewData.cluster_type || '').toUpperCase()}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="模式">
-                <Tag style={{ margin: 0 }}>{planPreviewData.mode || 'real'}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="节点">{planPreviewData.nodes?.length || 0}</Descriptions.Item>
-              <Descriptions.Item label="步骤">{planPreviewData.steps?.length || 0}</Descriptions.Item>
-              {planPreviewData.parameters?.mysql_version && (
-                <Descriptions.Item label="MySQL 版本">{planPreviewData.parameters.mysql_version}</Descriptions.Item>
-              )}
-            </Descriptions>
+      />
 
-            {/* Nodes Table - compact */}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>节点列表</div>
-              <Table
-                size="small"
-                pagination={false}
-                showHeader={false}
-                columns={[
-                  { title: 'Host', dataIndex: 'host', key: 'host', width: 130 },
-                  { title: '角色', dataIndex: 'role', key: 'role', width: 80, render: (role: string) => <Tag style={{ margin: 0 }}>{formatClusterRole(planPreviewArch, role)}</Tag> },
-                  { title: '端口', key: 'ports', width: 110, render: (_: any, record: any) => `${record.mysql_port || '-'}${record.agent_port ? ` / ${record.agent_port}` : ''}` },
-                  { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', render: (v: string) => v || '-', ellipsis: true },
-                  { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 72, render: (v: number) => v || '-' },
-                ]}
-                dataSource={planPreviewData.nodes || []}
-                rowKey={(row: any, index?: number) => row.id || row.host || `node-${index}`}
-              />
-            </div>
+      <DeployCredentialsModal
+        visible={credentialModalResult.visible}
+        mysql_user={credentialModalResult.mysql_user}
+        mysql_password={credentialModalResult.mysql_password}
+        nodes={credentialModalResult.nodes}
+        arch={planPreviewArch}
+        onClose={() => setCredentialModalResult({ visible: false, mysql_user: '', mysql_password: '' })}
+      />
 
-            {/* Steps Timeline - compact for preview */}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>执行步骤</div>
-              {(planPreviewData.steps && planPreviewData.steps.length > 0)
-                ? renderPreviewSteps(
-                    planPreviewData.steps.map((step: any) => ({
-                      ...step,
-                      status: step.status || 'planned',
-                    }))
-                  )
-                : <span style={{ color: '#999', fontSize: 12 }}>暂无步骤信息</span>
-              }
-            </div>
-
-            {/* Parameters - compact */}
-            {planPreviewData.parameters && Object.keys(planPreviewData.parameters).length > 0 && (
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>部署参数</div>
-                <Descriptions size="small" column={2} bordered>
-                  {Object.entries(planPreviewData.parameters).map(([key, value]: [string, any]) => (
-                    <Descriptions.Item label={key} key={key}>
-                      {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                    </Descriptions.Item>
-                  ))}
-                </Descriptions>
-              </div>
-            )}
-          </div>
-        ) : (
-          <Empty description="无法加载部署计划" />
-        )}
-      </Modal>
-
-      {/* Credentials Success Modal */}
-      <Modal
-        title={
-          <Space>
-            <KeyOutlined />
-            <span>部署成功 - MySQL 凭证信息</span>
-          </Space>
-        }
-        open={credentialModalResult.visible}
-        onCancel={() => setCredentialModalResult({ visible: false, mysql_user: '', mysql_password: '' })}
-        footer={
-          <Button type="primary" onClick={() => {
-            setCredentialModalResult({ visible: false, mysql_user: '', mysql_password: '' })
-          }}>
-            我已保存
-          </Button>
-        }
-        width={600}
-      >
-        <Alert
-          type="warning"
-          showIcon
-          message="请立即保存以下 MySQL 连接信息！此信息关闭后将不再显示。"
-          description="部署后的 MySQL root 密码仅在此处展示一次，请保存到安全位置。可在实例详情页通过「强制修改密码」功能重置密码。"
-          style={{ marginBottom: 16 }}
-        />
-        <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
-          <Descriptions.Item label="用户名">{credentialModalResult.mysql_user}</Descriptions.Item>
-          <Descriptions.Item label="密码">
-            <Text copyable={{ text: credentialModalResult.mysql_password }}>
-              {credentialModalResult.mysql_password}
-            </Text>
-          </Descriptions.Item>
-        </Descriptions>
-        {credentialModalResult.nodes && credentialModalResult.nodes.length > 0 && (
-          <Table
-            size="small"
-            pagination={false}
-            columns={[
-              { title: '节点', dataIndex: 'host', key: 'host' },
-              { title: '端口', dataIndex: 'port', key: 'port' },
-              { title: '角色', dataIndex: 'role', key: 'role', render: (role: string) => formatClusterRole(planPreviewArch, role) },
-              { title: '用户名', dataIndex: 'username', key: 'username' },
-              {
-                title: '密码',
-                dataIndex: 'password',
-                key: 'password',
-                render: (pw: string) => <Text copyable={{ text: pw }}>{pw}</Text>,
-              },
-            ]}
-            dataSource={credentialModalResult.nodes}
-            rowKey={(row) => `${row.host}:${row.port}`}
-          />
-        )}
-      </Modal>
-
-      <Modal
-        title="部署失败详情"
+      <DeployErrorModal
         open={!!deployErrorDetail}
-        onCancel={() => setDeployErrorDetail(null)}
-        footer={<Button type="primary" onClick={() => setDeployErrorDetail(null)}>关闭</Button>}
-        width={820}
-      >
-        {deployErrorDetail && (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Alert
-              type="error"
-              showIcon
-              message={`${deployErrorDetail.cluster_type?.toUpperCase?.() || '集群'} 部署失败`}
-              description={<pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{deployErrorDetail.message || deployErrorDetail.status}</pre>}
-            />
-            {deployErrorDetail.steps && deployErrorDetail.steps.length > 0 && (
-              <Table
-                size="small"
-                pagination={false}
-                rowKey={(row, index) => `${row.name}-${index}`}
-                dataSource={deployErrorDetail.steps}
-                columns={[
-                  { title: '步骤', dataIndex: 'name', key: 'name', width: 220 },
-                  {
-                    title: '状态',
-                    dataIndex: 'status',
-                    key: 'status',
-                    width: 90,
-                    render: (status: string) => <Tag color={isFailedDeployStatus(status) ? 'error' : stepStatusToAntd(status) === 'finish' ? 'success' : 'default'}>{status}</Tag>,
-                  },
-                  { title: '信息', dataIndex: 'message', key: 'message', render: (text: string) => text ? <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{text}</pre> : '-' },
-                ]}
-              />
-            )}
-          </Space>
-        )}
-      </Modal>
+        detail={deployErrorDetail}
+        onClose={() => setDeployErrorDetail(null)}
+      />
 
-      {/* MySQL Root Password Modal */}
-      <Modal
-        title={
-          <Space>
-            <KeyOutlined />
-            <span>设置 MySQL Root 密码</span>
-          </Space>
-        }
+      <MySQLPasswordModal
         open={mysqlPasswordModalOpen}
-        onCancel={() => setMysqlPasswordModalOpen(false)}
-        onOk={handleSaveMysqlPassword}
-        okText="保存"
-        cancelText="取消"
-        destroyOnClose
-      >
-        <Alert
-          type="info"
-          showIcon
-          message="此密码将用于集群部署时设置 MySQL root 用户密码"
-          description="部署过程中会使用此密码初始化 MySQL root 账户。请牢记此密码，部署完成后可使用此密码连接 MySQL。"
-          style={{ marginBottom: 16 }}
-        />
-        <Form form={mysqlPasswordForm} layout="vertical">
-          <Form.Item name="username" label="用户名" initialValue="root">
-            <Input placeholder="root" disabled />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label="密码"
-            rules={[{ required: true, message: '请输入 MySQL root 密码' }]}
-            initialValue="Root#1234"
-          >
-            <Input.Password placeholder="请输入 MySQL root 密码" />
-          </Form.Item>
-        </Form>
-      </Modal>
+        form={mysqlPasswordForm}
+        onClose={() => setMysqlPasswordModalOpen(false)}
+        onSave={handleSaveMysqlPassword}
+      />
 
       {activeDeployment && (
-        <Card
-          title={
-            <Space>
-              <ClusterOutlined />
-              <span>部署进度 - {activeDeployment.cluster_type?.toUpperCase()}</span>
-              {!isTerminalDeployStatus(activeDeployment.status) && (
-                <span style={{ fontSize: 12, color: '#1677ff' }}>
-                  <ReloadOutlined spin style={{ marginRight: 4 }} />
-                  实时更新中 (2s)
-                </span>
-              )}
-            </Space>
-          }
-          style={{ marginTop: 16 }}
-          extra={
-            <Space>
-              <Tag
-                color={
-                  isCompletedDeployStatus(activeDeployment.status) ? 'success'
-                  : isPartialDeployStatus(activeDeployment.status) ? 'warning'
-                  : isFailedDeployStatus(activeDeployment.status) ? 'error'
-                  : isDestroyedDeployStatus(activeDeployment.status) ? 'default'
-                  : 'processing'
-                }
-                icon={
-                  isCompletedDeployStatus(activeDeployment.status) ? <CheckCircleOutlined />
-                  : isFailedDeployStatus(activeDeployment.status) ? <CloseCircleOutlined />
-                  : isDestroyedDeployStatus(activeDeployment.status) ? <DeleteOutlined />
-                  : !isTerminalDeployStatus(activeDeployment.status) ? <ReloadOutlined spin />
-                  : undefined
-                }
-              >
-                {isCompletedDeployStatus(activeDeployment.status) ? '已完成'
-                  : isPartialDeployStatus(activeDeployment.status) ? '部分完成'
-                  : isFailedDeployStatus(activeDeployment.status) ? '失败'
-                  : isDestroyedDeployStatus(activeDeployment.status) ? '已销毁'
-                  : '运行中'}
-              </Tag>
-              {activeDeployment.finished_at && <span>完成于 {new Date(activeDeployment.finished_at).toLocaleString()}</span>}
-            </Space>
-          }
-        >
-          {/* Architecture info banner */}
-          <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Tag color={activeDeployment.cluster_type === 'ha' ? 'cyan' : activeDeployment.cluster_type === 'mha' ? 'blue' : activeDeployment.cluster_type === 'mgr' ? 'green' : 'orange'} style={{ fontSize: 14, padding: '2px 12px' }}>
-              <ClusterOutlined style={{ marginRight: 4 }} />
-              {activeDeployment.cluster_type?.toUpperCase()}
-            </Tag>
-            {activeDeployment.nodes && activeDeployment.nodes.length > 0 && (
-              <Space size={4}>
-                {activeDeployment.nodes.map((node, idx) => (
-                  <Tag key={idx} color={node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? 'blue' : node.role === 'manager' ? 'purple' : 'default'}>
-                    {formatClusterRole(activeDeployment.cluster_type, node.role)}
-                  </Tag>
-                ))}
-              </Space>
-            )}
-          </div>
-
-          {/* 5-stage progress bar */}
-          <Steps
-            current={currentStep}
-            size="small"
-            items={STAGE_ORDER.map((title, idx) => ({
-              title,
-              description: idx === currentStep && !isTerminalDeployStatus(activeDeployment.status)
-                ? <span style={{ fontSize: 11, color: '#1677ff' }}>进行中...</span>
-                : idx < currentStep
-                  ? <span style={{ fontSize: 11, color: '#52c41a' }}>已完成</span>
-                  : undefined,
-            }))}
-            status={deploymentStepStatus(activeDeployment.status)}
-          />
-
-          {/* Overall progress bar */}
-          <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <Progress
-                percent={deploymentProgress(activeDeployment.status, activeDeployment.progress)}
-                status={deploymentProgressStatus(activeDeployment.status)}
-                strokeColor={{
-                  '0%': '#108ee9',
-                  '100%': '#87d068',
-                }}
-              />
-            </div>
-            <span style={{ fontSize: 24, fontWeight: 600, color: '#333', minWidth: 48, textAlign: 'right' }}>
-              {deploymentProgress(activeDeployment.status, activeDeployment.progress)}%
-            </span>
-          </div>
-
-          {/* Status message */}
-          <Alert
-            type={
-              isFailedDeployStatus(activeDeployment.status) ? 'error'
-              : isCompletedDeployStatus(activeDeployment.status) ? 'success'
-              : isPartialDeployStatus(activeDeployment.status) ? 'warning'
-              : 'info'
-            }
-            message={
-              <Space>
-                <span>{activeDeployment.message || '等待后端返回状态...'}</span>
-                {!isTerminalDeployStatus(activeDeployment.status) && (
-                  <span style={{ fontSize: 11, color: '#888' }}>
-                    ({STAGE_ORDER[currentStep] || activeDeployment.stage || '初始化中'})
-                  </span>
-                )}
-              </Space>
-            }
-            showIcon
-            style={{ marginBottom: 16 }}
-          />
-
-          {/* Detailed steps timeline */}
-          {activeDeployment.steps && activeDeployment.steps.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <strong style={{ display: 'block', marginBottom: 8 }}>详细步骤</strong>
-              {renderVerticalStepProgress(activeDeployment.steps, activeDeployment.progress)}
-            </div>
-          )}
-
-          {/* Fallback substeps when backend doesn't return steps yet */}
-          {(!activeDeployment.steps || activeDeployment.steps.length === 0) && (
-            <div style={{ marginTop: 16 }}>
-              <strong style={{ display: 'block', marginBottom: 8 }}>当前阶段子步骤</strong>
-              <div style={{ marginTop: 8 }}>
-                {(DEPLOY_SUBSTEPS[activeDeployment.stage || ''] || DEPLOY_SUBSTEPS['环境检查']).map((substep, idx) => {
-                  const substeps = DEPLOY_SUBSTEPS[activeDeployment.stage || ''] || DEPLOY_SUBSTEPS['环境检查']
-                  const isLast = idx === substeps.length - 1
-                  return (
-                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, opacity: isLast && !isCompletedDeployStatus(activeDeployment.status) ? 1 : idx < substeps.length - 1 ? 0.6 : 0.4 }}>
-                      {idx < substeps.length - 1 ? (
-                        <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
-                      ) : !isTerminalDeployStatus(activeDeployment.status) ? (
-                        <ReloadOutlined spin style={{ color: '#1677ff', fontSize: 14 }} />
-                      ) : (
-                        <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
-                      )}
-                      <span style={{ color: isLast && !isCompletedDeployStatus(activeDeployment.status) ? '#333' : '#999' }}>{substep}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Node progress cards */}
-          {activeDeployment.nodes && activeDeployment.nodes.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <strong style={{ display: 'block', marginBottom: 8 }}>节点进度 ({activeDeployment.nodes.length})</strong>
-              <Row gutter={[12, 12]}>
-                {activeDeployment.nodes.map((node, idx) => (
-                  <Col span={8} key={idx}>
-                    <Card
-                      size="small"
-                      style={{
-                        borderLeft: `3px solid ${
-                          node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? '#1677ff'
-                          : node.role === 'manager' ? '#722ed1'
-                          : '#52c41a'
-                        }`,
-                      }}
-                      title={
-                        <Space size={4}>
-                          <span style={{ fontSize: 13, fontWeight: 500 }}>{node.name || node.instance_id || `节点 ${idx + 1}`}</span>
-                          <span style={{ fontSize: 11, color: '#888' }}>{node.host || '-'}:{node.port || '-'}</span>
-                        </Space>
-                      }
-                      extra={
-                        <Tag color={node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? 'blue' : node.role === 'manager' ? 'purple' : 'default'}>
-                          {formatClusterRole(activeDeployment.cluster_type, node.role)}
-                        </Tag>
-                      }
-                    >
-                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                        <Space>
-                          <span style={{ fontSize: 12, color: '#666' }}>状态: </span>
-                          <Tag
-                            color={
-                              node.status === 'completed' || node.status === 'healthy' ? 'success'
-                              : node.status === 'running' || node.status === 'deploying' ? 'processing'
-                              : node.status === 'failed' ? 'error'
-                              : 'default'
-                            }
-                            style={{ fontSize: 11 }}
-                          >
-                            {node.status || 'pending'}
-                          </Tag>
-                          {node.current_step && (
-                            <span style={{ fontSize: 11, color: '#888' }}>{node.current_step}</span>
-                          )}
-                        </Space>
-                        {typeof node.progress === 'number' && (
-                          <Progress percent={node.progress} size="small" />
-                        )}
-                        {node.message && (
-                          <div style={{ color: '#888', fontSize: 11, lineHeight: 1.4 }}>{node.message}</div>
-                        )}
-                      </Space>
-                    </Card>
-                  </Col>
-                ))}
-              </Row>
-            </div>
-          )}
-
-          {/* Live log viewer */}
-          {activeDeployment.logs && activeDeployment.logs.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <strong>部署日志 ({activeDeployment.logs.length})</strong>
-                {!isTerminalDeployStatus(activeDeployment.status) && (
-                  <span style={{ fontSize: 11, color: '#1677ff' }}>
-                    <ReloadOutlined spin style={{ marginRight: 4 }} />
-                    实时
-                  </span>
-                )}
-              </div>
-              <div
-                style={{
-                  background: '#1e1e1e',
-                  color: '#d4d4d4',
-                  padding: 12,
-                  borderRadius: 6,
-                  maxHeight: 200,
-                  overflow: 'auto',
-                  fontFamily: '\"Cascadia Code\", \"Fira Code\", \"Consolas\", monospace',
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                }}
-              >
-                {activeDeployment.logs.map((log, idx) => (
-                  <div key={idx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    <span style={{ color: '#888', marginRight: 8 }}>[{idx + 1}]</span>
-                    {log.includes('ERROR') || log.includes('failed') || log.includes('错误') ? (
-                      <span style={{ color: '#f56c6c' }}>{log}</span>
-                    ) : log.includes('completed') || log.includes('成功') ? (
-                      <span style={{ color: '#67c23a' }}>{log}</span>
-                    ) : (
-                      <span>{log}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Restart/retry button for terminal states */}
-          {isTerminalDeployStatus(activeDeployment.status) && (
-            <div style={{ marginTop: 16, textAlign: 'center' }}>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => {
-                  setActiveDeployment(null)
-                  stopPolling()
-                }}
-              >
-                返回部署表单
-              </Button>
-            </div>
-          )}
-        </Card>
+        <ClusterDeployProgress
+          activeDeployment={activeDeployment}
+          currentStep={currentStep}
+          onReturn={() => {
+            setActiveDeployment(null)
+            stopPolling()
+          }}
+        />
       )}
     </div>
   )
