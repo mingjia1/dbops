@@ -103,6 +103,20 @@ func (b *MessageBus) PublishStatus(taskID string, status string) {
 	})
 }
 
+func (b *MessageBus) PublishStepEvent(taskID, stepName, stepStatus, stepMessage string) {
+	b.Publish(TaskEvent{
+		TaskID:    taskID,
+		EventType: "step",
+		Stage:     stepName,
+		Status:    stepStatus,
+		Metadata: map[string]string{
+			"step_name":    stepName,
+			"step_status":  stepStatus,
+			"step_message": stepMessage,
+		},
+	})
+}
+
 func (b *MessageBus) WaitForCompletion(taskID string, ch chan TaskEvent) (TaskEvent, error) {
 	for event := range ch {
 		if event.Status == "completed" || event.Status == "failed" {

@@ -384,6 +384,10 @@ func (s *ClusterDeployService) addStep(deploymentID, name, status string) {
 	now := time.Now()
 	step := DeployStep{Name: name, Status: status, StartedAt: &now}
 	p.Steps = append(p.Steps, step)
+	// Notify SSE subscribers about the new step
+	if s.messageBus != nil {
+		s.messageBus.PublishStepEvent(deploymentID, name, status, "")
+	}
 }
 
 func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, message string) {
@@ -402,6 +406,8 @@ func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, mess
 					p.Steps[i].CompletedAt = &now
 				}
 				if s.messageBus != nil {
+					// Publish step event so SSE clients get real-time step name + status + message
+					s.messageBus.PublishStepEvent(deploymentID, name, status, message)
 					s.messageBus.PublishStatus(deploymentID, status)
 					if message != "" {
 						s.messageBus.PublishLog(deploymentID, fmt.Sprintf("%s: %s", name, message))

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 export interface TaskEvent {
   task_id: string
-  event_type: 'progress' | 'log' | 'status'
+  event_type: 'progress' | 'log' | 'status' | 'step'
   progress: number
   stage: string
   log_line: string
@@ -17,6 +17,7 @@ export interface UseTaskSSEOptions {
   onProgress?: (event: TaskEvent) => void
   onLog?: (event: TaskEvent) => void
   onStatus?: (event: TaskEvent) => void
+  onStep?: (event: TaskEvent) => void
   onComplete?: (event: TaskEvent) => void
   onError?: (error: Error) => void
 }
@@ -59,7 +60,10 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
         if (onComplete) onComplete(event)
       }
     }
-  }, [onProgress, onLog, onStatus, onComplete])
+    if (event.event_type === 'step') {
+      if (onStep) onStep(event)
+    }
+  }, [onProgress, onLog, onStatus, onStep, onComplete])
 
   useEffect(() => {
     if (!enabled || !taskID) return
