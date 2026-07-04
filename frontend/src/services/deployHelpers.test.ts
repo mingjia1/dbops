@@ -18,6 +18,7 @@ import {
   createMgrGroupName,
   parseMySQLConfig,
   normalizeDeployment,
+  buildDeployPayload,
   type DeployStepView,
   type ArchType,
 } from './deployHelpers'
@@ -239,6 +240,174 @@ describe('parseMySQLConfig', () => {
   it('handles values with = inside', () => {
     const result = parseMySQLConfig('my_cnf=/etc/my.cnf')
     expect(result).toEqual({ my_cnf: '/etc/my.cnf' })
+  })
+})
+
+// ---- deploymentProgressStatus ----
+
+describe('deploymentProgressStatus', () => {
+  it('returns exception for failed', () => {
+    expect(deploymentProgressStatus('failed')).toBe('exception')
+    expect(deploymentProgressStatus('error')).toBe('exception')
+    expect(deploymentProgressStatus('timeout')).toBe('exception')
+  })
+
+  it('returns success for completed/destroyed', () => {
+    expect(deploymentProgressStatus('success')).toBe('success')
+    expect(deploymentProgressStatus('completed')).toBe('success')
+    expect(deploymentProgressStatus('destroyed')).toBe('success')
+  })
+
+  it('returns normal for partial', () => {
+    expect(deploymentProgressStatus('partial')).toBe('normal')
+  })
+
+  it('returns active for running/pending', () => {
+    expect(deploymentProgressStatus('running')).toBe('active')
+    expect(deploymentProgressStatus('pending')).toBe('active')
+  })
+
+  it('returns active for undefined', () => {
+    expect(deploymentProgressStatus()).toBe('active')
+  })
+})
+
+// ---- deploymentStepStatus ----
+
+describe('deploymentStepStatus', () => {
+  it('returns error for failed', () => {
+    expect(deploymentStepStatus('failed')).toBe('error')
+    expect(deploymentStepStatus('error')).toBe('error')
+  })
+
+  it('returns finish for completed', () => {
+    expect(deploymentStepStatus('success')).toBe('finish')
+    expect(deploymentStepStatus('destroyed')).toBe('finish')
+  })
+
+  it('returns error for partial', () => {
+    expect(deploymentStepStatus('partial')).toBe('error')
+  })
+
+  it('returns process for running', () => {
+    expect(deploymentStepStatus('running')).toBe('process')
+  })
+})
+
+// ---- isPartialDeployStatus / isDestroyedDeployStatus ----
+
+describe('isPartialDeployStatus', () => {
+  it('returns true for partial', () => { expect(isPartialDeployStatus('partial')).toBe(true) })
+  it('returns true for partial_success', () => { expect(isPartialDeployStatus('partial_success')).toBe(true) })
+  it('returns false for success', () => { expect(isPartialDeployStatus('success')).toBe(false) })
+})
+
+describe('isDestroyedDeployStatus', () => {
+  it('returns true for destroyed', () => { expect(isDestroyedDeployStatus('destroyed')).toBe(true) })
+  it('returns false for success', () => { expect(isDestroyedDeployStatus('success')).toBe(false) })
+})
+
+// ---- buildDeployPayload ----
+
+describe('buildDeployPayload', () => {
+  const credential = { username: 'root', password: 'Root#1234' }
+
+  it('builds HA payload', () => {
+    const result = buildDeployPayload('ha', {
+      cluster_id: 'ha-cluster-01',
+      mysql_version: '8.0.36',
+      mysql_port: 3306,
+      master_host_id: 'host-1',
+      replica_host_ids: ['host-2'],
+      replica_port: 3307,
+      repl_user: 'repl',
+      repl_password: 'Repl#2024',
+      enable_keepalived: true,
+    }, credential)
+    expect(result.cluster_id).toBe('ha-cluster-01')
+    expect(result.cluster_type).toBe('ha')
+    expect(result.mysql.version).toBe('8.0.36')
+    expect(result.nodes).toHaveLength(2)
+    expect(result.nodes[0].role).toBe('master')
+    expect(result.nodes[1].role).toBe('replica')
+    expect(result.replication.mode).toBe('async')
+  })
+
+  it('builds MHA payload', () => {
+    const result = buildDeployPayload('mha', {
+      cluster_id: 'mha-cluster-01',
+      mysql_version: '8.0',
+      master_host_id: 'host-1',
+      replica_host_ids: ['host-2'],
+      manager_host_id: 'host-3',
+      vip: '192.168.1.100',
+      ssh_user: 'root',
+    }, credential)
+    expect(result.cluster_type).toBe('mha')
+    expect(result.nodes).toHaveLength(3)
+    expect(result.nodes[0].role).toBe('manager')
+    expect(result.nodes[1].role).toBe('master')
+    expect(result.nodes[2].role).toBe('replica')
+    expect(result.custom.vip).toBe('192.168.1.100')
+    expect(result.custom.ssh_user).toBe('root')
+  })
+
+  it('builds MGR payload', () => {
+    const result = buildDeployPayload('mgr', {
+      cluster_id: 'mgr-cluster-01',
+      mysql_version: '8.0.36',
+      master_host_id: 'host-1',
+      replica_host_ids: ['host-2', 'host-3'],
+      group_name: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      local_port: 33061,
+    }, credential)
+    expect(result.cluster_type).toBe('mgr')
+    expect(result.nodes).toHaveLength(3)
+    expect(result.nodes[0].role).toBe('primary')
+    expect(result.nodes[1].role).toBe('secondary')
+    expect(result.replication.mode).toBe('single-primary')
+    expect(result.custom.group_name).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+  })
+
+  it('builds PXC payload', () => {
+    const result = buildDeployPayload('pxc', {
+      cluster_id: 'pxc-cluster-01',
+      mysql_version: '8.0',
+      master_host_id: 'host-1',
+      replica_host_ids: ['host-2'],
+      wsrep_port: 4567,
+      sst_method: 'xtrabackup-v2',
+    }, credential)
+    expect(result.cluster_type).toBe('pxc')
+    expect(result.nodes).toHaveLength(2)
+    expect(result.nodes[0].role).toBe('bootstrap')
+    expect(result.nodes[1].role).toBe('secondary')
+    expect(result.replication.mode).toBe('galera')
+    expect(result.custom.wsrep_port).toBe(4567)
+    expect(result.custom.sst_method).toBe('xtrabackup-v2')
+  })
+
+  it('handles single replica_host_id', () => {
+    const result = buildDeployPayload('ha', {
+      cluster_id: 'test',
+      mysql_version: '8.0',
+      master_host_id: 'host-1',
+      replica_host_id: 'host-2',
+    }, credential)
+    expect(result.nodes).toHaveLength(2)
+    expect(result.nodes[1].role).toBe('replica')
+  })
+
+  it('includes mysql config from text input', () => {
+    const result = buildDeployPayload('ha', {
+      cluster_id: 'test',
+      mysql_version: '8.0',
+      master_host_id: 'host-1',
+      replica_host_ids: ['host-2'],
+      mysql_config_text: 'max_connections=500\ninnodb_buffer_pool_size=2G',
+    }, credential)
+    expect(result.mysql.config.max_connections).toBe('500')
+    expect(result.mysql.config.innodb_buffer_pool_size).toBe('2G')
   })
 })
 

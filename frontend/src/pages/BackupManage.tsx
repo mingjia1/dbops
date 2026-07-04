@@ -1,66 +1,17 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Button,
-  Card,
-  Col,
-  Empty,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Radio,
-  Row,
-  Select,
-  Space,
-  Statistic,
-  Switch,
-  Table,
-  Tabs,
-  Tag,
-  Tooltip,
-  message,
+  Button, Card, Empty, Form, Modal, Select, Space, Table, Tabs, Tag, Tooltip, message,
 } from 'antd'
-import { DeleteOutlined, FileSearchOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, ScheduleOutlined, ScanOutlined } from '@ant-design/icons'
+import { DeleteOutlined, FileSearchOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { backupApi, instanceApi, type Instance } from '../services/api'
-
-interface BackupRecord {
-  id: string
-  task_id: string
-  instance_id: string
-  backup_type: string
-  status: string
-  message?: string
-  size: string
-  file_path: string
-  created_at: string
-}
-
-interface BackupPolicy {
-  id: string
-  instance_id: string
-  backup_type: string
-  schedule: string
-  retention_days: number
-  storage_type: string
-  storage_path: string
-  enabled: boolean
-  created_at: string
-}
-const isFailedBackupStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
-}
-
-const isCompletedBackupStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
-}
-
-const isActiveBackupStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['pending', 'running', 'submitted', 'accepted', 'queued'].includes(normalized)
-}
+import {
+  isFailedBackupStatus, isCompletedBackupStatus, isActiveBackupStatus, formatBackupStatus,
+  type BackupRecord, type BackupPolicy, BACKUP_TYPE_LABELS, BACKUP_TYPE_COLORS,
+} from '../services/backupHelpers'
+import BackupCreateModal from '../components/BackupCreateModal'
+import BackupPolicyModal from '../components/BackupPolicyModal'
+import BackupStatCards from '../components/BackupStatCards'
 
 const BackupManage: React.FC = () => {
   const [tab, setTab] = useState('records')
@@ -351,7 +302,7 @@ const BackupManage: React.FC = () => {
       width: 90,
       render: (status) => (
         <Tag color={isCompletedBackupStatus(status) ? 'success' : isActiveBackupStatus(status) ? 'processing' : isFailedBackupStatus(status) ? 'error' : 'default'}>
-          {formatStatus(status)}
+          {formatBackupStatus(status)}
         </Tag>
       ),
     },
@@ -463,12 +414,7 @@ const BackupManage: React.FC = () => {
               label: '备份记录',
               children: (
                 <>
-                  <Row gutter={16} style={{ marginBottom: 16 }}>
-                    <Col span={6}><Card size="small"><Statistic title="记录数" value={records.length} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="已完成" value={records.filter((r) => isCompletedBackupStatus(r.status)).length} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="运行中" value={records.filter((r) => isActiveBackupStatus(r.status)).length} valueStyle={{ color: '#1677ff' }} /></Card></Col>
-                    <Col span={6}><Card size="small"><Statistic title="失败" value={records.filter((r) => isFailedBackupStatus(r.status)).length} /></Card></Col>
-                  </Row>
+                          <BackupStatCards records={records} />
                   <Table columns={recordColumns} dataSource={records} rowKey="id" loading={loading} locale={{ emptyText: <Empty description="暂无备份记录" /> }} />
                 </>
               ),
@@ -494,93 +440,35 @@ const BackupManage: React.FC = () => {
         />
       </Card>
 
-      <Modal
-        title="创建备份任务"
+      <BackupCreateModal
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        submitting={submitting}
+        form={form}
         onOk={submitBackup}
-        confirmLoading={submitting}
-        okText="创建任务"
-        cancelText="取消"
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item label="备份类型" name="backup_type" rules={[{ required: true }]}>
-            <Radio.Group>
-              <Radio.Button value="full">全量</Radio.Button>
-              <Radio.Button value="incremental">增量</Radio.Button>
-              <Radio.Button value="logical">逻辑</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-        </Form>
-      </Modal>
+        onCancel={() => setCreateOpen(false)}
+      />
 
-      <Modal
-        title={editingPolicy ? '编辑备份策略' : '新建备份策略'}
+      <BackupPolicyModal
         open={policyOpen}
+        submitting={submitting}
+        editingPolicy={editingPolicy}
+        form={policyForm}
+        instanceOptions={instances.map((item) => ({ value: item.id, label: item.name }))}
+        onOk={submitPolicy}
         onCancel={() => {
           setPolicyOpen(false)
           setEditingPolicy(null)
         }}
-        onOk={submitPolicy}
-        confirmLoading={submitting}
-        width={620}
-      >
-        <Form form={policyForm} layout="vertical">
-          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true }]}>
-            <Select options={instances.map((item) => ({ value: item.id, label: item.name }))} />
-          </Form.Item>
-          <Form.Item name="backup_type" label="备份类型" rules={[{ required: true }]}>
-            <Radio.Group>
-              <Radio.Button value="full">全量</Radio.Button>
-              <Radio.Button value="incremental">增量</Radio.Button>
-              <Radio.Button value="logical">逻辑</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item name="schedule" label={<span><ScheduleOutlined /> Cron 表达式</span>} rules={[{ required: true }]}>
-            <Input placeholder="0 2 * * *" />
-          </Form.Item>
-          <Form.Item name="retention_days" label="保留天数" rules={[{ required: true }]}>
-            <InputNumber min={1} max={3650} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="storage_type" label="存储类型">
-            <Radio.Group>
-              <Radio.Button value="local">本地</Radio.Button>
-              <Radio.Button value="nfs">NFS</Radio.Button>
-              <Radio.Button value="s3">S3</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item name="storage_path" label="存储路径">
-            <Input placeholder="/backup/mysql" />
-          </Form.Item>
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
-            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      />
 
     </div>
   )
 }
 
 const BackupTypeTag: React.FC<{ type: string }> = ({ type }) => {
-  const text = type === 'full' ? '全量' : type === 'incremental' ? '增量' : type === 'logical' ? '逻辑' : type
-  const color = type === 'full' ? 'blue' : type === 'incremental' ? 'green' : 'orange'
+  const text = BACKUP_TYPE_LABELS[type] || type
+  const color = BACKUP_TYPE_COLORS[type] || 'default'
   return <Tag color={color}>{text}</Tag>
-}
-
-function formatStatus(status: string): string {
-  if (status === 'completed') return '已完成'
-  if (status === 'running') return '运行中'
-  if (status === 'failed') return '失败'
-  return status || '-'
-}
-
-function formatSize(bytes: number): string {
-  if (!bytes) return '-'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 export default BackupManage
