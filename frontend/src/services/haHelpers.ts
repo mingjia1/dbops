@@ -1,4 +1,11 @@
 import type { Instance } from './api'
+import {
+  isCompletedHAStatus,
+  isFailedHAStatus,
+  isPartialHAStatus,
+  isSkippedHAStatus,
+} from './statusHelpers'
+import { normalizeRole, isPrimaryRole, isReplicaRole } from './roleHelpers'
 
 // ---- Types ----
 
@@ -44,29 +51,11 @@ export const instanceEndpoint = (instance?: Instance): string => {
   return host || '-'
 }
 
-// ---- Role/Normalize Helpers ----
+// ---- Status Helpers (re-exported from shared statusHelpers) ----
+export { isCompletedHAStatus, isFailedHAStatus, isPartialHAStatus, isSkippedHAStatus } from './statusHelpers'
 
-export const normalizeRole = (role?: string): string => (role || '').toLowerCase()
-
-export const isPrimaryRole = (role?: string): boolean =>
-  ['master', 'primary', 'primary_master', 'bootstrap'].includes(normalizeRole(role))
-
-export const isReplicaRole = (role?: string): boolean =>
-  ['slave', 'secondary', 'replica', 'donor', 'joiner'].includes(normalizeRole(role))
-
-// ---- Status Helpers ----
-
-export const isFailedHAStatus = (status?: string): boolean =>
-  ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes((status || '').toLowerCase())
-
-export const isCompletedHAStatus = (status?: string): boolean =>
-  ['completed', 'success', 'succeeded', 'ok'].includes((status || '').toLowerCase())
-
-export const isSkippedHAStatus = (status?: string): boolean =>
-  (status || '').toLowerCase() === 'skipped'
-
-export const isPartialHAStatus = (status?: string): boolean =>
-  (status || '').toLowerCase() === 'partial_success'
+// ---- Role/Normalize Helpers (re-exported from shared roleHelpers) ----
+export { normalizeRole, isPrimaryRole, isReplicaRole } from './roleHelpers'
 
 // ---- Cluster Architecture Detection ----
 

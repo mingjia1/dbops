@@ -78,7 +78,8 @@ describe('isSkippedHAStatus', () => {
 
 describe('isPartialHAStatus', () => {
   it('returns true for partial_success', () => { expect(isPartialHAStatus('partial_success')).toBe(true) })
-  it('returns false otherwise', () => { expect(isPartialHAStatus('partial')).toBe(false) })
+  it('returns true for partial (shared status mapping)', () => { expect(isPartialHAStatus('partial')).toBe(true) })
+  it('returns false for pending', () => { expect(isPartialHAStatus('pending')).toBe(false) })
 })
 
 // ---- Architecture detection ----

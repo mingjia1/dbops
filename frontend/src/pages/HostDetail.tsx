@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm,
-  Tabs, Modal, Form, Input, Result, Statistic, Row, Col, Badge, Radio, Switch, Tooltip, Select,
+  Tabs, Result, Statistic, Row, Col, Badge, Tooltip,
 } from 'antd'
 import {
   ArrowLeftOutlined, ThunderboltOutlined, DatabaseOutlined, PlusOutlined,
@@ -14,6 +14,9 @@ import {
   type Host, type HostTestResult, type Instance,
   type HostScanResult, type ScannedInstance,
 } from '../services/api'
+import ScanConfigModal from '../components/ScanConfigModal'
+import RegisterInstanceModal from '../components/RegisterInstanceModal'
+import BatchRegisterModal from '../components/BatchRegisterModal'
 
 const HostDetail: React.FC = () => {
   const navigate = useNavigate()
@@ -49,7 +52,6 @@ const HostDetail: React.FC = () => {
   const [scanRange, setScanRange] = useState<string>('3306-3310')
   const [discoverProcess, setDiscoverProcess] = useState(true)
   const [clusters, setClusters] = useState<any[]>([])
-  const [scanForm] = Form.useForm()
 
   useEffect(() => {
     setTab(searchParams.get('tab') || 'basic')
@@ -707,149 +709,99 @@ const HostDetail: React.FC = () => {
           ]}
         />
       </Card>
-
-      <Modal
-        title="一键纳管全部待纳管实例"
+      <BatchRegisterModal
         open={batchRegisterOpen}
+        newInstanceCount={newInstances.length}
+        clusters={clusters}
+        registering={batchRegistering}
         onCancel={() => setBatchRegisterOpen(false)}
-        onOk={submitBatchRegister}
-        confirmLoading={batchRegistering}
-        okText="全部纳管"
-        cancelText="取消"
-        width={560}
-      >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={`将纳管 ${newInstances.length} 个扫描发现的实例`}
-          description="这些实例会使用同一组 MySQL 连接账号和密码登记到平台。已纳管端口会自动跳过。"
-        />
-        <Form form={batchRegisterForm} layout="vertical">
-          <Form.Item name="username" label="连接用户名" rules={[{ required: true, message: '请输入连接用户名' }]}>
-            <Input placeholder="例如: root" />
-          </Form.Item>
-          <Form.Item name="password" label="连接密码" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
-          </Form.Item>
-          <Form.Item name="cluster_id" label="所属集群">
-            <Select
-              allowClear
-              placeholder="选择集群（可选）"
-              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onSubmit={async (values) => {
+          if (!id || !scanResult) return
+          const targets = (scanResult.instances || []).filter((item) => !item.already_managed)
+          if (targets.length === 0) {
+            message.info('没有待纳管实例')
+            return
+          }
+          setBatchRegistering(true)
+          try {
+            const payload = targets.map((item) => ({
+              port: item.port,
+              name: item.recommended_name || `${host?.name || 'host'}-${item.port}`,
+              username: values.username,
+              password: values.password,
+              cluster_id: values.cluster_id || undefined,
+            }))
+            const res: any = await hostApi.registerScannedInstances(id, payload)
+            const rows = res?.data?.rows || []
+            const registeredPorts = new Set(
+              rows.filter((row: any) => row.status === 'registered' || row.status === 'skipped').map((row: any) => row.port)
+            )
+            message.success(`一键纳管完成，成功 ${res?.data?.registered ?? 0} 个，跳过 ${res?.data?.skipped ?? 0} 个`)
+            setBatchRegisterOpen(false)
+            fetchInstances()
+            setScanResult({
+              ...scanResult,
+              instances: scanResult.instances.map((item) =>
+                registeredPorts.has(item.port) ? { ...item, already_managed: true } : item,
+              ),
+            })
+          } finally {
+            setBatchRegistering(false)
+          }
+        }}
+      />
 
-      <Modal
-        title={`配置扫描: ${host?.name || ''}`}
+      <ScanConfigModal
         open={scanConfigOpen}
+        host={host}
+        scanMode={scanMode}
+        scanPorts={scanPorts}
+        scanRange={scanRange}
+        discoverProcess={discoverProcess}
         onCancel={() => setScanConfigOpen(false)}
-        onOk={submitScan}
-        okText="开始扫描"
-        cancelText="取消"
-        width={560}
-      >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="扫描说明"
-          description="平台会并发 TCP 探测你指定的端口, 尝试读取 MySQL 握手包以获取版本/类型。开启进程发现后，还会通过 SSH 查询 mysqld 进程信息（需要主机已配置 SSH 凭据）。"
-        />
-        <Form form={scanForm} layout="vertical">
-          <Form.Item label="扫描方式" name="mode">
-            <Radio.Group
-              value={scanMode}
-              onChange={(e) => setScanMode(e.target.value)}
-            >
-              <Radio.Button value="default">常用端口</Radio.Button>
-              <Radio.Button value="custom">自定义端口</Radio.Button>
-              <Radio.Button value="range">端口范围</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
+        onSubmit={submitScan}
+        onScanModeChange={setScanMode}
+        onScanPortsChange={setScanPorts}
+        onScanRangeChange={setScanRange}
+        onDiscoverProcessChange={setDiscoverProcess}
+      />
 
-          {scanMode === 'default' && (
-            <div style={{ marginBottom: 12, padding: 8, background: '#f0f0f0', borderRadius: 4, fontSize: 13 }}>
-              将扫描 3300-3400, 33060, 33061 等常见 MySQL 端口
-            </div>
-          )}
-
-          {scanMode === 'custom' && (
-            <Form.Item label="自定义端口" extra="例如: 3306, 3307, 3308 (用英文逗号分隔)">
-              <Input
-                placeholder="3306, 3307, 3308"
-                value={scanPorts.join(', ')}
-                onChange={(e) => {
-                  const arr = e.target.value
-                    .split(',')
-                    .map((s) => parseInt(s.trim(), 10))
-                    .filter((n) => Number.isFinite(n) && n > 0 && n <= 65535)
-                  setScanPorts(arr)
-                }}
-              />
-            </Form.Item>
-          )}
-
-          {scanMode === 'range' && (
-            <Form.Item
-              label="端口范围"
-              name="port_range"
-              extra="支持单范围如 3306-3310, 也可混用逗号如 3306, 13306-13308"
-            >
-              <Input
-                placeholder="3306-3310"
-                value={scanRange}
-                onChange={(e) => setScanRange(e.target.value)}
-              />
-            </Form.Item>
-          )}
-
-          <Form.Item label="进程发现" extra="通过 SSH 查询主机上的 mysqld 进程, 可发现非标准端口的实例并获取 PID/内存/数据目录等信息">
-            <Switch checked={discoverProcess} onChange={setDiscoverProcess} checkedChildren="开启" unCheckedChildren="关闭" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title={`纳管扫描到的实例: ${registerTarget?.port || ''}`}
+      <RegisterInstanceModal
         open={registerOpen}
+        hostName={host?.name}
+        targetPort={registerTarget?.port ?? null}
+        clusters={clusters}
+        registering={registering}
         onCancel={() => setRegisterOpen(false)}
-        onOk={submitRegister}
-        confirmLoading={registering}
-        okText="纳管"
-        cancelText="取消"
-        width={560}
-      >
-        <Form form={registerForm} layout="vertical">
-          <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="username"
-            label="连接用户名"
-            rules={[{ required: true, message: '请输入连接用户名' }]}
-            extra="默认 root, 也可使用具有 SUPER/REPLICATION 权限的运维账号"
-          >
-            <Input placeholder="例如: root" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label="连接密码"
-            rules={[{ required: true, message: '请输入密码' }]}
-          >
-            <Input.Password placeholder="MySQL 密码" autoComplete="new-password" />
-          </Form.Item>
-          <Form.Item name="cluster_id" label="所属集群">
-            <Select
-              allowClear
-              placeholder="选择集群（可选）"
-              options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onSubmit={async (values) => {
+          if (!id || !registerTarget) return
+          setRegistering(true)
+          try {
+            await hostApi.registerScannedInstance(id, {
+              port: registerTarget.port,
+              name: values.name,
+              username: values.username,
+              password: values.password,
+              cluster_id: values.cluster_id || undefined,
+            })
+            message.success(`实例 ${values.name} 已纳管`)
+            setRegisterOpen(false)
+            fetchInstances()
+            if (scanResult) {
+              setScanResult({
+                ...scanResult,
+                instances: scanResult.instances.map((i) =>
+                  i.port === registerTarget.port ? { ...i, already_managed: true } : i,
+                ),
+              })
+            }
+          } catch (err: any) {
+            message.error(err?.response?.data?.message || err?.message || '纳管失败')
+          } finally {
+            setRegistering(false)
+          }
+        }}
+      />
     </div>
   )
 }

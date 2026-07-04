@@ -4,6 +4,28 @@
 export type { DeployStep, DeployState } from './deployStepHelper'
 export { processStepEvent } from './deployStepHelper'
 
+// Import shared status helpers (needed as local bindings for functions below)
+import {
+  normalizeStatus,
+  getStatusCategory,
+  isCompletedDeployStatus,
+  isFailedDeployStatus,
+  isPartialDeployStatus,
+  isDestroyedDeployStatus,
+  isTerminalDeployStatus,
+} from './statusHelpers'
+
+// Re-export for consumers
+export {
+  normalizeStatus,
+  getStatusCategory,
+  isCompletedDeployStatus,
+  isFailedDeployStatus,
+  isPartialDeployStatus,
+  isDestroyedDeployStatus,
+  isTerminalDeployStatus,
+}
+
 // ---- Constants ----
 
 export const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证'] as const
@@ -72,27 +94,7 @@ export interface DeployResult {
   logs?: string[]
 }
 
-// ---- Pure helpers ----
-
-export const normalizeStatus = (status?: string): string => (status || '').trim().toLowerCase()
-
-export const getStatusCategory = (status?: string): string => {
-  const norm = normalizeStatus(status)
-  if (['success', 'completed', 'succeeded', 'ok'].includes(norm)) return 'success'
-  if (['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(norm)) return 'failed'
-  if (['partial', 'partial_success'].includes(norm)) return 'partial'
-  if (norm === 'destroyed') return 'destroyed'
-  if (norm === 'running') return 'running'
-  if (norm === 'pending') return 'pending'
-  return norm || 'unknown'
-}
-
-export const isCompletedDeployStatus = (status?: string): boolean => getStatusCategory(status) === 'success'
-export const isFailedDeployStatus = (status?: string): boolean => getStatusCategory(status) === 'failed'
-export const isPartialDeployStatus = (status?: string): boolean => getStatusCategory(status) === 'partial'
-export const isDestroyedDeployStatus = (status?: string): boolean => getStatusCategory(status) === 'destroyed'
-export const isTerminalDeployStatus = (status?: string): boolean =>
-  isCompletedDeployStatus(status) || isFailedDeployStatus(status) || isPartialDeployStatus(status) || isDestroyedDeployStatus(status)
+// ---- Status-dependent helpers (deploy-specific logic on top of shared status checks) ----
 
 export const deploymentProgress = (status?: string, progress?: number): number => {
   if (typeof progress === 'number') return progress
