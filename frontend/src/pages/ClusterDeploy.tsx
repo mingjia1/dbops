@@ -1038,6 +1038,25 @@ const ClusterDeploy: React.FC = () => {
     />
   )
 
+  const renderPreviewSteps = (steps: DeployStepView[]) => (
+    <Steps
+      direction="vertical"
+      size="small"
+      current={-1}
+      items={steps.map((step, idx) => ({
+        title: (
+          <Space size={4} style={{ fontSize: 13 }}>
+            <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
+            {step.type && <Tag color="default" style={{ fontSize: 10, lineHeight: '16px' }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
+            {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
+          </Space>
+        ),
+        description: step.message ? <span style={{ fontSize: 12, color: '#666' }}>{step.message}</span> : undefined,
+        status: 'wait',
+      }))}
+    />
+  )
+
   const filteredDeployments = deployments.filter((d) => {
     const statusMatch = statusFilter.length === 0 || statusFilter.includes(getStatusCategory(d.status))
     const archMatch = archFilter === 'all' || d.cluster_type === archFilter
@@ -1236,8 +1255,7 @@ const ClusterDeploy: React.FC = () => {
         )}
       </Card>
 
-      {/* Plan Preview Modal */}
-      <Modal
+        <Modal
         title={
           <Space>
             <EyeOutlined />
@@ -1249,7 +1267,7 @@ const ClusterDeploy: React.FC = () => {
           setPlanPreviewOpen(false)
           setPlanPreviewData(null)
         }}
-        width={800}
+        width={720}
         footer={
           <Button onClick={() => {
             setPlanPreviewOpen(false)
@@ -1257,56 +1275,65 @@ const ClusterDeploy: React.FC = () => {
           }}>关闭</Button>
         }
         destroyOnClose
+        styles={{ body: { padding: '16px 20px' } }}
       >
         {planPreviewData ? (
           <div>
-            {/* Plan Summary */}
-            <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="部署ID">{planPreviewData.deployment_id || planPreviewData.id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="架构类型">
-                <Tag color={planPreviewData.cluster_type === 'ha' ? 'cyan' : planPreviewData.cluster_type === 'mha' ? 'blue' : planPreviewData.cluster_type === 'mgr' ? 'green' : 'orange'}>
+            {/* Plan Summary - compact */}
+            <Descriptions size="small" column={3} bordered style={{ marginBottom: 12 }}>
+              <Descriptions.Item label="部署ID" span={2}>{planPreviewData.deployment_id || planPreviewData.id || '-'}</Descriptions.Item>
+              <Descriptions.Item label="架构">
+                <Tag color={planPreviewData.cluster_type === 'ha' ? 'cyan' : planPreviewData.cluster_type === 'mha' ? 'blue' : planPreviewData.cluster_type === 'mgr' ? 'green' : 'orange'} style={{ margin: 0 }}>
                   {(planPreviewData.cluster_type || '').toUpperCase()}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="部署模式">
-                <Tag>{planPreviewData.mode || 'real'}</Tag>
+              <Descriptions.Item label="模式">
+                <Tag style={{ margin: 0 }}>{planPreviewData.mode || 'real'}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="节点数量">{planPreviewData.nodes?.length || 0}</Descriptions.Item>
-              <Descriptions.Item label="步骤数量">{planPreviewData.steps?.length || 0}</Descriptions.Item>
+              <Descriptions.Item label="节点">{planPreviewData.nodes?.length || 0}</Descriptions.Item>
+              <Descriptions.Item label="步骤">{planPreviewData.steps?.length || 0}</Descriptions.Item>
               {planPreviewData.parameters?.mysql_version && (
                 <Descriptions.Item label="MySQL 版本">{planPreviewData.parameters.mysql_version}</Descriptions.Item>
               )}
             </Descriptions>
 
-            {/* Nodes Table */}
-            <strong style={{ display: 'block', marginBottom: 8 }}>节点列表</strong>
-            <Table
-              size="small"
-              columns={[
-                { title: 'Host', dataIndex: 'host', key: 'host', width: 140 },
-                { title: '角色', dataIndex: 'role', key: 'role', width: 100, render: (role: string) => <Tag>{formatClusterRole(planPreviewArch, role)}</Tag> },
-                { title: 'MySQL 端口', dataIndex: 'mysql_port', key: 'mysql_port', width: 100 },
-                { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', width: 100 },
-                { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', width: 140, render: (v: string) => v || '-' },
-                { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 80, render: (v: number) => v || '-' },
-              ]}
-              dataSource={planPreviewData.nodes || []}
-              rowKey={(row: any, index?: number) => row.id || row.host || `node-${index}`}
-              pagination={false}
-              style={{ marginBottom: 16 }}
-            />
+            {/* Nodes Table - compact */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>节点列表</div>
+              <Table
+                size="small"
+                pagination={false}
+                showHeader={false}
+                columns={[
+                  { title: 'Host', dataIndex: 'host', key: 'host', width: 130 },
+                  { title: '角色', dataIndex: 'role', key: 'role', width: 80, render: (role: string) => <Tag style={{ margin: 0 }}>{formatClusterRole(planPreviewArch, role)}</Tag> },
+                  { title: '端口', key: 'ports', width: 110, render: (_: any, record: any) => `${record.mysql_port || '-'}${record.agent_port ? ` / ${record.agent_port}` : ''}` },
+                  { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', render: (v: string) => v || '-', ellipsis: true },
+                  { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 72, render: (v: number) => v || '-' },
+                ]}
+                dataSource={planPreviewData.nodes || []}
+                rowKey={(row: any, index?: number) => row.id || row.host || `node-${index}`}
+              />
+            </div>
 
-            {/* Steps Timeline */}
-            <strong style={{ display: 'block', marginBottom: 8 }}>执行步骤</strong>
-            {renderVerticalStepProgress((planPreviewData.steps || []).map((step: any) => ({
-              ...step,
-              status: step.status || 'planned',
-            })))}
+            {/* Steps Timeline - compact for preview */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>执行步骤</div>
+              {(planPreviewData.steps && planPreviewData.steps.length > 0)
+                ? renderPreviewSteps(
+                    planPreviewData.steps.map((step: any) => ({
+                      ...step,
+                      status: step.status || 'planned',
+                    }))
+                  )
+                : <span style={{ color: '#999', fontSize: 12 }}>暂无步骤信息</span>
+              }
+            </div>
 
-            {/* Architecture-specific parameters */}
+            {/* Parameters - compact */}
             {planPreviewData.parameters && Object.keys(planPreviewData.parameters).length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <strong style={{ display: 'block', marginBottom: 8 }}>部署参数</strong>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>部署参数</div>
                 <Descriptions size="small" column={2} bordered>
                   {Object.entries(planPreviewData.parameters).map(([key, value]: [string, any]) => (
                     <Descriptions.Item label={key} key={key}>
