@@ -1,31 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Form,
-  Input,
-  Modal,
-  Result,
-  Row,
-  Select,
-  Space,
-  Spin,
-  Statistic,
-  Switch,
-  Table,
-  Tabs,
-  Tag,
-  message,
+  Button, Card, Col, Descriptions, Form, Modal, Result, Row, Select, Space, Table, Tabs, Tag, message,
 } from 'antd'
 import {
-  AlertOutlined,
-  HeartOutlined,
-  SafetyCertificateOutlined,
-  SwapOutlined,
-  ThunderboltOutlined,
+  AlertOutlined, HeartOutlined, SafetyCertificateOutlined, SwapOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { haApi, instanceApi, roleSwitchApi, type Instance } from '../services/api'
@@ -36,6 +14,9 @@ import {
   isFailedHAStatus, isCompletedHAStatus, isSkippedHAStatus, isPartialHAStatus,
   isMGRInstance, isPXCInstance, detectClusterArch,
 } from '../services/haHelpers'
+import { PreflightModal } from '../components/PreflightModal'
+import { AutoFailoverModal } from '../components/AutoFailoverModal'
+import { ManualSwitchModal } from '../components/ManualSwitchModal'
 
 const HAManage: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
@@ -369,145 +350,35 @@ const HAManage: React.FC = () => {
         )}
       </Card>
 
-      <Modal
-        title="Pre-flight 检查"
+      <PreflightModal
         open={preflightOpen}
-        onCancel={() => setPreflightOpen(false)}
-        footer={<Button onClick={() => setPreflightOpen(false)}>关闭</Button>}
-        width={760}
-      >
-        {preflightLoading ? (
-          <div style={{ textAlign: 'center', padding: 30 }}><Spin /></div>
-        ) : preflight ? (
-          <>
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-              <Col span={6}>
-                <Statistic title="主节点健康" value={preflight.current_master_healthy ? '是' : '否'} valueStyle={{ color: preflight.current_master_healthy ? '#3f8600' : '#cf1322' }} />
-              </Col>
-              <Col span={6}>
-                <Statistic title="健康从节点" value={`${preflight.healthy_slave_count} / ${preflight.slave_count}`} />
-              </Col>
-              <Col span={6}>
-                <Statistic title="最大复制延迟" value={preflight.max_replication_lag} suffix="s" valueStyle={{ color: preflight.max_replication_lag > 30 ? '#cf1322' : '#3f8600' }} />
-              </Col>
-              <Col span={6}>
-                <Statistic title="GTID 一致" value={preflight.gtid_consistent ? '是' : '否'} valueStyle={{ color: preflight.gtid_consistent ? '#3f8600' : '#cf1322' }} />
-              </Col>
-            </Row>
-            <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="平台主节点">{preflight.platform_primary_id || preflight.current_master_id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="真实主节点">{preflight.real_primary_id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="目标新主">{preflight.target_master_id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="拓扑一致">{preflight.topology_consistent ? '是' : '否'}</Descriptions.Item>
-            </Descriptions>
-            <Alert
-              type={preflightPass ? 'success' : 'error'}
-              showIcon
-              message={preflightPass ? '检查通过，可以在非强制模式下切换' : '检查未通过，非强制模式不允许切换'}
-              description={(
-                <div>
-                  {(preflight.blocking_reasons?.length || 0) > 0 && (
-                    <ul style={{ marginBottom: 8, paddingLeft: 18 }}>
-                      {preflight.blocking_reasons?.map((item, index) => <li key={`block-${index}`}>{item}</li>)}
-                    </ul>
-                  )}
-                  {(preflight.warnings?.length || 0) > 0 && (
-                    <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-                      {preflight.warnings?.map((item, index) => <li key={`warn-${index}`}>{item}</li>)}
-                    </ul>
-                  )}
-                </div>
-              )}
-            />
-          </>
-        ) : null}
-      </Modal>
+        loading={preflightLoading}
+        result={preflight}
+        onClose={() => setPreflightOpen(false)}
+      />
 
-      <Modal
-        title="自动故障转移"
+      <AutoFailoverModal
         open={autoOpen}
-        onCancel={() => setAutoOpen(false)}
+        confirming={submitting}
+        form={autoForm}
+        forceMode={autoForce}
         onOk={submitAuto}
-        confirmLoading={submitting}
-        okText="确认执行"
-        cancelText="取消"
-        okButtonProps={{ danger: true }}
-      >
-        <Form form={autoForm} layout="vertical">
-          <Alert
-            type="error"
-            showIcon
-            message="自动故障转移只在系统确认主节点故障后执行"
-            description="自动故障转移不需要输入触发实例 ID，后端会根据当前集群主节点和故障确认状态决定是否切换。"
-            style={{ marginBottom: 12 }}
-          />
-          <Form.Item name="reason" label="故障原因" rules={[{ required: true, message: '请输入故障原因' }]}>
-            <Input placeholder="例如：主库宕机" />
-          </Form.Item>
-          <Form.Item name="force" label="强制执行" valuePropName="checked">
-            <Switch checkedChildren="强制" unCheckedChildren="安全模式" />
-          </Form.Item>
-          {autoForce && <Alert type="warning" showIcon message="强制模式可能绕过保护检查，请确认业务和数据风险。" style={{ marginBottom: 12 }} />}
-          <Form.Item name="confirm_impact" valuePropName="checked" rules={[{ required: true, message: '请确认操作影响' }]}>
-            <Switch checkedChildren="已确认影响" unCheckedChildren="未确认" />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onCancel={() => setAutoOpen(false)}
+      />
 
-      <Modal
-        title={clusterIsPXC ? 'PXC 集群角色切换' : clusterIsMGR ? 'MGR 集群角色切换' : '手动主从切换'}
+      <ManualSwitchModal
         open={manualOpen}
-        onCancel={() => setManualOpen(false)}
+        confirming={submitting}
+        form={manualForm}
+        slaveInstances={slaveInstances}
+        clusterIsMGR={clusterIsMGR}
+        clusterIsPXC={clusterIsPXC}
+        forceMode={manualForce}
+        preflightPass={preflightPass}
         onOk={submitManual}
-        confirmLoading={submitting}
-        okText="执行"
-        cancelText="取消"
-        okButtonProps={{ danger: true }}
-      >
-        <Form form={manualForm} layout="vertical">
-          <Alert
-            type="error"
-            showIcon
-            message={clusterIsPXC ? 'PXC 集群将通过角色切换接口完成主从切换' : clusterIsMGR ? 'MGR 集群将通过角色切换接口完成主从切换' : '手动切换需要选择一个非主节点作为新主'}
-            description={clusterIsPXC
-              ? '选择一个 secondary 节点，系统将通过角色切换接口将其提升为 primary。'
-              : clusterIsMGR
-                ? '选择一个 secondary 节点，系统将通过角色切换接口将其提升为 primary。'
-                : '未选择强制模式时，Pre-flight 通过后即可切换。'}
-            style={{ marginBottom: 12 }}
-          />
-          <Form.Item name="new_master_id" label={clusterIsPXC ? '目标节点' : '新主实例'} rules={[{ required: true, message: clusterIsPXC ? '请选择目标节点' : '请选择新主实例' }]}>
-            <Select
-              placeholder={clusterIsPXC ? '选择 secondary 节点' : '选择非主节点'}
-              onChange={() => setPreflight(null)}
-              options={slaveInstances.map((instance) => ({
-                value: instance.id,
-                label: `${instance.name} (${instanceEndpoint(instance)}, 延迟: ${instance.status?.seconds_behind_master ?? '-'}s)`,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="reason" label="切换原因" rules={[{ required: true, message: '请输入切换原因' }]}>
-            <Input placeholder="例如：计划内维护" />
-          </Form.Item>
-          <Form.Item name="force" label="强制执行" valuePropName="checked">
-            <Switch checkedChildren="强制" unCheckedChildren="安全模式" />
-          </Form.Item>
-          {manualForce ? (
-            <Alert type="warning" showIcon message="强制模式会绕过 Pre-flight 阻断项，请确认数据风险。" style={{ marginBottom: 12 }} />
-          ) : (
-            <Alert
-              type={preflightPass ? 'success' : 'info'}
-              showIcon
-              message={preflightPass ? 'Pre-flight 已通过' : '非强制模式需要先通过 Pre-flight 检查'}
-              action={<Button size="small" onClick={openPreFlight}>检查</Button>}
-              style={{ marginBottom: 12 }}
-            />
-          )}
-          <Form.Item name="confirm_impact" valuePropName="checked" rules={[{ required: true, message: '请确认操作影响' }]}>
-            <Switch checkedChildren="已确认影响" unCheckedChildren="未确认" />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onCancel={() => setManualOpen(false)}
+        onPreflight={openPreFlight}
+      />
     </div>
   )
 }
