@@ -30,6 +30,7 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
     onProgress,
     onLog,
     onStatus,
+    onStep,
     onComplete,
     onError,
   } = options
