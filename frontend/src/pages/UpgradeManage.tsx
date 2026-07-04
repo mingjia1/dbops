@@ -1,145 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Alert,
-  Button,
-  Card,
-  DatePicker,
-  Descriptions,
-  Empty,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Progress,
-  Select,
-  Space,
-  Spin,
-  Steps,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-  message,
+  Button, Card, Descriptions, Form, Input, InputNumber, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, message,
 } from 'antd'
 import {
-  CheckCircleOutlined,
-  FileTextOutlined,
-  PlayCircleOutlined,
-  ReloadOutlined,
-  RollbackOutlined,
+  CheckCircleOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RollbackOutlined,
 } from '@ant-design/icons'
 import { instanceApi, upgradeApi, versionApi, type Instance, type InstanceVersion, type VersionEntry } from '../services/api'
+import {
+  ActiveUpgrade, UpgradeHistory,
+  activeUpgradeStatuses, terminalUpgradeStatuses,
+  isCompletedUpgradeStatus, isFailedUpgradeStatus,
+  upgradeStagesFor, inferStepIndex, currentUpgradeStage,
+} from '../services/upgradeHelpers'
+import UpgradePlanModal from '../components/UpgradePlanModal'
+import CompatCheckModal from '../components/CompatCheckModal'
+import ExecuteUpgradeModal from '../components/ExecuteUpgradeModal'
+import UpgradeReportModal from '../components/UpgradeReportModal'
+import UpgradeProgressCard from '../components/UpgradeProgressCard'
 
-const { Title, Paragraph } = Typography
-
-const UPGRADE_STAGES = ['预检查', '备份数据', '停止服务', '安装新版本', '数据升级', '启动服务', '验证']
-const ROLLING_UPGRADE_STAGES = ['集群检查', '升级从库', '从库验证', '角色切换', '升级原主库', '重建拓扑', '最终验证']
-
-const UPGRADE_SUBSTEPS: Record<string, string[]> = {
-  '预检查': ['检查磁盘空间', '验证版本兼容性', '检查实例状态', '验证备份状态'],
-  '备份数据': ['执行全量备份', '验证备份完整性', '记录备份路径'],
-  '停止服务': ['通知应用断开连接', '等待事务完成', '停止 MySQL 服务'],
-  '安装新版本': ['下载安装包', '解压新版本', '替换二进制文件', '验证安装路径'],
-  '数据升级': ['执行 mysql_upgrade', '应用系统表变更', '验证数据字典'],
-  '启动服务': ['启动 MySQL 服务', '等待端口就绪', '执行健康检查'],
-  '验证': ['连接测试', '查询系统变量', '执行数据校验', '生成升级报告'],
-}
-
-interface UpgradeStep {
-  name: string
-  status: string
-  message?: string
-  started_at?: string
-  completed_at?: string
-}
-
-interface ActiveUpgrade {
-  task_id: string
-  instance_id: string
-  cluster_id?: string
-  strategy?: string
-  task_type?: string
-  status: string
-  progress: number
-  stage?: string
-  message?: string
-  steps?: UpgradeStep[]
-  logs?: string[]
-  started_at: string
-  finished_at?: string
-}
-
-interface UpgradeHistory {
-  id: string
-  instance_id: string
-  instance_name?: string
-  strategy?: string
-  upgrade_type?: string
-  task_type?: string
-  plan_id?: string
-  source_version?: string
-  target_version?: string
-  status: string
-  progress?: number
-  stage?: string
-  message?: string
-  start_time?: string
-  created_at?: string
-}
-
-const strategyOptions = [
-  { value: 'inplace', label: '原地升级' },
-  { value: 'logical', label: '逻辑迁移' },
-  { value: 'rolling', label: '滚动升级' },
-]
-
-const activeUpgradeStatuses = new Set(['pending', 'running', 'queued', 'executing'])
-const terminalUpgradeStatuses = new Set(['success', 'completed', 'failed', 'error', 'cancelled', 'canceled', 'timeout'])
-const isCompletedUpgradeStatus = (status?: string) => ['success', 'completed'].includes((status || '').toLowerCase())
-const isFailedUpgradeStatus = (status?: string) => ['failed', 'error', 'cancelled', 'canceled', 'timeout'].includes((status || '').toLowerCase())
-
-const clampProgress = (progress?: number) => {
-  if (typeof progress !== 'number' || Number.isNaN(progress)) return 0
-  return Math.max(0, Math.min(100, progress))
-}
-
-const upgradeStagesFor = (upgrade?: { strategy?: string; upgrade_type?: string; task_type?: string }) => {
-  const rawType = `${upgrade?.strategy || ''} ${upgrade?.upgrade_type || ''} ${upgrade?.task_type || ''}`.toLowerCase()
-  return rawType.includes('rolling') ? ROLLING_UPGRADE_STAGES : UPGRADE_STAGES
-}
-
-const inferStepIndex = (progress: number, stages: string[], status?: string, stage?: string) => {
-  const normalized = (status || '').toLowerCase()
-  if (isCompletedUpgradeStatus(normalized)) return stages.length - 1
-  if (isFailedUpgradeStatus(normalized)) return Math.min(stages.length - 1, Math.floor((clampProgress(progress) / 100) * stages.length))
-  if (stage) {
-    const idx = stages.indexOf(stage)
-    if (idx >= 0) return idx
-  }
-  return Math.min(stages.length - 1, Math.floor((clampProgress(progress) / 100) * stages.length))
-}
-
-const buildUpgradeSteps = (upgrade: ActiveUpgrade): UpgradeStep[] => {
-  if (upgrade.steps?.length) return upgrade.steps
-  const stages = upgradeStagesFor(upgrade)
-  const current = inferStepIndex(upgrade.progress, stages, upgrade.status, upgrade.stage)
-  return stages.map((name, idx) => {
-    let status = 'wait'
-    if (idx < current || isCompletedUpgradeStatus(upgrade.status)) status = 'completed'
-    else if (idx === current && !terminalUpgradeStatuses.has((upgrade.status || '').toLowerCase())) status = 'running'
-    else if (idx === current && isFailedUpgradeStatus(upgrade.status)) status = 'failed'
-    return {
-      name,
-      status,
-      message: idx === current ? (upgrade.message || '正在执行') : undefined,
-    }
-  })
-}
-
-const currentUpgradeStage = (upgrade: ActiveUpgrade) => {
-  const stages = upgradeStagesFor(upgrade)
-  return stages[inferStepIndex(upgrade.progress, stages, upgrade.status, upgrade.stage)] || stages[0]
-}
+const { Title } = Typography
 
 const UpgradeManage: React.FC = () => {
   const [history, setHistory] = useState<UpgradeHistory[]>([])
@@ -530,18 +409,7 @@ const UpgradeManage: React.FC = () => {
     { title: '时间', dataIndex: 'start_time', key: 'start_time', render: (v: string, r: UpgradeHistory) => v || r.created_at || '-' },
   ]
 
-  const activeUpgradeStages = activeUpgrade ? upgradeStagesFor(activeUpgrade) : UPGRADE_STAGES
-  const activeUpgradeSteps = activeUpgrade ? buildUpgradeSteps(activeUpgrade) : []
-  const activeUpgradeCurrentStage = activeUpgrade ? currentUpgradeStage(activeUpgrade) : UPGRADE_STAGES[0]
-  const activeUpgradeSubsteps = useMemo(() => {
-    // M6: derive substeps from plan result's upgrade_path when available
-    if (planResult?.upgrade_path?.length) {
-      return planResult.upgrade_path
-        .sort((a: any, b: any) => a.order - b.order)
-        .map((s: any) => s.name)
-    }
-    return UPGRADE_SUBSTEPS[activeUpgradeCurrentStage] || UPGRADE_SUBSTEPS['预检查']
-  }, [planResult, activeUpgradeCurrentStage])
+  // activeUpgradeStages, activeUpgradeSteps, activeUpgradeCurrentStage, activeUpgradeSubsteps moved to UpgradeProgressCard
 
   return (
     <div>
@@ -559,271 +427,56 @@ const UpgradeManage: React.FC = () => {
       <Table columns={columns} dataSource={history} rowKey="id" scroll={{ x: 1000 }} />
 
       {activeUpgrade && (
-        <Card
-          title="升级进度"
-          style={{ marginTop: 16 }}
-          extra={
-            <Space>
-              <Tag color={isCompletedUpgradeStatus(activeUpgrade.status) ? 'success' : isFailedUpgradeStatus(activeUpgrade.status) ? 'error' : 'processing'}>
-                {activeUpgrade.status}
-              </Tag>
-              {activeUpgrade.finished_at && <span>完成于 {new Date(activeUpgrade.finished_at).toLocaleString()}</span>}
-            </Space>
-          }
-        >
-          <Steps
-            current={upgradeStep}
-            size="small"
-            items={activeUpgradeStages.map((title) => ({ title }))}
-            status={isFailedUpgradeStatus(activeUpgrade.status) ? 'error' : isCompletedUpgradeStatus(activeUpgrade.status) ? 'finish' : 'process'}
-          />
-          <Progress
-            percent={activeUpgrade.progress}
-            status={isCompletedUpgradeStatus(activeUpgrade.status) ? 'success' : isFailedUpgradeStatus(activeUpgrade.status) ? 'exception' : 'active'}
-            style={{ marginTop: 16 }}
-          />
-          <div style={{ marginTop: 8, color: '#666' }}>{activeUpgrade.message}</div>
-
-          <div style={{ marginTop: 16 }}>
-            <strong>详细步骤</strong>
-            <Steps direction="vertical" size="small" style={{ marginTop: 8 }} current={activeUpgradeSteps.findIndex((s) => s.status === 'running')}>
-              {activeUpgradeSteps.map((step, idx) => (
-                <Steps.Step
-                  key={idx}
-                  title={step.name}
-                  description={
-                    <div>
-                      <div style={{ color: '#888', fontSize: 12 }}>
-                        {step.message || ''}
-                        {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
-                        {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
-                      </div>
-                    </div>
-                  }
-                  status={step.status === 'completed' ? 'finish' : step.status === 'running' ? 'process' : step.status === 'failed' ? 'error' : 'wait'}
-                />
-              ))}
-            </Steps>
-          </div>
-
-          <div style={{ marginTop: 16 }}>
-            <strong>当前阶段子步骤</strong>
-            <div style={{ marginTop: 8 }}>
-              {activeUpgradeSubsteps.map((substep: string, idx: number) => (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  {idx < activeUpgradeSubsteps.length - 1 ?
-                    <span style={{ color: '#52c41a' }}>&#10003;</span> :
-                    <span style={{ color: '#1677ff' }}>&#9679;</span>
-                  }
-                  <span>{substep}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {activeUpgrade.logs && activeUpgrade.logs.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <strong>升级日志</strong>
-              <div style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, maxHeight: 200, overflow: 'auto', fontFamily: 'monospace', fontSize: 12, marginTop: 8 }}>
-                {activeUpgrade.logs.map((log, idx) => (
-                  <div key={idx}>{log}</div>
-                ))}
-              </div>
-            </div>
-          )}
-        </Card>
+        <UpgradeProgressCard
+          activeUpgrade={activeUpgrade}
+          upgradeStep={upgradeStep}
+          planResult={planResult}
+        />
       )}
 
-      <Modal
-        title="规划升级路径"
+      <UpgradePlanModal
         open={planOpen}
+        submitting={submitting}
+        versionsLoading={versionsLoading}
+        instanceOptions={instanceOptions}
+        versionOptions={versionOptions}
+        planResult={planResult}
+        versionInfo={versionInfo(planInstanceId)}
+        form={planForm}
         onCancel={() => setPlanOpen(false)}
-        onOk={() => planForm.submit()}
-        confirmLoading={submitting}
-        width={720}
-      >
-        <Form form={planForm} layout="vertical" onFinish={planUpgrade} initialValues={{ check_data_exists: true, backup_confirmed: false, strategy: 'inplace' }}>
-          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true, message: '请选择实例' }]}>
-            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
-          </Form.Item>
-          {versionInfo(planInstanceId)}
-          <Form.Item name="target_version" label="目标版本" rules={[{ required: true, message: '请选择目标版本' }]}>
-            <Select
-              showSearch
-              optionFilterProp="label"
-              loading={versionsLoading}
-              notFoundContent={versionsLoading ? <Spin size="small" /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
-              options={versionOptions}
-              placeholder="选择目标版本"
-            />
-          </Form.Item>
-          <Form.Item name="strategy" label="升级策略" rules={[{ required: true }]}>
-            <Select options={strategyOptions} />
-          </Form.Item>
-          <Form.Item name="check_data_exists" label="检测是否存在数据" valuePropName="checked">
-            <Switch checkedChildren="检测" unCheckedChildren="跳过" />
-          </Form.Item>
-          <Form.Item name="backup_confirmed" label="数据是否已备份" valuePropName="checked">
-            <Switch checkedChildren="已备份" unCheckedChildren="未备份" />
-          </Form.Item>
-          <Form.Item name="backup_method" label="备份方式">
-            <Select allowClear options={[
-              { value: 'full', label: '全量备份' },
-              { value: 'incremental', label: '增量备份' },
-              { value: 'external', label: '外部备份已完成' },
-            ]} />
-          </Form.Item>
-          <Form.Item name="scheduled_time" label="计划执行时间">
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-        {planResult && (
-          <Card size="small" title="规划结果">
-            <Paragraph>源版本: {planResult.source_flavor} {planResult.source_version}</Paragraph>
-            <Paragraph>目标版本: {planResult.target_flavor} {planResult.target_version}</Paragraph>
-            <Paragraph>风险等级: <Tag>{planResult.risk_level}</Tag></Paragraph>
-            <Paragraph>预计耗时: {planResult.estimated_time || '-'} 分钟</Paragraph>
-          </Card>
-        )}
-      </Modal>
+        onFinish={planUpgrade}
+      />
 
-      <Modal
-        title="兼容性检查"
+      <CompatCheckModal
         open={compatOpen}
+        submitting={submitting}
+        instanceOptions={instanceOptions}
+        versionOptions={versionOptions}
+        compatResult={compatResult}
+        versionInfo={versionInfo(compatInstanceId)}
+        form={compatForm}
         onCancel={() => { setCompatOpen(false); setCompatResult(null) }}
-        onOk={() => compatForm.submit()}
-        confirmLoading={submitting}
-        width={760}
-      >
-        <Form form={compatForm} layout="vertical" onFinish={checkCompatibility}>
-          <Form.Item name="instance_id" label="目标实例" rules={[{ required: true, message: '请选择实例' }]}>
-            <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
-          </Form.Item>
-          {versionInfo(compatInstanceId)}
-          <Form.Item name="target_version" label="目标版本" rules={[{ required: true, message: '请选择目标版本' }]}>
-            <Select showSearch optionFilterProp="label" loading={versionsLoading} options={versionOptions} placeholder="选择目标版本" />
-          </Form.Item>
-        </Form>
-        {compatResult && (
-          <Card size="small" title="检查结果">
-            <Tag color={compatResult.is_compatible ? 'success' : 'error'}>
-              {compatResult.is_compatible ? '兼容' : '不兼容'}
-            </Tag>
-            <Paragraph style={{ marginTop: 12 }}>错误: {compatResult.error_count || 0}，警告: {compatResult.warning_count || 0}</Paragraph>
-            {(compatResult.incompatibilities || []).map((item: any, index: number) => (
-              <div key={index} style={{ marginTop: 8, padding: 8, background: item.level === 'error' ? '#fff2f0' : '#fffbe6', border: `1px solid ${item.level === 'error' ? '#ffccc7' : '#ffe58f'}`, borderRadius: 4 }}>
-                <div style={{ fontWeight: 500 }}>{item.description}</div>
-                {item.solution && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>解决方案: {item.solution}</div>}
-              </div>
-            ))}
-          </Card>
-        )}
-      </Modal>
+        onFinish={checkCompatibility}
+      />
 
-      <Modal
-        title="启动升级任务"
+      <ExecuteUpgradeModal
         open={inPlaceOpen}
+        submitting={submitting}
+        instanceOptions={instanceOptions}
+        clusterOptions={clusterOptions}
+        versionOptions={versionOptions}
+        versionsLoading={versionsLoading}
+        versionInfo={versionInfo(inPlaceInstanceId)}
+        form={inPlaceForm}
         onCancel={() => setInPlaceOpen(false)}
-        onOk={() => inPlaceForm.submit()}
-        confirmLoading={submitting}
-        okButtonProps={{ danger: true }}
-        width={720}
-      >
-        <Form form={inPlaceForm} layout="vertical" onFinish={executeUpgrade} initialValues={{ backup_enabled: false, strategy: 'inplace', parallelism: 4, batch_size: 1000, max_in_parallel: 1, health_check_interval: 30 }}>
-          <Form.Item name="strategy" label="升级策略" rules={[{ required: true }]}>
-            <Select options={strategyOptions} />
-          </Form.Item>
-          {executeStrategy === 'rolling' ? (
-            <Form.Item name="cluster_id" label="目标集群" rules={[{ required: true, message: '请选择集群' }]}>
-              <Select showSearch optionFilterProp="label" options={clusterOptions} placeholder="选择集群" />
-            </Form.Item>
-          ) : (
-            <>
-              <Form.Item name="instance_id" label="目标实例" rules={[{ required: true, message: '请选择实例' }]}>
-                <Select showSearch optionFilterProp="label" options={instanceOptions} placeholder="选择实例" />
-              </Form.Item>
-              {versionInfo(inPlaceInstanceId)}
-            </>
-          )}
-          <Form.Item name="plan_id" label="升级计划ID" rules={[{ required: true, message: '请输入规划后生成的计划ID' }]}>
-            <Input placeholder="先规划升级路径，再填写计划ID" />
-          </Form.Item>
-          <Form.Item name="target_version" label="目标版本" rules={[{ required: true, message: '请选择目标版本' }]}>
-            <Select showSearch optionFilterProp="label" loading={versionsLoading} options={versionOptions} placeholder="选择目标版本" />
-          </Form.Item>
-          <Form.Item name="backup_enabled" label="数据是否已备份" valuePropName="checked">
-            <Switch checkedChildren="已备份" unCheckedChildren="未备份" />
-          </Form.Item>
-          {executeStrategy === 'logical' && (
-            <>
-              <Form.Item name="parallelism" label="并行度">
-                <InputNumber min={1} max={32} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item name="batch_size" label="批次大小">
-                <InputNumber min={100} max={100000} style={{ width: '100%' }} />
-              </Form.Item>
-            </>
-          )}
-          {executeStrategy === 'rolling' ? (
-            <>
-              <Form.Item name="max_in_parallel" label="最大并行实例数">
-                <InputNumber min={1} max={8} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item name="health_check_interval" label="健康检查间隔(秒)">
-                <InputNumber min={5} max={600} style={{ width: '100%' }} />
-              </Form.Item>
-            </>
-          ) : (
-            <Form.Item name="stop_app_timeout" label="停止应用超时(秒)" initialValue={300}>
-              <InputNumber min={30} max={3600} style={{ width: '100%' }} />
-            </Form.Item>
-          )}
-        </Form>
-      </Modal>
-      <Modal
-        title="升级报告"
+        onFinish={executeUpgrade}
+      />
+      <UpgradeReportModal
         open={reportOpen}
-        onCancel={() => setReportOpen(false)}
-        footer={<Button onClick={() => setReportOpen(false)}>关闭</Button>}
-        width={760}
-      >
-        <Spin spinning={reportLoading}>
-          {reportResult ? (
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <Descriptions size="small" bordered column={1}>
-                <Descriptions.Item label="报告 ID">{reportResult.report_id || '-'}</Descriptions.Item>
-                <Descriptions.Item label="任务 / 计划 ID">{reportResult.plan_id || '-'}</Descriptions.Item>
-                <Descriptions.Item label="生成时间">{reportResult.generated_at || '-'}</Descriptions.Item>
-                <Descriptions.Item label="摘要">{reportResult.summary || '-'}</Descriptions.Item>
-                <Descriptions.Item label="详情">{reportResult.details || '-'}</Descriptions.Item>
-              </Descriptions>
-              <Descriptions size="small" bordered column={2} title="指标">
-                <Descriptions.Item label="耗时(秒)">{reportResult.metrics?.duration_seconds ?? 0}</Descriptions.Item>
-                <Descriptions.Item label="错误">{reportResult.metrics?.errors_encountered ?? 0}</Descriptions.Item>
-                <Descriptions.Item label="警告">{reportResult.metrics?.warnings_generated ?? 0}</Descriptions.Item>
-                <Descriptions.Item label="表数量">{reportResult.metrics?.tables_processed ?? 0}</Descriptions.Item>
-              </Descriptions>
-              {(reportResult.issues || []).map((item: any, index: number) => (
-                <Alert
-                  key={index}
-                  type={item.severity === 'error' ? 'error' : 'warning'}
-                  message={`${item.type || '问题'}: ${item.description || '-'}`}
-                  description={`是否解决=${item.resolved ? '是' : '否'} ${item.timestamp || ''}`}
-                />
-              ))}
-              {(reportResult.recommendations || []).length > 0 && (
-                <Card size="small" title="建议">
-                  {(reportResult.recommendations || []).map((item: string, index: number) => (
-                    <Paragraph key={index}>{item}</Paragraph>
-                  ))}
-                </Card>
-              )}
-            </Space>
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          )}
-        </Spin>
-      </Modal>
+        loading={reportLoading}
+        result={reportResult}
+        onClose={() => setReportOpen(false)}
+      />
     </div>
   )
 }
