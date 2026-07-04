@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 650,
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -21,7 +21,9 @@ export default defineConfig({
           if (
             normalized.includes('/node_modules/antd/') ||
             normalized.includes('/node_modules/@ant-design/') ||
-            normalized.includes('/node_modules/rc-') ||
+            normalized.includes('/node_modules/rc-')
+          ) return 'antd'
+          if (
             normalized.includes('/node_modules/@emotion/') ||
             normalized.includes('/node_modules/dayjs/') ||
             normalized.includes('/node_modules/classnames/') ||

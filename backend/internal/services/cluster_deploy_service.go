@@ -638,7 +638,6 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			partialResp.Steps = prog.Steps
 			partialResp.Logs = prog.Logs
 		}
-		// BUG-006: Clean up progress from memory after terminal state
 		s.clearProgress(clusterID)
 		finalResp = partialResp
 		finalErr = err
@@ -647,7 +646,6 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
-	// BUG-006: Clean up progress from memory after terminal state
 	defer s.clearProgress(clusterID)
 	// Write back cluster base info (cluster_id, arch, nodes, mysql_version, config_json)
 	nodeCount := len(plan.Nodes)
@@ -1159,7 +1157,6 @@ func (s *ClusterDeployService) buildPartialResponse(ctx context.Context, cluster
 		resp.Steps = prog.Steps
 		resp.Logs = prog.Logs
 	}
-	// BUG-006: Clean up progress from memory after terminal state
 	s.clearProgress(clusterID)
 	return resp
 }
@@ -1412,7 +1409,6 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	if err := s.repo.UpdateStatus(ctx, dep.ID, "destroyed"); err != nil {
 		return nil, err
 	}
-	// BUG-006: Clean up progress from memory after terminal state
 	s.clearProgress(dep.ID)
 	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", dep.ID)
 	if decommissioned == 0 {
