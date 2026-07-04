@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -63,6 +64,152 @@ func TestUniversalClusterDeployRejectsMGRMySQL57(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires MySQL 8.0+")
 	require.Contains(t, err.Error(), "5.7.44")
+}
+
+func TestUniversalClusterDeployBuildsMySQL8036PlansForAllClusterTypes(t *testing.T) {
+	ctx := context.Background()
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+	service.SetVersionCatalog(NewVersionCatalog())
+
+	cases := []struct {
+		clusterType string
+		nodes       []ClusterDeployNode
+		custom      map[string]interface{}
+	}{
+		{
+			clusterType: "ha",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.0.11", Role: "master", MySQLPort: 3306},
+				{Host: "10.0.0.12", Role: "replica", MySQLPort: 3306},
+			},
+		},
+		{
+			clusterType: "mha",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.0.10", Role: "manager", MySQLPort: 3306},
+				{Host: "10.0.0.11", Role: "master", MySQLPort: 3306},
+				{Host: "10.0.0.12", Role: "replica", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"vip": "10.0.0.100"},
+		},
+		{
+			clusterType: "mgr",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.0.11", Role: "primary", MySQLPort: 3306},
+				{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306},
+				{Host: "10.0.0.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"group_name": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+		},
+		{
+			clusterType: "pxc",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.0.11", Role: "bootstrap", MySQLPort: 3306},
+				{Host: "10.0.0.12", Role: "secondary", MySQLPort: 3306},
+				{Host: "10.0.0.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"cluster_name": "pxc8036", "wsrep_port": 4567},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.clusterType, func(t *testing.T) {
+			plan, err := service.BuildClusterDeployPlan(ctx, UniversalClusterDeployRequest{
+				ClusterID:   tc.clusterType + "-8036",
+				ClusterType: tc.clusterType,
+				Mode:        DeployModeReal,
+				MySQL:       MySQLDeployOptions{Version: "8.0.36", User: "root", Password: "rootpass"},
+				Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+				Nodes:       tc.nodes,
+				Custom:      tc.custom,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.clusterType, plan.ClusterType)
+			require.NotEmpty(t, plan.Steps)
+			require.True(t, planHasConfigValue(plan, "mysql_version", "8.0.36"))
+			require.True(t, planHasPackageURL(plan, "mysql-8.0.36"))
+		})
+	}
+}
+
+func TestUniversalClusterDeployDestroyedClustersCanBeRedeployed(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, nil, config.ClusterDefaults{})
+
+	cases := []struct {
+		clusterType string
+		nodes       []ClusterDeployNode
+		custom      map[string]interface{}
+	}{
+		{
+			clusterType: "ha",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.1.11", Role: "master", MySQLPort: 3306},
+				{Host: "10.0.1.12", Role: "replica", MySQLPort: 3306},
+			},
+		},
+		{
+			clusterType: "mha",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.2.10", Role: "manager", MySQLPort: 3306},
+				{Host: "10.0.2.11", Role: "master", MySQLPort: 3306},
+				{Host: "10.0.2.12", Role: "replica", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"vip": "10.0.2.100"},
+		},
+		{
+			clusterType: "mgr",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.3.11", Role: "primary", MySQLPort: 3306},
+				{Host: "10.0.3.12", Role: "secondary", MySQLPort: 3306},
+				{Host: "10.0.3.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"group_name": "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+		},
+		{
+			clusterType: "pxc",
+			nodes: []ClusterDeployNode{
+				{Host: "10.0.4.11", Role: "bootstrap", MySQLPort: 3306},
+				{Host: "10.0.4.12", Role: "secondary", MySQLPort: 3306},
+				{Host: "10.0.4.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"cluster_name": "pxc-redeploy", "wsrep_port": 4567},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.clusterType, func(t *testing.T) {
+			clusterID := tc.clusterType + "-redeploy-after-destroy"
+			requestJSON, err := json.Marshal(UniversalClusterDeployRequest{
+				ClusterID:   clusterID,
+				ClusterType: tc.clusterType,
+				Custom:      tc.custom,
+			})
+			require.NoError(t, err)
+			require.NoError(t, clusterRepo.Create(ctx, &models.ClusterDeployment{
+				ID:          clusterID,
+				ClusterID:   clusterID,
+				ClusterType: tc.clusterType,
+				Name:        clusterID,
+				Status:      "destroyed",
+				RequestJSON: string(requestJSON),
+			}))
+
+			plan, err := service.BuildClusterDeployPlan(ctx, UniversalClusterDeployRequest{
+				ClusterID:   clusterID,
+				ClusterType: tc.clusterType,
+				Mode:        DeployModeReal,
+				MySQL:       MySQLDeployOptions{Version: "8.0.36", User: "root", Password: "rootpass"},
+				Nodes:       tc.nodes,
+				Custom:      tc.custom,
+			})
+			require.NoError(t, err)
+			require.Equal(t, clusterID, plan.DeploymentID)
+		})
+	}
 }
 
 func TestUniversalClusterDeployRejectsForbiddenMySQLConfig(t *testing.T) {
@@ -700,4 +847,28 @@ func findStepByID(steps []PlanStep, id string) *PlanStep {
 		}
 	}
 	return nil
+}
+
+func planHasConfigValue(plan *ClusterDeployPlan, key, want string) bool {
+	for _, step := range plan.Steps {
+		if step.Config == nil {
+			continue
+		}
+		if got, ok := step.Config[key].(string); ok && got == want {
+			return true
+		}
+	}
+	return false
+}
+
+func planHasPackageURL(plan *ClusterDeployPlan, fragment string) bool {
+	for _, step := range plan.Steps {
+		if step.Config == nil {
+			continue
+		}
+		if got, ok := step.Config["package_url"].(string); ok && strings.Contains(got, fragment) {
+			return true
+		}
+	}
+	return false
 }

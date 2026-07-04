@@ -124,6 +124,7 @@ export const buildCreatePayload = (values: any, strategy: 'physical' | 'replicat
   name: `${strategy}-${Date.now()}`,
   source_instance_id: values.source_instance,
   target_instance_id: values.target_instance,
+  migration_type: strategy,
   strategy,
   config: JSON.stringify(values),
 })

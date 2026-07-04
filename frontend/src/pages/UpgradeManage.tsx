@@ -343,6 +343,7 @@ const UpgradeManage: React.FC = () => {
           const res: any = await upgradeApi.rollback({
             plan_id: record.plan_id || record.id,
             instance_id: record.instance_id,
+            target_version: record.target_version || '',
             force: true,
           })
           const data = res?.data || {}

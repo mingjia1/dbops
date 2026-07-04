@@ -35,7 +35,7 @@ const ClusterDeploy: React.FC = () => {
   const [submitting, setSubmitting] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [deployments, setDeployments] = useState<DeployResult[]>([])
-  const [statusFilter, setStatusFilter] = useState<string[]>(['success'])
+  const [statusFilter, setStatusFilter] = useState<string[]>(['success', 'running'])
   const [archFilter, setArchFilter] = useState<ArchType | 'all'>('all')
   const [showHistory, setShowHistory] = useState(true)
   const [precheckResults, setPrecheckResults] = useState<any[] | null>(null)
@@ -198,7 +198,7 @@ const ClusterDeploy: React.FC = () => {
       const stepName = event.metadata?.step_name
       if (!stepName) return
       setActiveDeployment((current) =>
-        processStepEvent(current, event.task_id, stepName, event.metadata?.step_status, event.metadata?.step_message)
+        processStepEvent(current as any, event.task_id, stepName, event.metadata?.step_status, event.metadata?.step_message) as DeployResult | null
       )
     },
     onStatus: (event) => {
@@ -232,7 +232,7 @@ const ClusterDeploy: React.FC = () => {
         }
         patchDeployment(next)
         if (isTerminalDeployStatus(next.status)) loadDeployments(false)
-        const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage) : -1
+        const stepIdx = next.stage ? STAGE_ORDER.indexOf(next.stage as typeof STAGE_ORDER[number]) : -1
         if (stepIdx >= 0) setCurrentStep(stepIdx)
         if (isTerminalDeployStatus(next.status) || attempts > 600) {
           stopPolling()
@@ -323,6 +323,19 @@ const ClusterDeploy: React.FC = () => {
       setPlanPreviewOpen(true)
     } catch (err: any) {
       message.error(`获取部署计划失败: ${err?.response?.data?.message || err?.message}`)
+    }
+  }
+
+  const viewDeploymentDetail = async (record: DeployResult) => {
+    try {
+      const res: any = await clusterDeployApi.getStatus(record.deployment_id)
+      const dep = normalizeDeployment(res?.data || record)
+      setActiveDeployment(dep)
+      const stepIdx = dep.stage ? STAGE_ORDER.indexOf(dep.stage as typeof STAGE_ORDER[number]) : -1
+      if (stepIdx >= 0) setCurrentStep(stepIdx)
+      if (!isTerminalDeployStatus(dep.status)) startPolling(dep)
+    } catch (err: any) {
+      message.error(`获取部署详情失败: ${err?.response?.data?.message || err?.message}`)
     }
   }
 
@@ -620,6 +633,7 @@ const ClusterDeploy: React.FC = () => {
             instances={instances}
             onStatusFilterChange={setStatusFilter}
             onArchFilterChange={setArchFilter}
+            onViewDetail={viewDeploymentDetail}
             onViewPlan={viewDeployPlan}
             onDestroy={destroyDeployment}
           />

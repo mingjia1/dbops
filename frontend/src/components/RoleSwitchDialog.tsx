@@ -33,17 +33,22 @@ export const RoleSwitchDialog: React.FC<RoleSwitchDialogProps> = ({
     }
   }, [open])
 
-  const replicaNodes = nodes.filter(n => n.role === 'replica' || n.role === 'secondary')
+  const replicaNodes = nodes.filter(n => ['replica', 'secondary', 'slave'].includes((n.role || '').toLowerCase()))
+  const targetRoleForNode = (node?: NodeInfo) => {
+    const role = (node?.role || '').toLowerCase()
+    return role === 'slave' || role === 'replica' ? 'master' : 'primary'
+  }
 
   const handleExecute = async () => {
     if (!targetNode) { message.warning('请选择目标主节点'); return }
     setStep('executing')
     setLoading(true)
     try {
+      const selectedNode = nodes.find(n => n.instance_id === targetNode)
       await roleSwitchApi.switch({
         cluster_id: clusterID,
         instance_id: targetNode,
-        target_role: 'primary',
+        target_role: targetRoleForNode(selectedNode),
       })
       message.success('角色切换完成')
       setStep('done')

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Avatar, Dropdown, Form, Input, Layout, Menu, message, Modal, Space, Switch, Tooltip, Typography } from 'antd'
-import { BulbFilled, BulbOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { BulbFilled, BulbOutlined, DatabaseOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../services/api'
 import { useTheme } from '../hooks/useTheme'

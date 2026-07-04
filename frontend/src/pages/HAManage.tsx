@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Button, Card, Col, Descriptions, Form, Modal, Result, Row, Select, Space, Table, Tabs, Tag, message,
+  Button, Card, Col, Descriptions, Form, Modal, Result, Row, Select, Space, Statistic, Table, Tabs, Tag, message,
 } from 'antd'
 import {
   AlertOutlined, HeartOutlined, SafetyCertificateOutlined, SwapOutlined, ThunderboltOutlined,
@@ -157,7 +157,7 @@ const HAManage: React.FC = () => {
         ? await roleSwitchApi.switch({
           cluster_id: clusterId as string,
           instance_id: values.new_master_id,
-          target_role: clusterIsPXC ? 'secondary' : 'primary',
+          target_role: 'primary',
           old_master_id: masterInstance?.id,
         })
         : await haApi.manualSwitch({

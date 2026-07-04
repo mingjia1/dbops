@@ -6,6 +6,7 @@ import { hostApi, type Host } from '../services/api'
 
 const actionOptions = [
   { value: 'install', label: '安装 Agent' },
+  { value: 'update', label: '更新 Agent' },
   { value: 'start', label: '启动 Agent' },
   { value: 'stop', label: '停止 Agent' },
   { value: 'restart', label: '重启 Agent' },
@@ -13,6 +14,8 @@ const actionOptions = [
   { value: 'delete', label: '删除 Agent' },
 ]
 
+const asyncActions = ['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove']
+const pendingResults = ['submitted', 'pending', 'running', 'installing']
 const isFailed = (s?: string) => ['failed', 'error', 'timeout', 'cancelled', 'canceled', 'inactive'].includes((s || '').toLowerCase())
 const isOk = (s?: string) => {
   const n = (s || '').toLowerCase()
@@ -31,6 +34,10 @@ const summarize = (rows: any[]) =>
 
 interface LiveStatus { status: string; message?: string; action?: string }
 
+const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+const isPendingResult = (status?: string) => pendingResults.includes((status || '').toLowerCase())
+const isAsyncAction = (action: string) => asyncActions.includes((action || '').toLowerCase())
+
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(false)
@@ -44,7 +51,9 @@ const AgentManage: React.FC = () => {
     setLoading(true)
     try {
       const res: any = await hostApi.list(1000, 0)
-      setHosts(res?.data || [])
+      const rows = res?.data || []
+      setHosts(rows)
+      return rows as Host[]
     } finally {
       setLoading(false)
     }
@@ -58,6 +67,57 @@ const AgentManage: React.FC = () => {
       delete next[hostId]
       return next
     })
+  }
+
+  const buildHostResult = (host: Host, action: string) => ({
+    host_id: host.id,
+    host_name: host.name,
+    address: host.address,
+    agent_port: host.agent_port || 9090,
+    action,
+    status: host.agent_last_action === action ? host.agent_last_result || host.status : host.status,
+    message: host.agent_last_action === action ? host.agent_last_message : '',
+  })
+
+  const pollAsyncResults = async (hostIds: string[], pendingHostIds: string[], action: string, initialRows: any[]) => {
+    const resultByHost = new Map(initialRows.map(row => [row.host_id, row]))
+    const pending = new Set(pendingHostIds)
+
+    for (let attempt = 0; attempt < 90 && pending.size > 0; attempt += 1) {
+      await sleep(2000)
+      const latestHosts = await fetchHosts()
+
+      latestHosts
+        .filter(host => pending.has(host.id) && host.agent_last_action === action)
+        .forEach(host => {
+          const row = buildHostResult(host, action)
+          resultByHost.set(host.id, row)
+          setLiveStatus(prev => ({
+            ...prev,
+            [host.id]: { status: row.status || 'unknown', message: row.message, action },
+          }))
+          if (!isPendingResult(row.status)) {
+            pending.delete(host.id)
+          }
+        })
+
+      setResultRows(hostIds.map(id => resultByHost.get(id) || { host_id: id, action, status: 'pending', message: '等待执行结果...' }))
+    }
+
+    if (pending.size > 0) {
+      pending.forEach(id => {
+        const row = resultByHost.get(id) || { host_id: id, action }
+        resultByHost.set(id, { ...row, status: 'timeout', message: '等待 agent 操作结果超时，请稍后刷新查看最新状态' })
+        setLiveStatus(prev => ({
+          ...prev,
+          [id]: { status: 'timeout', message: '等待 agent 操作结果超时，请稍后刷新查看最新状态', action },
+        }))
+      })
+    }
+
+    const finalRows = hostIds.map(id => resultByHost.get(id) || { host_id: id, action, status: 'unknown' })
+    setResultRows(finalRows)
+    return finalRows
   }
 
   const execute = async () => {
@@ -75,6 +135,7 @@ const AgentManage: React.FC = () => {
     try {
       const action = values.action as string
       const results: any[] = []
+      const pendingIds: string[] = []
 
       for (const hid of hostIds) {
         setLiveStatus(prev => ({ ...prev, [hid]: { status: 'running', message: `${action}中...`, action } }))
@@ -84,6 +145,9 @@ const AgentManage: React.FC = () => {
           const d = res?.data
           results.push(d)
           setLiveStatus(prev => ({ ...prev, [hid]: { status: d?.status || 'unknown', message: d?.message, action } }))
+          if (isAsyncAction(action) && isPendingResult(d?.status)) {
+            pendingIds.push(hid)
+          }
         } catch (err: any) {
           const msg = err?.response?.data?.message || err?.message || '请求失败'
           results.push({ host_id: hid, action, status: 'failed', message: msg })
@@ -92,12 +156,13 @@ const AgentManage: React.FC = () => {
       }
 
       setResultRows(results)
+      const finalResults = pendingIds.length > 0 ? await pollAsyncResults(hostIds, pendingIds, action, results) : results
 
-      const failed = results.filter(r => !isOk(r?.status))
+      const failed = finalResults.filter(r => !isOk(r?.status))
       if (failed.length > 0) {
         message.error(`${failed.length} 台主机 ${action} 失败，详见执行结果`)
       } else {
-        message.success(`${action} 成功：${results.length} 台`)
+        message.success(`${action} 成功：${finalResults.length} 台`)
       }
 
       await fetchHosts()

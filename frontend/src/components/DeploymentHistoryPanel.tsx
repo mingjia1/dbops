@@ -1,6 +1,6 @@
 import React from 'react'
 import { Button, Empty, Progress, Select, Space, Table, Tag } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, DeleteOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, CloseCircleOutlined, DeleteOutlined, EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
   type DeployResult, type ArchType,
@@ -19,6 +19,7 @@ interface DeploymentHistoryPanelProps {
   instances: Instance[]
   onStatusFilterChange: (values: string[]) => void
   onArchFilterChange: (value: ArchType | 'all') => void
+  onViewDetail: (record: DeployResult) => void
   onViewPlan: (record: DeployResult) => void
   onDestroy: (record: DeployResult) => void
 }
@@ -42,7 +43,7 @@ const deploymentNodes = (record: DeployResult, instances: Instance[]): string[] 
 
 const DeploymentHistoryPanel: React.FC<DeploymentHistoryPanelProps> = ({
   loading, dataSource, statusFilter, archFilter, instances,
-  onStatusFilterChange, onArchFilterChange, onViewPlan, onDestroy,
+  onStatusFilterChange, onArchFilterChange, onViewDetail, onViewPlan, onDestroy,
 }) => {
   const columns: ColumnsType<DeployResult> = [
     { title: '部署ID', dataIndex: 'deployment_id', key: 'deployment_id', width: 180, ellipsis: true },
@@ -96,9 +97,12 @@ const DeploymentHistoryPanel: React.FC<DeploymentHistoryPanelProps> = ({
     {
       title: '操作',
       key: 'action',
-      width: 140,
+      width: 220,
       render: (_, record) => (
         <Space>
+          <Button size="small" icon={<SearchOutlined />} onClick={() => onViewDetail(record)}>
+            详情
+          </Button>
           <Button size="small" icon={<EyeOutlined />} onClick={() => onViewPlan(record)}>
             查看计划
           </Button>

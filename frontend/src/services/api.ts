@@ -19,7 +19,7 @@ const api = axios.create({
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
 const agentSubmitTimeoutMs = 30000
 const agentSubmitFastTimeoutMs = 8000
-const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart']
+const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove']
 
 export const extractTaskPayload = (value: any): any => {
   if (!value || typeof value !== 'object') return value
@@ -429,9 +429,9 @@ export const hostApi = {
   testConnection: (id: string) =>
     api.post(`/hosts/${id}/test`),
 
-  agentAction: (id: string, action: string, agentPort?: number) =>
-    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort, sync: true }, {
-      timeout: longRunningAgentActions.includes(action) ? 240000 : 30000,
+  agentAction: (id: string, action: string, agentPort?: number, sync?: boolean) =>
+    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort, sync: sync ?? !longRunningAgentActions.includes(action) }, {
+      timeout: longRunningAgentActions.includes(action) ? agentSubmitFastTimeoutMs : 30000,
     }),
 
   batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
@@ -688,8 +688,8 @@ export interface BackupPolicyUpdateRequest {
 }
 
 export interface UpgradeRequest {
-  instance_id: string
-  target_version: string
+  instance_id?: string
+  target_version?: string
   flavor?: string
   method?: string
   source_flavor?: string

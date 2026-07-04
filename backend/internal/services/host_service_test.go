@@ -75,6 +75,11 @@ func TestBatchAgentActionForcesLongRunningActionsAsync(t *testing.T) {
 	assert.Equal(t, "submitted", result.Rows[0].Status)
 }
 
+func TestDeleteAgentActionIsLongRunning(t *testing.T) {
+	assert.True(t, IsLongRunningAgentAction("delete"))
+	assert.True(t, IsLongRunningAgentAction("remove"))
+}
+
 func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
 	repo := repositories.NewHostRepository(newTestDB(t))
@@ -128,6 +133,34 @@ func TestAgentActionResultPersistsOnHost(t *testing.T) {
 	assert.Equal(t, "restart failed for test", updated.AgentLastMessage)
 	require.NotNil(t, updated.AgentLastAt)
 	assert.Equal(t, "failed", updated.Status)
+}
+
+func TestAgentDeleteSuccessMarksHostInactive(t *testing.T) {
+	ctx := context.Background()
+	repo := repositories.NewHostRepository(newTestDB(t))
+	host := &models.Host{
+		ID:        "host-agent-delete-result",
+		Name:      "agent-delete-result-host",
+		Address:   "10.255.255.1",
+		SSHPort:   22,
+		SSHUser:   "root",
+		AgentPort: 9090,
+	}
+	require.NoError(t, repo.Create(ctx, host))
+
+	service := NewHostService(repo, "test-encryption-key")
+	service.updateAgentActionHostStatus(&HostAgentActionResult{
+		HostID:  host.ID,
+		Action:  "delete",
+		Status:  "success",
+		Message: "agent delete completed",
+	})
+
+	updated, err := repo.GetByID(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "inactive", updated.Status)
+	assert.Equal(t, "delete", updated.AgentLastAction)
+	assert.Equal(t, "success", updated.AgentLastResult)
 }
 
 func TestAgentStatusWithoutConfiguredClientDoesNotPanic(t *testing.T) {

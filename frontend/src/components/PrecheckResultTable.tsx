@@ -18,10 +18,12 @@ interface PrecheckResultItem {
   }>
 }
 
+type PrecheckResultDetail = NonNullable<PrecheckResultItem['details']>[number]
+
 interface PrecheckResultTableProps {
   results: PrecheckResultItem[]
   loading: boolean
-  onRepair: (record: PrecheckResultItem, detail: PrecheckResultItem['details'][0]) => void
+  onRepair: (record: PrecheckResultItem, detail: PrecheckResultDetail) => void
 }
 
 const PrecheckResultTable: React.FC<PrecheckResultTableProps> = ({ results, loading, onRepair }) => {

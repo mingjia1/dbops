@@ -59,7 +59,7 @@ const renderVerticalStepProgress = (steps: DeployStepView[], overallProgress?: n
 
 const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDeployment, currentStep, onReturn }) => {
   const dep = activeDeployment
-  const stepIdx = dep.stage ? STAGE_ORDER.indexOf(dep.stage) : -1
+  const stepIdx = dep.stage ? STAGE_ORDER.indexOf(dep.stage as typeof STAGE_ORDER[number]) : -1
   const displayStep = stepIdx >= 0 ? stepIdx : currentStep
 
   return (

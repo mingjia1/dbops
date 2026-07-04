@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm,
+  Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm, Form,
   Tabs, Result, Statistic, Row, Col, Badge, Tooltip,
 } from 'antd'
 import {
@@ -51,6 +51,7 @@ const HostDetail: React.FC = () => {
   const [scanPorts, setScanPorts] = useState<number[]>([3306, 33060, 3307])
   const [scanRange, setScanRange] = useState<string>('3306-3310')
   const [discoverProcess, setDiscoverProcess] = useState(true)
+  const [scanForm] = Form.useForm()
   const [clusters, setClusters] = useState<any[]>([])
 
   useEffect(() => {

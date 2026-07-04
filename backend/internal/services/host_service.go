@@ -155,7 +155,7 @@ type BatchHostAgentActionResult struct {
 
 func IsLongRunningAgentAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "install", "restart", "add", "update", "modify":
+	case "install", "restart", "add", "update", "modify", "delete", "remove":
 		return true
 	default:
 		return false
@@ -638,9 +638,18 @@ func (s *HostService) updateAgentActionHostStatus(row *HostAgentActionResult) {
 		return
 	}
 	status := "failed"
-	if row.Status == "success" {
-		status = "success"
-	} else if row.Status == "submitted" || row.Status == "running" || row.Status == "pending" {
+	action := strings.ToLower(strings.TrimSpace(row.Action))
+	result := strings.ToLower(strings.TrimSpace(row.Status))
+	if result == "success" {
+		switch action {
+		case "status", "install", "add", "update", "modify", "restart", "start":
+			status = "active"
+		case "stop", "delete", "remove":
+			status = "inactive"
+		default:
+			status = "success"
+		}
+	} else if result == "submitted" || result == "running" || result == "pending" {
 		status = "pending"
 	}
 	_ = s.repo.UpdateStatus(context.Background(), row.HostID, status)
