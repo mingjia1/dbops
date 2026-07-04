@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,7 +38,7 @@ func NewLDAPAuthenticator(config LDAPConfig) *LDAPAuthenticator {
 }
 
 func (a *LDAPAuthenticator) Authenticate(username, password string) (map[string]string, error) {
-	addr := fmt.Sprintf("%s:%d", a.config.Server, a.config.Port)
+	addr := net.JoinHostPort(a.config.Server, strconv.Itoa(a.config.Port))
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(a.config.Timeout)*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("ldap connect failed: %w", err)
