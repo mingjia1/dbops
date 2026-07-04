@@ -29,84 +29,13 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { haApi, instanceApi, roleSwitchApi, type Instance } from '../services/api'
-
-interface HAClusterStatus {
-  cluster_id: string
-  master: any
-  slaves: any[]
-  history: any[]
-}
-
-interface PreflightResult {
-  cluster_id: string
-  target_master_id?: string
-  current_master_id: string
-  current_master_healthy: boolean
-  healthy_slave_count: number
-  slave_count: number
-  max_replication_lag: number
-  gtid_consistent: boolean
-  topology_consistent: boolean
-  real_primary_id?: string
-  platform_primary_id?: string
-  pass: boolean
-  blocking_reasons?: string[]
-  warnings?: string[]
-}
-
-const haNodeID = (node: any) => node?.instance_id || node?.id || '-'
-
-const haNodeEndpoint = (node: any) => {
-  if (!node) return '-'
-  if (node.host && node.port) return `${node.host}:${node.port}`
-  return node.host || '-'
-}
-
-const instanceEndpoint = (instance?: Instance) => {
-  if (!instance) return '-'
-  const host = instance.host || instance.connection?.host
-  const port = instance.port || instance.connection?.port
-  if (host && port) return `${host}:${port}`
-  return host || '-'
-}
-
-const normalizeRole = (role?: string) => (role || '').toLowerCase()
-const isPrimaryRole = (role?: string) => ['master', 'primary', 'primary_master', 'bootstrap'].includes(normalizeRole(role))
-const isReplicaRole = (role?: string) => ['slave', 'secondary', 'replica', 'donor', 'joiner'].includes(normalizeRole(role))
-
-const isFailedHAStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(normalized)
-}
-
-const isCompletedHAStatus = (status?: string) => {
-  const normalized = (status || '').toLowerCase()
-  return ['completed', 'success', 'succeeded', 'ok'].includes(normalized)
-}
-
-const isSkippedHAStatus = (status?: string) => (status || '').toLowerCase() === 'skipped'
-const isPartialHAStatus = (status?: string) => (status || '').toLowerCase() === 'partial_success'
-
-const isMGRInstance = (instance: Instance) => {
-  const mode = (instance.topology?.replication_mode || '').toLowerCase()
-  const repl = (instance.status?.replication_status || '').toLowerCase()
-  return mode === 'mgr' || repl === 'mgr' || mode.includes('group_replication') || repl.includes('group_replication')
-}
-
-const isPXCInstance = (instance: Instance) => {
-  const mode = (instance.topology?.replication_mode || '').toLowerCase()
-  const repl = (instance.status?.replication_status || '').toLowerCase()
-  return mode === 'pxc' || repl === 'pxc' || mode.includes('galera') || repl.includes('galera') || mode.includes('wsrep') || repl.includes('wsrep')
-}
-
-const detectClusterArch = (instances: Instance[]): 'ha' | 'mha' | 'mgr' | 'pxc' | '' => {
-  if (instances.some(isMGRInstance)) return 'mgr'
-  if (instances.some(isPXCInstance)) return 'pxc'
-  const mode = (instances[0]?.topology?.replication_mode || '').toLowerCase()
-  if (mode === 'mha') return 'mha'
-  if (instances.length > 0) return 'ha'
-  return ''
-}
+import {
+  HAClusterStatus, PreflightResult,
+  haNodeID, haNodeEndpoint, instanceEndpoint,
+  isPrimaryRole, isReplicaRole,
+  isFailedHAStatus, isCompletedHAStatus, isSkippedHAStatus, isPartialHAStatus,
+  isMGRInstance, isPXCInstance, detectClusterArch,
+} from '../services/haHelpers'
 
 const HAManage: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
