@@ -35,14 +35,21 @@ func (c *VersionController) hasLocalPackage(entry services.VersionEntry) bool {
 	if c.packagesRoot == "" {
 		return false
 	}
-	versionDir := filepath.Join(c.packagesRoot, entry.Flavor, entry.Version)
-	items, err := os.ReadDir(versionDir)
-	if err != nil {
-		return false
+	// Check primary location: {DataDir}/{flavor}/{version}/
+	dirsToCheck := []string{
+		filepath.Join(c.packagesRoot, entry.Flavor, entry.Version),
+		// Also check the relay upload location: {DataDir}/packages/{flavor}/{version}/
+		filepath.Join(c.packagesRoot, "packages", entry.Flavor, entry.Version),
 	}
-	for _, item := range items {
-		if !item.IsDir() {
-			return true
+	for _, versionDir := range dirsToCheck {
+		items, err := os.ReadDir(versionDir)
+		if err != nil {
+			continue
+		}
+		for _, item := range items {
+			if !item.IsDir() {
+				return true
+			}
 		}
 	}
 	return false
