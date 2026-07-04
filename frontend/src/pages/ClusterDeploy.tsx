@@ -191,9 +191,6 @@ const ClusterDeploy: React.FC = () => {
   const [planPreviewData, setPlanPreviewData] = useState<any>(null)
   const [planPreviewArch, setPlanPreviewArch] = useState<ArchType>('ha')
   const [planPreviewLoading, setPlanPreviewLoading] = useState(false)
-  const [pendingDeployPayload, setPendingDeployPayload] = useState<any>(null)
-  const [pendingDeployArch, setPendingDeployArch] = useState<ArchType>('ha')
-  const [pendingDeployValues, setPendingDeployValues] = useState<any>(null)
 
   const [haForm] = Form.useForm()
   const [mhaForm] = Form.useForm()
@@ -441,9 +438,6 @@ const ClusterDeploy: React.FC = () => {
     clusterDeployApi.validateCluster(payload).then((res: any) => {
       const plan = res?.data?.plan || res?.data
       setPlanPreviewData(plan)
-      setPendingDeployPayload(payload)
-      setPendingDeployArch(arch)
-      setPendingDeployValues(nextValues)
       setPlanPreviewOpen(true)
     }).catch((err: any) => {
       message.error(`计划验证失败: ${err?.response?.data?.message || err?.message}`)
@@ -452,15 +446,8 @@ const ClusterDeploy: React.FC = () => {
     })
   }
 
-  const doConfirmDeploy = () => {
-    if (!pendingDeployPayload || !pendingDeployArch || !pendingDeployValues) return
-    setPlanPreviewOpen(false)
-    doDeploy(pendingDeployArch, pendingDeployValues, pendingDeployPayload)
-  }
-
   const runDeploy = (arch: ArchType, values: any) => {
-    // Show plan preview before deployment
-    doPreview(arch, values)
+    doDeploy(arch, values)
   }
 
   const runPrecheck = async (arch: ArchType, values: any) => {
@@ -505,7 +492,6 @@ const ClusterDeploy: React.FC = () => {
       const plan = res?.data || res
       setPlanPreviewArch(record.cluster_type)
       setPlanPreviewData(plan)
-      setPendingDeployPayload(null)
       setPlanPreviewOpen(true)
     } catch (err: any) {
       message.error(`获取部署计划失败: ${err?.response?.data?.message || err?.message}`)
@@ -1265,36 +1251,15 @@ const ClusterDeploy: React.FC = () => {
         }}
         width={800}
         footer={
-          pendingDeployPayload ? (
-            <Space>
-              <Button onClick={() => {
-                setPlanPreviewOpen(false)
-                setPlanPreviewData(null)
-              }}>取消</Button>
-              <Button type="primary" icon={<PlayCircleOutlined />} onClick={doConfirmDeploy}>
-                确认部署
-              </Button>
-            </Space>
-          ) : (
-            <Button onClick={() => {
-              setPlanPreviewOpen(false)
-              setPlanPreviewData(null)
-            }}>关闭</Button>
-          )
+          <Button onClick={() => {
+            setPlanPreviewOpen(false)
+            setPlanPreviewData(null)
+          }}>关闭</Button>
         }
         destroyOnClose
       >
         {planPreviewData ? (
           <div>
-            {/* Mode warning for new deployments */}
-            {pendingDeployPayload && (
-              <Alert
-                type="warning"
-                message="真实部署会修改目标主机上的 MySQL 实例、复制配置和服务状态。请确认已完成环境检查并具备回滚方案。"
-                style={{ marginBottom: 16 }}
-                showIcon
-              />
-            )}
             {/* Plan Summary */}
             <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
               <Descriptions.Item label="部署ID">{planPreviewData.deployment_id || planPreviewData.id || '-'}</Descriptions.Item>
