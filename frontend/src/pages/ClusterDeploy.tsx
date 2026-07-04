@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Col, Empty, Form, Input, InputNumber, message, Modal, Progress, Row, Select, Space, Table, Tabs, Tag, Typography,
+  Button, Card, Checkbox, Col, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tabs, Typography,
 } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, ClusterOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
+import { ClusterOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
 import { formatClusterRole } from '../services/roleDisplay'
@@ -11,10 +10,10 @@ import { useTaskSSE, type TaskEvent } from '../services/useTaskSSE'
 import { processStepEvent } from '../services/deployStepHelper'
 import {
   ArchType, DeployResult,
-  normalizeStatus, getStatusCategory,
-  isCompletedDeployStatus, isFailedDeployStatus, isPartialDeployStatus, isDestroyedDeployStatus, isTerminalDeployStatus,
-  deploymentProgress, deploymentProgressStatus,
-  majorVersion, versionSupportsArch,
+  getStatusCategory,
+  isCompletedDeployStatus, isFailedDeployStatus, isPartialDeployStatus, isTerminalDeployStatus,
+  deploymentProgress,
+  versionSupportsArch,
   createMgrGroupName, normalizeDeployment, buildDeployPayload,
   STAGE_ORDER,
 } from '../services/deployHelpers'
@@ -23,6 +22,8 @@ import DeployCredentialsModal from '../components/DeployCredentialsModal'
 import DeployErrorModal from '../components/DeployErrorModal'
 import MySQLPasswordModal from '../components/MySQLPasswordModal'
 import ClusterDeployProgress from '../components/ClusterDeployProgress'
+import DeploymentHistoryPanel from '../components/DeploymentHistoryPanel'
+import PrecheckResultTable from '../components/PrecheckResultTable'
 
 const { Text } = Typography
 
@@ -153,23 +154,6 @@ const ClusterDeploy: React.FC = () => {
       setDeployErrorDetail(dep)
       message.error(`${arch} 集群部署失败: ${dep.message || dep.status}`)
     }
-  }
-
-  const deploymentNodes = (record: DeployResult) => {
-    if (record.nodes?.length) {
-      return record.nodes.map((node) => {
-        const endpoint = `${node.host || '-'}:${node.port || '-'}`
-        return `${node.name || node.instance_id || '-'} (${endpoint}, ${formatClusterRole(record.cluster_type, node.role)})`
-      })
-    }
-    const clusterID = record.cluster_id || record.deployment_id
-    return instances
-      .filter((inst) => inst.cluster_id === clusterID)
-      .map((inst) => {
-        const endpoint = `${inst.connection?.host || inst.host || '-'}:${inst.connection?.port || inst.port || '-'}`
-        const role = formatClusterRole(record.cluster_type, inst.status?.role)
-        return `${inst.name} (${endpoint}, ${role})`
-      })
   }
 
   const stopPolling = () => {
@@ -469,72 +453,6 @@ const ClusterDeploy: React.FC = () => {
     })
   }
 
-  const columns: ColumnsType<DeployResult> = [
-    { title: '部署ID', dataIndex: 'deployment_id', key: 'deployment_id', width: 180, ellipsis: true },
-    { title: '集群ID', dataIndex: 'cluster_id', key: 'cluster_id', width: 150, ellipsis: true },
-    {
-      title: '架构',
-      dataIndex: 'cluster_type',
-      key: 'cluster_type',
-      width: 80,
-      render: (type: ArchType) => <Tag color={type === 'ha' ? 'cyan' : type === 'mha' ? 'blue' : type === 'mgr' ? 'green' : 'orange'}>{type.toUpperCase()}</Tag>,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 110,
-      render: (status: string) => {
-        if (isCompletedDeployStatus(status)) return <Tag color="success" icon={<CheckCircleOutlined />}>成功</Tag>
-        if (isDestroyedDeployStatus(status)) return <Tag color="default">已销毁</Tag>
-        if (isPartialDeployStatus(status)) return <Tag color="warning" icon={<CloseCircleOutlined />}>部分完成</Tag>
-        if (isFailedDeployStatus(status)) return <Tag color="error" icon={<CloseCircleOutlined />}>失败</Tag>
-        if (normalizeStatus(status) === 'pending') return <Tag color="default">待开始</Tag>
-        return <Tag color="processing" icon={<ReloadOutlined spin />}>进行中</Tag>
-      },
-    },
-    { title: '当前阶段', dataIndex: 'stage', key: 'stage', width: 100, ellipsis: true, render: (stage: string) => stage || '-' },
-    {
-      title: '进度',
-      dataIndex: 'progress',
-      key: 'progress',
-      width: 140,
-      render: (progress: number, record) => <Progress percent={deploymentProgress(record.status, progress)} size="small" status={deploymentProgressStatus(record.status)} />,
-    },
-    { title: '信息', dataIndex: 'message', key: 'message', ellipsis: true },
-    {
-      title: '节点信息',
-      key: 'nodes',
-      width: 200,
-      ellipsis: true,
-      render: (_, record) => {
-        const nodes = deploymentNodes(record)
-        if (nodes.length === 0) return '-'
-        return (
-          <Space direction="vertical" size={2}>
-            {nodes.map((node) => <span key={node}>{node}</span>)}
-          </Space>
-        )
-      },
-    },
-    { title: '开始时间', dataIndex: 'started_at', key: 'started_at', width: 160, render: (time: string) => (time ? new Date(time).toLocaleString() : '-') },
-    {
-      title: '操作',
-      key: 'action',
-      width: 140,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => viewDeployPlan(record)}>
-            查看计划
-          </Button>
-          <Button size="small" danger icon={<DeleteOutlined />} disabled={isDestroyedDeployStatus(record.status)} onClick={() => destroyDeployment(record)}>
-            销毁
-          </Button>
-        </Space>
-      ),
-    },
-  ]
-
   const renderForm = (
     arch: ArchType,
     form: any,
@@ -652,57 +570,11 @@ const ClusterDeploy: React.FC = () => {
         </Space>
       </Form.Item>
       {precheckResults && (
-        <div style={{ marginTop: 16 }}>
-          <strong>环境预检结果</strong>
-          <Table
-            size="small"
-            pagination={false}
-            style={{ marginTop: 8 }}
-            dataSource={precheckResults}
-            rowKey="host_id"
-            columns={[
-              { title: '主机', dataIndex: 'host', key: 'host' },
-              {
-                title: '状态',
-                dataIndex: 'status',
-                key: 'status',
-                render: (s: string) => (
-                  <Tag color={s === 'pass' ? 'success' : s === 'warn' ? 'warning' : 'error'}>
-                    {s === 'pass' ? '通过' : s === 'warn' ? '警告' : '失败'}
-                  </Tag>
-                ),
-              },
-              { title: '消息', dataIndex: 'message', key: 'message' },
-              {
-                title: '详情',
-                dataIndex: 'details',
-                key: 'details',
-                render: (details: any[], record: any) => (
-                  <Space direction="vertical" size={2}>
-                    {(details || []).map((d, i) => (
-                      <span key={i} style={{ fontSize: 12 }}>
-                        <Tag color={d.passed ? 'success' : 'error'} style={{ fontSize: 10 }}>{d.name}</Tag>
-                        {d.value && <span style={{ color: '#888' }}>{d.value} </span>}
-                        {d.message && <span style={{ color: '#ff4d4f' }}>{d.message}</span>}
-                        {!d.passed && d.fixable && (
-                          <Button
-                            size="small"
-                            type="link"
-                            loading={precheckLoading}
-                            onClick={() => repairPrecheckItem(record, d)}
-                            style={{ padding: '0 4px', height: 20 }}
-                          >
-                            修复
-                          </Button>
-                        )}
-                      </span>
-                    ))}
-                  </Space>
-                ),
-              },
-            ]}
-          />
-        </div>
+        <PrecheckResultTable
+          results={precheckResults}
+          loading={precheckLoading}
+          onRepair={repairPrecheckItem}
+        />
       )}
     </Form>
   )
@@ -740,56 +612,17 @@ const ClusterDeploy: React.FC = () => {
         }
       >
         {showHistory ? (
-          <div>
-            <Space style={{ marginBottom: 16 }}>
-              <Select
-                mode="multiple"
-                placeholder="筛选状态"
-                value={statusFilter}
-                onChange={setStatusFilter}
-                style={{ minWidth: 200 }}
-                maxTagCount="responsive"
-                options={[
-                  { label: '成功', value: 'success' },
-                  { label: '失败', value: 'failed' },
-                  { label: '部分完成', value: 'partial' },
-                  { label: '运行中', value: 'running' },
-                  { label: '待开始', value: 'pending' },
-                  { label: '已销毁', value: 'destroyed' },
-                ]}
-              />
-              <Select
-                placeholder="筛选架构"
-                value={archFilter}
-                onChange={setArchFilter}
-                style={{ width: 120 }}
-                options={[
-                  { label: '全部架构', value: 'all' },
-                  { label: 'HA', value: 'ha' },
-                  { label: 'MHA', value: 'mha' },
-                  { label: 'MGR', value: 'mgr' },
-                  { label: 'PXC', value: 'pxc' },
-                ]}
-              />
-            </Space>
-            {filteredDeployments.length === 0 ? (
-              <Empty description="暂无符合条件的部署记录" />
-            ) : (
-              <Table
-                columns={columns}
-                dataSource={filteredDeployments}
-                rowKey="deployment_id"
-                loading={historyLoading}
-                scroll={{ x: 'max-content' }}
-                pagination={{
-                  defaultPageSize: 10,
-                  showSizeChanger: true,
-                  showQuickJumper: true,
-                  showTotal: (t) => `共 ${t} 条记录`,
-                }}
-              />
-            )}
-          </div>
+          <DeploymentHistoryPanel
+            loading={historyLoading}
+            dataSource={filteredDeployments}
+            statusFilter={statusFilter}
+            archFilter={archFilter}
+            instances={instances}
+            onStatusFilterChange={setStatusFilter}
+            onArchFilterChange={setArchFilter}
+            onViewPlan={viewDeployPlan}
+            onDestroy={destroyDeployment}
+          />
         ) : (
           <Tabs
             activeKey={tab}
