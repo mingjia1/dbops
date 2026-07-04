@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Button, Card, Descriptions, Form, Input, InputNumber, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, message,
+  Button, Card, Descriptions, Form, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, message,
 } from 'antd'
 import {
   CheckCircleOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RollbackOutlined,
@@ -44,7 +44,7 @@ const UpgradeManage: React.FC = () => {
   const planInstanceId = Form.useWatch('instance_id', planForm)
   const compatInstanceId = Form.useWatch('instance_id', compatForm)
   const inPlaceInstanceId = Form.useWatch('instance_id', inPlaceForm)
-  const executeStrategy = Form.useWatch('strategy', inPlaceForm)
+  // executeStrategy is watched inside ExecuteUpgradeModal
 
   const loadData = () => {
     upgradeApi.listHistory().then((res: any) => setHistory(res?.data || [])).catch(() => setHistory([]))
