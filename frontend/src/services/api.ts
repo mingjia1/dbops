@@ -179,8 +179,8 @@ export interface PlatformRole {
 
 export const userApi = {
   list: () => api.get('/users'),
-  create: (data: any) => api.post('/users', data),
-  update: (id: string, data: any) => api.put(`/users/${id}`, data),
+  create: (data: UserCreateRequest) => api.post('/users', data),
+  update: (id: string, data: UserUpdateRequest) => api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   enable: (id: string) => api.post(`/users/${id}/enable`),
   disable: (id: string) => api.post(`/users/${id}/disable`),
@@ -190,8 +190,8 @@ export const userApi = {
 
 export const roleApi = {
   list: () => api.get('/roles'),
-  create: (data: any) => api.post('/roles', data),
-  update: (id: string, data: any) => api.put(`/roles/${id}`, data),
+  create: (data: RoleCreateRequest) => api.post('/roles', data),
+  update: (id: string, data: RoleUpdateRequest) => api.put(`/roles/${id}`, data),
   delete: (id: string) => api.delete(`/roles/${id}`),
 }
 
@@ -497,21 +497,13 @@ export const envCheckApi = {
 }
 
 export const backupApi = {
-  createPolicy: (data: {
-    instance_id: string
-    backup_type: string
-    schedule: string
-    retention_days?: number
-    storage_type?: string
-    storage_path?: string
-    enabled?: boolean
-  }) =>
+  createPolicy: (data: BackupPolicyCreateRequest) =>
     api.post('/backups/policies', data),
 
   listPolicies: (instanceId?: string) =>
     api.get(`/backups/policies${instanceId ? `?instance_id=${instanceId}` : ''}`),
 
-  updatePolicy: (id: string, data: any) =>
+  updatePolicy: (id: string, data: BackupPolicyUpdateRequest) =>
     api.put(`/backups/policies/${id}`, data),
 
   deletePolicy: (id: string) =>
@@ -624,6 +616,126 @@ export interface ApprovalRequest {
   expires_at?: string
   created_at: string
   updated_at: string
+}
+
+// ---- Generic API Response Wrapper ----
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+// ---- Typed Request Payloads ----
+
+export interface UserCreateRequest {
+  username: string
+  password: string
+  email: string
+  role: string
+}
+
+export interface UserUpdateRequest {
+  username?: string
+  email?: string
+  role?: string
+}
+
+export interface RoleCreateRequest {
+  name: string
+  display_name: string
+  description?: string
+  permissions: string[]
+}
+
+export interface RoleUpdateRequest {
+  name?: string
+  display_name?: string
+  description?: string
+  permissions?: string[]
+}
+
+export interface BackupPolicyCreateRequest {
+  instance_id: string
+  backup_type: string
+  schedule: string
+  retention_days?: number
+  storage_type?: string
+  storage_path?: string
+  enabled?: boolean
+}
+
+export interface BackupPolicyUpdateRequest {
+  backup_type?: string
+  schedule?: string
+  retention_days?: number
+  storage_type?: string
+  storage_path?: string
+  enabled?: boolean
+}
+
+export interface UpgradeRequest {
+  instance_id: string
+  target_version: string
+  flavor?: string
+  method?: string
+  source_flavor?: string
+  source_version?: string
+  backup_before?: boolean
+  [key: string]: any
+}
+
+export interface MigrationCreateRequest {
+  source_instance_id: string
+  target_instance_id: string
+  migration_type: 'physical' | 'replication' | 'gtid'
+  databases?: string[]
+  skip_tables?: string[]
+  throttle?: number
+  [key: string]: any
+}
+
+export interface HAActionRequest {
+  instance_ids?: string[]
+  cluster_id?: string
+  action?: string
+  [key: string]: any
+}
+
+export interface AlertChannelCreateRequest {
+  name: string
+  type: string
+  config: Record<string, any>
+  enabled?: boolean
+}
+
+export interface AlertChannelUpdateRequest {
+  name?: string
+  config?: Record<string, any>
+  enabled?: boolean
+}
+
+export interface AlertRuleCreateRequest {
+  name: string
+  metric: string
+  operator: string
+  threshold: number
+  duration_seconds?: number
+  severity?: string
+  notification_channels?: string[]
+  enabled?: boolean
+  [key: string]: any
+}
+
+export interface AlertRuleUpdateRequest {
+  name?: string
+  metric?: string
+  operator?: string
+  threshold?: number
+  duration_seconds?: number
+  severity?: string
+  notification_channels?: string[]
+  enabled?: boolean
+  [key: string]: any
 }
 
 export interface AuditLog {
@@ -836,23 +948,23 @@ const buildAlertRulePayload = (data: any) => {
 export const alertApi = {
   listRules: async () => normalizeAlertRuleResponse(await api.get('/alerts/rules')),
   getRule: async (id: string) => normalizeAlertRuleResponse(await api.get(`/alerts/rules/${id}`)),
-  createRule: async (data: any) => normalizeAlertRuleResponse(await api.post('/alerts/rules', buildAlertRulePayload(data))),
-  updateRule: async (id: string, data: any) => normalizeAlertRuleResponse(await api.put(`/alerts/rules/${id}`, buildAlertRulePayload(data))),
+  createRule: async (data: AlertRuleCreateRequest) => normalizeAlertRuleResponse(await api.post('/alerts/rules', buildAlertRulePayload(data))),
+  updateRule: async (id: string, data: AlertRuleUpdateRequest) => normalizeAlertRuleResponse(await api.put(`/alerts/rules/${id}`, buildAlertRulePayload(data))),
   deleteRule: (id: string) => api.delete(`/alerts/rules/${id}`),
   listChannels: () => api.get('/alerts/notifications/channels'),
-  createChannel: (data: any) => api.post('/alerts/notifications/channels', data),
-  updateChannel: (id: string, data: any) => api.put(`/alerts/notifications/channels/${id}`, data),
+  createChannel: (data: AlertChannelCreateRequest) => api.post('/alerts/notifications/channels', data),
+  updateChannel: (id: string, data: AlertChannelUpdateRequest) => api.put(`/alerts/notifications/channels/${id}`, data),
   deleteChannel: (id: string) => api.delete(`/alerts/notifications/channels/${id}`),
   listHistory: () => api.get('/alerts/history'),
 }
 
 export const upgradeApi = {
-  planPath: (data: any) => api.post('/upgrades/plan', data).then(rejectBusinessError),
-  checkCompat: (data: any) => api.post('/upgrades/check', data).then(rejectBusinessError),
-  executeInPlace: (data: any) => api.post('/upgrades/in-place', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  executeLogical: (data: any) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  executeRolling: (data: any) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  rollback: (data: any) => api.post('/upgrades/rollback', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  planPath: (data: UpgradeRequest) => api.post('/upgrades/plan', data).then(rejectBusinessError),
+  checkCompat: (data: UpgradeRequest) => api.post('/upgrades/check', data).then(rejectBusinessError),
+  executeInPlace: (data: UpgradeRequest) => api.post('/upgrades/in-place', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  executeLogical: (data: UpgradeRequest) => api.post('/upgrades/logical', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  executeRolling: (data: UpgradeRequest) => api.post('/upgrades/rolling', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  rollback: (data: UpgradeRequest) => api.post('/upgrades/rollback', data).then(rejectBusinessError).then(rejectFailedTaskData),
   listHistory: (limit = 100, offset = 0) => api.get(`/upgrades?limit=${limit}&offset=${offset}`).then(rejectBusinessError),
   getReport: (id: string) => api.get(`/upgrades/${id}/report`).then(rejectBusinessError),
   get: (id: string) => api.get(`/upgrades/${id}`).then(rejectBusinessError),
@@ -889,9 +1001,9 @@ export const versionApi = {
 }
 
 export const migrationApi = {
-  createPhysical: (data: any) => api.post('/migrations/physical', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  createReplication: (data: any) => api.post('/migrations/replication', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  createGTID: (data: any) => api.post('/migrations/gtid', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  createPhysical: (data: MigrationCreateRequest) => api.post('/migrations/physical', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  createReplication: (data: MigrationCreateRequest) => api.post('/migrations/replication', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  createGTID: (data: MigrationCreateRequest) => api.post('/migrations/gtid', data).then(rejectBusinessError).then(rejectFailedTaskData),
   verify: (taskId: string) => api.post(`/migrations/${taskId}/verify`).then(rejectBusinessError).then(rejectFailedTaskData),
   switchover: (taskId: string) => api.post(`/migrations/${taskId}/switch`).then(rejectBusinessError).then(rejectFailedTaskData),
   cancel: (taskId: string) => api.post(`/migrations/${taskId}/cancel`),
@@ -910,8 +1022,8 @@ export const clusterDeployApi = {
   list: (limit = 50, offset = 0) => api.get(`/deployments?limit=${limit}&offset=${offset}`),
   listClusters: () => api.get('/deployments/clusters'),
   getClusterDetail: (clusterId: string) => api.get(`/deployments/clusters/${encodeURIComponent(clusterId)}`),
-  deployCluster: (data: any) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  validateCluster: (data: any) => api.post('/deployments/validate', data).then(rejectBusinessError),
+  deployCluster: (data: Record<string, any>) => api.post('/deployments', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  validateCluster: (data: Record<string, any>) => api.post('/deployments/validate', data).then(rejectBusinessError),
   precheck: (data: { cluster_type?: string; host_ids?: string[]; nodes?: any[] }) => {
     if (!data.host_ids?.length && !data.nodes?.length) {
       return Promise.reject({ message: 'host_ids or nodes is required' })
@@ -921,10 +1033,10 @@ export const clusterDeployApi = {
   repairPrecheck: (data: { host_id: string; port: number; action?: string; component?: string; basedir?: string; data_dir?: string; package_url?: string; relay_url?: string }) =>
     api.post('/deployments/precheck/repair', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getDeployPlan: (id: string) => api.get(`/deployments/${id}/plan`),
-  deployHA: (data: any) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  deployMHA: (data: any) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  deployMGR: (data: any) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  deployPXC: (data: any) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployHA: (data: Record<string, any>) => api.post('/deployments/ha', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployMHA: (data: Record<string, any>) => api.post('/deployments/mha', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployMGR: (data: Record<string, any>) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  deployPXC: (data: Record<string, any>) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (id: string) => api.get(`/deployments/${id}`, { suppressGlobalError: true, suppressAuthLogout: true }),
   destroy: (id: string) => api.delete(`/deployments/${id}`),
   changePassword: (clusterId: string, data: { new_password: string; username?: string; user_host?: string }) =>
@@ -932,12 +1044,12 @@ export const clusterDeployApi = {
 }
 
 export const haApi = {
-  healthCheck: (data: any) => api.post('/ha/health/batch', data),
+  healthCheck: (data: HAActionRequest) => api.post('/ha/health/batch', data),
   detectFailure: (instanceId: string) => api.get(`/ha/health/detect?instance_id=${instanceId}`),
   getFailureState: (instanceId: string) => api.get(`/ha/health/failure-state?instance_id=${instanceId}`),
-  preflight: (data: any) => api.post('/ha/preflight', data).then(rejectBusinessError),
-  autoFailover: (data: any) => api.post('/ha/failover', data).then(rejectBusinessError).then(rejectFailedTaskData),
-  manualSwitch: (data: any) => api.post('/ha/manual-switch', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  preflight: (data: HAActionRequest) => api.post('/ha/preflight', data).then(rejectBusinessError),
+  autoFailover: (data: HAActionRequest) => api.post('/ha/failover', data).then(rejectBusinessError).then(rejectFailedTaskData),
+  manualSwitch: (data: HAActionRequest) => api.post('/ha/manual-switch', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (clusterId: string, limit = 10) =>
     api.get(`/ha/status?cluster_id=${clusterId}&limit=${limit}`),
 }
