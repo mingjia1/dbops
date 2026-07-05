@@ -4723,6 +4723,9 @@ func controlInstanceService(ctx context.Context, config map[string]interface{}) 
 		if pid, ok := instancePID(datadir); ok && processMatchesDatadir(pid, datadir) {
 			return fmt.Sprintf("running pid=%d datadir=%s port=%d", pid, datadir, port), nil
 		}
+		if mysqlInstanceReachable(ctx, port, datadir) {
+			return fmt.Sprintf("running mysql_reachable datadir=%s port=%d", datadir, port), nil
+		}
 		return fmt.Sprintf("stopped datadir=%s port=%d", datadir, port), nil
 	case "stop":
 		return stopInstanceProcess(ctx, datadir)
@@ -4738,6 +4741,38 @@ func controlInstanceService(ctx context.Context, config map[string]interface{}) 
 	default:
 		return "", fmt.Errorf("invalid service action")
 	}
+}
+
+func mysqlInstanceReachable(ctx context.Context, port int, datadir string) bool {
+	if port <= 0 {
+		return false
+	}
+	if socket := detectMySQLSocket(port, datadir); socket != "" {
+		if mysqlProtocolHandshake(ctx, "unix", socket) {
+			return true
+		}
+	}
+	return mysqlProtocolHandshake(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func mysqlProtocolHandshake(ctx context.Context, network, address string) bool {
+	if address == "" {
+		return false
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, 700*time.Millisecond)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, network, address)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(700 * time.Millisecond))
+	header := make([]byte, 5)
+	n, err := io.ReadFull(conn, header)
+	if err != nil || n < len(header) {
+		return false
+	}
+	return header[4] == 0x0a
 }
 
 func decommissionInstance(ctx context.Context, config map[string]interface{}) (string, error) {

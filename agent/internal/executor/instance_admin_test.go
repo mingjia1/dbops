@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,10 +72,9 @@ func TestExecuteInstanceAdminServiceControlDefaultsTrimmedStatus(t *testing.T) {
 	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
 		TaskID: "admin-test",
 		Config: map[string]interface{}{
-			"action":      "service_control",
-			"verb":        " STATUS ",
-			"datadir":     datadir,
-			"target_port": 3307,
+			"action":  "service_control",
+			"verb":    " STATUS ",
+			"datadir": datadir,
 		},
 	})
 
@@ -82,6 +82,40 @@ func TestExecuteInstanceAdminServiceControlDefaultsTrimmedStatus(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "completed", result.Status)
 	assert.Contains(t, strings.ToLower(result.Message), "stopped")
+	assert.Contains(t, result.Message, datadir)
+}
+
+func TestExecuteInstanceAdminServiceControlStatusUsesMySQLHandshakeFallback(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte{0x4a, 0x00, 0x00, 0x00, 0x0a, '8', '.', '0', '.', '3', '6', 0x00})
+	}()
+
+	executor := NewTaskExecutor()
+	datadir := t.TempDir()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
+		TaskID: "admin-test",
+		Config: map[string]interface{}{
+			"action":      "service_control",
+			"verb":        "status",
+			"datadir":     datadir,
+			"target_port": port,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "completed", result.Status)
+	assert.Contains(t, result.Message, "running mysql_reachable")
 	assert.Contains(t, result.Message, datadir)
 }
 
