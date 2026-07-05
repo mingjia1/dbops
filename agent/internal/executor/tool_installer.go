@@ -17,6 +17,12 @@ type ToolInstaller struct {
 	relayClient *relayClient
 }
 
+type mysqlRuntimeOptions struct {
+	Basedir       string
+	PluginDir     string
+	SecureFileDir string
+}
+
 func NewToolInstaller() *ToolInstaller {
 	installDir := "/opt/dbops-tools"
 	if runtime.GOOS == "windows" {
@@ -382,6 +388,55 @@ func (t *ToolInstaller) checkToolInstalled(tool string) string {
 	}
 
 	return ""
+}
+
+func mysqlRuntimeOptionsFor(mysqld string) mysqlRuntimeOptions {
+	opts := mysqlRuntimeOptions{SecureFileDir: "/var/lib/mysql-files"}
+	if mysqld == "" {
+		return opts
+	}
+	if abs, err := filepath.Abs(mysqld); err == nil {
+		mysqld = abs
+	}
+	dir := filepath.Dir(mysqld)
+	if filepath.Base(dir) == "bin" || filepath.Base(dir) == "sbin" || filepath.Base(dir) == "libexec" {
+		basedir := filepath.Dir(dir)
+		if st, err := os.Stat(basedir); err == nil && st.IsDir() && basedir != "/usr" {
+			opts.Basedir = basedir
+		}
+	}
+	for _, base := range []string{opts.Basedir, "/usr", "/usr/local/mysql", "/opt/mysql"} {
+		if base == "" {
+			continue
+		}
+		for _, rel := range []string{
+			filepath.Join("lib", "mysql", "plugin"),
+			filepath.Join("lib64", "mysql", "plugin"),
+			filepath.Join("lib", "plugin"),
+			"plugin",
+		} {
+			candidate := filepath.Join(base, rel)
+			if st, err := os.Stat(filepath.Join(candidate, "group_replication.so")); err == nil && !st.IsDir() {
+				opts.PluginDir = candidate
+				return opts
+			}
+		}
+	}
+	return opts
+}
+
+func (opts mysqlRuntimeOptions) args() []string {
+	args := make([]string, 0, 3)
+	if opts.Basedir != "" {
+		args = append(args, "--basedir="+opts.Basedir)
+	}
+	if opts.PluginDir != "" {
+		args = append(args, "--plugin-dir="+opts.PluginDir)
+	}
+	if opts.SecureFileDir != "" {
+		args = append(args, "--secure-file-priv="+opts.SecureFileDir)
+	}
+	return args
 }
 
 func (t *ToolInstaller) installToolLinux(ctx context.Context, tool string, mysqlVersion string, info HostOSInfo) (string, error) {
@@ -1184,6 +1239,17 @@ func (t *ToolInstaller) prepareBlankHostDatadir(ctx context.Context, dataDir, ro
 	if uid < 0 || gid < 0 {
 		uid, gid = -1, -1
 	}
+	runtimeOpts := mysqlRuntimeOptionsFor(mysqld)
+	if runtimeOpts.SecureFileDir != "" {
+		if err := os.MkdirAll(runtimeOpts.SecureFileDir, 0750); err != nil {
+			return fmt.Errorf("create secure_file_priv dir %s failed: %w", runtimeOpts.SecureFileDir, err)
+		}
+		if uid >= 0 && gid >= 0 {
+			if err := os.Chown(runtimeOpts.SecureFileDir, uid, gid); err != nil {
+				return fmt.Errorf("chown secure_file_priv dir %s failed: %w", runtimeOpts.SecureFileDir, err)
+			}
+		}
+	}
 
 	initArgs := []string{
 		"--no-defaults",
@@ -1191,6 +1257,7 @@ func (t *ToolInstaller) prepareBlankHostDatadir(ctx context.Context, dataDir, ro
 		"--datadir=" + dataDir,
 		"--user=mysql",
 	}
+	initArgs = append(initArgs, runtimeOpts.args()...)
 	initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
 	out, err := initCmd.CombinedOutput()
 	if err != nil {
@@ -1213,6 +1280,17 @@ func (t *ToolInstaller) startBlankHostMySQL(ctx context.Context, dataDir string,
 	if p := t.checkToolInstalled("mysqld"); p != "" {
 		mysqld = p
 	}
+	runtimeOpts := mysqlRuntimeOptionsFor(mysqld)
+	if runtimeOpts.SecureFileDir != "" {
+		if err := os.MkdirAll(runtimeOpts.SecureFileDir, 0750); err != nil {
+			return fmt.Errorf("create secure_file_priv dir %s failed: %w", runtimeOpts.SecureFileDir, err)
+		}
+		if uid, gid := lookupUserIDs("mysql"); uid >= 0 && gid >= 0 {
+			if err := os.Chown(runtimeOpts.SecureFileDir, uid, gid); err != nil {
+				return fmt.Errorf("chown secure_file_priv dir %s failed: %w", runtimeOpts.SecureFileDir, err)
+			}
+		}
+	}
 
 	startArgs := []string{
 		"--no-defaults",
@@ -1231,6 +1309,7 @@ func (t *ToolInstaller) startBlankHostMySQL(ctx context.Context, dataDir string,
 		"--log-error=" + filepath.Join(dataDir, "error.log"),
 		"--user=mysql",
 	}
+	startArgs = append(startArgs, runtimeOpts.args()...)
 	startCmd := exec.CommandContext(ctx, mysqld, startArgs...)
 	out, err := startCmd.CombinedOutput()
 	if err != nil {
