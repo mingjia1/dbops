@@ -39,6 +39,8 @@ const resourceOptions = [
   { value: 'upgrade_task', label: '升级任务' },
 ]
 
+const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
+
 const ApprovalManage: React.FC = () => {
   const [data, setData] = useState<ApprovalRequest[]>([])
   const [loading, setLoading] = useState(false)
@@ -55,6 +57,9 @@ const ApprovalManage: React.FC = () => {
     try {
       const res: any = await approvalApi.list(nextStatus)
       setData(res?.data || [])
+    } catch (err: any) {
+      setData([])
+      message.error('加载审批列表失败: ' + getErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -86,7 +91,9 @@ const ApprovalManage: React.FC = () => {
       await approvalApi.create({ requester_id: currentUserId(), ...values })
       message.success('审批申请已创建')
       setCreateOpen(false)
-      fetchData()
+      await fetchData()
+    } catch (err: any) {
+      message.error('创建审批申请失败: ' + getErrorMessage(err))
     } finally {
       setSubmitting(false)
     }
@@ -97,9 +104,14 @@ const ApprovalManage: React.FC = () => {
       title: '通过审批',
       content: `确认通过 ${item.operation_type} 申请？`,
       onOk: async () => {
-        await approvalApi.approve(item.id, { comment: 'approved' })
-        message.success('已通过')
-        fetchData()
+        try {
+          await approvalApi.approve(item.id, { comment: 'approved' })
+          message.success('已通过')
+        } catch (err: any) {
+          message.error('审批通过失败: ' + getErrorMessage(err))
+        } finally {
+          await fetchData()
+        }
       },
     })
   }
@@ -110,9 +122,14 @@ const ApprovalManage: React.FC = () => {
       content: `确认拒绝 ${item.operation_type} 申请？`,
       okButtonProps: { danger: true },
       onOk: async () => {
-        await approvalApi.reject(item.id, { comment: 'rejected' })
-        message.success('已拒绝')
-        fetchData()
+        try {
+          await approvalApi.reject(item.id, { comment: 'rejected' })
+          message.success('已拒绝')
+        } catch (err: any) {
+          message.error('审批拒绝失败: ' + getErrorMessage(err))
+        } finally {
+          await fetchData()
+        }
       },
     })
   }

@@ -7,6 +7,14 @@ const buildAuthHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+async function readJson(res: Response): Promise<any> {
+  try {
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 async function fetchSettings(): Promise<Record<string, string>> {
   const res = await fetch(`${API_BASE}/settings`, {
     credentials: 'include',
@@ -18,12 +26,16 @@ async function fetchSettings(): Promise<Record<string, string>> {
 }
 
 async function saveSetting(key: string, value: string): Promise<void> {
-  await fetch(`${API_BASE}/settings/${key}`, {
+  const res = await fetch(`${API_BASE}/settings/${key}`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
     body: JSON.stringify({ value }),
   })
+  const json = await readJson(res)
+  if (!res.ok || (json?.code && json.code !== 200)) {
+    throw new Error(json?.message || `failed to save setting ${key}`)
+  }
 }
 
 export function usePlatformSetting(key: string, defaultValue: string = '') {

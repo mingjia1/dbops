@@ -11,6 +11,21 @@ const buildAuthHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
+
+const parseFetchJson = async (res: Response) => {
+  let json: any = null
+  try {
+    json = await res.json()
+  } catch {
+    json = null
+  }
+  if (!res.ok || (json?.code && json.code !== 200)) {
+    throw new Error(json?.message || `请求失败(${res.status})`)
+  }
+  return json
+}
+
 // ─── 安全设置 ─────────────────────────────────────────────────────────────
 
 const SecurityTab: React.FC = () => {
@@ -92,7 +107,17 @@ const PasswordPolicyForm: React.FC = () => {
     const raw = settings.password_policy || localStorage.getItem(POLICY_KEY)
     if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultPolicy) }
   }, [settings.password_policy])
-  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(POLICY_KEY, j); save('password_policy', j); message.success('密码策略已保存') }
+  const handleSave = async () => {
+    const v = form.getFieldsValue()
+    const j = JSON.stringify(v)
+    try {
+      await save('password_policy', j)
+      localStorage.setItem(POLICY_KEY, j)
+      message.success('密码策略已保存')
+    } catch (err: any) {
+      message.error('保存密码策略失败: ' + getErrorMessage(err))
+    }
+  }
   return (
     <Form form={form} layout="vertical" size="small">
       <Row gutter={8}>
@@ -141,12 +166,16 @@ const MetricsTab: React.FC = () => {
     credForm.setFieldsValue({ mysql_user: credential.username || 'root', mysql_password: credential.password || '' })
   }, [settings, form, credForm])
 
-  const saveMetrics = () => {
+  const saveMetrics = async () => {
     const v = form.getFieldsValue()
     const j = JSON.stringify(v)
-    localStorage.setItem(METRICS_KEY, j)
-    save('metrics_thresholds', j)
-    message.success('Metrics thresholds saved')
+    try {
+      await save('metrics_thresholds', j)
+      localStorage.setItem(METRICS_KEY, j)
+      message.success('Metrics thresholds saved')
+    } catch (err: any) {
+      message.error('保存监控阈值失败: ' + getErrorMessage(err))
+    }
   }
 
   const saveCred = async () => {
@@ -214,7 +243,17 @@ const PlatformTab: React.FC = () => {
     const raw = settings.platform_params || localStorage.getItem(PARAMS_KEY)
     if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultParams) }
   }, [settings.platform_params])
-  const handleSave = () => { const v = form.getFieldsValue(); const j = JSON.stringify(v); localStorage.setItem(PARAMS_KEY, j); save('platform_params', j); message.success('平台参数已保存') }
+  const handleSave = async () => {
+    const v = form.getFieldsValue()
+    const j = JSON.stringify(v)
+    try {
+      await save('platform_params', j)
+      localStorage.setItem(PARAMS_KEY, j)
+      message.success('平台参数已保存')
+    } catch (err: any) {
+      message.error('保存平台参数失败: ' + getErrorMessage(err))
+    }
+  }
   return (
     <Form form={form} layout="horizontal" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} size="small">
       <Row gutter={16}>
@@ -302,17 +341,27 @@ const PackageTab: React.FC = () => {
     handleScanRelay()
   }, [])
 
-  const saveCfg = () => save('relay_config', JSON.stringify({ relay_host_id: relayHostId, relay_path: relayPath }))
+  const saveCfg = async (nextHostId = relayHostId, nextPath = relayPath) => {
+    try {
+      await save('relay_config', JSON.stringify({ relay_host_id: nextHostId, relay_path: nextPath }))
+      message.success('中继配置已保存')
+    } catch (err: any) {
+      message.error('保存中继配置失败: ' + getErrorMessage(err))
+    }
+  }
 
   const handleScanRelay = async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: '' }) })
-      const json = await res.json()
+      const json = await parseFetchJson(res)
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
       setRelayFiles(m)
-    } catch {} finally { setLoading(false) }
+    } catch (err: any) {
+      setRelayFiles(new Map())
+      message.error('扫描中继包失败: ' + getErrorMessage(err))
+    } finally { setLoading(false) }
   }
 
   const handleScanRemote = async () => {
@@ -320,12 +369,12 @@ const PackageTab: React.FC = () => {
     setLoading(true)
     try {
       const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
-      const json = await res.json()
+      const json = await parseFetchJson(res)
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
       setRemoteFiles(m)
       message.success(`远程扫描完成，${(json?.data?.packages || []).length} 个包`)
-    } catch (e: any) { message.error(`扫描失败: ${e?.message}`) } finally { setLoading(false) }
+    } catch (e: any) { setRemoteFiles(new Map()); message.error(`扫描失败: ${getErrorMessage(e)}`) } finally { setLoading(false) }
   }
 
   // 统一"补充"操作：存在则从远程拉取，不存在则从镜像下载
@@ -336,20 +385,20 @@ const PackageTab: React.FC = () => {
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '拉取中...' }))
       try {
         const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
-        const json = await res.json()
+        const json = await parseFetchJson(res)
         if (json?.code === 200) { message.success(`${c.fn} 已拉取`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`拉取失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
-      } catch (e: any) { message.error(`拉取失败: ${e?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      } catch (e: any) { message.error(`拉取失败: ${getErrorMessage(e)}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
       finally { setDownloading(null) }
     } else {
       // 从镜像下载
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '下载中...' }))
       try {
         const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
-        const json = await res.json()
+        const json = await parseFetchJson(res)
         if (json?.code === 200) { message.success(`${c.fn} 下载完成`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`下载失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
-      } catch (e: any) { message.error(`下载失败: ${e?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
+      } catch (e: any) { message.error(`下载失败: ${getErrorMessage(e)}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
       finally { setDownloading(null) }
     }
   }
@@ -358,17 +407,17 @@ const PackageTab: React.FC = () => {
     const fd = new FormData(); fd.append('file', file)
     try {
       const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { ...buildAuthHeaders() }, body: fd })
-      const json = await res.json()
+      const json = await parseFetchJson(res)
       if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanRelay() } else message.error(`上传失败: ${json?.message}`)
-    } catch (e: any) { message.error(`上传失败: ${e?.message}`) }
+    } catch (e: any) { message.error(`上传失败: ${getErrorMessage(e)}`) }
   }
 
   const handleDelete = async (fn: string) => {
     try {
       const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: fn }) })
-      const json = await res.json()
+      const json = await parseFetchJson(res)
       if (json?.code === 200) { message.success('已删除'); handleScanRelay() } else message.error(`删除失败: ${json?.message}`)
-    } catch (e: any) { message.error(`删除失败: ${e?.message}`) }
+    } catch (e: any) { message.error(`删除失败: ${getErrorMessage(e)}`) }
   }
 
   const filtered = CATALOG.filter(c => (osFilter === 'all' || c.os === osFilter) && (productFilter === 'all' || c.p === productFilter))
@@ -378,8 +427,8 @@ const PackageTab: React.FC = () => {
     <div>
       <Card type="inner" size="small" style={{ marginBottom: 12 }}>
         <Row gutter={8} align="middle">
-          <Col span={5}><Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveCfg() }} placeholder="中继主机" options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} /></Col>
-          <Col span={3}><Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={saveCfg} placeholder="/opt" addonBefore="路径" /></Col>
+          <Col span={5}><Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveCfg(v, relayPath) }} placeholder="中继主机" options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} /></Col>
+          <Col span={3}><Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={(e) => saveCfg(relayHostId, e.target.value)} placeholder="/opt" addonBefore="路径" /></Col>
           <Col span={2}><Button size="small" icon={<ReloadOutlined />} onClick={handleScanRelay} loading={loading}>刷新</Button></Col>
           <Col span={3}><Button size="small" icon={<DownloadOutlined />} onClick={handleScanRemote} loading={loading} disabled={!relayHostId}>扫描远程</Button></Col>
           <Col span={3}>
