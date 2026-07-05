@@ -109,6 +109,30 @@ describe('useTaskSSE', () => {
     expect(onProgress).toHaveBeenCalledWith(event)
   })
 
+  it('unwraps backend SSE messages before dispatching events', () => {
+    const onProgress = vi.fn()
+    renderHook(() => useTaskSSE({ ...defaultOptions, onProgress }))
+
+    const instance = MockEventSource.lastInstance()
+    expect(instance).toBeDefined()
+
+    const event: TaskEvent = {
+      task_id: 'test-deploy-001',
+      event_type: 'progress',
+      progress: 60,
+      stage: 'deploying',
+      log_line: '',
+      status: 'running',
+    }
+
+    act(() => {
+      instance!.receive(JSON.stringify({ type: 'progress', data: event }))
+    })
+
+    expect(onProgress).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenCalledWith(event)
+  })
+
   it('calls onLog when receiving log event', () => {
     const onLog = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onLog }))

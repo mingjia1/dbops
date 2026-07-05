@@ -22,6 +22,29 @@ export interface UseTaskSSEOptions {
   onError?: (error: Error) => void
 }
 
+function normalizeTaskEvent(value: unknown): TaskEvent {
+  if (!value || typeof value !== 'object') {
+    throw new Error('invalid task event')
+  }
+  const maybeWrapped = value as { type?: string; data?: unknown }
+  const payload = maybeWrapped.data && typeof maybeWrapped.data === 'object'
+    ? maybeWrapped.data as Partial<TaskEvent>
+    : value as Partial<TaskEvent>
+  const eventType = payload.event_type || maybeWrapped.type
+  if (!eventType) {
+    throw new Error('invalid task event')
+  }
+  return {
+    task_id: payload.task_id || '',
+    event_type: eventType as TaskEvent['event_type'],
+    progress: typeof payload.progress === 'number' ? payload.progress : 0,
+    stage: payload.stage || '',
+    log_line: payload.log_line || '',
+    status: payload.status || '',
+    metadata: payload.metadata,
+  }
+}
+
 export function useTaskSSE(options: UseTaskSSEOptions) {
   const {
     taskID,
@@ -77,7 +100,7 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
 
     source.onmessage = (msg) => {
       try {
-        const event = JSON.parse(msg.data) as TaskEvent
+        const event = normalizeTaskEvent(JSON.parse(msg.data))
         addEvent(event)
       } catch {
         // raw log line
