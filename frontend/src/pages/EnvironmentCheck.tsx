@@ -77,6 +77,9 @@ const EnvironmentCheck: React.FC = () => {
     fetchHosts()
   }, [])
 
+  const errorMessage = (err: any, fallback: string) =>
+    err?.response?.data?.message || err?.message || fallback
+
   const onFinish = async () => {
     let payload: {
       hosts?: { host: string; port: number; username: string; password: string }[]
@@ -136,6 +139,12 @@ const EnvironmentCheck: React.FC = () => {
           message.success('环境检查通过')
         }
       }
+    } catch (err: any) {
+      setResult(null)
+      if (mode === 'from-hosts') {
+        await fetchHosts()
+      }
+      message.error(errorMessage(err, '环境检查失败'))
     } finally {
       setSubmitting(false)
     }

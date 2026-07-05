@@ -48,6 +48,9 @@ const ParameterTemplateList: React.FC = () => {
   const [applyForm] = Form.useForm()
   const paramsText = Form.useWatch('parameters', form)
 
+  const errorMessage = (err: any, fallback: string) =>
+    err?.response?.data?.data?.message || err?.response?.data?.message || err?.message || fallback
+
   const fetchData = async () => {
     setLoading(true)
     try {
@@ -115,6 +118,8 @@ const ParameterTemplateList: React.FC = () => {
       }
       setModalOpen(false)
       fetchData()
+    } catch (err: any) {
+      message.error(errorMessage(err, editing ? '更新模板失败' : '创建模板失败'))
     } finally {
       setSubmitting(false)
     }
@@ -128,9 +133,13 @@ const ParameterTemplateList: React.FC = () => {
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        await parameterTemplateApi.delete(template.id)
-        message.success('模板已删除')
-        fetchData()
+        try {
+          await parameterTemplateApi.delete(template.id)
+          message.success('模板已删除')
+          fetchData()
+        } catch (err: any) {
+          message.error(errorMessage(err, '删除模板失败'))
+        }
       },
     })
   }
@@ -142,6 +151,9 @@ const ParameterTemplateList: React.FC = () => {
       const res: any = await parameterTemplateApi.recommend(values)
       setRecommendResult(res?.data || res)
       message.success('推荐参数已生成')
+    } catch (err: any) {
+      setRecommendResult(null)
+      message.error(errorMessage(err, '推荐参数生成失败'))
     } finally {
       setSubmitting(false)
     }
@@ -178,6 +190,10 @@ const ParameterTemplateList: React.FC = () => {
         message.success(`参数模板已应用：成功 ${applied} 个`)
       }
       setApplyOpen(false)
+      fetchData()
+    } catch (err: any) {
+      message.error(errorMessage(err, '应用参数模板失败'))
+      fetchData()
     } finally {
       setSubmitting(false)
     }
