@@ -29,6 +29,9 @@ const BackupManage: React.FC = () => {
   const [form] = Form.useForm()
   const [policyForm] = Form.useForm()
 
+  const backupErrorMessage = (err: any, fallback: string) =>
+    err?.response?.data?.data?.message || err?.response?.data?.message || err?.message || fallback
+
   useEffect(() => {
     Promise.all([
       instanceApi.list(100, 0).then((res: any) => setInstances(res?.data || [])).catch(() => setInstances([])),
@@ -100,11 +103,8 @@ const BackupManage: React.FC = () => {
       setTab('records')
       await fetchRecordsFor(selectedInstance)
     } catch (err: any) {
-      if (!err?.response?.data?.message && err?.message) {
-        message.error(err.message)
-        return
-      }
-      message.error(err?.response?.data?.message || '备份执行失败')
+      await fetchRecordsFor(selectedInstance)
+      message.error(backupErrorMessage(err, '备份执行失败'))
     } finally {
       setSubmitting(false)
     }
@@ -126,7 +126,7 @@ const BackupManage: React.FC = () => {
         message.success('\u5907\u4efd\u4efb\u52a1\u5df2\u63d0\u4ea4\uff0c\u8bf7\u5237\u65b0\u8bb0\u5f55\u67e5\u770b\u72b6\u6001')
       }
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '\u5907\u4efd\u6267\u884c\u5931\u8d25')
+      message.error(backupErrorMessage(err, '\u5907\u4efd\u6267\u884c\u5931\u8d25'))
     } finally {
       await fetchRecordsFor(policy.instance_id)
       setSubmitting(false)
@@ -145,7 +145,8 @@ const BackupManage: React.FC = () => {
       await fetchRecordsFor(selectedInstance)
       message.success(`扫描完成，发现 ${list.length} 个备份文件`)
     } catch (err: any) {
-      message.error(err?.response?.data?.message || '扫描备份失败')
+      await fetchRecordsFor(selectedInstance)
+      message.error(backupErrorMessage(err, '扫描备份失败'))
     } finally {
       setScanLoading(false)
     }
@@ -256,7 +257,8 @@ const BackupManage: React.FC = () => {
           message.success(isCompletedBackupStatus(data.status) ? '\u6062\u590d\u5b8c\u6210' : '\u6062\u590d\u4efb\u52a1\u5df2\u63d0\u4ea4')
           await fetchRecordsFor(record.instance_id)
         } catch (err: any) {
-          message.error(err?.response?.data?.message || err?.message || '\u6062\u590d\u5931\u8d25')
+          await fetchRecordsFor(record.instance_id)
+          message.error(backupErrorMessage(err, '\u6062\u590d\u5931\u8d25'))
         } finally {
           setSubmitting(false)
         }
