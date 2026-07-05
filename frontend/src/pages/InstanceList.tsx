@@ -170,6 +170,11 @@ const InstanceList: React.FC = () => {
       password: i.password || '',
       host_id: i.host_id || undefined,
       cluster_id: i.cluster_id || undefined,
+      version_id: i.version_id || undefined,
+      basedir: i.basedir || undefined,
+      datadir: i.datadir || undefined,
+      os_user: i.os_user || undefined,
+      package_url: i.package_url || undefined,
     }))
     setBatchSubmitting(true)
     try {
@@ -492,23 +497,57 @@ const InstanceList: React.FC = () => {
 
       <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width={900}>
         <Form form={batchForm} layout="vertical">
-          <Form.List name="instances" initialValue={[{ name: '', host: '', port: 3306, username: 'root', password: '' }]}>
+          <Form.List name="instances" initialValue={[{ name: '', host: '', port: 3306, username: 'root', password: '', os_user: 'mysql' }]}>
             {(fields, { add, remove }) => (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 80px 1fr 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
                   <span>实例名</span><span>地址</span><span>端口</span><span>用户</span><span>密码</span><span></span>
                 </div>
                 {fields.map(({ key, name }) => (
-                  <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
-                    <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
-                    <Form.Item name={[name, 'host']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
-                    <Form.Item name={[name, 'port']} style={{ margin: 0 }} initialValue={3306}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
-                    <Form.Item name={[name, 'username']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
-                    <Form.Item name={[name, 'password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="MySQL密码" autoComplete="new-password" /></Form.Item>
-                    <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
+                  <div key={key} style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 80px 1fr 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
+                      <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
+                      <Form.Item name={[name, 'host']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
+                      <Form.Item name={[name, 'port']} style={{ margin: 0 }} initialValue={3306}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
+                      <Form.Item name={[name, 'username']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
+                      <Form.Item name={[name, 'password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="MySQL密码" autoComplete="new-password" /></Form.Item>
+                      <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr 80px 1.2fr', gap: 8 }}>
+                      <Form.Item name={[name, 'host_id']} style={{ margin: 0 }}>
+                        <Select
+                          size="small"
+                          allowClear
+                          placeholder="绑定主机"
+                          options={hosts.map((h) => ({ value: h.id, label: `${h.name} (${h.address})` }))}
+                          onChange={(value) => {
+                            const host = hosts.find((h) => h.id === value)
+                            if (host) {
+                              const rows = batchForm.getFieldValue('instances') || []
+                              rows[name] = { ...rows[name], host: host.address }
+                              batchForm.setFieldsValue({ instances: rows })
+                            }
+                          }}
+                        />
+                      </Form.Item>
+                      <Form.Item name={[name, 'version_id']} style={{ margin: 0 }}>
+                        <Select
+                          size="small"
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder="目标版本"
+                          options={versions.map((v) => ({ value: v.id, label: `${v.flavor} ${v.version}` }))}
+                        />
+                      </Form.Item>
+                      <Form.Item name={[name, 'basedir']} style={{ margin: 0 }}><Input size="small" placeholder="basedir" /></Form.Item>
+                      <Form.Item name={[name, 'datadir']} style={{ margin: 0 }}><Input size="small" placeholder="datadir" /></Form.Item>
+                      <Form.Item name={[name, 'os_user']} style={{ margin: 0 }} initialValue="mysql"><Input size="small" placeholder="OS用户" /></Form.Item>
+                      <Form.Item name={[name, 'package_url']} style={{ margin: 0 }}><Input size="small" placeholder="package_url" /></Form.Item>
+                    </div>
                   </div>
                 ))}
-                <Button size="small" type="dashed" onClick={() => add({ name: '', host: '', port: 3306, username: 'root', password: '' })} style={{ marginTop: 4 }}>+ 添加一行</Button>
+                <Button size="small" type="dashed" onClick={() => add({ name: '', host: '', port: 3306, username: 'root', password: '', os_user: 'mysql' })} style={{ marginTop: 4 }}>+ 添加一行</Button>
               </>
             )}
           </Form.List>
