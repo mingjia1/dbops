@@ -222,6 +222,15 @@ const HostDetail: React.FC = () => {
     setRegisterOpen(true)
   }
 
+  const buildScannedInstanceMetadata = (s: ScannedInstance) => {
+    const version = (s.version || '').trim().split('-')[0]
+    const flavor = (s.flavor || '').trim()
+    return {
+      version_id: flavor && version ? `${flavor}-${version}` : undefined,
+      datadir: s.datadir || undefined,
+    }
+  }
+
   const submitRegister = async () => {
     if (!id || !registerTarget) return
     try {
@@ -234,6 +243,7 @@ const HostDetail: React.FC = () => {
           username: values.username,
           password: values.password,
           cluster_id: values.cluster_id || undefined,
+          ...buildScannedInstanceMetadata(registerTarget),
         })
         message.success(`实例 ${values.name} 已纳管`)
         setRegisterOpen(false)
@@ -278,10 +288,11 @@ const HostDetail: React.FC = () => {
         username: values.username,
         password: values.password,
         cluster_id: values.cluster_id || undefined,
+        ...buildScannedInstanceMetadata(item),
       }))
       const res: any = await hostApi.registerScannedInstances(id, payload)
       const rows = res?.data?.rows || []
-      const registeredPorts = new Set(rows.filter((row: any) => row.status === 'registered' || row.status === 'skipped').map((row: any) => row.port))
+      const registeredPorts = new Set(rows.filter((row: any) => row.status === 'registered' || row.status === 'skipped' || row.status === 'updated').map((row: any) => row.port))
       message.success(`一键纳管完成，成功 ${res?.data?.registered ?? 0} 个，跳过 ${res?.data?.skipped ?? 0} 个`)
       setBatchRegisterOpen(false)
       fetchInstances()

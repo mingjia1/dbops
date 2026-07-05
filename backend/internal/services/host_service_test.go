@@ -245,3 +245,38 @@ func TestRegisterScannedInstancesUpdatesPasswordForManagedPort(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new-password", plain)
 }
+
+func TestRegisterScannedInstancePersistsScanMetadata(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	hostRepo := repositories.NewHostRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	service := NewHostService(hostRepo, "test-encryption-key")
+	service.SetInstanceRepo(instanceRepo)
+
+	host := &models.Host{
+		ID:      "host-scan-metadata",
+		Name:    "host-scan-metadata",
+		Address: "10.0.0.31",
+		SSHPort: 22,
+		SSHUser: "root",
+	}
+	require.NoError(t, hostRepo.Create(ctx, host))
+
+	instanceID, err := service.RegisterScannedInstance(ctx, host.ID, RegisterScannedInstanceRequest{
+		Port:      3307,
+		Name:      "scanned-3307",
+		Username:  "root",
+		Password:  "secret-password",
+		VersionID: "mysql-8.0.36",
+		Datadir:   "/data/mysql_3307",
+	})
+
+	require.NoError(t, err)
+	conn, err := instanceRepo.GetConnection(ctx, instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, "mysql-8.0.36", conn.VersionID)
+	assert.Equal(t, "/data/mysql_3307", conn.Datadir)
+	assert.Equal(t, host.Address, conn.Host)
+	assert.Equal(t, 3307, conn.Port)
+}

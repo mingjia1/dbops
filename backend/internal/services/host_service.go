@@ -1555,11 +1555,16 @@ func normalizeVersionString(s string) string {
 }
 
 type RegisterScannedInstanceRequest struct {
-	Port      int    `json:"port" binding:"required"`
-	Name      string `json:"name" binding:"required"`
-	Username  string `json:"username"`
-	Password  string `json:"password" binding:"required"`
-	ClusterID string `json:"cluster_id"`
+	Port       int    `json:"port" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	Username   string `json:"username"`
+	Password   string `json:"password" binding:"required"`
+	ClusterID  string `json:"cluster_id"`
+	VersionID  string `json:"version_id"`
+	Basedir    string `json:"basedir"`
+	Datadir    string `json:"datadir"`
+	OSUser     string `json:"os_user"`
+	PackageURL string `json:"package_url"`
 }
 
 type BatchRegisterScannedInstanceRequest struct {
@@ -1607,6 +1612,11 @@ func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string
 		Host:       host.Address,
 		Port:       req.Port,
 		Username:   req.Username,
+		VersionID:  req.VersionID,
+		Basedir:    req.Basedir,
+		Datadir:    req.Datadir,
+		OSUser:     req.OSUser,
+		PackageURL: req.PackageURL,
 	}
 	// P1-4: 之前 PasswordEncrypted: req.Password 直接存明文, 与 InstanceService.Create
 	// 不一致 — 任何后续 health_check / failover 拿 conn 当密码, MySQL 收到 AES-GCM 密文必败.

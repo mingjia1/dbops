@@ -457,10 +457,32 @@ export const hostApi = {
   getScanResult: (hostId: string, taskId: string) =>
     api.get(`/hosts/${hostId}/scan-instances/${taskId}`),
 
-  registerScannedInstance: (hostId: string, data: { port: number; name: string; username: string; password: string; cluster_id?: string }) =>
+  registerScannedInstance: (hostId: string, data: {
+    port: number
+    name: string
+    username: string
+    password: string
+    cluster_id?: string
+    version_id?: string
+    basedir?: string
+    datadir?: string
+    os_user?: string
+    package_url?: string
+  }) =>
     api.post(`/hosts/${hostId}/scan-instances/register`, data),
 
-  registerScannedInstances: (hostId: string, instances: Array<{ port: number; name: string; username: string; password: string; cluster_id?: string }>) =>
+  registerScannedInstances: (hostId: string, instances: Array<{
+    port: number
+    name: string
+    username: string
+    password: string
+    cluster_id?: string
+    version_id?: string
+    basedir?: string
+    datadir?: string
+    os_user?: string
+    package_url?: string
+  }>) =>
     api.post(`/hosts/${hostId}/scan-instances/register-batch`, { instances }),
   }
 
