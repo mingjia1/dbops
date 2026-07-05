@@ -18,6 +18,8 @@ import ScanConfigModal from '../components/ScanConfigModal'
 import RegisterInstanceModal from '../components/RegisterInstanceModal'
 import BatchRegisterModal from '../components/BatchRegisterModal'
 
+const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
+
 const HostDetail: React.FC = () => {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
@@ -302,6 +304,9 @@ const HostDetail: React.FC = () => {
           registeredPorts.has(item.port) ? { ...item, already_managed: true } : item,
         ),
       })
+    } catch (err: any) {
+      message.error('一键纳管失败: ' + getErrorMessage(err))
+      fetchInstances()
     } finally {
       setBatchRegistering(false)
     }
@@ -439,13 +444,33 @@ const HostDetail: React.FC = () => {
               fetchHost()
             }
           }
-        } catch {
+        } catch (err: any) {
           clearInterval(interval)
           setTesting(false)
+          setTestResult({
+            task_id: taskId,
+            host_id: id,
+            status: 'failed',
+            message: getErrorMessage(err),
+            latency_ms: 0,
+            started_at: initial.started_at,
+            ended_at: new Date().toISOString(),
+          })
+          message.error('连接检测结果查询失败: ' + getErrorMessage(err))
         }
       }, 1000)
-    } catch {
+    } catch (err: any) {
       setTesting(false)
+      setTestResult({
+        task_id: '',
+        host_id: id,
+        status: 'failed',
+        message: getErrorMessage(err),
+        latency_ms: 0,
+        started_at: new Date().toISOString(),
+        ended_at: new Date().toISOString(),
+      })
+      message.error('连接检测发起失败: ' + getErrorMessage(err))
     }
   }
 

@@ -32,6 +32,8 @@ const tagColor = (s?: string) => {
 const summarize = (rows: any[]) =>
   rows.map(r => `${r?.host_name || r?.address || '-'}: ${r?.message || r?.status || '-'}`).join('\n')
 
+const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
+
 interface LiveStatus { status: string; message?: string; action?: string }
 
 const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
@@ -47,13 +49,17 @@ const AgentManage: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState<Record<string, LiveStatus>>({})
   const [form] = Form.useForm()
 
-  const fetchHosts = useCallback(async () => {
+  const fetchHosts = useCallback(async (notify = true, clearOnError = true) => {
     setLoading(true)
     try {
       const res: any = await hostApi.list(1000, 0)
       const rows = res?.data || []
       setHosts(rows)
       return rows as Host[]
+    } catch (err: any) {
+      if (clearOnError) setHosts([])
+      if (notify) message.error('加载主机列表失败: ' + getErrorMessage(err))
+      return [] as Host[]
     } finally {
       setLoading(false)
     }
@@ -85,7 +91,7 @@ const AgentManage: React.FC = () => {
 
     for (let attempt = 0; attempt < 90 && pending.size > 0; attempt += 1) {
       await sleep(2000)
-      const latestHosts = await fetchHosts()
+      const latestHosts = await fetchHosts(false, false)
 
       latestHosts
         .filter(host => pending.has(host.id) && host.agent_last_action === action)
