@@ -2,14 +2,17 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
@@ -724,6 +727,11 @@ func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo
 			config[k] = v
 		}
 	}
+	if clusterType == "mgr" {
+		if serverUUID, err := s.queryInstanceServerUUID(ctx, req.InstanceID); err == nil && serverUUID != "" {
+			config["new_master_server_uuid"] = serverUUID
+		}
+	}
 
 	result, err := s.agentClient.callAgent(ctx, host.Address, host.Port, "/agent/tasks/role-promote", map[string]interface{}{
 		"task_id":     uuid.New().String(),
@@ -735,6 +743,40 @@ func (s *SwitchService) promoteInstance(ctx context.Context, host *AgentHostInfo
 		return err
 	}
 	return switchAgentTaskError("promote instance", result)
+}
+
+func (s *SwitchService) queryInstanceServerUUID(ctx context.Context, instanceID string) (string, error) {
+	conn, err := s.instRepo.GetConnection(ctx, instanceID)
+	if err != nil {
+		return "", err
+	}
+	pass, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return "", err
+	}
+	cfg := mysql.NewConfig()
+	cfg.User = conn.Username
+	cfg.Passwd = pass
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(conn.Host, fmt.Sprintf("%d", conn.Port))
+	cfg.Timeout = 5 * time.Second
+	cfg.ReadTimeout = 5 * time.Second
+	cfg.WriteTimeout = 5 * time.Second
+	dsn := cfg.FormatDSN()
+
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	var serverUUID string
+	if err := db.QueryRowContext(queryCtx, "SELECT @@server_uuid").Scan(&serverUUID); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(serverUUID), nil
 }
 
 func (s *SwitchService) demoteInstance(ctx context.Context, host *AgentHostInfo, clusterType string, req RoleSwitchRequest) error {

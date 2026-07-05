@@ -763,6 +763,32 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 			Timestamp: time.Now(),
 		}, nil
 	}
+	runtimeOpts := mysqlRuntimeOptionsFor(mysqld)
+	if runtimeOpts.Basedir != "" {
+		basedir = runtimeOpts.Basedir
+	}
+	if runtimeOpts.SecureFileDir != "" {
+		if err := os.MkdirAll(runtimeOpts.SecureFileDir, 0o750); err != nil {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("create secure_file_priv dir failed: %v", err),
+				Timestamp: time.Now(),
+			}, nil
+		}
+		if uid >= 0 && gid >= 0 {
+			if err := os.Chown(runtimeOpts.SecureFileDir, uid, gid); err != nil {
+				return &TaskResult{
+					TaskID:    req.TaskID,
+					Status:    "failed",
+					Progress:  0,
+					Message:   fmt.Sprintf("chown secure_file_priv dir failed: %v", err),
+					Timestamp: time.Now(),
+				}, nil
+			}
+		}
+	}
 
 	// Kill any mysqld process using the target port
 	socketPath := fmt.Sprintf("/tmp/mysql_%d.sock", port)
@@ -805,6 +831,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		if basedir != "" {
 			initArgs = append(initArgs, "--basedir="+basedir)
 		}
+		if runtimeOpts.SecureFileDir != "" {
+			initArgs = append(initArgs, "--secure-file-priv="+runtimeOpts.SecureFileDir)
+		}
 		initCmd := exec.CommandContext(ctx, mysqld, initArgs...)
 		if out, err := initCmd.CombinedOutput(); err != nil {
 			return &TaskResult{
@@ -821,7 +850,7 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// basedir/lib/plugin/ instead of the default basedir/lib/mysql/plugin/.
 	// Without --plugin-dir, mysqld with --no-defaults uses its compiled-in default
 	// and fails to load group_replication.so dependencies (component_reference_cache.so).
-	var pluginDir string
+	pluginDir := runtimeOpts.PluginDir
 	if basedir != "" {
 		for _, rel := range []string{
 			filepath.Join("lib", "plugin"),
@@ -855,6 +884,9 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	}
 	if pluginDir != "" {
 		startArgs = append(startArgs, "--plugin-dir="+pluginDir)
+	}
+	if runtimeOpts.SecureFileDir != "" {
+		startArgs = append(startArgs, "--secure-file-priv="+runtimeOpts.SecureFileDir)
 	}
 
 	// 如果是MGR部署，添加MGR配置
@@ -898,41 +930,41 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 		)
 	}
 	// Diagnostic: gather info about mysqld binary and component .so before starting
-		var diag strings.Builder
-		if basedir != "" {
-			// Check all candidate plugin directories for group_replication.so and component_reference_cache.so
-			candidatePluginDirs := []string{
-				filepath.Join(basedir, "lib", "plugin"),
-				filepath.Join(basedir, "lib64", "plugin"),
-				filepath.Join(basedir, "lib", "mysql", "plugin"),
-				filepath.Join(basedir, "plugin"),
+	var diag strings.Builder
+	if basedir != "" {
+		// Check all candidate plugin directories for group_replication.so and component_reference_cache.so
+		candidatePluginDirs := []string{
+			filepath.Join(basedir, "lib", "plugin"),
+			filepath.Join(basedir, "lib64", "plugin"),
+			filepath.Join(basedir, "lib", "mysql", "plugin"),
+			filepath.Join(basedir, "plugin"),
+		}
+		if pluginDir != "" {
+			diag.WriteString("USING_PLUGIN_DIR: " + pluginDir + "\n")
+		}
+		for _, dir := range candidatePluginDirs {
+			lsOut, _ := exec.CommandContext(ctx, "ls", "-la", dir).CombinedOutput()
+			if len(lsOut) > 0 {
+				diag.WriteString("PLUGIN_DIR " + dir + ":\n" + strings.TrimSpace(string(lsOut)) + "\n")
+			} else {
+				diag.WriteString("PLUGIN_DIR " + dir + ": (does not exist or empty)\n")
 			}
-			if pluginDir != "" {
-				diag.WriteString("USING_PLUGIN_DIR: " + pluginDir + "\n")
-			}
-			for _, dir := range candidatePluginDirs {
-				lsOut, _ := exec.CommandContext(ctx, "ls", "-la", dir).CombinedOutput()
-				if len(lsOut) > 0 {
-					diag.WriteString("PLUGIN_DIR " + dir + ":\n" + strings.TrimSpace(string(lsOut)) + "\n")
+			componentSO := filepath.Join(dir, "component_reference_cache.so")
+			if _, err := os.Stat(componentSO); err == nil {
+				lddCmd := exec.CommandContext(ctx, "ldd", componentSO)
+				lddCmd.Env = startCmd.Env
+				if lddOut, lddErr := lddCmd.CombinedOutput(); lddErr == nil {
+					diag.WriteString("LDD " + componentSO + ":\n" + strings.TrimSpace(string(lddOut)) + "\n")
 				} else {
-					diag.WriteString("PLUGIN_DIR " + dir + ": (does not exist or empty)\n")
+					diag.WriteString("LDD_ERR " + componentSO + ": " + lddErr.Error() + " " + strings.TrimSpace(string(lddOut)) + "\n")
 				}
-				componentSO := filepath.Join(dir, "component_reference_cache.so")
-				if _, err := os.Stat(componentSO); err == nil {
-					lddCmd := exec.CommandContext(ctx, "ldd", componentSO)
-					lddCmd.Env = startCmd.Env
-					if lddOut, lddErr := lddCmd.CombinedOutput(); lddErr == nil {
-						diag.WriteString("LDD " + componentSO + ":\n" + strings.TrimSpace(string(lddOut)) + "\n")
-					} else {
-						diag.WriteString("LDD_ERR " + componentSO + ": " + lddErr.Error() + " " + strings.TrimSpace(string(lddOut)) + "\n")
-					}
-				}
-			}
-			lsMysqld := exec.CommandContext(ctx, "ls", "-la", mysqld)
-			if mOut, err := lsMysqld.CombinedOutput(); err == nil {
-				diag.WriteString("MYSQLD_BIN: " + strings.TrimSpace(string(mOut)) + "\n")
 			}
 		}
+		lsMysqld := exec.CommandContext(ctx, "ls", "-la", mysqld)
+		if mOut, err := lsMysqld.CombinedOutput(); err == nil {
+			diag.WriteString("MYSQLD_BIN: " + strings.TrimSpace(string(mOut)) + "\n")
+		}
+	}
 	if out, err := startCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
