@@ -566,6 +566,88 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 	require.Equal(t, "mha", replicaTopology.ReplicationMode)
 }
 
+func TestSyncClusterManagementFromPlanSkipsMHAManager(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(nil, nil, nil, instRepo, nil, config.ClusterDefaults{})
+	service.SetEncryptionKey("test-encryption-key")
+
+	err := service.syncClusterManagementFromPlan(ctx, ClusterTypeMHA, "mha-sync", []PlanNode{
+		{ID: "manager", Host: "10.0.0.10", MySQLPort: 3306, Role: "manager", AgentPort: 9090},
+		{ID: "master", Host: "10.0.0.11", MySQLPort: 3306, Role: "master", AgentPort: 9090, DataDir: "/data/mysql/3306"},
+		{ID: "replica", Host: "10.0.0.12", MySQLPort: 3306, Role: "replica", AgentPort: 9090, DataDir: "/data/mysql/3306"},
+	}, UniversalClusterDeployRequest{
+		MySQL: MySQLDeployOptions{User: "root", Password: "Root#2026"},
+	})
+	require.NoError(t, err)
+
+	instances, err := instRepo.ListByClusterID(ctx, "mha-sync")
+	require.NoError(t, err)
+	require.Len(t, instances, 2)
+
+	seenRoles := map[string]bool{}
+	for _, inst := range instances {
+		managed, err := instRepo.GetByID(ctx, inst.ID)
+		require.NoError(t, err)
+		conn, err := instRepo.GetConnection(ctx, inst.ID)
+		require.NoError(t, err)
+		require.NotEqual(t, "10.0.0.10", conn.Host)
+		seenRoles[managed.Status.Role] = true
+		plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
+		require.NoError(t, err)
+		require.Equal(t, "Root#2026", plain)
+	}
+	require.True(t, seenRoles["master"])
+	require.True(t, seenRoles["replica"])
+}
+
+func TestSyncClusterManagementUpdatesExistingConnectionFromDeployConfig(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(nil, nil, nil, instRepo, nil, config.ClusterDefaults{})
+	service.SetEncryptionKey("test-encryption-key")
+
+	oldPassword, err := utils.Encrypt("oldpass", "test-encryption-key")
+	require.NoError(t, err)
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "existing-master", Name: "existing-master"}))
+	require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID:        "existing-master",
+		Host:              "10.0.0.11",
+		Port:              3306,
+		Username:          "admin",
+		PasswordEncrypted: oldPassword,
+		Basedir:           "/old/mysql",
+		Datadir:           "/old/data",
+	}))
+
+	err = service.syncClusterManagement(ctx, ClusterTypeHA, "ha-sync", []pseudoNode{{
+		Host:          "10.0.0.11",
+		Port:          3306,
+		Role:          "master",
+		DataDir:       "/data/mysql/3306",
+		Basedir:       "/usr/local/mysql-3306",
+		MySQLUser:     "root",
+		MySQLPassword: "Root#2026",
+	}})
+	require.NoError(t, err)
+
+	inst, err := instRepo.GetByID(ctx, "existing-master")
+	require.NoError(t, err)
+	require.Equal(t, "ha-sync", inst.ClusterID)
+	require.Equal(t, "master", inst.Status.Role)
+
+	conn, err := instRepo.GetConnection(ctx, "existing-master")
+	require.NoError(t, err)
+	require.Equal(t, "root", conn.Username)
+	require.Equal(t, "/usr/local/mysql-3306", conn.Basedir)
+	require.Equal(t, "/data/mysql/3306", conn.Datadir)
+	plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
+	require.NoError(t, err)
+	require.Equal(t, "Root#2026", plain)
+}
+
 func TestClusterDeployWithoutAgentClientFailsDeployment(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {

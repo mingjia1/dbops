@@ -5195,6 +5195,22 @@ func runMySQLExecSafe(ctx context.Context, host string, port int, user, pass, sq
 	cmd := exec.CommandContext(ctx, getMySQLBinary(), args...)
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	out, err := cmd.CombinedOutput()
+	if err != nil && isLocalMySQLHost(host) {
+		if socket := findMySQLSocket(port); socket != "" {
+			noPassArgs := []string{"-S", socket, "-u", user, "-N", "-B", "-e", sql}
+			noPassCmd := exec.CommandContext(ctx, getMySQLBinary(), noPassArgs...)
+			if noPassOut, noPassErr := noPassCmd.CombinedOutput(); noPassErr == nil {
+				return string(noPassOut), nil
+			}
+			if pass != "" {
+				withPassArgs := append(mysqlSocketArgs(socket, user, pass), "-N", "-B", "-e", sql)
+				withPassCmd := exec.CommandContext(ctx, getMySQLBinary(), withPassArgs...)
+				if withPassOut, withPassErr := withPassCmd.CombinedOutput(); withPassErr == nil {
+					return string(withPassOut), nil
+				}
+			}
+		}
+	}
 	if err != nil && strings.Contains(string(out), "error while loading shared libraries") {
 		if sysOut, sysErr := runSystemMySQLFallback(ctx, host, port, user, pass, sql); sysErr == nil {
 			return string(sysOut), nil
@@ -5566,43 +5582,43 @@ func repairMySQLComponentConfig(config map[string]interface{}) (string, error) {
 		}
 		return reinstallMySQLPackage(config)
 	}
-		// Case 3: Plugin exists but has missing shared library dependencies - re-extract MySQL package
-		if check.MissingDeps {
-			if len(check.Issues) > 0 && !canReextract {
-				return disableStaleComponentConfig(check, config)
-			}
-			return reinstallMySQLPackage(config)
+	// Case 3: Plugin exists but has missing shared library dependencies - re-extract MySQL package
+	if check.MissingDeps {
+		if len(check.Issues) > 0 && !canReextract {
+			return disableStaleComponentConfig(check, config)
 		}
-		// Case 4: Plugin exists at non-default location - create symlink so default plugin_dir works
-		if check.PluginPath != "" {
-			basedir := strings.TrimSpace(configString(config, "basedir"))
-			if basedir == "" {
-				basedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(check.PluginPath))))
-				if !fileExists(filepath.Join(basedir, "bin", "mysqld")) {
-					basedir = filepath.Dir(filepath.Dir(filepath.Dir(check.PluginPath)))
-				}
-			}
-			if basedir != "" {
-				defaultPluginDir := filepath.Join(basedir, "lib", "mysql", "plugin")
-				defaultPluginPath := filepath.Join(defaultPluginDir, check.Component+".so")
-				if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
-					// Plugin is at a non-default location; create a symlink from default dir
-					if _, dirErr := os.Stat(defaultPluginDir); os.IsNotExist(dirErr) {
-						_ = os.MkdirAll(defaultPluginDir, 0o755)
-					}
-					if linkErr := os.Symlink(check.PluginPath, defaultPluginPath); linkErr != nil {
-						return "", fmt.Errorf("创建符号链接 %s → %s 失败: %v", defaultPluginPath, check.PluginPath, linkErr)
-					}
-					after := inspectMySQLComponentConfig(config)
-					after.Passed = true
-					after.Fixable = false
-					after.Message = fmt.Sprintf("已创建符号链接 %s → %s，MySQL 默认插件目录可正常加载 %s.so", defaultPluginPath, check.PluginPath, check.Component)
-					data, _ := json.Marshal(after)
-					return string(data), nil
-				}
+		return reinstallMySQLPackage(config)
+	}
+	// Case 4: Plugin exists at non-default location - create symlink so default plugin_dir works
+	if check.PluginPath != "" {
+		basedir := strings.TrimSpace(configString(config, "basedir"))
+		if basedir == "" {
+			basedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(check.PluginPath))))
+			if !fileExists(filepath.Join(basedir, "bin", "mysqld")) {
+				basedir = filepath.Dir(filepath.Dir(filepath.Dir(check.PluginPath)))
 			}
 		}
-		// Case 2: Plugin exists but config has stale references - comment out config lines
+		if basedir != "" {
+			defaultPluginDir := filepath.Join(basedir, "lib", "mysql", "plugin")
+			defaultPluginPath := filepath.Join(defaultPluginDir, check.Component+".so")
+			if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
+				// Plugin is at a non-default location; create a symlink from default dir
+				if _, dirErr := os.Stat(defaultPluginDir); os.IsNotExist(dirErr) {
+					_ = os.MkdirAll(defaultPluginDir, 0o755)
+				}
+				if linkErr := os.Symlink(check.PluginPath, defaultPluginPath); linkErr != nil {
+					return "", fmt.Errorf("创建符号链接 %s → %s 失败: %v", defaultPluginPath, check.PluginPath, linkErr)
+				}
+				after := inspectMySQLComponentConfig(config)
+				after.Passed = true
+				after.Fixable = false
+				after.Message = fmt.Sprintf("已创建符号链接 %s → %s，MySQL 默认插件目录可正常加载 %s.so", defaultPluginPath, check.PluginPath, check.Component)
+				data, _ := json.Marshal(after)
+				return string(data), nil
+			}
+		}
+	}
+	// Case 2: Plugin exists but config has stale references - comment out config lines
 	changed := 0
 	seen := map[string]bool{}
 	for _, issue := range check.Issues {
@@ -5704,30 +5720,30 @@ func reinstallMySQLPackage(config map[string]interface{}) (string, error) {
 	if mysqld == "" || !fileExists(mysqld) {
 		return "", fmt.Errorf("重新提取 MySQL 安装包失败：mysqld 二进制文件未找到")
 	}
-		// Run ldconfig to update library cache after re-extraction
-		_ = runLdconfig(context.Background(), basedir)
-		// If plugin exists at non-default location, create symlink so MySQL default plugin_dir can find it
-		pluginPath := findMySQLComponentPlugin(config, port, "component_reference_cache")
-		if pluginPath != "" {
-			defaultPluginDir := filepath.Join(basedir, "lib", "mysql", "plugin")
-			defaultPluginPath := filepath.Join(defaultPluginDir, "component_reference_cache.so")
-			if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
-				if _, dirErr := os.Stat(defaultPluginDir); os.IsNotExist(dirErr) {
-					_ = os.MkdirAll(defaultPluginDir, 0o755)
-				}
-				_ = os.Symlink(pluginPath, defaultPluginPath)
+	// Run ldconfig to update library cache after re-extraction
+	_ = runLdconfig(context.Background(), basedir)
+	// If plugin exists at non-default location, create symlink so MySQL default plugin_dir can find it
+	pluginPath := findMySQLComponentPlugin(config, port, "component_reference_cache")
+	if pluginPath != "" {
+		defaultPluginDir := filepath.Join(basedir, "lib", "mysql", "plugin")
+		defaultPluginPath := filepath.Join(defaultPluginDir, "component_reference_cache.so")
+		if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
+			if _, dirErr := os.Stat(defaultPluginDir); os.IsNotExist(dirErr) {
+				_ = os.MkdirAll(defaultPluginDir, 0o755)
 			}
+			_ = os.Symlink(pluginPath, defaultPluginPath)
 		}
-		after := inspectMySQLComponentConfig(config)
-		after.Passed = after.PluginPath != "" && !after.MissingDeps
-		after.Fixable = !after.Passed
-		if after.Passed {
-			after.Message = fmt.Sprintf("已重新提取 MySQL 安装包，%s.so 及其依赖库已恢复", after.Component)
-		} else if after.MissingDeps {
-			after.Message = fmt.Sprintf("重新提取 MySQL 安装包后 %s.so 依赖库仍缺失，请检查系统共享库", after.Component)
-		} else {
-			after.Message = fmt.Sprintf("重新提取 MySQL 安装包后仍未找到 %s.so", after.Component)
-		}
+	}
+	after := inspectMySQLComponentConfig(config)
+	after.Passed = after.PluginPath != "" && !after.MissingDeps
+	after.Fixable = !after.Passed
+	if after.Passed {
+		after.Message = fmt.Sprintf("已重新提取 MySQL 安装包，%s.so 及其依赖库已恢复", after.Component)
+	} else if after.MissingDeps {
+		after.Message = fmt.Sprintf("重新提取 MySQL 安装包后 %s.so 依赖库仍缺失，请检查系统共享库", after.Component)
+	} else {
+		after.Message = fmt.Sprintf("重新提取 MySQL 安装包后仍未找到 %s.so", after.Component)
+	}
 	data, err := json.Marshal(after)
 	if err != nil {
 		return "", err
@@ -5772,50 +5788,50 @@ func inspectMySQLComponentConfig(config map[string]interface{}) mysqlComponentCo
 		return result
 	}
 	// Case 2: Plugin exists but config has stale references
-		if len(issues) > 0 {
-			result.Passed = false
-			result.Fixable = true
-			result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮注释过期 component_load 配置", component, component)
-		}
-		// Case 4: Plugin exists at non-default location — MySQL's default plugin_dir
-		// is basedir/lib/mysql/plugin/, but Community 8.0.36+ places .so files at
-		// basedir/lib/plugin/.  Without --plugin-dir at startup, mysqld won't find
-		// the component and deployment will fail.
-		if pluginPath != "" {
-			// Try to get basedir from config first (more reliable than deriving from path)
-			checkBasedir := strings.TrimSpace(configString(config, "basedir"))
-			if checkBasedir == "" {
-				// Derive basedir from the actual plugin path (works for 3-4 levels deep)
-				checkBasedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(pluginPath))))
-				// If pluginPath is like basedir/plugin/xxx.so, 4 levels goes up to basedir
-				if !fileExists(filepath.Join(checkBasedir, "bin", "mysqld")) {
-					checkBasedir = filepath.Dir(filepath.Dir(filepath.Dir(pluginPath)))
-				}
-			}
-			if checkBasedir != "" {
-				defaultPluginPath := filepath.Join(checkBasedir, "lib", "mysql", "plugin", component+".so")
-				if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
-					// Plugin not in MySQL's default plugin_dir — deployment risk
-					if !result.Passed {
-						result.Message += fmt.Sprintf("；此外 %s.so 位于 %s，不在 MySQL 默认插件目录 %s 下，需设置 --plugin-dir 部署", component, pluginPath, filepath.Dir(defaultPluginPath))
-					} else {
-						result.Passed = false
-						result.Fixable = true
-						result.Message = fmt.Sprintf("%s.so 位于 %s，但 MySQL 默认插件目录 (%s) 下不存在该文件；部署时需设置 --plugin-dir 否则 MySQL 将启动失败。可点击修复按钮创建符号链接", component, pluginPath, filepath.Dir(defaultPluginPath))
-					}
-				}
+	if len(issues) > 0 {
+		result.Passed = false
+		result.Fixable = true
+		result.Message = fmt.Sprintf("配置文件引用 %s，但目标 MySQL 插件目录缺少 %s.so；可点击修复按钮注释过期 component_load 配置", component, component)
+	}
+	// Case 4: Plugin exists at non-default location — MySQL's default plugin_dir
+	// is basedir/lib/mysql/plugin/, but Community 8.0.36+ places .so files at
+	// basedir/lib/plugin/.  Without --plugin-dir at startup, mysqld won't find
+	// the component and deployment will fail.
+	if pluginPath != "" {
+		// Try to get basedir from config first (more reliable than deriving from path)
+		checkBasedir := strings.TrimSpace(configString(config, "basedir"))
+		if checkBasedir == "" {
+			// Derive basedir from the actual plugin path (works for 3-4 levels deep)
+			checkBasedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(pluginPath))))
+			// If pluginPath is like basedir/plugin/xxx.so, 4 levels goes up to basedir
+			if !fileExists(filepath.Join(checkBasedir, "bin", "mysqld")) {
+				checkBasedir = filepath.Dir(filepath.Dir(filepath.Dir(pluginPath)))
 			}
 		}
-		// Collect diagnostics when plugin exists but might have dependency issues
-		if pluginPath != "" {
-			// Use basedir from config or derive from pluginPath
-			basedir := strings.TrimSpace(configString(config, "basedir"))
-			if basedir == "" {
-				basedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(pluginPath))))
-				if !fileExists(filepath.Join(basedir, "bin", "mysqld")) {
-					basedir = filepath.Dir(filepath.Dir(filepath.Dir(pluginPath)))
+		if checkBasedir != "" {
+			defaultPluginPath := filepath.Join(checkBasedir, "lib", "mysql", "plugin", component+".so")
+			if _, statErr := os.Stat(defaultPluginPath); os.IsNotExist(statErr) {
+				// Plugin not in MySQL's default plugin_dir — deployment risk
+				if !result.Passed {
+					result.Message += fmt.Sprintf("；此外 %s.so 位于 %s，不在 MySQL 默认插件目录 %s 下，需设置 --plugin-dir 部署", component, pluginPath, filepath.Dir(defaultPluginPath))
+				} else {
+					result.Passed = false
+					result.Fixable = true
+					result.Message = fmt.Sprintf("%s.so 位于 %s，但 MySQL 默认插件目录 (%s) 下不存在该文件；部署时需设置 --plugin-dir 否则 MySQL 将启动失败。可点击修复按钮创建符号链接", component, pluginPath, filepath.Dir(defaultPluginPath))
 				}
 			}
+		}
+	}
+	// Collect diagnostics when plugin exists but might have dependency issues
+	if pluginPath != "" {
+		// Use basedir from config or derive from pluginPath
+		basedir := strings.TrimSpace(configString(config, "basedir"))
+		if basedir == "" {
+			basedir = filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(pluginPath))))
+			if !fileExists(filepath.Join(basedir, "bin", "mysqld")) {
+				basedir = filepath.Dir(filepath.Dir(filepath.Dir(pluginPath)))
+			}
+		}
 		ldEnv := append(os.Environ(),
 			"LD_LIBRARY_PATH="+
 				filepath.Join(basedir, "lib")+":"+

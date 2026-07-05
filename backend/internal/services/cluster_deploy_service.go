@@ -402,20 +402,20 @@ func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, mess
 		if p.Steps[i].Name == name {
 			p.Steps[i].Status = status
 			p.Steps[i].Message = message
-				if status == "completed" || status == "failed" {
-					p.Steps[i].CompletedAt = &now
-				}
-				if s.messageBus != nil {
-					// Publish step event so SSE clients get real-time step name + status + message
-					s.messageBus.PublishStepEvent(deploymentID, name, status, message)
-					s.messageBus.PublishStatus(deploymentID, status)
-					if message != "" {
-						s.messageBus.PublishLog(deploymentID, fmt.Sprintf("%s: %s", name, message))
-					}
-				}
-				return
+			if status == "completed" || status == "failed" {
+				p.Steps[i].CompletedAt = &now
 			}
+			if s.messageBus != nil {
+				// Publish step event so SSE clients get real-time step name + status + message
+				s.messageBus.PublishStepEvent(deploymentID, name, status, message)
+				s.messageBus.PublishStatus(deploymentID, status)
+				if message != "" {
+					s.messageBus.PublishLog(deploymentID, fmt.Sprintf("%s: %s", name, message))
+				}
+			}
+			return
 		}
+	}
 }
 
 func (s *ClusterDeployService) getOrCreateProgress(deploymentID string) *DeploymentProgress {
@@ -711,8 +711,7 @@ func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context
 func isMySQLDeployRole(clusterType, role string) bool {
 	switch clusterType {
 	case ClusterTypeMHA:
-		// MHA: include all three roles so manager/master/replica all appear in topology
-		return role == "manager" || role == "master" || role == "replica"
+		return role == "master" || role == "replica"
 	default:
 		return role != "manager"
 	}
@@ -738,12 +737,12 @@ type PreCheckItem struct {
 }
 
 type ClusterDeployCheckNode struct {
-	HostID    string `json:"host_id"`
-	Host      string `json:"host,omitempty"`
-	Role      string `json:"role,omitempty"`
-	MySQLPort int    `json:"mysql_port,omitempty"`
-	DataDir   string `json:"data_dir,omitempty"`
-	Basedir   string `json:"basedir,omitempty"`
+	HostID     string `json:"host_id"`
+	Host       string `json:"host,omitempty"`
+	Role       string `json:"role,omitempty"`
+	MySQLPort  int    `json:"mysql_port,omitempty"`
+	DataDir    string `json:"data_dir,omitempty"`
+	Basedir    string `json:"basedir,omitempty"`
 	PackageURL string `json:"package_url,omitempty"`
 	RelayURL   string `json:"relay_url,omitempty"`
 }
@@ -772,17 +771,17 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, clusterType string,
 		return nil, fmt.Errorf("host repository not configured")
 	}
 	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
-		nodeByHostID := map[string][]ClusterDeployCheckNode{}
-		for _, node := range nodes {
-			if node.MySQLPort == 0 {
-				node.MySQLPort = 3306
-			}
-			if node.HostID != "" {
-				nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
-				hostIDs = append(hostIDs, node.HostID)
-			}
+	nodeByHostID := map[string][]ClusterDeployCheckNode{}
+	for _, node := range nodes {
+		if node.MySQLPort == 0 {
+			node.MySQLPort = 3306
 		}
-		hostIDs = dedupeStrings(hostIDs)
+		if node.HostID != "" {
+			nodeByHostID[node.HostID] = append(nodeByHostID[node.HostID], node)
+			hostIDs = append(hostIDs, node.HostID)
+		}
+	}
+	hostIDs = dedupeStrings(hostIDs)
 	if len(hostIDs) == 0 {
 		return nil, fmt.Errorf("host_ids or nodes is required")
 	}
@@ -2000,24 +1999,9 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 				return fmt.Errorf("sync node %s:%d failed: %w", node.Host, node.Port, err)
 			}
 		} else {
-			// Instance already exists — update its connection password if provided
-			if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
-				conn, connErr := s.instRepo.GetConnection(ctx, inst.ID)
-				if connErr == nil {
-					enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey)
-					if encErr == nil {
-						conn.PasswordEncrypted = enc
-						if strings.TrimSpace(conn.Username) == "" {
-							conn.Username = strings.TrimSpace(node.MySQLUser)
-							if conn.Username == "" {
-								conn.Username = "root"
-							}
-						}
-						if uErr := s.instRepo.UpdateConnection(ctx, conn); uErr != nil {
-							log.Printf("WARN: failed to update password for existing instance %s: %v", inst.ID, uErr)
-						}
-					}
-				}
+			// Existing managed instances must follow the latest deploy config.
+			if err := s.syncManagedInstanceConnection(ctx, inst.ID, node); err != nil {
+				log.Printf("WARN: failed to sync connection for existing instance %s: %v", inst.ID, err)
 			}
 		}
 		inst.ClusterID = clusterID
@@ -2159,13 +2143,8 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 			existing.HostID = &hostID
 		}
 		_ = s.instRepo.Update(ctx, existing)
-		if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
-			if enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey); encErr == nil {
-				if conn, connErr := s.instRepo.GetConnection(ctx, existing.ID); connErr == nil {
-					conn.PasswordEncrypted = enc
-					_ = s.instRepo.UpdateConnection(ctx, conn)
-				}
-			}
+		if err := s.syncManagedInstanceConnection(ctx, existing.ID, node); err != nil {
+			log.Printf("WARN: failed to sync connection for recovered instance %s: %v", existing.ID, err)
 		}
 		return existing, nil
 	}
@@ -2208,6 +2187,55 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 		return nil, fmt.Errorf("create managed instance connection for %s:%d: %w", node.Host, node.Port, err)
 	}
 	return inst, nil
+}
+
+func (s *ClusterDeployService) syncManagedInstanceConnection(ctx context.Context, instanceID string, node pseudoNode) error {
+	conn, err := s.instRepo.GetConnection(ctx, instanceID)
+	if err != nil {
+		username := strings.TrimSpace(node.MySQLUser)
+		if username == "" {
+			username = "root"
+		}
+		passwordEncrypted := ""
+		if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
+			enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey)
+			if encErr != nil {
+				return encErr
+			}
+			passwordEncrypted = enc
+		}
+		return s.instRepo.CreateConnection(ctx, &models.InstanceConnection{
+			InstanceID:        instanceID,
+			Host:              node.Host,
+			Port:              node.Port,
+			Username:          username,
+			PasswordEncrypted: passwordEncrypted,
+			Basedir:           node.Basedir,
+			Datadir:           node.DataDir,
+		})
+	}
+
+	conn.Host = node.Host
+	conn.Port = node.Port
+	if username := strings.TrimSpace(node.MySQLUser); username != "" {
+		conn.Username = username
+	} else if strings.TrimSpace(conn.Username) == "" {
+		conn.Username = "root"
+	}
+	if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
+		enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey)
+		if encErr != nil {
+			return encErr
+		}
+		conn.PasswordEncrypted = enc
+	}
+	if strings.TrimSpace(node.Basedir) != "" {
+		conn.Basedir = node.Basedir
+	}
+	if strings.TrimSpace(node.DataDir) != "" {
+		conn.Datadir = node.DataDir
+	}
+	return s.instRepo.UpdateConnection(ctx, conn)
 }
 
 func (s *ClusterDeployService) findInstanceByEndpoint(ctx context.Context, host string, port int) (*models.Instance, error) {
