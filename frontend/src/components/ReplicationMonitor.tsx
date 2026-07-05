@@ -9,8 +9,20 @@ const lagColor = (seconds: number) => {
   return '#ff4d4f'
 }
 
+const isRunningValue = (value: boolean | string | number | undefined | null) => {
+  if (value === true) return true
+  if (value === false || value === undefined || value === null) return false
+  const normalized = String(value).trim().toLowerCase()
+  return ['yes', 'on', 'online', 'running', 'primary'].includes(normalized)
+}
+
+const hasStatusValue = (value: boolean | string | number | undefined | null) => {
+  if (value === undefined || value === null) return false
+  return String(value).trim() !== ''
+}
+
 const ReplTag: React.FC<{ value: boolean | string | undefined; trueLabel?: string; falseLabel?: string }> = ({ value, trueLabel = 'Yes', falseLabel = 'No' }) => {
-  const isOk = value === true || value === 'Yes' || value === 'YES' || value === 'ONLINE' || value === 'Primary'
+  const isOk = isRunningValue(value)
   return <Tag color={isOk ? 'success' : 'error'}>{isOk ? trueLabel : (value === undefined ? '-' : falseLabel)}</Tag>
 }
 
@@ -18,7 +30,13 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
   const clusterType = (status.cluster_type || 'ha').toLowerCase()
   const queryFailed = status.query_failed === true
 
-  const getField = (snake: string, camel: string) => status[snake] ?? status[camel]
+  const getField = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = status[key]
+      if (value !== undefined && value !== null && String(value).trim() !== '') return value
+    }
+    return undefined
+  }
 
   if (queryFailed) {
     return (
@@ -42,23 +60,25 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
 
   // ---- HA / MHA ----
   if (clusterType === 'ha' || clusterType === 'mha') {
-    const ioRunning = getField('slave_io_running', 'Slave_IO_Running')
-    const sqlRunning = getField('slave_sql_running', 'Slave_SQL_Running')
-    const lagRaw = getField('seconds_behind_master', 'Seconds_Behind_Master')
+    const ioRunning = getField('slave_io_running', 'Slave_IO_Running', 'replica_io_running', 'Replica_IO_Running')
+    const sqlRunning = getField('slave_sql_running', 'Slave_SQL_Running', 'replica_sql_running', 'Replica_SQL_Running')
+    const ioOK = isRunningValue(ioRunning)
+    const sqlOK = isRunningValue(sqlRunning)
+    const lagRaw = getField('seconds_behind_master', 'Seconds_Behind_Master', 'seconds_behind_source', 'Seconds_Behind_Source')
     const lag = typeof lagRaw === 'number' ? lagRaw : parseInt(lagRaw, 10)
-    const isMaster = !ioRunning && !sqlRunning && (isNaN(lag) || lag < 0)
+    const isMaster = !hasStatusValue(ioRunning) && !hasStatusValue(sqlRunning) && (isNaN(lag) || lag < 0)
 
     return (
       <div>
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="IO Thread" value={ioRunning ? 'Running' : 'Stopped'} valueStyle={{ color: ioRunning ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="IO Thread" value={ioOK ? 'Running' : 'Stopped'} valueStyle={{ color: ioOK ? '#52c41a' : '#ff4d4f' }} />
             </Card>
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="SQL Thread" value={sqlRunning ? 'Running' : 'Stopped'} valueStyle={{ color: sqlRunning ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="SQL Thread" value={sqlOK ? 'Running' : 'Stopped'} valueStyle={{ color: sqlOK ? '#52c41a' : '#ff4d4f' }} />
             </Card>
           </Col>
           <Col span={6}>

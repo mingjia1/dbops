@@ -4492,23 +4492,24 @@ func detectClusterType(ctx context.Context, host string, port int, user, pass st
 }
 
 func queryHAReplicationStatus(ctx context.Context, host string, port int, user, pass string) (string, error) {
-	out, err := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW SLAVE STATUS")
-	if err != nil {
-		return "", fmt.Errorf("SHOW SLAVE STATUS failed: %w", err)
+	headerOut, err := runFirstReplicationStatusG(ctx, host, port, user, pass)
+	if err == nil && strings.TrimSpace(headerOut) != "" {
+		return parseSlaveStatusG(headerOut), nil
 	}
-	if strings.TrimSpace(out) == "" {
+
+	out, err := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS", "SHOW REPLICA STATUS")
+	if err != nil {
+		return "", fmt.Errorf("SHOW replication status failed: %w", err)
+	}
+	outText := string(out)
+
+	if strings.TrimSpace(outText) == "" {
 		return "cluster_type=ha\nrole=master\nslave_io_running=\nslave_sql_running=\nseconds_behind_master=-1\nmaster_host=\nmaster_port=0\nlast_error=\nrelay_log_space=0", nil
 	}
-	parts := strings.Split(strings.TrimSpace(out), "\t")
+	parts := strings.Split(strings.TrimSpace(outText), "\t")
 	colNames := []string{
 		"slave_io_running", "slave_sql_running", "seconds_behind_master",
 		"master_host", "master_port", "last_error", "relay_log_space",
-	}
-	// SHOW SLAVE STATUS -N -B returns tab-separated values; column order depends on MySQL version.
-	// Use SHOW SLAVE STATUS with column headers for reliable parsing.
-	headerOut, _ := runMySQLExecSafe(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G")
-	if headerOut != "" {
-		return parseSlaveStatusG(headerOut), nil
 	}
 	// Fallback: positional parsing
 	var lines []string
@@ -4539,18 +4540,32 @@ func queryHAReplicationStatus(ctx context.Context, host string, port int, user, 
 	return strings.Join(lines, "\n"), nil
 }
 
+func runFirstReplicationStatusG(ctx context.Context, host string, port int, user, pass string) (string, error) {
+	out, err := runFirstMySQL(ctx, host, port, user, pass, "SHOW SLAVE STATUS\\G", "SHOW REPLICA STATUS\\G")
+	return string(out), err
+}
+
 func parseSlaveStatusG(output string) string {
 	lines := []string{"cluster_type=ha", "role=slave"}
 	keyMap := map[string]string{
 		"Slave_IO_Running":      "slave_io_running",
 		"Slave_SQL_Running":     "slave_sql_running",
 		"Seconds_Behind_Master": "seconds_behind_master",
+		"Replica_IO_Running":    "slave_io_running",
+		"Replica_SQL_Running":   "slave_sql_running",
+		"Seconds_Behind_Source": "seconds_behind_master",
 		"Master_Host":           "master_host",
 		"Master_Port":           "master_port",
+		"Source_Host":           "master_host",
+		"Source_Port":           "master_port",
 		"Last_Error":            "last_error",
+		"Last_IO_Error":         "last_io_error",
+		"Last_SQL_Error":        "last_sql_error",
 		"Relay_Log_Space":       "relay_log_space",
 		"Exec_Master_Log_Pos":   "exec_master_log_pos",
 		"Read_Master_Log_Pos":   "read_master_log_pos",
+		"Exec_Source_Log_Pos":   "exec_master_log_pos",
+		"Read_Source_Log_Pos":   "read_master_log_pos",
 		"Retrieved_Gtid_Set":    "retrieved_gtid_set",
 		"Executed_Gtid_Set":     "executed_gtid_set",
 	}

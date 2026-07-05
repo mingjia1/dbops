@@ -24,15 +24,15 @@ func TestParseMasterSlaveConfig_Defaults(t *testing.T) {
 
 func TestParseMasterSlaveConfig_CustomValues(t *testing.T) {
 	got := parseMasterSlaveConfig(map[string]interface{}{
-		"master_host":     "10.0.0.1",
-		"master_port":     3306,
-		"slave_host":      "10.0.0.2",
-		"slave_port":      3307,
-		"replicate_user":  "myrepl",
-		"replicate_pass":  "myrepl!@#",
-		"mysql_user":      "admin",
-		"mysql_password":  "admin!@#",
-		"server_id":       42,
+		"master_host":    "10.0.0.1",
+		"master_port":    3306,
+		"slave_host":     "10.0.0.2",
+		"slave_port":     3307,
+		"replicate_user": "myrepl",
+		"replicate_pass": "myrepl!@#",
+		"mysql_user":     "admin",
+		"mysql_password": "admin!@#",
+		"server_id":      42,
 	})
 	assert.Equal(t, "10.0.0.1", got.MasterHost)
 	assert.Equal(t, 3306, got.MasterPort)
@@ -149,6 +149,43 @@ Slave_SQL_Running: No`
 
 func TestReplicationThreadsRunning_Empty(t *testing.T) {
 	assert.False(t, replicationThreadsRunning(""))
+}
+
+func TestParseSlaveStatusG_ModernReplicaFields(t *testing.T) {
+	output := `Replica_IO_Running: Yes
+Replica_SQL_Running: Yes
+Seconds_Behind_Source: 0
+Source_Host: 10.1.81.21
+Source_Port: 3306
+Last_IO_Error:
+Relay_Log_Space: 1024`
+
+	parsed := parseSlaveStatusG(output)
+
+	assert.Contains(t, parsed, "cluster_type=ha")
+	assert.Contains(t, parsed, "role=slave")
+	assert.Contains(t, parsed, "slave_io_running=Yes")
+	assert.Contains(t, parsed, "slave_sql_running=Yes")
+	assert.Contains(t, parsed, "seconds_behind_master=0")
+	assert.Contains(t, parsed, "master_host=10.1.81.21")
+	assert.Contains(t, parsed, "master_port=3306")
+	assert.Contains(t, parsed, "relay_log_space=1024")
+}
+
+func TestParseSlaveStatusG_LegacySlaveFields(t *testing.T) {
+	output := `Slave_IO_Running: Yes
+Slave_SQL_Running: Yes
+Seconds_Behind_Master: 0
+Master_Host: 10.1.81.21
+Master_Port: 3306`
+
+	parsed := parseSlaveStatusG(output)
+
+	assert.Contains(t, parsed, "slave_io_running=Yes")
+	assert.Contains(t, parsed, "slave_sql_running=Yes")
+	assert.Contains(t, parsed, "seconds_behind_master=0")
+	assert.Contains(t, parsed, "master_host=10.1.81.21")
+	assert.Contains(t, parsed, "master_port=3306")
 }
 
 // --- cleanMySQLOutput ---
