@@ -19,6 +19,9 @@ const MigrationManage: React.FC = () => {
   const [activeMigration, setActiveMigration] = useState<MigrationTask | null>(null)
   const [progressDetails, setProgressDetails] = useState<MigrationProgressStep[]>([])
 
+  const migrationErrorMessage = (err: any, fallback: string) =>
+    err?.message || err?.response?.data?.data?.message || err?.response?.data?.message || fallback
+
   const loadData = async () => {
     try {
       const [instanceRes, migrationRes]: any[] = await Promise.all([
@@ -103,7 +106,8 @@ const MigrationManage: React.FC = () => {
       setProgressDetails(progress)
       message.success(`${label}任务已启动`)
     } catch (err: any) {
-      message.error(`启动${label}失败: ` + (err?.response?.data?.message || err?.message || '未知错误'))
+      await loadData()
+      message.error(`启动${label}失败: ` + migrationErrorMessage(err, '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -117,7 +121,8 @@ const MigrationManage: React.FC = () => {
       message[errors.length > 0 ? 'warning' : 'success'](errors.length > 0 ? '迁移验证完成，但存在错误' : '迁移验证通过')
       await loadData()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '迁移验证失败')
+      await loadData()
+      message.error(migrationErrorMessage(err, '迁移验证失败'))
     }
   }
 
@@ -140,11 +145,12 @@ const MigrationManage: React.FC = () => {
             message.info(data?.message || '迁移切换已提交，请刷新任务状态')
           }
         } catch (err: any) {
+          await loadData()
           if (err?.response?.status === 404) {
             message.error('迁移切换接口不存在或任务不存在')
             return
           }
-          message.error(err?.response?.data?.message || '切换失败')
+          message.error(migrationErrorMessage(err, '切换失败'))
         }
       },
     })
@@ -161,10 +167,11 @@ const MigrationManage: React.FC = () => {
           await loadData()
           message.success('已取消迁移')
         } catch (err: any) {
+          await loadData()
           if (err?.response?.status === 404) {
             message.error('迁移取消接口不存在或任务不存在')
           } else {
-            message.error(err?.response?.data?.message || '取消失败')
+            message.error(migrationErrorMessage(err, '取消失败'))
           }
         }
       },
