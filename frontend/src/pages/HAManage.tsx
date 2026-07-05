@@ -69,6 +69,13 @@ const HAManage: React.FC = () => {
   const clusterSupportsRoleSwitch = clusterIsMGR || clusterIsPXC
   const preflightPass = !!preflight?.pass
 
+  const haErrorMessage = (err: any, fallback: string) =>
+    err?.response?.data?.data?.error_message
+    || err?.response?.data?.data?.message
+    || err?.response?.data?.message
+    || err?.message
+    || fallback
+
   const refreshClusterData = async () => {
     await loadInstances().catch(() => { /* soft fallback: instance list unavailable */ })
     if (clusterId) await fetchStatus(clusterId)
@@ -128,7 +135,8 @@ const HAManage: React.FC = () => {
       autoForm.resetFields()
       await refreshClusterData()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '提交失败')
+      await refreshClusterData()
+      message.error(haErrorMessage(err, '提交失败'))
     } finally {
       setSubmitting(false)
     }
@@ -184,7 +192,8 @@ const HAManage: React.FC = () => {
       setPreflight(null)
       await refreshClusterData()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '提交失败')
+      await refreshClusterData()
+      message.error(haErrorMessage(err, '提交失败'))
     } finally {
       setSubmitting(false)
     }
