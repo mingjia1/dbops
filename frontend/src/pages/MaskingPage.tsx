@@ -24,7 +24,7 @@ export default function MaskingPage() {
 
   const fetchRules = async () => {
     setLoading(true)
-    try { const res = await api.get('/masking'); setRules(res.data?.data || []) }
+    try { const res = await api.get('/masking'); setRules(res.data || []) }
     catch { message.error('获取脱敏规则失败') }
     finally { setLoading(false) }
   }

@@ -23,7 +23,7 @@ export default function KeyRotationPage() {
     setLoading(true)
     try {
       const res = await api.get('/keys/versions')
-      setVersions(res.data?.data || [])
+      setVersions(res.data || [])
     } catch { message.error('获取密钥版本失败') }
     finally { setLoading(false) }
   }

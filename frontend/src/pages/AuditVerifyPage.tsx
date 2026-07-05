@@ -17,7 +17,7 @@ export default function AuditVerifyPage() {
     setVerifying(true)
     try {
       const res = await api.get('/audit-logs/verify-chain')
-      setResult(res.data?.data || null)
+      setResult(res.data || null)
     } catch (err: any) {
       message.error(`验证失败: ${err.message}`)
     } finally { setVerifying(false) }

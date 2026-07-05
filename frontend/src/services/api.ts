@@ -17,7 +17,6 @@ const api = axios.create({
 })
 
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
-const agentSubmitTimeoutMs = 30000
 const agentSubmitFastTimeoutMs = 8000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove']
 
@@ -429,16 +428,24 @@ export const hostApi = {
   testConnection: (id: string) =>
     api.post(`/hosts/${id}/test`),
 
-  agentAction: (id: string, action: string, agentPort?: number, sync?: boolean) =>
-    api.post(`/hosts/${id}/agent`, { action, agent_port: agentPort, sync: sync ?? !longRunningAgentActions.includes(action) }, {
-      timeout: longRunningAgentActions.includes(action) ? agentSubmitFastTimeoutMs : 30000,
-    }),
+  agentAction: (id: string, action: string, agentPort?: number, sync?: boolean) => {
+    const normalizedAction = (action || '').toLowerCase()
+    const isLongRunning = longRunningAgentActions.includes(normalizedAction)
+    return api.post(`/hosts/${id}/agent`, { action: normalizedAction, agent_port: agentPort, sync: sync ?? !isLongRunning }, {
+      timeout: isLongRunning ? agentSubmitFastTimeoutMs : 30000,
+    })
+  },
 
-  batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async, agent_port: agentPort }, { timeout: timeoutMs ?? (async ? agentSubmitTimeoutMs : 600000) }),
+  batchAgentAction: (hostIds: string[], action: string, async = false, agentPort?: number, timeoutMs?: number) => {
+    const normalizedAction = (action || '').toLowerCase()
+    const shouldSubmitAsync = async || longRunningAgentActions.includes(normalizedAction)
+    return api.post('/hosts/agent/batch', { host_ids: hostIds, action: normalizedAction, async: shouldSubmitAsync, agent_port: agentPort }, {
+      timeout: timeoutMs ?? (shouldSubmitAsync ? agentSubmitFastTimeoutMs : 600000),
+    })
+  },
 
   submitBatchAgentAction: (hostIds: string[], action: string, agentPort?: number) =>
-    api.post('/hosts/agent/batch', { host_ids: hostIds, action, async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true }),
+    api.post('/hosts/agent/batch', { host_ids: hostIds, action: (action || '').toLowerCase(), async: true, agent_port: agentPort }, { timeout: agentSubmitFastTimeoutMs, suppressGlobalError: true }),
 
   getTestResult: (taskId: string) =>
     api.get(`/hosts/test/${taskId}`),

@@ -13,7 +13,7 @@ export default function MigrationOrchestratePage() {
     setLoading(true)
     try {
       const res = await api.post('/migrations/orchestrate', values)
-      setResult(res.data?.data)
+      setResult(res.data)
       message.success('迁移编排任务已提交')
       setStep(2)
     } catch (err: any) {

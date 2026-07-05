@@ -23,7 +23,7 @@ export default function DrillPage() {
 
   const fetchDrills = async () => {
     setLoading(true)
-    try { const res = await api.get('/drills'); setDrills(res.data?.data || []) }
+    try { const res = await api.get('/drills'); setDrills(res.data || []) }
     catch {}
     finally { setLoading(false) }
   }
@@ -42,7 +42,7 @@ export default function DrillPage() {
     catch (err: any) { message.error(err.message) }
   }
   const viewReport = async (id: string) => {
-    try { const res = await api.get(`/drills/${id}/report`); setReport(res.data?.data); setReportOpen(true) }
+    try { const res = await api.get(`/drills/${id}/report`); setReport(res.data); setReportOpen(true) }
     catch { message.error('获取报告失败') }
   }
 

@@ -15,7 +15,7 @@ export default function ArchUpgradePage() {
     setLoading(true)
     try {
       const res = await api.post(`/switch/single-to-${targetArch}`)
-      setResult(res.data?.data)
+      setResult(res.data)
       message.success(`已升级为 ${targetArch.toUpperCase()} 架构`)
       setStep(2)
     } catch (err: any) {

@@ -29,7 +29,7 @@ export default function ParameterEnhancedPage() {
     setLoading(true)
     try {
       const res = await api.get('/parameter-templates/presets')
-      setPresets(res.data?.data || [])
+      setPresets(res.data || [])
     } catch {}
     finally { setLoading(false) }
   }
@@ -38,7 +38,7 @@ export default function ParameterEnhancedPage() {
   const fetchParameters = async (templateID: string) => {
     try {
       const res = await api.get(`/parameter-templates/${templateID}/parameters`)
-      setParameters(res.data?.data || [])
+      setParameters(res.data || [])
     } catch { message.error('获取参数失败') }
   }
 
@@ -46,7 +46,7 @@ export default function ParameterEnhancedPage() {
     setValidating(true)
     try {
       const res = await api.post(`/parameter-templates/${templateID}/validate`, { instance_id: instanceID || undefined })
-      setValidationResult(res.data?.data || null)
+      setValidationResult(res.data || null)
     } catch (err: any) { message.error(err.message) }
     finally { setValidating(false) }
   }

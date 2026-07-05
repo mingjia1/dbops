@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { useTaskSSE, type TaskEvent, type UseTaskSSEOptions } from './useTaskSSE'
 
 // Mock EventSource
@@ -239,7 +239,7 @@ describe('useTaskSSE', () => {
     expect(onComplete).toHaveBeenCalledTimes(1)
   })
 
-  it('updates returned state values on progress events', () => {
+  it('updates returned state values on progress events', async () => {
     const { result } = renderHook(() => useTaskSSE(defaultOptions))
 
     const instance = MockEventSource.lastInstance()!
@@ -250,23 +250,23 @@ describe('useTaskSSE', () => {
     expect(result.current.connected).toBe(false)
 
     // Wait for connection
-    return vi.waitFor(() => {
+    await waitFor(() => {
       expect(result.current.connected).toBe(true)
-    }).then(() => {
-      const event: TaskEvent = {
-        task_id: 'test-deploy-001',
-        event_type: 'progress',
-        progress: 75,
-        stage: '启动节点',
-        log_line: '',
-        status: 'running',
-      }
-
-      act(() => { instance.receive(JSON.stringify(event)) })
-
-      expect(result.current.progress).toBe(75)
-      expect(result.current.stage).toBe('启动节点')
     })
+
+    const event: TaskEvent = {
+      task_id: 'test-deploy-001',
+      event_type: 'progress',
+      progress: 75,
+      stage: '启动节点',
+      log_line: '',
+      status: 'running',
+    }
+
+    act(() => { instance.receive(JSON.stringify(event)) })
+
+    expect(result.current.progress).toBe(75)
+    expect(result.current.stage).toBe('启动节点')
   })
 
   it('handles raw (non-JSON) messages as log lines', () => {

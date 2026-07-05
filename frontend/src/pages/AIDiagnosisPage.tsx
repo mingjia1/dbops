@@ -34,10 +34,10 @@ export default function AIDiagnosisPage() {
   const [loading, setLoading] = useState(false)
 
   const fetchDiagnoses = async () => {
-    try { const res = await api.get('/ai/diagnoses'); setDiagnoses(res.data?.data || []) } catch {}
+    try { const res = await api.get('/ai/diagnoses'); setDiagnoses(res.data || []) } catch {}
   }
   const fetchAdvices = async () => {
-    try { const res = await api.get('/ai/sql-advices'); setAdvices(res.data?.data || []) } catch {}
+    try { const res = await api.get('/ai/sql-advices'); setAdvices(res.data || []) } catch {}
   }
   useEffect(() => { fetchDiagnoses(); fetchAdvices() }, [])
 
