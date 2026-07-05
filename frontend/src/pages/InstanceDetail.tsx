@@ -122,6 +122,30 @@ const InstanceDetail: React.FC = () => {
     }
   }
 
+  const adminErrorMessage = (err: any, fallback: string) => {
+    const payload = err?.response?.data?.data
+    if (payload && typeof payload === 'object') return formatTaskMessage(payload, fallback)
+    return err?.response?.data?.message || err?.message || fallback
+  }
+
+  const shouldRefreshAfterAdmin = (action?: string) =>
+    [
+      'change_password',
+      'create_user',
+      'grant_privileges',
+      'revoke_privileges',
+      'set_variable',
+      'write_config',
+      'service_control',
+    ].includes((action || '').toLowerCase())
+
+  const refreshInstanceState = async () => {
+    await Promise.allSettled([
+      fetchInstance(),
+      fetchReplStatus(),
+    ])
+  }
+
   const runAdmin = async (payload: any) => {
     if (!id) return null
     setAdminLoading(true)
@@ -146,11 +170,17 @@ const InstanceDetail: React.FC = () => {
           content: formatTaskMessage(result, '\u540e\u7aef\u8fd4\u56de\u4e86\u672a\u8bc6\u522b\u7684\u72b6\u6001\uff0c\u8bf7\u5237\u65b0\u540e\u786e\u8ba4\u7ed3\u679c'),
         })
       }
+      if (shouldRefreshAfterAdmin(payload?.action)) {
+        await refreshInstanceState()
+      }
       return result
     } catch (err: any) {
+      if (shouldRefreshAfterAdmin(payload?.action)) {
+        await refreshInstanceState()
+      }
       Modal.error({
         title: '\u64cd\u4f5c\u5931\u8d25',
-        content: err?.response?.data?.message || err?.message || '\u64cd\u4f5c\u5931\u8d25',
+        content: adminErrorMessage(err, '\u64cd\u4f5c\u5931\u8d25'),
       })
       return null
     } finally {
@@ -244,9 +274,10 @@ const InstanceDetail: React.FC = () => {
             })
           }
         } catch (err: any) {
+          await refreshInstanceState()
           Modal.error({
             title: '批量密码修改失败',
-            content: err?.response?.data?.message || err?.message || '批量密码修改失败',
+            content: adminErrorMessage(err, '批量密码修改失败'),
           })
         } finally {
           setAdminLoading(false)
@@ -321,8 +352,10 @@ const InstanceDetail: React.FC = () => {
       message.success('密码强制修改成功，平台连接密码已同步更新')
       setForceResetOpen(false)
       forceResetForm.resetFields()
+      await refreshInstanceState()
     } catch (err: any) {
-      message.error(err?.response?.data?.message || err?.message || '强制修改密码失败')
+      await refreshInstanceState()
+      message.error(adminErrorMessage(err, '强制修改密码失败'))
     } finally {
       setForceResetting(false)
     }
