@@ -3,7 +3,7 @@ import { Card, Button, Space, Modal, Select, message, Popconfirm } from 'antd'
 import {
   PlusOutlined, MinusOutlined, ReloadOutlined, DeleteOutlined,
 } from '@ant-design/icons'
-import api, { hostApi, type Host } from '../services/api'
+import { clusterDeployApi, hostApi, type Host } from '../services/api'
 
 interface NodeInfo {
   instance_id: string
@@ -33,12 +33,20 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
   const [removeNodeId, setRemoveNodeId] = useState<string>('')
   const [rebuildNodeId, setRebuildNodeId] = useState<string>('')
 
+  const runClusterAction = (action: string, payload?: any) => {
+    if (action === 'scale-out') return clusterDeployApi.scaleOut(clusterID, payload)
+    if (action === 'scale-in') return clusterDeployApi.scaleIn(clusterID, payload)
+    if (action === 'rebuild') return clusterDeployApi.rebuildNode(clusterID, payload)
+    if (action === 'destroy') return clusterDeployApi.destroy(clusterID)
+    return Promise.reject(new Error(`Unsupported cluster action: ${action}`))
+  }
+
   const handleAction = async (action: string, payload?: any) => {
     setLoading(action)
     try {
-      const res = await api.post(`/deployments/${clusterID}/${action}`, payload)
+      const res = await runClusterAction(action, payload)
       message.success(`${action} 成功`)
-      onActionComplete?.(action, res.data)
+      onActionComplete?.(action, res?.data)
     } catch (err: any) {
       message.error(`${action} 失败: ${err?.response?.data?.message || err.message}`)
     } finally {

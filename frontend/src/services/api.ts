@@ -1072,7 +1072,13 @@ export const clusterDeployApi = {
   deployMGR: (data: Record<string, any>) => api.post('/deployments/mgr', data).then(rejectBusinessError).then(rejectFailedTaskData),
   deployPXC: (data: Record<string, any>) => api.post('/deployments/pxc', data).then(rejectBusinessError).then(rejectFailedTaskData),
   getStatus: (id: string) => api.get(`/deployments/${id}`, { suppressGlobalError: true, suppressAuthLogout: true }),
-  destroy: (id: string) => api.delete(`/deployments/${id}`),
+  destroy: (id: string) => api.delete(`/deployments/${id}`).then(rejectBusinessError).then(rejectFailedTaskData),
+  scaleOut: (id: string, data: { node_count?: number; host_ids: string[] }) =>
+    api.post(`/deployments/${id}/scale-out`, data).then(rejectBusinessError).then(rejectFailedTaskData),
+  scaleIn: (id: string, data: { remove_node_id: string }) =>
+    api.post(`/deployments/${id}/scale-in`, data).then(rejectBusinessError).then(rejectFailedTaskData),
+  rebuildNode: (id: string, data: { node_id: string }) =>
+    api.post(`/deployments/${id}/rebuild`, data).then(rejectBusinessError).then(rejectFailedTaskData),
   changePassword: (clusterId: string, data: { new_password: string; username?: string; user_host?: string }) =>
     api.post(`/deployments/${clusterId}/change-password`, data),
 }
