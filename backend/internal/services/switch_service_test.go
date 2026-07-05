@@ -488,6 +488,31 @@ func TestSwitchRoleWithinCluster_PromoteMGRSecondaryToPrimary(t *testing.T) {
 	assert.Equal(t, "primary", result.NewRole)
 }
 
+func TestInstanceConnectionConfigUsesAgentLocalhost(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instRepo := repositories.NewInstanceRepository(db)
+	encrypted, err := utils.Encrypt("secret", "")
+	require.NoError(t, err)
+	require.NoError(t, instRepo.Create(ctx, &models.Instance{ID: "mgr-local", Name: "mgr-local"}))
+	require.NoError(t, instRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID:        "mgr-local",
+		Host:              "tvy-dbtest-05.hcfc.host",
+		Port:              3306,
+		Username:          "root",
+		PasswordEncrypted: encrypted,
+	}))
+
+	svc := NewSwitchService(nil, instRepo, nil, nil, nil)
+	cfg, err := svc.instanceConnectionConfig(ctx, "mgr-local")
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1", cfg["target_host"])
+	assert.Equal(t, "tvy-dbtest-05.hcfc.host", cfg["target_real_host"])
+	assert.Equal(t, 3306, cfg["target_port"])
+	assert.Equal(t, "root", cfg["target_user"])
+	assert.Equal(t, "secret", cfg["target_pass"])
+}
+
 func TestSwitchRoleWithinClusterPromoteWithoutAgentClientFailsAndRecordsHistory(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

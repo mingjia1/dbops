@@ -2,6 +2,9 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,6 +71,19 @@ func TestMysqlBaseArgs(t *testing.T) {
 	assert.Contains(t, args, "-u")
 	assert.Contains(t, args, "root")
 	assert.Contains(t, args, "-psecret")
+}
+
+func TestMysqlBaseArgs_EmptyPasswordDoesNotPrompt(t *testing.T) {
+	args := mysqlBaseArgs("db.example.com", 3306, "root", "")
+	assert.NotContains(t, args, "-p")
+	assert.NotContains(t, args, "-p ")
+}
+
+func TestMysqlSocketArgs_EmptyPasswordDoesNotPrompt(t *testing.T) {
+	args := mysqlSocketArgs("/data/mysql/3306/mysql.sock", "root", "")
+	assert.Contains(t, args, "-S")
+	assert.Contains(t, args, "/data/mysql/3306/mysql.sock")
+	assert.NotContains(t, args, "-p")
 }
 
 // --- TDD: data structures ---
@@ -168,6 +184,45 @@ func TestResolveMGRPrimaryUUID_PrefersConfig(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, "uuid-from-config", got)
+}
+
+func TestExecuteRolePromote_MGRReportsMySQLErrorOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		requireNoError(t, os.WriteFile(filepath.Join(tempDir, "mysql.bat"), []byte("@echo ERROR 1045 (28000): Access denied 1>&2\r\n@exit /b 1\r\n"), 0o755))
+	} else {
+		requireNoError(t, os.WriteFile(filepath.Join(tempDir, "mysql"), []byte("#!/bin/sh\necho 'ERROR 1045 (28000): Access denied' >&2\nexit 1\n"), 0o755))
+	}
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	e := NewTaskExecutor()
+	req := DeployTaskRequest{
+		TaskID:     "p-mgr",
+		InstanceID: "i-1",
+		Config: map[string]interface{}{
+			"cluster_id":   "c1",
+			"instance_id":  "i-1",
+			"cluster_type": "mgr",
+			"target_role":  "primary",
+			"target_host":  "127.0.0.1",
+			"target_port":  1,
+			"target_user":  "root",
+		},
+	}
+	res, err := e.ExecuteRolePromote(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+	assert.Equal(t, "failed", res.Status)
+	assert.Contains(t, res.Message, "MGR promote requires target server_uuid")
+	assert.Contains(t, res.Message, "output:")
+	assert.Contains(t, res.Message, "Access denied")
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestExecuteRoleDemote_NoMySQL(t *testing.T) {

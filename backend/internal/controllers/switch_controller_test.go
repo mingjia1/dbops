@@ -76,14 +76,14 @@ func TestSwitchController_SwitchRoleWithinCluster_InvalidRole(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusConflict, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	data, _ := resp["data"].(map[string]interface{})
-	assert.Equal(t, "failed", data["status"])
+	assert.Equal(t, float64(http.StatusConflict), resp["code"])
+	assert.Contains(t, resp["message"], "not valid")
 }
 
-func TestSwitchController_SwitchRoleWithinCluster_Success(t *testing.T) {
+func TestSwitchController_SwitchRoleWithinCluster_AgentFailureReturnsConflict(t *testing.T) {
 	r, _, _, _ := setupTestRouter(t)
 	body := map[string]interface{}{
 		"cluster_id":  "c1",
@@ -95,12 +95,11 @@ func TestSwitchController_SwitchRoleWithinCluster_Success(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusConflict, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	data, _ := resp["data"].(map[string]interface{})
-	// agent call will fail (port 1 unreachable) --?service returns "failed" result with nil error
-	assert.Contains(t, []string{"failed", "completed"}, data["status"])
+	assert.Equal(t, float64(http.StatusConflict), resp["code"])
+	assert.NotEmpty(t, resp["message"])
 }
 
 func TestSwitchController_ListRoleSwitchHistory(t *testing.T) {

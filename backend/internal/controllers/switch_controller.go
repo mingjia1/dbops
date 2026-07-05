@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
@@ -72,6 +73,10 @@ func (c *SwitchController) SwitchRoleWithinCluster(ctx *gin.Context) {
 	result, err := c.service.SwitchRoleWithinCluster(ctx.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Role switch failed", err)
+		return
+	}
+	if result != nil && strings.EqualFold(result.Status, "failed") {
+		utils.ErrorResponse(ctx, 409, result.Message, nil)
 		return
 	}
 	utils.SuccessResponse(ctx, result)

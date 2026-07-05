@@ -908,10 +908,11 @@ func (s *SwitchService) instanceConnectionConfig(ctx context.Context, instanceID
 		return nil, err
 	}
 	return map[string]interface{}{
-		"target_host": conn.Host,
-		"target_port": conn.Port,
-		"target_user": conn.Username,
-		"target_pass": pass,
+		"target_host":      "127.0.0.1",
+		"target_real_host": conn.Host,
+		"target_port":      conn.Port,
+		"target_user":      conn.Username,
+		"target_pass":      pass,
 	}, nil
 }
 

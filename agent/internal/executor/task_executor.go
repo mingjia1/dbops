@@ -3232,12 +3232,15 @@ func parseRoleSwitchConfig(config map[string]interface{}) RoleSwitchConfig {
 }
 
 func mysqlBaseArgs(host string, port int, user, pass string) []string {
-	return []string{
+	args := []string{
 		"-h", host,
 		"-P", fmt.Sprintf("%d", port),
 		"-u", user,
-		fmt.Sprintf("-p%s", pass),
 	}
+	if pass != "" {
+		args = append(args, fmt.Sprintf("-p%s", pass))
+	}
+	return args
 }
 
 // resolveTargetConn prefers target connection values from cfg.
@@ -3261,10 +3264,41 @@ func resolveMGRPrimaryUUID(ctx context.Context, host string, port int, user, pas
 }
 
 func runMySQLExec(ctx context.Context, host string, port int, user, pass, sql string) (string, error) {
-	args := append(mysqlBaseArgs(host, port, user, pass), "-N", "-B", "-e", sql)
-	cmd := exec.CommandContext(ctx, "mysql", args...)
+	args := append(mysqlBaseArgs(host, port, user, pass), "--connect-timeout=5", "-N", "-B", "-e", sql)
+	cmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), args...)
 	out, err := cmd.CombinedOutput()
-	return cleanMySQLOutput(string(out)), err
+	cleaned := cleanMySQLOutput(string(out))
+	if err != nil && isLocalMySQLHost(host) {
+		if socket := findMySQLSocket(port); socket != "" {
+			socketArgs := append(mysqlSocketArgs(socket, user, pass), "-N", "-B", "-e", sql)
+			socketCmd := exec.CommandContext(ctx, resolveBinaryPath("mysql"), socketArgs...)
+			socketOut, socketErr := socketCmd.CombinedOutput()
+			socketCleaned := cleanMySQLOutput(string(socketOut))
+			if socketErr == nil {
+				return socketCleaned, nil
+			}
+			if socketCleaned != "" {
+				return socketCleaned, fmt.Errorf("%w, output: %s", socketErr, socketCleaned)
+			}
+		}
+	}
+	if err != nil && cleaned != "" {
+		return cleaned, fmt.Errorf("%w, output: %s", err, cleaned)
+	}
+	return cleaned, err
+}
+
+func mysqlSocketArgs(socket, user, pass string) []string {
+	args := []string{"-S", socket, "-u", user}
+	if pass != "" {
+		args = append(args, fmt.Sprintf("-p%s", pass))
+	}
+	return args
+}
+
+func isLocalMySQLHost(host string) bool {
+	h := strings.TrimSpace(strings.ToLower(host))
+	return h == "" || h == "127.0.0.1" || h == "localhost" || h == "::1"
 }
 
 func cleanMySQLOutput(output string) string {
