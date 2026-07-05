@@ -3,11 +3,13 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -339,12 +341,108 @@ func TestUpgradeService_ExecuteRollingUpgrade_HydratesRolesAndNodeIDs(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, resp.Instances, 2)
-	assert.Equal(t, "primary", resp.Instances[0].Role)
-	assert.Equal(t, "secondary", resp.Instances[1].Role)
-	assert.Equal(t, []string{"cluster-node-1", "cluster-node-2"}, rollingNodeIDs(service.hydrateClusterInstances(ctx, []*models.Instance{
+	assert.Equal(t, "secondary", resp.Instances[0].Role)
+	assert.Equal(t, "primary", resp.Instances[1].Role)
+	assert.Equal(t, []string{"cluster-node-2", "cluster-node-1"}, rollingNodeIDs(orderRollingUpgradeInstances("mgr", service.hydrateClusterInstances(ctx, []*models.Instance{
 		{ID: "cluster-node-1"},
 		{ID: "cluster-node-2"},
-	})))
+	}))))
+}
+
+func TestOrderRollingUpgradeInstancesSupportsClusterArchitectures(t *testing.T) {
+	tests := []struct {
+		name        string
+		clusterType string
+		roles       []string
+		wantIDs     []string
+	}{
+		{
+			name:        "ha replicas before master",
+			clusterType: "ha",
+			roles:       []string{"master", "replica"},
+			wantIDs:     []string{"node-2", "node-1"},
+		},
+		{
+			name:        "mha excludes manager and upgrades data replicas before primary",
+			clusterType: "mha",
+			roles:       []string{"manager", "primary", "secondary"},
+			wantIDs:     []string{"node-3", "node-2"},
+		},
+		{
+			name:        "mgr secondaries before primary",
+			clusterType: "mgr",
+			roles:       []string{"primary", "secondary"},
+			wantIDs:     []string{"node-2", "node-1"},
+		},
+		{
+			name:        "pxc secondaries before bootstrap",
+			clusterType: "pxc",
+			roles:       []string{"bootstrap", "secondary"},
+			wantIDs:     []string{"node-2", "node-1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			instances := make([]*models.Instance, 0, len(tt.roles))
+			for i, role := range tt.roles {
+				instances = append(instances, &models.Instance{
+					ID:     fmt.Sprintf("node-%d", i+1),
+					Status: models.InstanceStatus{Role: role},
+				})
+			}
+
+			ordered := orderRollingUpgradeInstances(tt.clusterType, instances)
+
+			assert.Equal(t, tt.wantIDs, rollingNodeIDs(ordered))
+		})
+	}
+}
+
+func TestUpgradeService_RollingNodeConfigsHydratesConnectionVersionAndPassword(t *testing.T) {
+	db := newTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	instanceRepo := repositories.NewInstanceRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	service := NewUpgradeService(instanceRepo, taskRepo, nil)
+	encKey := "test-encryption-key"
+	service.SetEncryptionKey(encKey)
+	createUpgradeTestInstance(t, ctx, instanceRepo, "rolling-node-1", "cluster-rolling-config")
+	encryptedPassword, err := utils.Encrypt("Root#2026", encKey)
+	require.NoError(t, err)
+	require.NoError(t, instanceRepo.CreateConnection(ctx, &models.InstanceConnection{
+		InstanceID:        "rolling-node-1",
+		Host:              "10.0.0.11",
+		Port:              3307,
+		Username:          "admin",
+		PasswordEncrypted: encryptedPassword,
+		Datadir:           "/data/mysql/3307",
+		Basedir:           "/usr/local/mysql-8.0",
+		OSUser:            "mysql",
+		PackageURL:        "file:///pkg/mysql.tar.gz",
+		VersionID:         "mysql-5.7.40",
+	}))
+
+	nodes := service.rollingNodeConfigs(ctx, []*models.Instance{{
+		ID:     "rolling-node-1",
+		Status: models.InstanceStatus{Role: "secondary"},
+	}})
+
+	require.Len(t, nodes, 1)
+	assert.Equal(t, "rolling-node-1", nodes[0].InstanceID)
+	assert.Equal(t, "10.0.0.11", nodes[0].Host)
+	assert.Equal(t, 3307, nodes[0].Port)
+	assert.Equal(t, "secondary", nodes[0].Role)
+	assert.Equal(t, "admin", nodes[0].MySQLUser)
+	assert.Equal(t, "Root#2026", nodes[0].MySQLPass)
+	assert.Equal(t, "/data/mysql/3307", nodes[0].DataDir)
+	assert.Equal(t, "/usr/local/mysql-8.0", nodes[0].Basedir)
+	assert.Equal(t, "mysql", nodes[0].OSUser)
+	assert.Equal(t, "file:///pkg/mysql.tar.gz", nodes[0].PackageURL)
+	assert.Equal(t, "mysql-5.7.40", nodes[0].VersionID)
+	assert.Equal(t, "5.7.40", nodes[0].CurrentVersion)
+	assert.Equal(t, "mysql", nodes[0].TargetFlavor)
 }
 
 func TestUpgradeService_ExecuteInPlaceRequiresBackupConfirmation(t *testing.T) {

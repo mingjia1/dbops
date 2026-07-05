@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"strconv"
 	"strings"
-	"log"
 	"sync"
 	"time"
 
@@ -585,6 +586,22 @@ type RollingUpgradeInstance struct {
 	CompletedAt time.Time `json:"completed_at"`
 }
 
+type rollingUpgradeNodeConfig struct {
+	InstanceID     string `json:"instance_id"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	Role           string `json:"role"`
+	MySQLUser      string `json:"mysql_user"`
+	MySQLPass      string `json:"mysql_pass,omitempty"`
+	DataDir        string `json:"data_dir,omitempty"`
+	Basedir        string `json:"basedir,omitempty"`
+	OSUser         string `json:"os_user,omitempty"`
+	PackageURL     string `json:"package_url,omitempty"`
+	VersionID      string `json:"version_id,omitempty"`
+	CurrentVersion string `json:"current_version,omitempty"`
+	TargetFlavor   string `json:"target_flavor,omitempty"`
+}
+
 func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteRollingUpgradeRequest) (*ExecuteRollingUpgradeResponse, error) {
 	if _, err := s.requireKnownPlan(req.PlanID, "", "rolling"); err != nil {
 		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
@@ -612,6 +629,14 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 		return nil, err
 	}
 	clusterInstances = s.hydrateClusterInstances(ctx, clusterInstances)
+	clusterType := inferRollingClusterType(clusterInstances)
+	clusterInstances = orderRollingUpgradeInstances(clusterType, clusterInstances)
+	if len(clusterInstances) == 0 {
+		err := fmt.Errorf("cluster %s has no upgradeable MySQL instances", req.ClusterID)
+		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	// P0: 派发前落 task, 用集群第一个实例 ID 作为 task.InstanceID (anchor).
 	taskID := s.createAndTrackTask("upgrade_rolling",
 		firstInstanceID(clusterInstances), req.PlanID, "", req.TargetVersion)
@@ -638,7 +663,9 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			"max_in_parallel":       req.MaxInParallel,
 			"health_check_interval": req.HealthCheckInterval,
 			"cluster_id":            req.ClusterID,
-			"rolling_nodes":         rollingNodeIDs(clusterInstances),
+			"cluster_type":          clusterType,
+			"rolling_nodes":         s.rollingNodeConfigs(ctx, clusterInstances),
+			"rolling_node_ids":      rollingNodeIDs(clusterInstances),
 		})
 	}
 
@@ -657,6 +684,151 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			req.ClusterID, req.PlanID, req.TargetVersion, taskID, len(instances), req.MaxInParallel, req.HealthCheckInterval))
 
 	return response, nil
+}
+
+func inferRollingClusterType(instances []*models.Instance) string {
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		for _, value := range []string{inst.Status.ReplicationStatus, inst.Topology.ReplicationMode} {
+			normalized := strings.ToLower(strings.TrimSpace(value))
+			switch normalized {
+			case "ha", "mha", "mgr", "pxc":
+				return normalized
+			}
+		}
+	}
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(inst.Status.Role)) {
+		case "primary":
+			return "mgr"
+		case "bootstrap":
+			return "pxc"
+		case "master", "slave", "replica":
+			return "ha"
+		}
+	}
+	return "ha"
+}
+
+func orderRollingUpgradeInstances(clusterType string, instances []*models.Instance) []*models.Instance {
+	type weighted struct {
+		index  int
+		weight int
+		inst   *models.Instance
+	}
+	items := make([]weighted, 0, len(instances))
+	for i, inst := range instances {
+		if inst == nil || strings.EqualFold(strings.TrimSpace(inst.Status.Role), "manager") {
+			continue
+		}
+		items = append(items, weighted{
+			index:  i,
+			weight: rollingRoleWeight(clusterType, inst.Status.Role),
+			inst:   inst,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].weight == items[j].weight {
+			return items[i].index < items[j].index
+		}
+		return items[i].weight < items[j].weight
+	})
+	out := make([]*models.Instance, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.inst)
+	}
+	return out
+}
+
+func rollingRoleWeight(clusterType, role string) int {
+	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "slave", "replica", "secondary", "donor", "joiner":
+		return 10
+	case "manager":
+		return 100
+	case "master":
+		if clusterType == "mgr" || clusterType == "pxc" {
+			return 50
+		}
+		return 90
+	case "primary", "primary_master", "bootstrap":
+		return 90
+	default:
+		return 50
+	}
+}
+
+func (s *UpgradeService) rollingNodeConfigs(ctx context.Context, instances []*models.Instance) []rollingUpgradeNodeConfig {
+	out := make([]rollingUpgradeNodeConfig, 0, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		role := strings.TrimSpace(inst.Status.Role)
+		if role == "" {
+			role = "replica"
+		}
+		node := rollingUpgradeNodeConfig{
+			InstanceID: inst.ID,
+			Role:       role,
+		}
+		if conn, err := s.instanceRepo.GetConnection(ctx, inst.ID); err == nil {
+			node.Host = conn.Host
+			node.Port = conn.Port
+			node.MySQLUser = conn.Username
+			node.DataDir = conn.Datadir
+			node.Basedir = conn.Basedir
+			node.OSUser = conn.OSUser
+			node.PackageURL = conn.PackageURL
+			node.VersionID = conn.VersionID
+			if s.encKey != "" && conn.PasswordEncrypted != "" {
+				if pass, decErr := utils.Decrypt(conn.PasswordEncrypted, s.encKey); decErr == nil {
+					node.MySQLPass = pass
+				}
+			}
+		} else {
+			node.Host = inst.Connection.Host
+			node.Port = inst.Connection.Port
+			node.MySQLUser = inst.Connection.Username
+			node.DataDir = inst.Connection.Datadir
+			node.Basedir = inst.Connection.Basedir
+			node.OSUser = inst.Connection.OSUser
+			node.PackageURL = inst.Connection.PackageURL
+			node.VersionID = inst.Connection.VersionID
+		}
+		if version, err := s.instanceRepo.GetVersion(ctx, inst.ID); err == nil {
+			node.TargetFlavor = version.Flavor
+			if version.FullVersion != "" {
+				node.CurrentVersion = version.FullVersion
+			} else {
+				node.CurrentVersion = version.Version
+			}
+		} else if inst.Version.Version != "" || inst.Version.FullVersion != "" {
+			node.TargetFlavor = inst.Version.Flavor
+			if inst.Version.FullVersion != "" {
+				node.CurrentVersion = inst.Version.FullVersion
+			} else {
+				node.CurrentVersion = inst.Version.Version
+			}
+		}
+		if strings.TrimSpace(node.Host) == "" {
+			node.Host = inst.ID
+		}
+		if node.Port == 0 {
+			node.Port = 3306
+		}
+		if strings.TrimSpace(node.MySQLUser) == "" {
+			node.MySQLUser = "root"
+		}
+		out = append(out, node)
+	}
+	return out
 }
 
 func (s *UpgradeService) hydrateClusterInstances(ctx context.Context, instances []*models.Instance) []*models.Instance {

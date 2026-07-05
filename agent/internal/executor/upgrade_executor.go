@@ -16,37 +16,40 @@ func NewUpgradeExecutor() *UpgradeExecutor {
 }
 
 const (
-	UpgradeModeInPlace       = "in_place"
-	UpgradeModeLogical       = "logical"
-	UpgradeModeRolling       = "rolling"
-	UpgradeModeRollingArch   = "rolling_arch"
+	UpgradeModeInPlace     = "in_place"
+	UpgradeModeLogical     = "logical"
+	UpgradeModeRolling     = "rolling"
+	UpgradeModeRollingArch = "rolling_arch"
 )
 
 type UpgradeConfig struct {
-	CurrentVersion     string   `json:"current_version"`
-	TargetVersion      string   `json:"target_version"`
-	TargetFlavor       string   `json:"target_flavor"`
-	UpgradeType        string   `json:"upgrade_type"`
-	UpgradeMode        string   `json:"upgrade_mode"`
-	InstanceHost       string   `json:"instance_host"`
-	InstancePort       int      `json:"instance_port"`
-	MySQLUser          string   `json:"mysql_user"`
-	MySQLPass          string   `json:"mysql_pass"`
-	DataDir            string   `json:"data_dir"`
-	BackupDir          string   `json:"backup_dir"`
-	Basedir            string   `json:"basedir"`
-	OSUser             string   `json:"os_user"`
-	PackageURL         string   `json:"package_url"`
-	Checksum           string   `json:"checksum"`
-	UpgradeMethod      string   `json:"upgrade_method"`
-	SkipCompatibility  bool     `json:"skip_compatibility"`
-	SkipBackup         bool     `json:"skip_backup"`
-	SSHUser            string   `json:"ssh_user"`
-	SSHPrivateKey      string   `json:"ssh_private_key"`
-	LogicalMigrateTool string   `json:"logical_migrate_tool"`
-	BinlogSyncTimeout  int      `json:"binlog_sync_timeout"`
-	UpgradeTimeout     int      `json:"upgrade_timeout"`
-	RollingNodes       []string `json:"rolling_nodes"`
+	CurrentVersion     string               `json:"current_version"`
+	TargetVersion      string               `json:"target_version"`
+	TargetFlavor       string               `json:"target_flavor"`
+	UpgradeType        string               `json:"upgrade_type"`
+	UpgradeMode        string               `json:"upgrade_mode"`
+	ClusterType        string               `json:"cluster_type"`
+	InstanceHost       string               `json:"instance_host"`
+	InstancePort       int                  `json:"instance_port"`
+	MySQLUser          string               `json:"mysql_user"`
+	MySQLPass          string               `json:"mysql_pass"`
+	DataDir            string               `json:"data_dir"`
+	BackupDir          string               `json:"backup_dir"`
+	Basedir            string               `json:"basedir"`
+	OSUser             string               `json:"os_user"`
+	PackageURL         string               `json:"package_url"`
+	Checksum           string               `json:"checksum"`
+	UpgradeMethod      string               `json:"upgrade_method"`
+	SkipCompatibility  bool                 `json:"skip_compatibility"`
+	SkipBackup         bool                 `json:"skip_backup"`
+	SSHUser            string               `json:"ssh_user"`
+	SSHPrivateKey      string               `json:"ssh_private_key"`
+	LogicalMigrateTool string               `json:"logical_migrate_tool"`
+	BinlogSyncTimeout  int                  `json:"binlog_sync_timeout"`
+	UpgradeTimeout     int                  `json:"upgrade_timeout"`
+	RollingNodes       []string             `json:"rolling_nodes"`
+	RollingNodeConfigs []RollingUpgradeNode `json:"rolling_node_configs"`
+	RollingNodeIDs     []string             `json:"rolling_node_ids"`
 	// A4: 之前 export/import/pre-upgrade-backup 各自 time.Now().Unix(),
 	// import 时 exportDir 找不到自己的导出目录; rollback 找不到预备份.
 	// 改成用 backend 下发的 task_id (在每个 Execute* 入口从 req.TaskID 拷过来)
@@ -54,14 +57,30 @@ type UpgradeConfig struct {
 	TaskID string `json:"task_id"`
 }
 
+type RollingUpgradeNode struct {
+	InstanceID     string `json:"instance_id"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	Role           string `json:"role"`
+	MySQLUser      string `json:"mysql_user"`
+	MySQLPass      string `json:"mysql_pass"`
+	DataDir        string `json:"data_dir"`
+	Basedir        string `json:"basedir"`
+	OSUser         string `json:"os_user"`
+	PackageURL     string `json:"package_url"`
+	VersionID      string `json:"version_id"`
+	CurrentVersion string `json:"current_version"`
+	TargetFlavor   string `json:"target_flavor"`
+}
+
 type UpgradePath struct {
-	Steps            []UpgradeStep `json:"steps"`
-	EstimatedTime    int           `json:"estimated_time"`
-	RequiresRestart  bool          `json:"requires_restart"`
-	RequiresBackup   bool          `json:"requires_backup"`
-	CompatibilityOK  bool          `json:"compatibility_ok"`
-	Warnings         []string      `json:"warnings"`
-	Recommendations  []string      `json:"recommendations"`
+	Steps           []UpgradeStep `json:"steps"`
+	EstimatedTime   int           `json:"estimated_time"`
+	RequiresRestart bool          `json:"requires_restart"`
+	RequiresBackup  bool          `json:"requires_backup"`
+	CompatibilityOK bool          `json:"compatibility_ok"`
+	Warnings        []string      `json:"warnings"`
+	Recommendations []string      `json:"recommendations"`
 }
 
 type UpgradeStep struct {
@@ -104,6 +123,9 @@ func parseUpgradeConfig(config map[string]interface{}) UpgradeConfig {
 	}
 	if v, ok := config["target_flavor"].(string); ok {
 		uc.TargetFlavor = v
+	}
+	if v, ok := config["cluster_type"].(string); ok {
+		uc.ClusterType = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v, ok := config["basedir"].(string); ok {
 		uc.Basedir = v
@@ -170,13 +192,60 @@ func parseUpgradeConfig(config map[string]interface{}) UpgradeConfig {
 	}
 	if nodes, ok := config["rolling_nodes"].([]interface{}); ok {
 		for _, n := range nodes {
-			if node, ok := n.(string); ok {
+			switch node := n.(type) {
+			case string:
 				uc.RollingNodes = append(uc.RollingNodes, node)
+			default:
+				if nodeConfig, ok := parseRollingUpgradeNode(node); ok {
+					uc.RollingNodeConfigs = append(uc.RollingNodeConfigs, nodeConfig)
+					if nodeConfig.Host != "" {
+						uc.RollingNodes = append(uc.RollingNodes, nodeConfig.Host)
+					} else if nodeConfig.InstanceID != "" {
+						uc.RollingNodes = append(uc.RollingNodes, nodeConfig.InstanceID)
+					}
+				}
 			}
 		}
+	} else if nodes, ok := config["rolling_nodes"].([]string); ok {
+		uc.RollingNodes = append(uc.RollingNodes, nodes...)
+	}
+	if nodes, ok := config["rolling_node_ids"].([]interface{}); ok {
+		for _, n := range nodes {
+			if nodeID, ok := n.(string); ok {
+				uc.RollingNodeIDs = append(uc.RollingNodeIDs, nodeID)
+			}
+		}
+	} else if nodes, ok := config["rolling_node_ids"].([]string); ok {
+		uc.RollingNodeIDs = append(uc.RollingNodeIDs, nodes...)
 	}
 
 	return uc
+}
+
+func parseRollingUpgradeNode(raw interface{}) (RollingUpgradeNode, bool) {
+	if node, ok := raw.(RollingUpgradeNode); ok {
+		return node, node.Host != "" || node.InstanceID != ""
+	}
+	nodeMap, ok := raw.(map[string]interface{})
+	if !ok {
+		return RollingUpgradeNode{}, false
+	}
+	node := RollingUpgradeNode{
+		InstanceID:     configString(nodeMap, "instance_id"),
+		Host:           configString(nodeMap, "host"),
+		Port:           configInt(nodeMap, "port"),
+		Role:           configString(nodeMap, "role"),
+		MySQLUser:      configString(nodeMap, "mysql_user"),
+		MySQLPass:      configString(nodeMap, "mysql_pass"),
+		DataDir:        configString(nodeMap, "data_dir"),
+		Basedir:        configString(nodeMap, "basedir"),
+		OSUser:         configString(nodeMap, "os_user"),
+		PackageURL:     configString(nodeMap, "package_url"),
+		VersionID:      configString(nodeMap, "version_id"),
+		CurrentVersion: configString(nodeMap, "current_version"),
+		TargetFlavor:   configString(nodeMap, "target_flavor"),
+	}
+	return node, node.Host != "" || node.InstanceID != ""
 }
 
 func (e *UpgradeExecutor) PlanUpgradePath(ctx context.Context, req DeployTaskRequest) (*UpgradePath, error) {
@@ -1035,9 +1104,10 @@ func (e *UpgradeExecutor) validateLogicalMigration(ctx context.Context, config U
 
 func (e *UpgradeExecutor) ExecuteRollingUpgrade(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
 	config := parseUpgradeConfig(req.Config)
+	nodeConfigs := rollingUpgradeNodeConfigs(config)
 
 	if upgradeTargetAlreadySatisfied(config) {
-		nodeCount := len(config.RollingNodes)
+		nodeCount := len(nodeConfigs)
 		if nodeCount == 0 {
 			nodeCount = 1
 		}
@@ -1056,7 +1126,7 @@ func (e *UpgradeExecutor) ExecuteRollingUpgrade(ctx context.Context, req DeployT
 		}, nil
 	}
 
-	if len(config.RollingNodes) == 0 {
+	if len(nodeConfigs) == 0 {
 		return &TaskResult{
 			Status:    "failed",
 			Progress:  0,
@@ -1065,12 +1135,11 @@ func (e *UpgradeExecutor) ExecuteRollingUpgrade(ctx context.Context, req DeployT
 		}, nil
 	}
 
-	totalNodes := len(config.RollingNodes)
+	totalNodes := len(nodeConfigs)
 	completedNodes := 0
 
-	for i, node := range config.RollingNodes {
-		nodeConfig := config
-		nodeConfig.InstanceHost = node
+	for i, nodeConfig := range nodeConfigs {
+		node := rollingUpgradeNodeLabel(nodeConfig)
 
 		nodeResult := e.upgradeSingleNode(ctx, nodeConfig)
 		if nodeResult.Status == "failed" {
@@ -1103,6 +1172,67 @@ func (e *UpgradeExecutor) ExecuteRollingUpgrade(ctx context.Context, req DeployT
 		Message:   fmt.Sprintf("Rolling upgrade completed on %d/%d nodes", completedNodes, totalNodes),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+func rollingUpgradeNodeConfigs(config UpgradeConfig) []UpgradeConfig {
+	if len(config.RollingNodeConfigs) == 0 {
+		out := make([]UpgradeConfig, 0, len(config.RollingNodes))
+		for _, node := range config.RollingNodes {
+			nodeConfig := config
+			nodeConfig.InstanceHost = node
+			out = append(out, nodeConfig)
+		}
+		return out
+	}
+
+	out := make([]UpgradeConfig, 0, len(config.RollingNodeConfigs))
+	for _, node := range config.RollingNodeConfigs {
+		nodeConfig := config
+		if node.Host != "" {
+			nodeConfig.InstanceHost = node.Host
+		} else if node.InstanceID != "" {
+			nodeConfig.InstanceHost = node.InstanceID
+		}
+		if node.Port != 0 {
+			nodeConfig.InstancePort = node.Port
+		}
+		if node.MySQLUser != "" {
+			nodeConfig.MySQLUser = node.MySQLUser
+		}
+		if node.MySQLPass != "" {
+			nodeConfig.MySQLPass = node.MySQLPass
+		}
+		if node.DataDir != "" {
+			nodeConfig.DataDir = node.DataDir
+		}
+		if node.Basedir != "" {
+			nodeConfig.Basedir = node.Basedir
+		}
+		if node.OSUser != "" {
+			nodeConfig.OSUser = node.OSUser
+		}
+		if node.PackageURL != "" {
+			nodeConfig.PackageURL = node.PackageURL
+		}
+		if node.CurrentVersion != "" {
+			nodeConfig.CurrentVersion = node.CurrentVersion
+		}
+		if node.TargetFlavor != "" {
+			nodeConfig.TargetFlavor = node.TargetFlavor
+		}
+		out = append(out, nodeConfig)
+	}
+	return out
+}
+
+func rollingUpgradeNodeLabel(config UpgradeConfig) string {
+	if config.InstanceHost == "" {
+		return "unknown"
+	}
+	if config.InstancePort > 0 {
+		return fmt.Sprintf("%s:%d", config.InstanceHost, config.InstancePort)
+	}
+	return config.InstanceHost
 }
 
 func (e *UpgradeExecutor) upgradeSingleNode(ctx context.Context, config UpgradeConfig) *TaskResult {

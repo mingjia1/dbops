@@ -40,23 +40,23 @@ func TestParseUpgradeConfig(t *testing.T) {
 		{
 			name: "custom values",
 			config: map[string]interface{}{
-				"current_version":    "5.7.30",
-				"target_version":     "8.0.25",
-				"upgrade_type":       "logical",
-				"instance_host":      "192.168.1.100",
-				"instance_port":      3307,
-				"mysql_user":         "admin",
-				"mysql_pass":         "password123",
-				"data_dir":           "/data/mysql",
-				"backup_dir":         "/backup",
-				"upgrade_method":     "manual",
-				"skip_compatibility": true,
-				"skip_backup":        true,
-				"ssh_user":           "mysql",
-				"ssh_private_key":    "/home/mysql/.ssh/id_rsa",
+				"current_version":      "5.7.30",
+				"target_version":       "8.0.25",
+				"upgrade_type":         "logical",
+				"instance_host":        "192.168.1.100",
+				"instance_port":        3307,
+				"mysql_user":           "admin",
+				"mysql_pass":           "password123",
+				"data_dir":             "/data/mysql",
+				"backup_dir":           "/backup",
+				"upgrade_method":       "manual",
+				"skip_compatibility":   true,
+				"skip_backup":          true,
+				"ssh_user":             "mysql",
+				"ssh_private_key":      "/home/mysql/.ssh/id_rsa",
 				"logical_migrate_tool": "mysqldump",
-				"binlog_sync_timeout": 600,
-				"upgrade_timeout":    7200,
+				"binlog_sync_timeout":  600,
+				"upgrade_timeout":      7200,
 			},
 			expected: UpgradeConfig{
 				CurrentVersion:     "5.7.30",
@@ -76,6 +76,76 @@ func TestParseUpgradeConfig(t *testing.T) {
 				LogicalMigrateTool: "mysqldump",
 				BinlogSyncTimeout:  600,
 				UpgradeTimeout:     7200,
+			},
+		},
+		{
+			name: "rolling node config objects",
+			config: map[string]interface{}{
+				"cluster_type": "MGR",
+				"rolling_nodes": []interface{}{
+					map[string]interface{}{
+						"instance_id":     "inst-2",
+						"host":            "10.0.0.2",
+						"port":            float64(3307),
+						"role":            "secondary",
+						"mysql_user":      "admin",
+						"mysql_pass":      "secret",
+						"data_dir":        "/data/mysql/3307",
+						"basedir":         "/usr/local/mysql-8.0",
+						"os_user":         "mysql",
+						"package_url":     "file:///pkg/mysql.tar.gz",
+						"version_id":      "mysql-5.7.40",
+						"current_version": "5.7.40",
+						"target_flavor":   "mysql",
+					},
+					map[string]interface{}{
+						"instance_id": "inst-1",
+						"host":        "10.0.0.1",
+						"port":        3306,
+						"role":        "primary",
+					},
+				},
+				"rolling_node_ids": []interface{}{"inst-2", "inst-1"},
+			},
+			expected: UpgradeConfig{
+				UpgradeType:        "in-place",
+				ClusterType:        "mgr",
+				InstanceHost:       "localhost",
+				InstancePort:       3306,
+				MySQLUser:          "root",
+				DataDir:            "/var/lib/mysql",
+				BackupDir:          "/backup/mysql",
+				UpgradeMethod:      "auto",
+				SSHUser:            "root",
+				SSHPrivateKey:      "/root/.ssh/id_rsa",
+				LogicalMigrateTool: "mydumper",
+				BinlogSyncTimeout:  300,
+				UpgradeTimeout:     3600,
+				RollingNodes:       []string{"10.0.0.2", "10.0.0.1"},
+				RollingNodeIDs:     []string{"inst-2", "inst-1"},
+				RollingNodeConfigs: []RollingUpgradeNode{
+					{
+						InstanceID:     "inst-2",
+						Host:           "10.0.0.2",
+						Port:           3307,
+						Role:           "secondary",
+						MySQLUser:      "admin",
+						MySQLPass:      "secret",
+						DataDir:        "/data/mysql/3307",
+						Basedir:        "/usr/local/mysql-8.0",
+						OSUser:         "mysql",
+						PackageURL:     "file:///pkg/mysql.tar.gz",
+						VersionID:      "mysql-5.7.40",
+						CurrentVersion: "5.7.40",
+						TargetFlavor:   "mysql",
+					},
+					{
+						InstanceID: "inst-1",
+						Host:       "10.0.0.1",
+						Port:       3306,
+						Role:       "primary",
+					},
+				},
 			},
 		},
 		{
@@ -106,7 +176,9 @@ func TestParseUpgradeConfig(t *testing.T) {
 			result := parseUpgradeConfig(tt.config)
 			assert.Equal(t, tt.expected.CurrentVersion, result.CurrentVersion)
 			assert.Equal(t, tt.expected.TargetVersion, result.TargetVersion)
+			assert.Equal(t, tt.expected.TargetFlavor, result.TargetFlavor)
 			assert.Equal(t, tt.expected.UpgradeType, result.UpgradeType)
+			assert.Equal(t, tt.expected.ClusterType, result.ClusterType)
 			assert.Equal(t, tt.expected.InstanceHost, result.InstanceHost)
 			assert.Equal(t, tt.expected.InstancePort, result.InstancePort)
 			assert.Equal(t, tt.expected.MySQLUser, result.MySQLUser)
@@ -122,8 +194,58 @@ func TestParseUpgradeConfig(t *testing.T) {
 			assert.Equal(t, tt.expected.BinlogSyncTimeout, result.BinlogSyncTimeout)
 			assert.Equal(t, tt.expected.UpgradeTimeout, result.UpgradeTimeout)
 			assert.Equal(t, tt.expected.RollingNodes, result.RollingNodes)
+			assert.Equal(t, tt.expected.RollingNodeIDs, result.RollingNodeIDs)
+			assert.Equal(t, tt.expected.RollingNodeConfigs, result.RollingNodeConfigs)
 		})
 	}
+}
+
+func TestRollingUpgradeNodeConfigs(t *testing.T) {
+	config := UpgradeConfig{
+		TargetVersion: "8.0.36",
+		InstanceHost:  "anchor",
+		InstancePort:  3306,
+		MySQLUser:     "root",
+		DataDir:       "/var/lib/mysql",
+		PackageURL:    "file:///pkg/default.tar.gz",
+		RollingNodeConfigs: []RollingUpgradeNode{
+			{
+				InstanceID:     "inst-2",
+				Host:           "10.0.0.2",
+				Port:           3307,
+				MySQLUser:      "admin",
+				MySQLPass:      "secret",
+				DataDir:        "/data/mysql/3307",
+				Basedir:        "/usr/local/mysql-8.0",
+				OSUser:         "mysql",
+				PackageURL:     "file:///pkg/mysql.tar.gz",
+				CurrentVersion: "5.7.40",
+				TargetFlavor:   "mysql",
+			},
+			{
+				InstanceID: "inst-1",
+				Host:       "10.0.0.1",
+			},
+		},
+	}
+
+	nodes := rollingUpgradeNodeConfigs(config)
+
+	assert.Len(t, nodes, 2)
+	assert.Equal(t, "10.0.0.2", nodes[0].InstanceHost)
+	assert.Equal(t, 3307, nodes[0].InstancePort)
+	assert.Equal(t, "admin", nodes[0].MySQLUser)
+	assert.Equal(t, "secret", nodes[0].MySQLPass)
+	assert.Equal(t, "/data/mysql/3307", nodes[0].DataDir)
+	assert.Equal(t, "/usr/local/mysql-8.0", nodes[0].Basedir)
+	assert.Equal(t, "mysql", nodes[0].OSUser)
+	assert.Equal(t, "file:///pkg/mysql.tar.gz", nodes[0].PackageURL)
+	assert.Equal(t, "5.7.40", nodes[0].CurrentVersion)
+	assert.Equal(t, "mysql", nodes[0].TargetFlavor)
+	assert.Equal(t, "10.0.0.1", nodes[1].InstanceHost)
+	assert.Equal(t, 3306, nodes[1].InstancePort)
+	assert.Equal(t, "root", nodes[1].MySQLUser)
+	assert.Equal(t, "file:///pkg/default.tar.gz", nodes[1].PackageURL)
 }
 
 func TestCalculateVersionGap(t *testing.T) {
@@ -358,12 +480,12 @@ func TestUpgradePathStruct(t *testing.T) {
 			{Order: 1, Name: "backup", Description: "Create backup", Status: "pending"},
 			{Order: 2, Name: "upgrade", Description: "Upgrade package", Status: "pending"},
 		},
-		EstimatedTime:    30,
-		RequiresRestart:  true,
-		RequiresBackup:   true,
-		CompatibilityOK:  true,
-		Warnings:         []string{"Warning 1"},
-		Recommendations:  []string{"Recommendation 1"},
+		EstimatedTime:   30,
+		RequiresRestart: true,
+		RequiresBackup:  true,
+		CompatibilityOK: true,
+		Warnings:        []string{"Warning 1"},
+		Recommendations: []string{"Recommendation 1"},
 	}
 
 	assert.Len(t, path.Steps, 2)
@@ -540,12 +662,12 @@ func TestExecuteRollingUpgradeWithNodes(t *testing.T) {
 	req := DeployTaskRequest{
 		TaskID: "rolling-test-002",
 		Config: map[string]interface{}{
-			"current_version":  "8.0.25",
-			"target_version":   "8.0.26",
-			"upgrade_type":     "rolling",
-			"rolling_nodes":    []interface{}{"node1", "node2"},
-			"ssh_user":         "root",
-			"ssh_private_key":  "/root/.ssh/id_rsa",
+			"current_version": "8.0.25",
+			"target_version":  "8.0.26",
+			"upgrade_type":    "rolling",
+			"rolling_nodes":   []interface{}{"node1", "node2"},
+			"ssh_user":        "root",
+			"ssh_private_key": "/root/.ssh/id_rsa",
 		},
 	}
 
@@ -559,10 +681,10 @@ func TestPlanUpgradePath(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name            string
-		config          map[string]interface{}
-		expectedSteps   int
-		expectCompatOK  bool
+		name           string
+		config         map[string]interface{}
+		expectedSteps  int
+		expectCompatOK bool
 	}{
 		{
 			name: "major upgrade path",
@@ -631,13 +753,13 @@ func TestRollbackUpgrade(t *testing.T) {
 	req := DeployTaskRequest{
 		TaskID: "rollback-test",
 		Config: map[string]interface{}{
-			"current_version":  "5.7.30",
-			"target_version":   "8.0.25",
-			"instance_host":    "localhost",
-			"instance_port":    3306,
-			"mysql_user":       "root",
-			"mysql_pass":       "password",
-			"backup_dir":       "/backup",
+			"current_version": "5.7.30",
+			"target_version":  "8.0.25",
+			"instance_host":   "localhost",
+			"instance_port":   3306,
+			"mysql_user":      "root",
+			"mysql_pass":      "password",
+			"backup_dir":      "/backup",
 		},
 	}
 
@@ -731,10 +853,10 @@ func TestGenerateUpgradeStepsEdgeCases(t *testing.T) {
 	executor := NewUpgradeExecutor()
 
 	tests := []struct {
-		name        string
-		config      UpgradeConfig
-		versionGap  string
-		minSteps    int
+		name       string
+		config     UpgradeConfig
+		versionGap string
+		minSteps   int
 	}{
 		{
 			name: "empty target version",
@@ -771,10 +893,10 @@ func TestCheckCompatibilityEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name            string
-		config          map[string]interface{}
-		expectCompat    bool
-		expectErrors    bool
+		name         string
+		config       map[string]interface{}
+		expectCompat bool
+		expectErrors bool
 	}{
 		{
 			name: "missing current version",
@@ -793,8 +915,8 @@ func TestCheckCompatibilityEdgeCases(t *testing.T) {
 			expectErrors: true,
 		},
 		{
-			name: "both missing",
-			config: map[string]interface{}{},
+			name:         "both missing",
+			config:       map[string]interface{}{},
 			expectCompat: false,
 			expectErrors: true,
 		},
