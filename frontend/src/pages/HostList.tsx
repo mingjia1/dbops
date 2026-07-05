@@ -26,6 +26,8 @@ const agentResultColor = (status?: string) => {
 const summarizeAgentRows = (rows: any[]) =>
   rows.map((row: any) => `${row?.host_name || row?.host_id || row?.address || '-'}: ${row?.message || row?.status || 'unknown'}`).join('\n')
 
+const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
+
 const HostList: React.FC = () => {
   const navigate = useNavigate()
   const [hosts, setHosts] = useState<Host[]>([])
@@ -167,7 +169,11 @@ const HostList: React.FC = () => {
         }))
       }
     }
-    message.success(`已提交 ${submitted} 个主机连通性检测任务`)
+    if (submitted > 0) {
+      message.success(`已提交 ${submitted} 个主机连通性检测任务`)
+    } else {
+      message.error('主机连通性检测提交失败')
+    }
   }
 
   const pollHostTestResult = (host: Host, taskId: string) => {
@@ -199,24 +205,32 @@ const HostList: React.FC = () => {
       message.warning('\u8bf7\u5148\u9009\u62e9\u4e3b\u673a')
       return
     }
-    const asyncAction = longRunningAgentActions.has(action)
-    const res: any = await hostApi.batchAgentAction(hostIds, action, asyncAction)
-    const rows = res?.data?.rows || []
-    const failedRows = rows.filter((row: any) => isFailedAgentStatus(row?.status))
-    if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
+    try {
+      const asyncAction = longRunningAgentActions.has(action)
+      const res: any = await hostApi.batchAgentAction(hostIds, action, asyncAction)
+      const rows = res?.data?.rows || []
+      const failedRows = rows.filter((row: any) => isFailedAgentStatus(row?.status))
+      if (failedRows.length > 0 || (res?.data?.failed ?? 0) > 0) {
+        Modal.error({
+          title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
+          content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : rows)}</div>,
+        })
+      } else if (asyncAction || res?.data?.async) {
+        Modal.info({
+          title: `Agent ${action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
+          content: `\u5df2\u63d0\u4ea4 ${rows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u8bf7\u7a0d\u540e\u5237\u65b0\u4e3b\u673a\u6216 Agent \u72b6\u6001\u67e5\u770b\u6700\u7ec8\u7ed3\u679c\u3002`,
+        })
+      } else {
+        message.success(`Agent ${action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
+      }
+    } catch (err: any) {
       Modal.error({
-        title: `Agent ${action} \u64cd\u4f5c\u5931\u8d25`,
-        content: <div style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{summarizeAgentRows(failedRows.length > 0 ? failedRows : rows)}</div>,
+        title: `Agent ${action} \u64cd\u4f5c\u63d0\u4ea4\u5931\u8d25`,
+        content: getErrorMessage(err),
       })
-    } else if (asyncAction || res?.data?.async) {
-      Modal.info({
-        title: `Agent ${action} \u4efb\u52a1\u5df2\u63d0\u4ea4`,
-        content: `\u5df2\u63d0\u4ea4 ${rows.length || hostIds.length} \u53f0\u4e3b\u673a\uff0c\u5e73\u53f0\u4f1a\u5728\u540e\u53f0\u6267\u884c\u3002\u8bf7\u7a0d\u540e\u5237\u65b0\u4e3b\u673a\u6216 Agent \u72b6\u6001\u67e5\u770b\u6700\u7ec8\u7ed3\u679c\u3002`,
-      })
-    } else {
-      message.success(`Agent ${action} \u6210\u529f\uff1a${res?.data?.success ?? 0} \u4e2a`)
+    } finally {
+      fetchHosts()
     }
-    fetchHosts()
   }
   const submitBatchCreate = async () => {
     const values = await batchForm.validateFields()
@@ -252,6 +266,9 @@ const HostList: React.FC = () => {
       }
       setBatchOpen(false)
       batchForm.resetFields()
+      fetchHosts()
+    } catch (err: any) {
+      message.error('批量添加主机失败: ' + getErrorMessage(err))
       fetchHosts()
     } finally {
       setBatchSubmitting(false)
