@@ -347,6 +347,27 @@ const UpgradeManage: React.FC = () => {
             force: true,
           })
           const data = res?.data || {}
+          const taskId = data.rollback_id || data.task_id || data.id
+          if (taskId) {
+            const progress = typeof data.progress === 'number' ? data.progress : 0
+            const rollbackTask: ActiveUpgrade = {
+              task_id: taskId,
+              instance_id: data.instance_id || record.instance_id || '',
+              cluster_id: data.cluster_id || (record as any).cluster_id,
+              strategy: 'rollback',
+              task_type: data.task_type || 'upgrade_rollback',
+              status: data.status || 'running',
+              progress,
+              stage: data.stage || data.steps?.[0]?.name || upgradeStagesFor({ strategy: 'rollback', task_type: 'upgrade_rollback' })[0],
+              message: data.message || '回滚任务已提交',
+              started_at: data.started_at || new Date().toISOString(),
+              finished_at: data.finished_at || data.completed_at,
+              steps: Array.isArray(data.steps) ? data.steps : [],
+              logs: Array.isArray(data.logs) ? data.logs : [],
+            }
+            setActiveUpgrade(rollbackTask)
+            setUpgradeStep(inferStepIndex(progress, upgradeStagesFor({ strategy: 'rollback', task_type: rollbackTask.task_type }), rollbackTask.status, rollbackTask.stage))
+          }
           message.success(data.rollback_id ? `回滚任务已提交: ${data.rollback_id}` : '回滚任务已提交')
           loadData()
         } catch (err: any) {

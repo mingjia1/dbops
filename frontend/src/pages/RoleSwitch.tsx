@@ -67,8 +67,17 @@ const RoleSwitch: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [form] = Form.useForm()
 
+  const loadInstances = async () => {
+    try {
+      const res: any = await instanceApi.list(1000, 0)
+      setInstances(res?.data || [])
+    } catch (e) {
+      console.warn('Failed to load instances:', e)
+    }
+  }
+
   useEffect(() => {
-    instanceApi.list(1000, 0).then((res: any) => setInstances(res?.data || [])).catch(e => console.warn('Failed to load instances:', e))
+    loadInstances()
   }, [])
 
   const clusters = useMemo(() => {
@@ -129,6 +138,7 @@ const RoleSwitch: React.FC = () => {
       return
     }
     setSubmitting(true)
+    const submittedClusterId = clusterId
     try {
       const res: any = await roleSwitchApi.switch({
         cluster_id: clusterId,
@@ -145,10 +155,13 @@ const RoleSwitch: React.FC = () => {
       } else {
         message.info(data?.message || '\u89d2\u8272\u5207\u6362\u5df2\u8bb0\u5f55\uff0c\u8bf7\u67e5\u770b\u5386\u53f2\u72b6\u6001')
       }
-      fetchHistory(clusterId)
     } catch (err: any) {
       message.error(err?.response?.data?.message || '\u89d2\u8272\u5207\u6362\u5931\u8d25')
     } finally {
+      await Promise.all([
+        fetchHistory(submittedClusterId),
+        loadInstances(),
+      ])
       setSubmitting(false)
     }
   }
