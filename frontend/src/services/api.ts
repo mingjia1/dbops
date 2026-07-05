@@ -416,6 +416,7 @@ export const hostApi = {
     ssh_user?: string
     ssh_auth_method?: string
     ssh_credential?: string
+    agent_port?: number
     os_type?: string
     description?: string
     tags?: string

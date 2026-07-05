@@ -11,6 +11,7 @@ interface FormValues {
   ssh_user: string
   ssh_auth_method: string
   ssh_credential: string
+  agent_port: number
   os_type: string
   description?: string
   tags?: string
@@ -39,6 +40,7 @@ const HostForm: React.FC = () => {
             ssh_port: h.ssh_port,
             ssh_user: h.ssh_user,
             ssh_auth_method: h.ssh_auth_method,
+            agent_port: h.agent_port || 9090,
             os_type: h.os_type,
             description: h.description,
             tags: h.tags,
@@ -53,6 +55,7 @@ const HostForm: React.FC = () => {
       form.setFieldsValue({
         ssh_port: 22,
         ssh_auth_method: 'password',
+        agent_port: 9090,
         os_type: 'linux',
       })
     }
@@ -121,6 +124,14 @@ const HostForm: React.FC = () => {
             name="ssh_port"
             label="SSH 端口"
             rules={[{ required: true, message: '请输入 SSH 端口' }]}
+          >
+            <InputNumber min={1} max={65535} style={{ width: 200 }} />
+          </Form.Item>
+
+          <Form.Item
+            name="agent_port"
+            label="Agent 端口"
+            rules={[{ required: true, message: '请输入 Agent 端口' }]}
           >
             <InputNumber min={1} max={65535} style={{ width: 200 }} />
           </Form.Item>
