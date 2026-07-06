@@ -232,8 +232,8 @@ cd frontend && npm run build
 ## 联系方式
 
 - GitHub：提交 Issue 或 Pull Request。
-- 支持邮箱：`support@dbops.io`
-- 企业咨询：`enterprise@dbops.io`
+- 支持邮箱：`ice_out@sina.com`
+- 企业咨询：`ice_out@sina.com`
 
 [go-image]: https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go
 [go-url]: https://go.dev/

@@ -232,8 +232,8 @@ The recent validation suite covers backend deployment planning, repositories, au
 ## Contact
 
 - GitHub: submit issues or pull requests.
-- Support email: `support@dbops.io`
-- Enterprise consultation: `enterprise@dbops.io`
+- Support email: `ice_out@sina.com`
+- Enterprise consultation: `ice_out@sina.com`
 
 [go-image]: https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go
 [go-url]: https://go.dev/
