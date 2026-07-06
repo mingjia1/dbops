@@ -1,13 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Card, Row, Col, Statistic, Select, Spin, Empty, Tag, Space, Progress, Tooltip, Button } from 'antd'
+import { Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Statistic, Tag, Tooltip } from 'antd'
 import {
-  DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined, AlertOutlined,
-  ReloadOutlined, ClockCircleOutlined, ThunderboltOutlined, HddOutlined,
-  ArrowUpOutlined, ArrowDownOutlined,
+  AlertOutlined,
+  ArrowUpOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ClockCircleOutlined,
+  DatabaseOutlined,
+  HddOutlined,
+  ReloadOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import {
-  LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, ResponsiveContainer,
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RTooltip,
+  XAxis,
+  YAxis,
 } from 'recharts'
 import { instanceApi, monitorApi } from '../services/api'
 import { palette } from '../appTheme'
@@ -37,6 +53,8 @@ interface MetricBundle {
   bytes_sent?: number
 }
 
+type MonitorStatus = 'configured' | 'not_configured' | 'no_data' | 'failed'
+
 function formatNumber(n: number | undefined) {
   if (n === undefined || n === null || Number.isNaN(n)) return '-'
   if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}G`
@@ -47,27 +65,110 @@ function formatNumber(n: number | undefined) {
 
 function formatBytes(n: number | undefined) {
   if (n === undefined || n === null) return '-'
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
-  return `${v.toFixed(2)} ${u[i]}`
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let idx = 0
+  let value = n
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024
+    idx += 1
+  }
+  return `${value.toFixed(2)} ${units[idx]}`
 }
 
 function formatDuration(seconds: number | undefined) {
   if (seconds === undefined || seconds === null) return '-'
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return `${d}天${h}小时`
-  if (h > 0) return `${h}小时${m}分`
-  return `${m}分`
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+const seriesData = (series?: MetricPoint[]) =>
+  (series || []).map((point) => ({ ...point, time: point.ts ? new Date(point.ts).toLocaleTimeString() : '-' }))
+
+const hasMetricData = (bundle: MetricBundle) =>
+  Object.values(bundle).some((value) => (Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null))
+
+const normalizeMetricRows = (rows: any[]): MetricBundle | null => {
+  if (rows.length === 0) return null
+  const grouped = rows.reduce((acc: Record<string, MetricPoint[]>, row: any) => {
+    const name = String(row?.name || row?.metric_name || '').trim()
+    if (!name) return acc
+    const point = {
+      ts: row?.timestamp || row?.ts || row?.time || '',
+      value: Number(row?.value ?? 0),
+    }
+    acc[name] = [...(acc[name] || []), point]
+    return acc
+  }, {})
+  const last = (name: string) => {
+    const series = grouped[name]
+    return series?.[series.length - 1]?.value
+  }
+  const bundle: MetricBundle = {
+    tps: grouped.tps || grouped.com_tps || grouped.transactions,
+    qps: grouped.qps || grouped.questions || grouped.queries,
+    connections: grouped.connections || grouped.threads_connected,
+    cpu: grouped.cpu || grouped.cpu_usage,
+    memory: grouped.memory || grouped.memory_usage,
+    disk: grouped.disk || grouped.disk_usage,
+    innodb_buffer_pool_hit_ratio: last('innodb_buffer_pool_hit_ratio') ?? last('buffer_pool_hit_ratio'),
+    slow_queries: last('slow_queries') ?? last('slow_query_count'),
+    uptime: last('uptime') ?? last('uptime_seconds'),
+    innodb_rows_inserted: last('innodb_rows_inserted'),
+    innodb_rows_read: last('innodb_rows_read'),
+    innodb_rows_updated: last('innodb_rows_updated'),
+    innodb_rows_deleted: last('innodb_rows_deleted'),
+    threads_running: last('threads_running'),
+    threads_connected: last('threads_connected'),
+    bytes_received: last('bytes_received'),
+    bytes_sent: last('bytes_sent'),
+  }
+  return hasMetricData(bundle) ? bundle : null
+}
+
+const normalizeMetrics = (raw: any): MetricBundle | null => {
+  if (Array.isArray(raw)) return normalizeMetricRows(raw)
+  const seriesFrom = (key: string): MetricPoint[] | undefined => {
+    const value = raw?.[key]
+    if (Array.isArray(value)) {
+      return value.map((point: any) => ({ ts: point.ts || point.time || point.timestamp || '', value: Number(point.value ?? 0) }))
+    }
+    if (typeof value === 'number') {
+      return [{ ts: new Date().toISOString(), value }]
+    }
+    return undefined
+  }
+  const bundle: MetricBundle = {
+    tps: seriesFrom('tps') || seriesFrom('com_tps') || seriesFrom('transactions'),
+    qps: seriesFrom('qps') || seriesFrom('questions') || seriesFrom('queries'),
+    connections: seriesFrom('connections') || seriesFrom('threads_connected'),
+    cpu: seriesFrom('cpu') || seriesFrom('cpu_usage'),
+    memory: seriesFrom('memory') || seriesFrom('memory_usage'),
+    disk: seriesFrom('disk') || seriesFrom('disk_usage'),
+    innodb_buffer_pool_hit_ratio: raw?.innodb_buffer_pool_hit_ratio ?? raw?.buffer_pool_hit_ratio,
+    slow_queries: raw?.slow_queries ?? raw?.slow_query_count,
+    uptime: raw?.uptime ?? raw?.uptime_seconds,
+    innodb_rows_inserted: raw?.innodb_rows_inserted,
+    innodb_rows_read: raw?.innodb_rows_read,
+    innodb_rows_updated: raw?.innodb_rows_updated,
+    innodb_rows_deleted: raw?.innodb_rows_deleted,
+    threads_running: raw?.threads_running,
+    threads_connected: raw?.threads_connected,
+    bytes_received: raw?.bytes_received,
+    bytes_sent: raw?.bytes_sent,
+  }
+  return hasMetricData(bundle) ? bundle : null
 }
 
 const MonitorDashboard: React.FC = () => {
   const [instances, setInstances] = useState<any[]>([])
   const [selectedInstance, setSelectedInstance] = useState<string | undefined>(undefined)
   const [metrics, setMetrics] = useState<MetricBundle | null>(null)
+  const [monitorStatus, setMonitorStatus] = useState<MonitorStatus>('configured')
+  const [monitorMessage, setMonitorMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [stats, setStats] = useState({ total: 0, healthy: 0, unhealthy: 0, stopped: 0 })
 
@@ -78,25 +179,15 @@ const MonitorDashboard: React.FC = () => {
       setInstances(list)
       setStats({
         total: list.length,
-        healthy: list.filter((i: any) => {
-          const h = i.status?.health_status
-          return h === 'healthy' || h === 'ok'
-        }).length,
-        unhealthy: list.filter((i: any) => {
-          const h = i.status?.health_status
-          return h === 'unhealthy' || h === 'failed'
-        }).length,
-        stopped: list.filter((i: any) => i.status?.run_status === 'stopped').length,
+        healthy: list.filter((item: any) => ['healthy', 'ok'].includes(item.status?.health_status)).length,
+        unhealthy: list.filter((item: any) => ['unhealthy', 'failed'].includes(item.status?.health_status)).length,
+        stopped: list.filter((item: any) => item.status?.run_status === 'stopped').length,
       })
-      if (!selectedInstance && list.length > 0) {
-        setSelectedInstance(list[0].id)
-      }
-    } catch { /* ignore */ }
+      if (!selectedInstance && list.length > 0) setSelectedInstance(list[0].id)
+    } catch {
+      // Keep dashboard usable when the instance list is temporarily unavailable.
+    }
   }
-
-  useEffect(() => {
-    fetchInstances()
-  }, [])
 
   const fetchMetrics = async () => {
     if (!selectedInstance) return
@@ -104,8 +195,14 @@ const MonitorDashboard: React.FC = () => {
     try {
       const res: any = await monitorApi.queryMetrics(selectedInstance)
       const data = res?.data || res || {}
-      setMetrics(normalizeMetrics(data))
-    } catch {
+      const status = (data?.status || (Array.isArray(data) && data.length === 0 ? 'no_data' : 'configured')) as MonitorStatus
+      const normalized = normalizeMetrics(data?.metrics ?? data)
+      setMonitorStatus(normalized ? status : (status === 'configured' ? 'no_data' : status))
+      setMonitorMessage(data?.message || '')
+      setMetrics(normalized)
+    } catch (err: any) {
+      setMonitorStatus('failed')
+      setMonitorMessage(err?.response?.data?.message || err?.message || 'Monitoring query failed')
       setMetrics(null)
     } finally {
       setLoading(false)
@@ -113,320 +210,168 @@ const MonitorDashboard: React.FC = () => {
   }
 
   useEffect(() => {
+    fetchInstances()
+  }, [])
+
+  useEffect(() => {
     fetchMetrics()
-  }, [fetchMetrics])
+  }, [selectedInstance])
 
-  const normalizeMetrics = (raw: any): MetricBundle => {
-    const seriesFrom = (k: string): MetricPoint[] | undefined => {
-      const v = raw?.[k]
-      if (Array.isArray(v)) {
-        return v.map((p: any) => ({ ts: p.ts || p.time || p.timestamp || '', value: Number(p.value ?? 0) }))
-      }
-      if (typeof v === 'number') {
-        return [{ ts: new Date().toLocaleTimeString(), value: v }]
-      }
-      return undefined
-    }
-    return {
-      tps: seriesFrom('tps') || seriesFrom('com_tps') || seriesFrom('transactions'),
-      qps: seriesFrom('qps') || seriesFrom('questions') || seriesFrom('queries'),
-      connections: seriesFrom('connections') || seriesFrom('threads_connected'),
-      cpu: seriesFrom('cpu') || seriesFrom('cpu_usage'),
-      memory: seriesFrom('memory') || seriesFrom('memory_usage'),
-      disk: seriesFrom('disk') || seriesFrom('disk_usage'),
-      innodb_buffer_pool_hit_ratio: raw?.innodb_buffer_pool_hit_ratio ?? raw?.buffer_pool_hit_ratio,
-      slow_queries: raw?.slow_queries ?? raw?.slow_query_count,
-      uptime: raw?.uptime ?? raw?.uptime_seconds,
-      innodb_rows_inserted: raw?.innodb_rows_inserted,
-      innodb_rows_read: raw?.innodb_rows_read,
-      innodb_rows_updated: raw?.innodb_rows_updated,
-      innodb_rows_deleted: raw?.innodb_rows_deleted,
-      threads_running: raw?.threads_running,
-      threads_connected: raw?.threads_connected,
-      bytes_received: raw?.bytes_received,
-      bytes_sent: raw?.bytes_sent,
-    }
-  }
-
-  const seriesData = (s?: MetricPoint[]) =>
-    (s || []).map((p) => ({ ...p, time: p.ts ? new Date(p.ts).toLocaleTimeString() : '-' }))
-
-  const trafficData = useMemo(() => {
-    if (!metrics) return []
-    return [
-      { name: '接收', value: metrics.bytes_received || 0, color: palette.series.primary },
-      { name: '发送', value: metrics.bytes_sent || 0, color: palette.series.success },
-    ]
-  }, [metrics])
-
-  const dmlData = useMemo(() => {
-    if (!metrics) return []
-    return [
-      { name: 'INSERT', value: metrics.innodb_rows_inserted || 0, color: palette.series.primary },
-      { name: 'UPDATE', value: metrics.innodb_rows_updated || 0, color: palette.series.warning },
-      { name: 'DELETE', value: metrics.innodb_rows_deleted || 0, color: palette.series.danger },
-      { name: 'SELECT', value: metrics.innodb_rows_read || 0, color: palette.series.success },
-    ]
-  }, [metrics])
-
-  const selectedInstanceObj = instances.find((i) => i.id === selectedInstance)
-  const bufferHit = metrics?.innodb_buffer_pool_hit_ratio ?? null
-  const noData = !loading && !metrics
+  const selectedInstanceObj = instances.find((item) => item.id === selectedInstance)
+  const trafficData = useMemo(() => [
+    { name: 'Received', value: metrics?.bytes_received || 0, color: palette.series.primary },
+    { name: 'Sent', value: metrics?.bytes_sent || 0, color: palette.series.success },
+  ], [metrics])
+  const dmlData = useMemo(() => [
+    { name: 'INSERT', value: metrics?.innodb_rows_inserted || 0, color: palette.series.primary },
+    { name: 'UPDATE', value: metrics?.innodb_rows_updated || 0, color: palette.series.warning },
+    { name: 'DELETE', value: metrics?.innodb_rows_deleted || 0, color: palette.series.danger },
+    { name: 'SELECT', value: metrics?.innodb_rows_read || 0, color: palette.series.success },
+  ], [metrics])
+  const emptyDescription = monitorStatus === 'not_configured'
+    ? 'Monitoring storage is not configured. Configure ClickHouse and agent metrics ingest.'
+    : monitorStatus === 'failed'
+      ? (monitorMessage || 'Monitoring query failed.')
+      : 'No monitoring data has been ingested for this instance.'
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: 24 }}>
       <Row gutter={[16, 16]}>
-        <Col span={6}>
-          <Card>
-            <Statistic title="总实例数" value={stats.total} prefix={<DatabaseOutlined />} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title="健康" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: palette.text.healthy }} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title="异常" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title="已停止" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} />
-          </Card>
-        </Col>
+        <Col xs={24} md={6}><Card><Statistic title="Instances" value={stats.total} prefix={<DatabaseOutlined />} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="Healthy" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: palette.text.healthy }} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="Unhealthy" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="Stopped" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} /></Card></Col>
       </Row>
 
       <Card
-        title={
-          <Space>
-            <span>实例指标</span>
-            {selectedInstanceObj && <Tag color="blue">{selectedInstanceObj.name}</Tag>}
-          </Space>
-        }
+        title={<Space><span>Instance Metrics</span>{selectedInstanceObj && <Tag color="blue">{selectedInstanceObj.name}</Tag>}</Space>}
         style={{ marginTop: 16 }}
-        extra={
+        extra={(
           <Space>
             <Select
-              placeholder="选择实例查看指标"
+              placeholder="Select instance"
               style={{ width: 240 }}
               value={selectedInstance}
               onChange={setSelectedInstance}
-              options={instances.map((i: any) => ({ label: i.name, value: i.id }))}
+              options={instances.map((item: any) => ({ label: item.name, value: item.id }))}
             />
-            <Tooltip title="刷新">
-              <Button
-                type="text"
-                icon={<ReloadOutlined spin={loading} />}
-                onClick={fetchMetrics}
-              />
+            <Tooltip title="Refresh">
+              <Button type="text" icon={<ReloadOutlined spin={loading} />} onClick={fetchMetrics} />
             </Tooltip>
           </Space>
-        }
+        )}
       >
         {loading ? (
           <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Spin tip="加载中..." />
+            <Spin tip="Loading..." />
           </div>
-        ) : noData || !metrics ? (
-          <Empty description="暂无监控数据" />
+        ) : !metrics ? (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Alert
+              type={monitorStatus === 'failed' ? 'error' : monitorStatus === 'not_configured' ? 'warning' : 'info'}
+              showIcon
+              message={monitorStatus === 'not_configured' ? 'Monitoring not configured' : monitorStatus === 'failed' ? 'Monitoring query failed' : 'No monitoring data'}
+              description={emptyDescription}
+            />
+            <Empty description={emptyDescription} />
+          </Space>
         ) : (
-          <>
-            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-              <Col span={6}>
-                <Card size="small">
-                  <Statistic
-                    title="QPS"
-                    value={metrics.qps?.[metrics.qps.length - 1]?.value || 0}
-                    precision={1}
-                    prefix={<ThunderboltOutlined />}
-                    valueStyle={{ color: palette.series.primary }}
-                  />
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="QPS" value={metrics.qps?.[metrics.qps.length - 1]?.value || 0} precision={1} prefix={<ThunderboltOutlined />} valueStyle={{ color: palette.series.primary }} /></Card></Col>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="TPS" value={metrics.tps?.[metrics.tps.length - 1]?.value || 0} precision={1} prefix={<ArrowUpOutlined />} valueStyle={{ color: palette.series.success }} /></Card></Col>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="Running Threads" value={metrics.threads_running || metrics.connections?.[metrics.connections.length - 1]?.value || 0} prefix={<DatabaseOutlined />} /></Card></Col>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="Slow Queries" value={metrics.slow_queries || 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries || 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
+            </Row>
+
+            <Row gutter={[16, 16]}>
+              <Col xs={24} xl={12}>
+                <Card title="QPS Trend" size="small">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={seriesData(metrics.qps)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="time" />
+                      <YAxis />
+                      <RTooltip />
+                      <Line type="monotone" dataKey="value" stroke={palette.series.primary} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </Card>
               </Col>
-              <Col span={6}>
-                <Card size="small">
-                  <Statistic
-                    title="TPS"
-                    value={metrics.tps?.[metrics.tps.length - 1]?.value || 0}
-                    precision={1}
-                    prefix={<ArrowUpOutlined />}
-                    valueStyle={{ color: palette.series.success }}
-                  />
+              <Col xs={24} xl={12}>
+                <Card title="TPS Trend" size="small">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <AreaChart data={seriesData(metrics.tps)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="time" />
+                      <YAxis />
+                      <RTooltip />
+                      <Area type="monotone" dataKey="value" stroke={palette.series.success} fill={palette.series.success} fillOpacity={0.16} />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </Card>
               </Col>
-              <Col span={6}>
-                <Card size="small">
-                  <Statistic
-                    title="活跃连接"
-                    value={metrics.threads_running || metrics.connections?.[metrics.connections.length - 1]?.value || 0}
-                    prefix={<ArrowDownOutlined />}
-                  />
+              <Col xs={24} xl={12}>
+                <Card title="Connections" size="small">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={seriesData(metrics.connections)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="time" />
+                      <YAxis />
+                      <RTooltip />
+                      <Line type="monotone" dataKey="value" stroke={palette.series.warning} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </Card>
               </Col>
-              <Col span={6}>
-                <Card size="small">
-                  <Statistic
-                    title="慢查询累计"
-                    value={metrics.slow_queries || 0}
-                    prefix={<ClockCircleOutlined />}
-                    valueStyle={{ color: (metrics.slow_queries || 0) > 100 ? '#cf1322' : '#fa8c16' }}
-                  />
+              <Col xs={24} xl={12}>
+                <Card title="Resource Usage" size="small">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <AreaChart data={seriesData(metrics.cpu || metrics.memory || metrics.disk)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="time" />
+                      <YAxis />
+                      <RTooltip />
+                      <Legend />
+                      <Area type="monotone" dataKey="value" stroke={palette.series.danger} fill={palette.series.danger} fillOpacity={0.14} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </Card>
+              </Col>
+              <Col xs={24} xl={12}>
+                <Card title="Traffic" size="small">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={trafficData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis tickFormatter={(value) => formatBytes(Number(value))} />
+                      <RTooltip formatter={(value: any) => formatBytes(Number(value))} />
+                      <Bar dataKey="value" fill={palette.series.primary} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              </Col>
+              <Col xs={24} xl={12}>
+                <Card title="DML Rows" size="small">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={dmlData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis tickFormatter={(value) => formatNumber(Number(value))} />
+                      <RTooltip formatter={(value: any) => formatNumber(Number(value))} />
+                      <Bar dataKey="value" fill={palette.series.success} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </Card>
               </Col>
             </Row>
 
             <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Card size="small" title="QPS 趋势">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={seriesData(metrics.qps)}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <RTooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="value" name="QPS" stroke="#1890ff" dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
-              <Col span={12}>
-                <Card size="small" title="TPS 趋势">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <AreaChart data={seriesData(metrics.tps)}>
-                      <defs>
-                        <linearGradient id="tpsGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#52c41a" stopOpacity={0.8} />
-                          <stop offset="95%" stopColor="#52c41a" stopOpacity={0.1} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <RTooltip />
-                      <Area type="monotone" dataKey="value" name="TPS" stroke="#52c41a" fill="url(#tpsGrad)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
-
-              <Col span={12}>
-                <Card size="small" title="连接数趋势">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={seriesData(metrics.connections)}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <RTooltip />
-                      <Line type="monotone" dataKey="value" name="连接数" stroke="#722ed1" dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
-              <Col span={12}>
-                <Card size="small" title="InnoDB DML 行数累计">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={dmlData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} tickFormatter={formatNumber} />
-                      <RTooltip formatter={(v: any) => formatNumber(Number(v))} />
-                      <Bar dataKey="value" name="行数">
-                        {dmlData.map((entry, idx) => (
-                          <Cell key={idx} fill={entry.color} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
-
-              <Col span={12}>
-                <Card size="small" title="CPU 使用率">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <AreaChart data={seriesData(metrics.cpu)}>
-                      <defs>
-                        <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#fa8c16" stopOpacity={0.8} />
-                          <stop offset="95%" stopColor="#fa8c16" stopOpacity={0.1} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} unit="%" />
-                      <RTooltip />
-                      <Area type="monotone" dataKey="value" name="CPU%" stroke="#fa8c16" fill="url(#cpuGrad)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
-              <Col span={12}>
-                <Card size="small" title="网络流量 (累计)">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <PieChart>
-                      <Pie
-                        data={trafficData}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        outerRadius={80}
-                        dataKey="value"
-                        label={(e: any) => `${e.name}: ${formatBytes(e.value)}`}
-                      >
-                        {trafficData.map((entry, idx) => (
-                          <Cell key={idx} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <RTooltip formatter={(v: any) => formatBytes(Number(v))} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </Card>
-              </Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="Uptime" value={formatDuration(metrics.uptime)} prefix={<ClockCircleOutlined />} /></Card></Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="Buffer Pool Hit" value={metrics.innodb_buffer_pool_hit_ratio ?? 0} suffix="%" precision={2} prefix={<HddOutlined />} /></Card></Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="Threads Connected" value={metrics.threads_connected || 0} /></Card></Col>
             </Row>
-
-            <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-              <Col span={8}>
-                <Card size="small" title={<Space><HddOutlined />InnoDB 缓冲池命中率</Space>}>
-                  {bufferHit !== null ? (
-                    <>
-                      <Progress
-                        type="circle"
-                        percent={Math.round((bufferHit > 1 ? bufferHit : bufferHit * 100))}
-                        format={(p) => `${p}%`}
-                        strokeColor={bufferHit > 0.95 ? '#52c41a' : bufferHit > 0.85 ? '#fa8c16' : '#f5222d'}
-                      />
-                      <div style={{ marginTop: 8, color: palette.text.stopped, fontSize: 12 }}>
-                        健康范围: ≥ 95%
-                      </div>
-                    </>
-                  ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无数据" />}
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card size="small" title="MySQL 运行时间">
-                  <Statistic
-                    value={formatDuration(metrics.uptime)}
-                    valueStyle={{ color: palette.series.primary }}
-                    prefix={<ClockCircleOutlined />}
-                  />
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card size="small" title="连接数详情">
-                  <Row gutter={8}>
-                    <Col span={12}>
-                      <Statistic title="活跃" value={metrics.threads_running || 0} valueStyle={{ fontSize: 18, color: palette.series.warning }} />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic title="已连接" value={metrics.threads_connected || 0} valueStyle={{ fontSize: 18 }} />
-                    </Col>
-                  </Row>
-                </Card>
-              </Col>
-            </Row>
-          </>
+          </Space>
         )}
       </Card>
     </div>

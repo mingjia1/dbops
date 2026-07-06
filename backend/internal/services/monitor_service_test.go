@@ -8,6 +8,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type fakeMetricStore struct {
+	writes  []MetricData
+	queries []MetricQueryRequest
+}
+
+func (f *fakeMetricStore) WriteMetric(ctx context.Context, instanceID, metricName string, value float64, timestamp time.Time) error {
+	f.writes = append(f.writes, MetricData{Name: metricName, Value: value, Timestamp: timestamp})
+	return nil
+}
+
+func (f *fakeMetricStore) QueryMetrics(ctx context.Context, instanceID string, metricNames []string, startTime, endTime time.Time) ([]map[string]interface{}, error) {
+	f.queries = append(f.queries, MetricQueryRequest{InstanceID: instanceID, Metrics: metricNames, StartTime: startTime, EndTime: endTime})
+	return []map[string]interface{}{
+		{"name": "qps", "value": 42.0, "timestamp": time.Now()},
+	}, nil
+}
+
 func TestNewMonitorService(t *testing.T) {
 	service := NewMonitorService(nil)
 	assert.NotNil(t, service)
@@ -27,6 +44,59 @@ func TestQueryMetrics(t *testing.T) {
 	// P0-4: 无 ClickHouse 时返回空 slice, 不再返回写死假数据.
 	assert.NoError(t, err)
 	assert.Empty(t, metrics)
+}
+
+func TestIngestMetricsWritesEachMetric(t *testing.T) {
+	store := &fakeMetricStore{}
+	service := &MonitorService{clickhouse: store}
+
+	err := service.IngestMetrics(context.Background(), MetricIngestRequest{
+		InstanceID: "instance-001",
+		Metrics: []MetricData{
+			{Name: "qps", Value: 10},
+			{Name: "threads_connected", Value: 3},
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.Len(t, store.writes, 2)
+	assert.Equal(t, "qps", store.writes[0].Name)
+	assert.Equal(t, 10.0, store.writes[0].Value)
+	assert.Equal(t, "threads_connected", store.writes[1].Name)
+}
+
+func TestIngestMetricsValidatesRequiredFields(t *testing.T) {
+	service := &MonitorService{clickhouse: &fakeMetricStore{}}
+
+	assert.ErrorContains(t, service.IngestMetrics(context.Background(), MetricIngestRequest{}), "instance_id is required")
+	assert.ErrorContains(t, service.IngestMetrics(context.Background(), MetricIngestRequest{InstanceID: "i"}), "metrics is required")
+	assert.ErrorContains(t, service.IngestMetrics(context.Background(), MetricIngestRequest{InstanceID: "i", Metrics: []MetricData{{Name: ""}}}), "metric name is required")
+}
+
+func TestIngestMetricsRequiresClickHouse(t *testing.T) {
+	service := NewMonitorService(nil)
+
+	err := service.IngestMetrics(context.Background(), MetricIngestRequest{
+		InstanceID: "instance-001",
+		Metrics:    []MetricData{{Name: "qps", Value: 1}},
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "clickhouse not configured")
+}
+
+func TestQueryMetricsUsesDefaultWindowAndMetricNames(t *testing.T) {
+	store := &fakeMetricStore{}
+	service := &MonitorService{clickhouse: store}
+
+	metrics, err := service.QueryMetrics(context.Background(), MetricQueryRequest{InstanceID: "instance-001"})
+
+	assert.NoError(t, err)
+	assert.Len(t, metrics, 1)
+	assert.Len(t, store.queries, 1)
+	assert.Contains(t, store.queries[0].Metrics, "qps")
+	assert.False(t, store.queries[0].StartTime.IsZero())
+	assert.False(t, store.queries[0].EndTime.IsZero())
 }
 
 func TestQueryMetrics_WithTimeRange(t *testing.T) {

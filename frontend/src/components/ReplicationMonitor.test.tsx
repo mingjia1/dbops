@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+﻿import { render, screen } from '@testing-library/react'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import ReplicationMonitor from './ReplicationMonitor'
 
@@ -27,7 +27,7 @@ describe('ReplicationMonitor', () => {
           Replica_IO_Running: 'Yes',
           Replica_SQL_Running: 'Yes',
           Seconds_Behind_Source: 0,
-          Source_Host: '10.1.81.21',
+          Source_Host: '192.0.2.21',
           Source_Port: 3306,
         }}
       />
