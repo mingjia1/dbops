@@ -223,6 +223,29 @@ func TestInstanceDeployWritesSuccessAuditLog(t *testing.T) {
 	assert.Contains(t, logs[0].Details, instanceID)
 }
 
+func TestInstanceDeployDoesNotRetryWithMutatedPortOnExistingDirectory(t *testing.T) {
+	agent := newAgentStub()
+	defer agent.Close()
+	agent.statusByPath["/agent/tasks/deploy"] = "failed"
+	agent.messageByPath["/agent/tasks/deploy"] = "Can't create directory '/data/mysql/3307' (File exists)"
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	service, _, instanceID := newInstanceDeployTestService(t, password, agent)
+
+	result, err := service.Deploy(context.Background(), instanceID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	require.Len(t, agent.calls, 1)
+	config, ok := agent.calls[0].Body["config"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(3307), config["port"])
+	conn, err := service.repo.GetConnection(context.Background(), instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, 3307, conn.Port)
+}
+
 func TestInstanceDeployWritesFailedAuditLogOnPasswordDecryptFailure(t *testing.T) {
 	service, auditRepo, instanceID := newInstanceDeployTestService(t, "not-encrypted", nil)
 	ctx := context.WithValue(context.Background(), "user_id", "deploy-user")

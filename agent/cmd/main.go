@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -14,6 +15,213 @@ import (
 )
 
 const AgentVersion = "1.0.0"
+
+type middlewareSetupTaskExecutor interface {
+	ExecuteKeepalivedSetup(ctx context.Context, req executor.DeployTaskRequest) (*executor.TaskResult, error)
+	ExecuteProxySQLSetup(ctx context.Context, req executor.DeployTaskRequest) (*executor.TaskResult, error)
+}
+
+type metricsTaskCollector interface {
+	CollectMySQLStatusMetrics(ctx context.Context, target collector.MySQLMetricTarget) ([]collector.Metric, error)
+}
+
+func agentAuthMiddleware(agentToken string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if agentToken == "" {
+			c.AbortWithStatusJSON(500, gin.H{"code": 500, "message": "agent_token not configured"})
+			return
+		}
+		h := c.GetHeader("Authorization")
+		const prefix = "Bearer "
+		if len(h) < len(prefix) || h[:len(prefix)] != prefix {
+			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "missing bearer token"})
+			return
+		}
+		tok := h[len(prefix):]
+		if tok != agentToken {
+			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "invalid agent token"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func registerMiddlewareSetupTaskRoutes(tasks gin.IRoutes, taskExecutor middlewareSetupTaskExecutor) {
+	tasks.POST("/keepalived-setup", func(c *gin.Context) {
+		var req executor.DeployTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		result, err := taskExecutor.ExecuteKeepalivedSetup(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": "Keepalived setup failed"})
+			return
+		}
+		statusCode := 200
+		if result.Status == "failed" {
+			statusCode = 500
+		}
+		c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+	})
+
+	tasks.POST("/proxysql-setup", func(c *gin.Context) {
+		var req executor.DeployTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		result, err := taskExecutor.ExecuteProxySQLSetup(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": "ProxySQL setup failed"})
+			return
+		}
+		statusCode := 200
+		if result.Status == "failed" {
+			statusCode = 500
+		}
+		c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+	})
+}
+
+func registerMetricsTaskRoutes(tasks gin.IRoutes, metricsCollector metricsTaskCollector) {
+	tasks.POST("/metrics-collect", func(c *gin.Context) {
+		var req executor.DeployTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		target, err := metricTargetFromTaskRequest(req)
+		if err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+			return
+		}
+		metrics, err := metricsCollector.CollectMySQLStatusMetrics(c.Request.Context(), target)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"code": 200, "message": "success", "data": executor.TaskResult{
+			TaskID:   req.TaskID,
+			Status:   "completed",
+			Progress: 100,
+			Message:  "mysql metrics collected",
+			Data: map[string]interface{}{
+				"instance_id": target.InstanceID,
+				"metrics":     metrics,
+			},
+			Timestamp: time.Now(),
+		}})
+	})
+}
+
+func metricTargetFromTaskRequest(req executor.DeployTaskRequest) (collector.MySQLMetricTarget, error) {
+	instanceID := req.InstanceID
+	if instanceID == "" {
+		instanceID, _ = req.Config["instance_id"].(string)
+	}
+	host, _ := req.Config["target_host"].(string)
+	if host == "" {
+		host, _ = req.Config["host"].(string)
+	}
+	user, _ := req.Config["target_user"].(string)
+	if user == "" {
+		user, _ = req.Config["mysql_user"].(string)
+	}
+	pass, _ := req.Config["target_pass"].(string)
+	if pass == "" {
+		pass, _ = req.Config["mysql_password"].(string)
+	}
+	port := 0
+	switch v := req.Config["target_port"].(type) {
+	case int:
+		port = v
+	case float64:
+		port = int(v)
+	}
+	if port == 0 {
+		switch v := req.Config["port"].(type) {
+		case int:
+			port = v
+		case float64:
+			port = int(v)
+		}
+	}
+	if instanceID == "" {
+		return collector.MySQLMetricTarget{}, fmt.Errorf("instance_id is required")
+	}
+	return collector.MySQLMetricTarget{
+		InstanceID: instanceID,
+		Host:       host,
+		Port:       port,
+		User:       user,
+		Password:   pass,
+	}, nil
+}
+
+func registerCompatAccountRoutes(compatAccounts gin.IRoutes, accountManager *executor.AccountManager) {
+	compatAccounts.POST("/setup", func(c *gin.Context) {
+		var req executor.AccountSetupRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		ctx := c.Request.Context()
+		host := req.Host
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		port := req.Port
+		if port == 0 {
+			port = 3306
+		}
+		adminUser := req.AdminUser
+		if adminUser == "" {
+			adminUser = "root"
+		}
+		if req.RootPassword != "" {
+			if err := accountManager.SetupRootAccount(ctx, host, port, req.RootPassword); err != nil {
+				c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+				return
+			}
+		}
+		if req.ReplUser != "" && req.ReplPass != "" {
+			if err := accountManager.SetupReplAccount(ctx, host, port, adminUser, req.AdminPass, req.ReplUser, req.ReplPass); err != nil {
+				c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+				return
+			}
+		}
+		if req.MonitorUser != "" && req.MonitorPass != "" {
+			if err := accountManager.SetupMonitorAccount(ctx, host, port, adminUser, req.AdminPass, req.MonitorUser, req.MonitorPass); err != nil {
+				c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+				return
+			}
+		}
+		c.JSON(200, gin.H{"code": 200, "message": "Accounts setup completed"})
+	})
+	compatAccounts.POST("/rotate", func(c *gin.Context) {
+		var req executor.AccountRotateRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		if req.Host == "" {
+			req.Host = "127.0.0.1"
+		}
+		if req.Port == 0 {
+			req.Port = 3306
+		}
+		if req.TargetUser == "" || req.NewPassword == "" {
+			c.JSON(400, gin.H{"code": 400, "message": "target_user and new_password are required"})
+			return
+		}
+		if err := accountManager.RotatePassword(c.Request.Context(), req.Host, req.Port, req.AdminUser, req.AdminPass, req.TargetUser, req.NewPassword); err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"code": 200, "message": "Password rotated"})
+	})
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -62,82 +270,8 @@ func main() {
 	})
 
 	// P1-2: 校验 platform-backend 调用 agent 时携带的 Bearer token, 与 config.agent_token 一致.
-	authAgent := func(c *gin.Context) {
-		if cfg.AgentToken == "" {
-			c.AbortWithStatusJSON(500, gin.H{"code": 500, "message": "agent_token not configured"})
-			return
-		}
-		h := c.GetHeader("Authorization")
-		const prefix = "Bearer "
-		if len(h) < len(prefix) || h[:len(prefix)] != prefix {
-			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "missing bearer token"})
-			return
-		}
-		tok := h[len(prefix):]
-		if tok != cfg.AgentToken {
-			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "invalid agent token"})
-			return
-		}
-		c.Next()
-	}
-
-	// 跳过授权的辅助: 把 agent 路由组挂上中间件.
-	_ = authAgent
-
-	compatAccounts := r.Group("/api/v1/accounts")
-	{
-		compatAccounts.POST("/setup", func(c *gin.Context) {
-			var req executor.AccountSetupRequest
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
-				return
-			}
-			ctx := c.Request.Context()
-			host := req.Host
-			if host == "" { host = "127.0.0.1" }
-			port := req.Port
-			if port == 0 { port = 3306 }
-			adminUser := req.AdminUser
-			if adminUser == "" { adminUser = "root" }
-			if req.RootPassword != "" {
-				if err := accountManager.SetupRootAccount(ctx, host, port, req.RootPassword); err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
-					return
-				}
-			}
-			if req.ReplUser != "" && req.ReplPass != "" {
-				if err := accountManager.SetupReplAccount(ctx, host, port, adminUser, req.AdminPass, req.ReplUser, req.ReplPass); err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
-					return
-				}
-			}
-			if req.MonitorUser != "" && req.MonitorPass != "" {
-				if err := accountManager.SetupMonitorAccount(ctx, host, port, adminUser, req.AdminPass, req.MonitorUser, req.MonitorPass); err != nil {
-					c.JSON(500, gin.H{"code": 500, "message": err.Error()})
-					return
-				}
-			}
-			c.JSON(200, gin.H{"code": 200, "message": "Accounts setup completed"})
-		})
-		compatAccounts.POST("/rotate", func(c *gin.Context) {
-			var req executor.AccountRotateRequest
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
-				return
-			}
-			if req.Host == "" { req.Host = "127.0.0.1" }
-			if req.Port == 0 { req.Port = 3306 }
-			if req.TargetUser == "" || req.NewPassword == "" {
-				c.JSON(400, gin.H{"code": 400, "message": "target_user and new_password are required"})
-				return
-			}
-			if err := accountManager.RotatePassword(c.Request.Context(), req.Host, req.Port, req.AdminUser, req.AdminPass, req.TargetUser, req.NewPassword); err != nil {
-				c.JSON(500, gin.H{"code": 500, "message": err.Error()})
-				return
-			}
-			c.JSON(200, gin.H{"code": 200, "message": "Password rotated"})
-		})
-	}
+	authAgent := agentAuthMiddleware(cfg.AgentToken)
+	registerCompatAccountRoutes(r.Group("/api/v1/accounts", authAgent), accountManager)
 
 	agent := r.Group("/agent", authAgent)
 	{
@@ -192,6 +326,9 @@ func main() {
 
 				c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
 			})
+
+			registerMiddlewareSetupTaskRoutes(tasks, taskExecutor)
+			registerMetricsTaskRoutes(tasks, metricsCollector)
 
 			tasks.POST("/restore", func(c *gin.Context) {
 				var req executor.DeployTaskRequest
@@ -741,6 +878,23 @@ func main() {
 		c.Writer.Header().Set("X-Trace-Id", tid)
 		c.Next()
 	})
+
+	go func() {
+		ctx := context.Background()
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			metrics, err := metricsCollector.CollectSystemMetrics(ctx, "agent:"+cfg.AgentPort)
+			if err == nil {
+				if err := metricsCollector.ReportMetrics(ctx, cfg.PlatformURL, cfg.AgentToken, metrics); err != nil {
+					log.Printf("WARN: report metrics failed: %v", err)
+				}
+			} else {
+				log.Printf("WARN: collect metrics failed: %v", err)
+			}
+			<-ticker.C
+		}
+	}()
 
 	logInstance.Info("Agent starting on port " + cfg.AgentPort)
 	srv := &http.Server{

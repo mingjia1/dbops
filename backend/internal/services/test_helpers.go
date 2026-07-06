@@ -119,17 +119,7 @@ func (s *TestableUpgradeService) planLogicalMigrationSteps(source, target string
 }
 
 func (s *TestableUpgradeService) planRollingUpgradeSteps(source, target string) []UpgradeStepInfo {
-	return []UpgradeStepInfo{
-		{Order: 1, Name: "Cluster Health Check", Type: "check", Description: "Verify cluster health"},
-		{Order: 2, Name: "Upgrade Slave 1", Type: "upgrade", Description: "Upgrade first slave"},
-		{Order: 3, Name: "Verify Slave 1", Type: "verify", Description: "Verify slave 1"},
-		{Order: 4, Name: "Upgrade Slave 2", Type: "upgrade", Description: "Upgrade second slave"},
-		{Order: 5, Name: "Verify Slave 2", Type: "verify", Description: "Verify slave 2"},
-		{Order: 6, Name: "Promote New Master", Type: "promote", Description: "Promote slave"},
-		{Order: 7, Name: "Upgrade Old Master", Type: "upgrade", Description: "Upgrade old master"},
-		{Order: 8, Name: "Reconfigure Topology", Type: "configure", Description: "Update topology"},
-		{Order: 9, Name: "Final Verification", Type: "verify", Description: "Final check"},
-	}
+	return rollingUpgradeStepsForInstances("ha", nil, source, target)
 }
 
 func (s *TestableUpgradeService) generatePreCheckWarnings(instance *models.Instance, strategy string) []string {

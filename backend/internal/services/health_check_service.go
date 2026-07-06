@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,11 +41,11 @@ func NewHealthCheckService(db *repositories.Database, encryptionKey string) *Hea
 }
 
 type HealthCheckConfig struct {
-	CheckInterval     time.Duration `json:"check_interval"`
-	Timeout           time.Duration `json:"timeout"`
-	FailureThreshold  int           `json:"failure_threshold"`
-	SuccessThreshold  int           `json:"success_threshold"`
-	CheckTypes        []string      `json:"check_types"`
+	CheckInterval    time.Duration `json:"check_interval"`
+	Timeout          time.Duration `json:"timeout"`
+	FailureThreshold int           `json:"failure_threshold"`
+	SuccessThreshold int           `json:"success_threshold"`
+	CheckTypes       []string      `json:"check_types"`
 }
 
 type HealthCheckRequest struct {
@@ -74,21 +75,21 @@ type HealthCheckResult struct {
 }
 
 type CheckDetails struct {
-	TCPReachable    bool   `json:"tcp_reachable"`
-	MySQLAlive      bool   `json:"mysql_alive"`
-	ReplWorking     bool   `json:"repl_working"`
-	SecondsBehind   int    `json:"seconds_behind"`
-	ConnectionCount int    `json:"connection_count"`
+	TCPReachable    bool    `json:"tcp_reachable"`
+	MySQLAlive      bool    `json:"mysql_alive"`
+	ReplWorking     bool    `json:"repl_working"`
+	SecondsBehind   int     `json:"seconds_behind"`
+	ConnectionCount int     `json:"connection_count"`
 	QPS             float64 `json:"qps"`
 }
 
 type FailureState struct {
-	InstanceID      string    `json:"instance_id"`
-	ConsecutiveFailures int    `json:"consecutive_failures"`
-	LastFailureTime time.Time `json:"last_failure_time"`
-	LastSuccessTime time.Time `json:"last_success_time"`
-	IsMarkedFailed  bool      `json:"is_marked_failed"`
-	FailureReason   string    `json:"failure_reason"`
+	InstanceID          string    `json:"instance_id"`
+	ConsecutiveFailures int       `json:"consecutive_failures"`
+	LastFailureTime     time.Time `json:"last_failure_time"`
+	LastSuccessTime     time.Time `json:"last_success_time"`
+	IsMarkedFailed      bool      `json:"is_marked_failed"`
+	FailureReason       string    `json:"failure_reason"`
 }
 
 // failureStates moved into HealthCheckService.failureStates (B9: was package var with no lock)
@@ -111,6 +112,7 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 	if config.CheckTypes == nil {
 		config.CheckTypes = []string{"tcp", "mysql", "replication"}
 	}
+	config.CheckTypes = effectiveHealthCheckTypes(instance, config.CheckTypes)
 
 	result := &HealthCheckResult{
 		InstanceID:     req.InstanceID,
@@ -125,6 +127,7 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 		TargetEndpoint: fmt.Sprintf("%s:%d", conn.Host, conn.Port),
 	}
 
+	checks := healthCheckTypeSet(config.CheckTypes)
 	for _, checkType := range config.CheckTypes {
 		switch checkType {
 		case "tcp":
@@ -145,7 +148,7 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 				result.Details.QPS = mysqlResult.Details.QPS
 			}
 		case "replication":
-			if instance.Status.Role == "slave" {
+			if isReplicationReplicaRole(instance.Status.Role) {
 				replResult := s.checkReplication(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, config.Timeout)
 				result.Details.ReplWorking = replResult.IsHealthy
 				result.Details.SecondsBehind = replResult.Details.SecondsBehind
@@ -156,8 +159,14 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 		}
 	}
 
-	result.IsHealthy = result.Details.TCPReachable && result.Details.MySQLAlive
-	if instance.Status.Role == "slave" {
+	result.IsHealthy = true
+	if checks["tcp"] {
+		result.IsHealthy = result.IsHealthy && result.Details.TCPReachable
+	}
+	if checks["mysql"] {
+		result.IsHealthy = result.IsHealthy && result.Details.MySQLAlive
+	}
+	if checks["replication"] && isReplicationReplicaRole(instance.Status.Role) {
 		result.IsHealthy = result.IsHealthy && result.Details.ReplWorking
 	}
 
@@ -570,6 +579,33 @@ func (s *HealthCheckService) BatchHealthCheck(ctx context.Context, instanceIDs [
 
 func batchHealthCheckTypes() []string {
 	return []string{"tcp", "mysql"}
+}
+
+func effectiveHealthCheckTypes(instance *models.Instance, requested []string) []string {
+	if instance == nil {
+		return requested
+	}
+	if strings.EqualFold(instance.Topology.ReplicationMode, ClusterTypeMHA) && strings.EqualFold(instance.Status.Role, "manager") {
+		return []string{"tcp"}
+	}
+	return requested
+}
+
+func healthCheckTypeSet(checkTypes []string) map[string]bool {
+	out := make(map[string]bool, len(checkTypes))
+	for _, checkType := range checkTypes {
+		out[strings.ToLower(strings.TrimSpace(checkType))] = true
+	}
+	return out
+}
+
+func isReplicationReplicaRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "slave", "replica":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseInt64(s string) (int64, error) {

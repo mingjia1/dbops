@@ -16,9 +16,9 @@ func NewProxySQLAddonPlugin(agentCaller func(ctx context.Context, host string, a
 	return &ProxySQLAddonPlugin{agentCaller: agentCaller}
 }
 
-func (p *ProxySQLAddonPlugin) Name() string         { return "proxysql-addon" }
+func (p *ProxySQLAddonPlugin) Name() string             { return "proxysql-addon" }
 func (p *ProxySQLAddonPlugin) Type() plugins.PluginType { return plugins.PluginTypeMiddleware }
-func (p *ProxySQLAddonPlugin) Version() string       { return "1.0.0" }
+func (p *ProxySQLAddonPlugin) Version() string          { return "1.0.0" }
 
 func (p *ProxySQLAddonPlugin) Prepare(_ context.Context, env plugins.PluginEnv) error {
 	if len(env.Nodes) < 1 {
@@ -33,12 +33,19 @@ func (p *ProxySQLAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv
 	}
 
 	proxyHost, _ := params["proxy_host"].(string)
-	proxyPort, _ := params["proxy_port"].(int)
+	proxyPort := intParam(params, "proxy_port")
+	proxyAgentPort := intParam(params, "agent_port")
+	if proxyAgentPort == 0 {
+		proxyAgentPort = intParam(params, "proxy_agent_port")
+	}
 	if proxyHost == "" {
 		return nil, fmt.Errorf("proxy_host is required")
 	}
 	if proxyPort == 0 {
 		proxyPort = 6033
+	}
+	if proxyAgentPort == 0 {
+		proxyAgentPort = 9090
 	}
 
 	var backends []map[string]interface{}
@@ -50,16 +57,22 @@ func (p *ProxySQLAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv
 	}
 
 	payload := map[string]interface{}{
-		"task_id":   fmt.Sprintf("proxysql-%s", env.ClusterID),
-		"proxy_host": proxyHost,
-		"proxy_port": proxyPort,
-		"backends":  backends,
-		"admin_user": env.Credentials.RootUser,
-		"admin_pass": env.Credentials.RootPassword,
+		"task_id": fmt.Sprintf("proxysql-%s", env.ClusterID),
+		"config": map[string]interface{}{
+			"proxy_host": proxyHost,
+			"proxy_port": proxyPort,
+			"backends":   backends,
+			"admin_user": env.Credentials.RootUser,
+			"admin_pass": env.Credentials.RootPassword,
+		},
 	}
 
-	if _, err := p.agentCaller(ctx, proxyHost, 6032, "/api/v1/proxysql/setup", payload); err != nil {
+	resp, err := p.agentCaller(ctx, proxyHost, proxyAgentPort, "/agent/tasks/proxysql-setup", payload)
+	if err != nil {
 		return nil, fmt.Errorf("proxysql setup: %w", err)
+	}
+	if err := ensureAgentTaskSucceeded("proxysql", proxyHost, resp); err != nil {
+		return nil, err
 	}
 
 	return &plugins.PluginResult{
@@ -74,4 +87,24 @@ func (p *ProxySQLAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv) e
 
 func (p *ProxySQLAddonPlugin) Teardown(_ context.Context, _ plugins.PluginEnv) error {
 	return nil
+}
+
+func intParam(params map[string]interface{}, key string) int {
+	if params == nil {
+		return 0
+	}
+	switch v := params[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		var out int
+		if _, err := fmt.Sscanf(v, "%d", &out); err == nil {
+			return out
+		}
+	}
+	return 0
 }

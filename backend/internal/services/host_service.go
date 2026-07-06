@@ -128,14 +128,15 @@ type HostAgentActionRequest struct {
 }
 
 type HostAgentActionResult struct {
-	HostID    string                 `json:"host_id"`
-	HostName  string                 `json:"host_name"`
-	Address   string                 `json:"address"`
-	AgentPort int                    `json:"agent_port"`
-	Action    string                 `json:"action"`
-	Status    string                 `json:"status"`
-	Message   string                 `json:"message"`
-	Result    map[string]interface{} `json:"result,omitempty"`
+	HostID       string                 `json:"host_id"`
+	HostName     string                 `json:"host_name"`
+	Address      string                 `json:"address"`
+	AgentPort    int                    `json:"agent_port"`
+	Action       string                 `json:"action"`
+	Status       string                 `json:"status"`
+	Message      string                 `json:"message"`
+	AgentVersion string                 `json:"agent_version,omitempty"`
+	Result       map[string]interface{} `json:"result,omitempty"`
 }
 
 type BatchHostAgentActionRequest struct {
@@ -341,12 +342,17 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		if ok, msg := s.agentHTTPHealth(ctx, host.Address, port); ok {
 			_ = s.repo.UpdateStatus(ctx, host.ID, "active")
 			ver, _ := agentClient.GetAgentVersion(ctx, host.Address, port)
+			storedVersion := strings.TrimSpace(host.AgentVersion)
+			if strings.TrimSpace(ver) != "" {
+				storedVersion = strings.TrimSpace(ver)
+			}
 			now := time.Now().UTC()
-			_ = s.repo.UpdateAgentMeta(ctx, host.ID, ver, "running", &now)
+			_ = s.repo.UpdateAgentMeta(ctx, host.ID, storedVersion, "running", &now)
 			result.Status = "success"
 			result.Message = msg
-			if ver != "" {
-				result.Message = msg + " (agent version: " + ver + ")"
+			result.AgentVersion = storedVersion
+			if storedVersion != "" {
+				result.Message = msg + " (agent version: " + storedVersion + ")"
 			}
 			return result, nil
 		} else {
@@ -401,7 +407,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		depCmd := "yum install -y ncurses-compat-libs ncurses-libs 2>/dev/null || apt-get install -y libncurses5 libncursesw5 2>/dev/null || true"
 		runSSH(client, depCmd)
 		// Stop old agent, wait 2 seconds for process to fully die, then start new one
-		startCmd := agentStopCommand() + "\nsleep 2\n" + agentStartCommand(port, s.agentToken)
+		startCmd := agentStopCommand(port) + "\nsleep 2\n" + agentStartCommand(port)
 		out, err := runSSH(client, startCmd)
 		if err != nil {
 			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
@@ -437,22 +443,22 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 			result.Message = fmt.Sprintf("write agent config failed: %v\n%s", err, out)
 			return result, nil
 		}
-		if out, err := runSSH(client, agentStopCommand()+"\n"+agentStartCommand(port, s.agentToken)); err != nil {
+		if out, err := runSSH(client, agentStopCommand(port)+"\n"+agentStartCommand(port)); err != nil {
 			result.Message = fmt.Sprintf("restart agent failed: %v\n%s", err, out)
 			return result, nil
 		}
 	case "start":
-		if out, err := runSSH(client, agentStartCommand(port, s.agentToken)); err != nil {
+		if out, err := runSSH(client, agentStartCommand(port)); err != nil {
 			result.Message = fmt.Sprintf("start agent failed: %v\n%s", err, out)
 			return result, nil
 		}
 	case "stop":
-		if out, err := runSSH(client, agentStopCommand()); err != nil {
+		if out, err := runSSH(client, agentStopCommand(port)); err != nil {
 			result.Message = fmt.Sprintf("stop agent failed: %v\n%s", err, out)
 			return result, nil
 		}
 	case "delete", "remove":
-		if out, err := runSSH(client, agentStopCommand()+"\nrm -rf /opt/dbops-agent"); err != nil {
+		if out, err := runSSH(client, agentStopCommand(port)+"\nrm -rf /opt/dbops-agent"); err != nil {
 			result.Message = fmt.Sprintf("delete agent failed: %v\n%s", err, out)
 			return result, nil
 		}
@@ -484,6 +490,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 		result.Message = msg
 		ver, _ := agentClient.GetAgentVersion(ctx, host.Address, port)
 		if ver != "" {
+			result.AgentVersion = strings.TrimSpace(ver)
 			result.Message = msg + " (agent version: " + ver + ")"
 			if action == "install" || action == "add" || action == "update" {
 				_ = s.repo.UpdateAgentInstalled(ctx, host.ID, ver)
@@ -492,6 +499,7 @@ func (s *HostService) AgentAction(ctx context.Context, hostID string, req HostAg
 				_ = s.repo.UpdateAgentMeta(ctx, host.ID, ver, "running", &now)
 			}
 		} else {
+			result.AgentVersion = strings.TrimSpace(host.AgentVersion)
 			now := time.Now().UTC()
 			_ = s.repo.UpdateAgentMeta(ctx, host.ID, host.AgentVersion, "running", &now)
 		}
@@ -856,28 +864,27 @@ func agentConfigCommand(port int, token string) string {
 		port, shellEscape(token))
 }
 
-func agentStartCommand(port int, token string) string {
-	// Start agent, verify it's listening, retry once if port conflict
-	return fmt.Sprintf(`cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 2
+func agentStartCommand(port int) string {
+	// Start agent using /opt/dbops-agent/config.yaml. Do not pass secrets through
+	// process environment or command arguments where they can appear in ps output.
+	return fmt.Sprintf(`cd /opt/dbops-agent && (nohup ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 2
 if ! fuser %d/tcp >/dev/null 2>&1; then
   echo "Agent not listening on %d, checking log..."
   tail -5 /opt/dbops-agent/agent.log 2>/dev/null
-  # If port conflict, kill old process and retry
-  fuser -k %d/tcp 2>/dev/null || true
-  sleep 1
-  cd /opt/dbops-agent && (nohup env DBOPS_AGENT_TOKEN='%s' ./agent >/opt/dbops-agent/agent.log 2>&1 </dev/null & echo $! > /opt/dbops-agent/agent.pid) && sleep 2
+  exit 1
 fi
-echo "agent started on port %d"`, shellEscape(token), port, port, port, shellEscape(token), port)
+echo "agent started on port %d"`, port, port, port)
 }
 
-func agentStopCommand() string {
-	// Stop agent by PID file first, then by port (agent listens on its configured port).
-	// Using fuser by port is safe — it only kills processes holding that specific TCP port.
-	// Avoid pkill -f which may match the SSH session itself.
-	return `if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi
-# Kill by common agent ports
-for p in 9090 9091 9092 9093; do fuser -k ${p}/tcp 2>/dev/null || true; done
-sleep 1`
+func agentStopCommand(port int) string {
+	if port <= 0 {
+		port = 9090
+	}
+	// Stop agent by PID file first, then only the configured port. Avoid scanning
+	// common ports because other services or agents may legitimately use them.
+	return fmt.Sprintf(`if [ -f /opt/dbops-agent/agent.pid ]; then kill $(cat /opt/dbops-agent/agent.pid) 2>/dev/null || true; rm -f /opt/dbops-agent/agent.pid; fi
+fuser -k %d/tcp 2>/dev/null || true
+sleep 1`, port)
 }
 
 func shellEscape(value string) string {

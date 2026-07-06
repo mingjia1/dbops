@@ -2,6 +2,11 @@ package services
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -78,6 +83,23 @@ func TestBatchAgentActionForcesLongRunningActionsAsync(t *testing.T) {
 func TestDeleteAgentActionIsLongRunning(t *testing.T) {
 	assert.True(t, IsLongRunningAgentAction("delete"))
 	assert.True(t, IsLongRunningAgentAction("remove"))
+}
+
+func TestAgentStopCommandOnlyTargetsConfiguredPort(t *testing.T) {
+	cmd := agentStopCommand(9090)
+
+	assert.Contains(t, cmd, "fuser -k 9090/tcp")
+	assert.NotContains(t, cmd, "9091")
+	assert.NotContains(t, cmd, "9092")
+	assert.NotContains(t, cmd, "9093")
+}
+
+func TestAgentStartCommandDoesNotExposeTokenInEnvironment(t *testing.T) {
+	cmd := agentStartCommand(9090)
+
+	assert.NotContains(t, cmd, "DBOPS_AGENT_TOKEN")
+	assert.NotContains(t, cmd, "env ")
+	assert.Contains(t, cmd, "nohup ./agent")
 }
 
 func TestSubmitAgentActionReturnsSubmittedWithoutSSHWait(t *testing.T) {
@@ -186,6 +208,86 @@ func TestAgentStatusWithoutConfiguredClientDoesNotPanic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "status", updated.AgentLastAction)
 	assert.Equal(t, "failed", updated.AgentLastResult)
+}
+
+func TestAgentStatusPreservesAndRefreshesVersion(t *testing.T) {
+	tests := []struct {
+		name         string
+		versionCode  int
+		versionBody  string
+		initial      string
+		wantVersion  string
+		wantInResult string
+	}{
+		{
+			name:         "preserves known version when version endpoint fails",
+			versionCode:  http.StatusInternalServerError,
+			versionBody:  `{"code":500,"message":"version unavailable"}`,
+			initial:      "1.0.0",
+			wantVersion:  "1.0.0",
+			wantInResult: "1.0.0",
+		},
+		{
+			name:         "refreshes version from agent",
+			versionCode:  http.StatusOK,
+			versionBody:  `{"code":200,"message":"success","data":{"version":"1.1.0","service":"mysql-ops-agent"}}`,
+			initial:      "1.0.0",
+			wantVersion:  "1.1.0",
+			wantInResult: "1.1.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := repositories.NewHostRepository(newTestDB(t))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"status":"ok","service":"mysql-ops-agent"}}`))
+				case "/version":
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.versionCode)
+					_, _ = w.Write([]byte(tt.versionBody))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			parsed, err := url.Parse(server.URL)
+			require.NoError(t, err)
+			hostAddr, portText, err := net.SplitHostPort(parsed.Host)
+			require.NoError(t, err)
+			agentPort, err := strconv.Atoi(portText)
+			require.NoError(t, err)
+			host := &models.Host{
+				ID:           "host-agent-version-" + tt.wantVersion,
+				Name:         "agent-version-host",
+				Address:      hostAddr,
+				SSHPort:      22,
+				SSHUser:      "root",
+				AgentPort:    agentPort,
+				AgentVersion: tt.initial,
+				AgentStatus:  "running",
+			}
+			require.NoError(t, repo.Create(ctx, host))
+			service := NewHostService(repo, "test-encryption-key")
+
+			result, err := service.AgentAction(ctx, host.ID, HostAgentActionRequest{Action: "status"})
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "success", result.Status)
+			assert.Equal(t, tt.wantInResult, result.AgentVersion)
+			updated, err := repo.GetByID(ctx, host.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "active", updated.Status)
+			assert.Equal(t, "running", updated.AgentStatus)
+			assert.Equal(t, tt.wantVersion, updated.AgentVersion)
+			require.NotNil(t, updated.AgentLastHeartbeat)
+		})
+	}
 }
 
 func TestRegisterScannedInstancesUpdatesPasswordForManagedPort(t *testing.T) {

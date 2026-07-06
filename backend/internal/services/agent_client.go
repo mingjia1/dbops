@@ -165,6 +165,31 @@ func (c *AgentClient) ExecuteInstanceAdmin(ctx context.Context, hostAddr string,
 	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/instance-admin", payload)
 }
 
+func (c *AgentClient) ExecuteMetricsCollect(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) ([]MetricData, error) {
+	payload := DeployTaskPayload{
+		TaskID:     fmt.Sprintf("metrics-collect-%d", time.Now().UnixNano()),
+		InstanceID: instanceID,
+		Config:     config,
+	}
+	result, err := c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/metrics-collect", payload)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := result.Data["metrics"]
+	if !ok {
+		return nil, fmt.Errorf("agent metrics response missing metrics")
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("marshal agent metrics: %w", err)
+	}
+	var metrics []MetricData
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		return nil, fmt.Errorf("parse agent metrics: %w", err)
+	}
+	return metrics, nil
+}
+
 func (c *AgentClient) ExecuteMySQLHealthCheck(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) (*AgentTaskResult, error) {
 	payload := DeployTaskPayload{
 		TaskID:     "health-check-" + instanceID,

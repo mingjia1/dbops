@@ -112,6 +112,85 @@ type TaskResult struct {
 	Data      any       `json:"data,omitempty"`
 }
 
+func (e *TaskExecutor) ExecuteKeepalivedSetup(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := KeepalivedConfig{
+		VIP:          configString(req.Config, "vip"),
+		VIPInterface: configString(req.Config, "vip_interface"),
+		Priority:     configInt(req.Config, "priority"),
+		Role:         configString(req.Config, "role"),
+		MySQLPort:    configInt(req.Config, "mysql_port"),
+		MySQLUser:    configString(req.Config, "mysql_user"),
+		MySQLPass:    configString(req.Config, "mysql_pass"),
+		VRID:         configInt(req.Config, "virtual_router_id"),
+		AuthPass:     configString(req.Config, "auth_pass"),
+	}
+	if cfg.MySQLPort == 0 {
+		cfg.MySQLPort = 3306
+	}
+	setup := NewKeepalivedSetup()
+	if err := setup.Install(ctx); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 20, "Keepalived install failed: "+err.Error(), nil), nil
+	}
+	content, err := setup.GenerateConfig(cfg)
+	if err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 40, "Keepalived config validation failed: "+err.Error(), nil), nil
+	}
+	if err := setup.WriteConfig(ctx, content); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 60, "Keepalived config failed: "+err.Error(), nil), nil
+	}
+	if err := setup.Start(ctx); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 80, "Keepalived start failed: "+err.Error(), nil), nil
+	}
+	return middlewareTaskResult(req.TaskID, "completed", 100, "Keepalived setup completed", map[string]any{"vip": cfg.VIP, "interface": cfg.VIPInterface}), nil
+}
+
+func (e *TaskExecutor) ExecuteProxySQLSetup(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	cfg := ProxySQLConfig{
+		ProxyHost:   configString(req.Config, "proxy_host"),
+		ProxyPort:   configInt(req.Config, "proxy_port"),
+		AdminHost:   configString(req.Config, "admin_host"),
+		AdminPort:   configInt(req.Config, "admin_port"),
+		AdminUser:   configString(req.Config, "admin_user"),
+		AdminPass:   configString(req.Config, "admin_pass"),
+		HostgroupID: configInt(req.Config, "hostgroup_id"),
+		Backends:    parseProxySQLBackends(req.Config["backends"]),
+	}
+	if cfg.ProxyPort == 0 {
+		cfg.ProxyPort = 6033
+	}
+	setup := NewProxySQLSetup()
+	if err := setup.Install(ctx); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 20, "ProxySQL install failed: "+err.Error(), nil), nil
+	}
+	if err := setup.ConfigureBackends(ctx, cfg); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 70, "ProxySQL backend config failed: "+err.Error(), nil), nil
+	}
+	if err := setup.Start(ctx); err != nil {
+		return middlewareTaskResult(req.TaskID, "failed", 90, "ProxySQL start failed: "+err.Error(), nil), nil
+	}
+	return middlewareTaskResult(req.TaskID, "completed", 100, "ProxySQL setup completed", map[string]any{"proxy_host": cfg.ProxyHost, "proxy_port": cfg.ProxyPort, "backends": cfg.Backends}), nil
+}
+
+func middlewareTaskResult(taskID, status string, progress int, message string, data any) *TaskResult {
+	return &TaskResult{TaskID: taskID, Status: status, Progress: progress, Message: message, Timestamp: time.Now(), Data: data}
+}
+
+func parseProxySQLBackends(value interface{}) []ProxySQLBackendConfig {
+	raw, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]ProxySQLBackendConfig, 0, len(raw))
+	for _, item := range raw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		out = append(out, ProxySQLBackendConfig{Host: configString(m, "host"), Port: configInt(m, "port")})
+	}
+	return out
+}
+
 type MasterSlaveConfig struct {
 	MasterHost    string `json:"master_host"`
 	MasterPort    int    `json:"master_port"`

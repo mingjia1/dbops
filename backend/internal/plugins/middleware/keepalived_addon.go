@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 )
@@ -16,9 +17,9 @@ func NewKeepalivedAddonPlugin(agentCaller func(ctx context.Context, host string,
 	return &KeepalivedAddonPlugin{agentCaller: agentCaller}
 }
 
-func (p *KeepalivedAddonPlugin) Name() string         { return "keepalived-addon" }
+func (p *KeepalivedAddonPlugin) Name() string             { return "keepalived-addon" }
 func (p *KeepalivedAddonPlugin) Type() plugins.PluginType { return plugins.PluginTypeMiddleware }
-func (p *KeepalivedAddonPlugin) Version() string       { return "1.0.0" }
+func (p *KeepalivedAddonPlugin) Version() string          { return "1.0.0" }
 
 func (p *KeepalivedAddonPlugin) Prepare(_ context.Context, env plugins.PluginEnv) error {
 	if len(env.Nodes) < 2 {
@@ -40,6 +41,14 @@ func (p *KeepalivedAddonPlugin) Execute(ctx context.Context, env plugins.PluginE
 	if vipInterface == "" {
 		vipInterface = "eth0"
 	}
+	vrid := intParam(params, "virtual_router_id")
+	if vrid == 0 {
+		vrid = stableKeepalivedVRID(env.ClusterID)
+	}
+	authPass, _ := params["auth_pass"].(string)
+	if authPass == "" {
+		authPass = stableKeepalivedAuthPass(env.ClusterID, vrid)
+	}
 
 	for i, node := range env.Nodes {
 		priority := 100 - i
@@ -49,15 +58,25 @@ func (p *KeepalivedAddonPlugin) Execute(ctx context.Context, env plugins.PluginE
 		}
 
 		payload := map[string]interface{}{
-			"task_id":      fmt.Sprintf("keepalived-%s-%d", env.ClusterID, i),
-			"vip":          vip,
-			"vip_interface": vipInterface,
-			"priority":     priority,
-			"role":         role,
-			"mysql_port":   node.MySQLPort,
+			"task_id": fmt.Sprintf("keepalived-%s-%d", env.ClusterID, i),
+			"config": map[string]interface{}{
+				"vip":               vip,
+				"vip_interface":     vipInterface,
+				"priority":          priority,
+				"role":              role,
+				"mysql_port":        node.MySQLPort,
+				"mysql_user":        env.Credentials.RootUser,
+				"mysql_pass":        env.Credentials.RootPassword,
+				"virtual_router_id": vrid,
+				"auth_pass":         authPass,
+			},
 		}
-		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/keepalived/setup", payload); err != nil {
+		resp, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/agent/tasks/keepalived-setup", payload)
+		if err != nil {
 			return nil, fmt.Errorf("keepalived setup on %s: %w", node.Address, err)
+		}
+		if err := ensureAgentTaskSucceeded("keepalived", node.Address, resp); err != nil {
+			return nil, err
 		}
 	}
 
@@ -73,4 +92,20 @@ func (p *KeepalivedAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv)
 
 func (p *KeepalivedAddonPlugin) Teardown(_ context.Context, _ plugins.PluginEnv) error {
 	return nil
+}
+
+func stableKeepalivedVRID(clusterID string) int {
+	if clusterID == "" {
+		return 51
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(clusterID))
+	return int(h.Sum32()%255) + 1
+}
+
+func stableKeepalivedAuthPass(clusterID string, vrid int) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(clusterID))
+	_, _ = h.Write([]byte(fmt.Sprintf(":%d", vrid)))
+	return fmt.Sprintf("k%07x", h.Sum32()&0x0fffffff)[:8]
 }

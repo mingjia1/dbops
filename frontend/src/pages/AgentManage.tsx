@@ -34,11 +34,12 @@ const summarize = (rows: any[]) =>
 
 const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
 
-interface LiveStatus { status: string; message?: string; action?: string }
+interface LiveStatus { status: string; message?: string; action?: string; agent_version?: string }
 
 const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
 const isPendingResult = (status?: string) => pendingResults.includes((status || '').toLowerCase())
 const isAsyncAction = (action: string) => asyncActions.includes((action || '').toLowerCase())
+const formatTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '-'
 
 const AgentManage: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
@@ -49,8 +50,8 @@ const AgentManage: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState<Record<string, LiveStatus>>({})
   const [form] = Form.useForm()
 
-  const fetchHosts = useCallback(async (notify = true, clearOnError = true) => {
-    setLoading(true)
+  const fetchHosts = useCallback(async (notify = true, clearOnError = true, showLoading = true) => {
+    if (showLoading) setLoading(true)
     try {
       const res: any = await hostApi.list(1000, 0)
       const rows = res?.data || []
@@ -61,11 +62,18 @@ const AgentManage: React.FC = () => {
       if (notify) message.error('加载主机列表失败: ' + getErrorMessage(err))
       return [] as Host[]
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [])
 
   useEffect(() => { fetchHosts() }, [fetchHosts])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!running) void fetchHosts(false, false, false)
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [fetchHosts, running])
 
   const clearLive = (hostId: string) => {
     setLiveStatus(prev => {
@@ -83,6 +91,7 @@ const AgentManage: React.FC = () => {
     action,
     status: host.agent_last_action === action ? host.agent_last_result || host.status : host.status,
     message: host.agent_last_action === action ? host.agent_last_message : '',
+    agent_version: host.agent_version || '',
   })
 
   const pollAsyncResults = async (hostIds: string[], pendingHostIds: string[], action: string, initialRows: any[]) => {
@@ -91,7 +100,7 @@ const AgentManage: React.FC = () => {
 
     for (let attempt = 0; attempt < 90 && pending.size > 0; attempt += 1) {
       await sleep(2000)
-      const latestHosts = await fetchHosts(false, false)
+      const latestHosts = await fetchHosts(false, false, false)
 
       latestHosts
         .filter(host => pending.has(host.id) && host.agent_last_action === action)
@@ -100,7 +109,7 @@ const AgentManage: React.FC = () => {
           resultByHost.set(host.id, row)
           setLiveStatus(prev => ({
             ...prev,
-            [host.id]: { status: row.status || 'unknown', message: row.message, action },
+            [host.id]: { status: row.status || 'unknown', message: row.message, action, agent_version: row.agent_version },
           }))
           if (!isPendingResult(row.status)) {
             pending.delete(host.id)
@@ -140,26 +149,47 @@ const AgentManage: React.FC = () => {
 
     try {
       const action = values.action as string
-      const results: any[] = []
-      const pendingIds: string[] = []
+      const hostByID = new Map(hosts.map(host => [host.id, host]))
+      setLiveStatus(prev => {
+        const next = { ...prev }
+        hostIds.forEach(hid => {
+          next[hid] = { status: 'running', message: `${action}中...`, action }
+        })
+        return next
+      })
 
-      for (const hid of hostIds) {
-        setLiveStatus(prev => ({ ...prev, [hid]: { status: 'running', message: `${action}中...`, action } }))
-
-        try {
-          const res: any = await hostApi.agentAction(hid, action, values.agent_port)
-          const d = res?.data
-          results.push(d)
-          setLiveStatus(prev => ({ ...prev, [hid]: { status: d?.status || 'unknown', message: d?.message, action } }))
-          if (isAsyncAction(action) && isPendingResult(d?.status)) {
-            pendingIds.push(hid)
-          }
-        } catch (err: any) {
-          const msg = err?.response?.data?.message || err?.message || '请求失败'
-          results.push({ host_id: hid, action, status: 'failed', message: msg })
-          setLiveStatus(prev => ({ ...prev, [hid]: { status: 'failed', message: msg, action } }))
+      const res: any = await hostApi.batchAgentAction(hostIds, action, isAsyncAction(action), values.agent_port)
+      const payload = res?.data || {}
+      const rows: any[] = Array.isArray(payload.rows) ? payload.rows : []
+      const rowsByHost = new Map<string, any>(rows.map((row: any) => [String(row?.host_id), row]))
+      const results: any[] = hostIds.map((hid) => {
+        const host = hostByID.get(hid)
+        return rowsByHost.get(String(hid)) || {
+          host_id: hid,
+          host_name: host?.name,
+          address: host?.address,
+          agent_port: host?.agent_port || values.agent_port || 9090,
+          action,
+          status: 'failed',
+          message: 'batch response missing host result',
         }
-      }
+      })
+      const pendingIds = results
+        .filter(row => isAsyncAction(action) && isPendingResult(row?.status))
+        .map(row => String(row.host_id))
+
+      setLiveStatus(prev => {
+        const next = { ...prev }
+        results.forEach(row => {
+          next[row.host_id] = {
+            status: row?.status || 'unknown',
+            message: row?.message,
+            action,
+            agent_version: row?.agent_version,
+          }
+        })
+        return next
+      })
 
       setResultRows(results)
       const finalResults = pendingIds.length > 0 ? await pollAsyncResults(hostIds, pendingIds, action, results) : results
@@ -187,10 +217,13 @@ const AgentManage: React.FC = () => {
       else if (isFailed(s)) label = '不可用'
       return { status: s, label, tip: live.message }
     }
-    const dbStatus = host.status
-    const tip = host.agent_last_message || undefined
-    if (dbStatus === 'active') return { status: 'success', label: '可用', tip }
-    if (dbStatus === 'failed' || dbStatus === 'inactive') return { status: 'failed', label: '不可用', tip }
+    const dbStatus = host.agent_status || host.status
+    const tip = [
+      host.agent_last_message || undefined,
+      host.agent_last_heartbeat ? `最后心跳: ${formatTime(host.agent_last_heartbeat)}` : undefined,
+    ].filter(Boolean).join('\n') || undefined
+    if (['running', 'active', 'success'].includes(dbStatus)) return { status: 'success', label: '可用', tip }
+    if (['failed', 'inactive', 'stopped', 'removed'].includes(dbStatus)) return { status: 'failed', label: '不可用', tip }
     return { status: dbStatus, label: dbStatus || 'unknown', tip }
   }
 
@@ -199,7 +232,8 @@ const AgentManage: React.FC = () => {
     { title: '地址', key: 'address', render: (_, r) => `${r.address}:${r.ssh_port}` },
     { title: 'SSH 用户', dataIndex: 'ssh_user', key: 'ssh_user' },
     { title: 'Agent 端口', dataIndex: 'agent_port', key: 'agent_port', render: (v) => v || 9090 },
-    { title: 'Agent 版本', dataIndex: 'agent_version', key: 'agent_version', render: (v) => v || '-' },
+    { title: 'Agent 版本', dataIndex: 'agent_version', key: 'agent_version', render: (v, r) => liveStatus[r.id]?.agent_version || v || '-' },
+    { title: '最后心跳', dataIndex: 'agent_last_heartbeat', key: 'agent_last_heartbeat', render: (v) => formatTime(v) },
     {
       title: '最近操作',
       key: 'agent_last_action',
@@ -217,7 +251,7 @@ const AgentManage: React.FC = () => {
       },
     },
     {
-      title: '主机状态',
+      title: 'Agent 状态',
       key: 'status',
       render: (_, r) => {
         const d = getStatusDisplay(r)
@@ -231,6 +265,7 @@ const AgentManage: React.FC = () => {
     { title: '地址', dataIndex: 'address', key: 'address' },
     { title: '动作', dataIndex: 'action', key: 'action' },
     { title: '结果', dataIndex: 'status', key: 'status', render: (v) => <Tag color={tagColor(v)}>{v || '-'}</Tag> },
+    { title: 'Agent 版本', dataIndex: 'agent_version', key: 'agent_version', render: (v) => v || '-' },
     { title: '信息', dataIndex: 'message', key: 'message', ellipsis: true },
   ]
 

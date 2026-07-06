@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 )
 
@@ -54,5 +55,29 @@ func TestBatchHealthCheckTypesOnlyCheckLiveness(t *testing.T) {
 	want := []string{"tcp", "mysql"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("batch health check types = %v, want %v", got, want)
+	}
+}
+
+func TestEffectiveHealthCheckTypesForMHAManagerOnlyChecksTCP(t *testing.T) {
+	instance := &models.Instance{
+		Status:   models.InstanceStatus{Role: "manager"},
+		Topology: models.InstanceTopology{ReplicationMode: ClusterTypeMHA},
+	}
+
+	got := effectiveHealthCheckTypes(instance, []string{"tcp", "mysql", "replication"})
+	want := []string{"tcp"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manager health check types = %v, want %v", got, want)
+	}
+}
+
+func TestIsReplicationReplicaRoleRecognizesReplicaAndSlave(t *testing.T) {
+	for _, role := range []string{"replica", "slave"} {
+		if !isReplicationReplicaRole(role) {
+			t.Fatalf("expected %s to be a replication replica role", role)
+		}
+	}
+	if isReplicationReplicaRole("secondary") {
+		t.Fatal("secondary should not use SHOW SLAVE STATUS replication check")
 	}
 }
