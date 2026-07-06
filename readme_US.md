@@ -1,353 +1,249 @@
-﻿# MySQL Ops Platform
+# MySQL Ops Platform
 
-> **A commercial-grade DevOps platform for database architecture-level lifecycle management**
-> 
-> Manages MySQL hosts and instances through agents, supporting HA/MHA/MGR/PXC cluster architectures.
-> 
-> [![Go Version][go-image]][go-url] [![Node.js][node-image]][node-url] [![License][license-image]][license-url] [![Language][lang-image]][lang-url] [![Status][status-image]][status-url] [![Build][build-image]][build-url]
-> 
-> **Tech Stack**
-> 
-> - **Backend**: Go 1.25+ + Gin + SQLite/MySQL + Redis
-> - **Frontend**: React 18 + TypeScript + Ant Design 5
-> - **Agent**: Go 1.21+ + HTTP + Bearer Token authentication
-> 
-> **Commercial Editions**
-> 
-> - **CE** (Community Edition): Core features, MIT license
-> - **EE** (Enterprise Edition): CE + HA/Upgrade/Migration/Audit features
-> - **UE** (Ultimate Edition): EE + AI-powered intelligence, commercial license
+> A database operations platform for architecture-level MySQL lifecycle management.
+>
+> It manages hosts, MySQL instances, clusters, middleware, monitoring, backup, upgrade, and role switching through a backend API, React console, and host-side Agent.
 
----
+[![Go Version][go-image]][go-url] [![Node.js][node-image]][node-url] [![License][license-image]][license-url] [![Language][lang-image]][lang-url] [![Status][status-image]][status-url] [![Build][build-image]][build-url]
 
-## Quick Start
+## Overview
 
-### Key Commands
+MySQL Ops Platform is built around three components:
 
-```bash
-# Build all components
-make build
+- `backend`: Go API server, deployment orchestration, metadata, audit, monitoring ingestion, and task coordination.
+- `frontend`: React + TypeScript web console for cluster deployment, host management, monitoring, backup, upgrade, and role switching.
+- `agent`: Go host-side service that executes MySQL, middleware, backup, health check, and upgrade tasks through authenticated HTTP APIs.
 
-# Run tests
-make test
+Supported database architectures:
 
-# Install frontend dependencies
-make install-web
-```
+- Standalone MySQL instance management
+- HA master/replica
+- MHA
+- MGR
+- PXC
 
-### API Access
+## Latest Features
 
-- **Backend Admin**: `http://localhost:8080`
-- **Web Console**: `http://localhost:3000`
-- **Agent Service**: `http://localhost:9090`
+- Flow-based cluster deployment orchestration powered by React Flow.
+- Cluster deployment detail pages with live step progress, status colors, plan preview, and status polling.
+- Shared deployment plan model for form deployment and flow orchestration.
+- Middleware add-ons for Keepalived and ProxySQL through Agent task APIs.
+- Deployment tools for environment precheck, post-deploy health check, and baseline backup.
+- Metadata synchronization after deployment, including cluster and instance registration.
+- Resilient deployment state handling for failed, partial, interrupted, and in-progress deployments.
+- Agent management with batch install, update, delete, status check, heartbeat, last action, and version display.
+- Upgrade management for multiple architectures, including role-aware rolling upgrade planning.
+- Improved HA/MHA replication status detection and MGR/PXC role/deployment handling.
+- Monitoring collection loop from Agent metrics to backend ingestion and frontend no-data/config states.
+- Secret hygiene through `.env.example`, example backend config, credential encryption, and local secret scanning script.
 
-### One-Click Start (Windows)
+## Deployment Orchestration
 
-```powershell
-.\start.bat
-```
+The cluster deployment page now supports two deployment modes:
 
-### Manual Start
+- **Flow Orchestration**: the default mode. Users choose an architecture, configure database nodes, add compatible middleware or tools, preview the generated plan, then submit deployment.
+- **Form Deployment**: the existing form-based deployment path remains available as a fallback.
 
-```bash
-cd platform-backend && go run ./cmd/main.go
-cd agent && go run ./cmd/main.go
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
-```
+The flow editor supports these first-version nodes:
 
----
+- Architecture nodes: HA, MHA, MGR, PXC
+- Database nodes: master/replica, manager, primary/secondary, bootstrap/secondary
+- Middleware nodes: Keepalived, ProxySQL
+- Tool nodes: environment precheck, health check, baseline backup
 
-## Architecture Overview
+Compatibility rules:
+
+| Architecture | Keepalived | ProxySQL | Precheck | Health Check | Baseline Backup |
+|--------------|------------|----------|----------|--------------|-----------------|
+| HA | Supported | Supported | Supported | Supported | Supported |
+| MHA | Supported | Supported | Supported | Supported | Supported |
+| MGR | Disabled in v1 | Supported | Supported | Supported | Supported |
+| PXC | Disabled in v1 | Supported | Supported | Supported | Supported |
+
+Flow orchestration uses the existing deployment APIs:
+
+- `POST /deployments/validate`
+- `POST /deployments`
+- `GET /deployments/:id/status`
+- `GET /deployments/:id/plan`
+
+The flow JSON is stored in the deployment request custom payload under `custom.flow_spec`, so no separate template table is required for the first version.
+
+## Agent Capabilities
+
+The Agent is the execution boundary for host-side operations. Current supported capabilities include:
+
+- Host and Agent lifecycle: install, update, delete, status check, heartbeat, version reporting.
+- MySQL instance operations: deploy, start, stop, restart, remove, status check.
+- Cluster tasks: HA/MHA replication setup and checks, MGR setup and role switching support, PXC setup and status checks.
+- Middleware tasks:
+  - `POST /agent/tasks/keepalived-setup`
+  - `POST /agent/tasks/proxysql-setup`
+- Upgrade tasks: in-place, logical migration, and role-aware rolling upgrade execution support.
+- Metrics collection: CPU, memory, disk, MySQL, replication, and service health data.
+
+ProxySQL setup uses the target host Agent port, not the ProxySQL admin port. Keepalived is currently enabled only for HA/MHA deployment flows.
+
+## Architecture
 
 ```text
-web-console (:3000)
+frontend (:3000 or Vite dev port)
         |
         | REST API /api/v1
         v
-platform-backend (:8080)  ---- HTTP + Bearer token ---->  agent (:9090)
+backend (:8080)  ---- HTTP + Bearer token ---->  agent (:9090)
         |
-        | metadata storage
+        | metadata, audit, tasks, monitoring
         v
-SQLite or MySQL, depending on storage_mode
+SQLite or MySQL, depending on storage mode
 ```
 
-**Platform Description**
+Optional integrations:
 
-Manages MySQL hosts and instances, executing operations through agents. Target hosts must have the required OS access and MySQL tools for the selected cluster architecture (HA/MHA/MGR/PXC).
-
-**Core Features**
-
-- MySQL cluster management (HA/MHA/MGR/PXC)
-- Host resource monitoring and real-time alerting
-- Automated deployment and scheduled backups
-- Security auditing and RBAC access control
-- Multi-tenancy and environment isolation
-- Monitoring and observability (ClickHouse)
-
----
+- Redis for cache and queue scenarios.
+- ClickHouse for monitoring data storage.
+- Keepalived and ProxySQL for HA/MHA/MGR/PXC traffic management patterns.
 
 ## Repository Layout
 
 ```text
-platform-backend/   Go backend API and storage layer
-web-console/        React web console
+backend/            Go backend API, services, repositories, config, and migrations
+frontend/           React + TypeScript web console
 agent/              Go execution agent deployed on managed hosts
-bin/                Linux helper scripts for current components
-scripts/            Operational helper scripts
-docs/               Supplemental reports and guides
+bin/                Helper binaries and scripts
+scripts/            Operational helper scripts, including local secret scanning
+docs/               Supplemental documents and screenshots
+data/               Local development data
+logs/               Local runtime logs
+Makefile            Build, test, install, dist, and upgrade helpers
 start.bat/.ps1      Windows all-in-one startup
 stop.bat/.ps1       Windows all-in-one shutdown
-Makefile            Build/test helpers for current components
 ```
-
----
 
 ## Requirements
 
-### Technical Requirements
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Go | Backend 1.25+, Agent 1.21+ | Backend and Agent build/runtime |
+| Node.js | 18+ | Frontend build/runtime |
+| npm | Required | Frontend dependency management |
+| PowerShell | 5.1+ | Windows scripts |
+| bash | Required on Linux/macOS | Shell scripts |
+| Redis | Optional | Cache/queue scenarios |
+| ClickHouse | Optional | Monitoring storage |
 
-| Component | Version | Description |
-|-----------|---------|-------------|
-| **Go** | 1.25+ | Backend service development language |
-| **Node.js** | 18+ | Frontend development runtime |
-| **npm** | Yes | Package manager |
-| **PowerShell** | 5.1+ | Windows system |
-| **bash** | Yes | Linux/macOS system |
-| **Redis** | Optional | Cache and message queue |
-| **ClickHouse** | Optional | Monitoring data storage |
+Target MySQL hosts should have the required OS permissions and MySQL tools for the selected operation. Deployment flows may also require MySQL packages, backup tools, Keepalived, ProxySQL, or package download access depending on the selected plan.
 
-### Runtime Environment
+## Configuration
 
-| Service | Port | Protocol | Authentication |
-|---------|------|----------|----------------|
-| **Backend** | 8080 | HTTP/REST | JWT Token |
-| **Frontend** | 3000 | HTTP/WS | Session Cookie |
-| **Agent** | 9090 | HTTP | Agent Token |
-
-### Host Requirements
-
-Target MySQL hosts must have:
-
-- `mysqld` - MySQL server
-- `mysql` client - Client tools
-- Deploy and backup tools based on operation type
-
----
-
-## Configuration Guide
-
-### Environment Configuration
-
-Copy `.env.example` to `.env` and set the required variables:
+Copy `.env.example` to `.env` and set strong values before running a non-local environment:
 
 ```env
-# Database Connection
 DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
-
-# Authentication
 DBOPS_JWT_SECRET=replace-with-at-least-32-chars
 DBOPS_AGENT_TOKEN=replace-with-at-least-16-chars
-
-# Encryption
 DBOPS_ENCRYPTION_KEY=replace-with-at-least-32-chars
 ```
 
-### Backend Configuration
+Example backend configuration is available at:
 
-Configuration file is located at `platform-backend/config/config.yaml`. The system also supports environment variable overrides.
-
-```yaml
-# Example Configuration
-storage:
-  mode: mysql
-  dsn: dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops
-
-auth:
-  jwt_secret: "your-jwt-secret-key"
-  agent_token: "your-agent-token-key"
+```text
+backend/config/config.example.yaml
 ```
 
----
+Security notes:
 
-## Build & Test
+- Do not commit real secrets, tokens, database passwords, SSH keys, or license material.
+- Sensitive credentials are encrypted with AES-GCM.
+- Run the local secret scanner before publishing changes:
 
-### Build
-
-```bash
-# Build all components
-make build
-
-# Equivalent component commands
-cd platform-backend && go build -o bin/platform ./cmd/main.go
-cd agent && go build -o bin/agent ./cmd/main.go
-cd web-console && npm run build
+```powershell
+.\scripts\scan-local-secrets.ps1
 ```
 
-### Test
+## Build And Run
+
+Install dependencies:
 
 ```bash
-# Run backend tests
-cd platform-backend && go test ./...
-
-# Run agent tests
-cd agent && go test ./...
-
-# Frontend type checking and build
-cd web-console && npx tsc --noEmit && npm run build
-```
-
-### Development Commands
-
-```bash
-# Install frontend dependencies
+make install-backend
+make install-agent
 make install-web
-
-# Start development server
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
----
+Build all components:
 
-## Windows Usage
+```bash
+make build
+```
 
-### Start Services
+Run components manually:
+
+```bash
+cd backend && go run ./cmd/main.go
+cd agent && go run ./cmd/main.go
+cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+```
+
+Windows one-click startup:
 
 ```powershell
 .\start.bat
 ```
 
-This script will:
-1. Build all components
-2. Start backend (8080)
-3. Start web-console (3000)
-4. Start agent (9090)
+Default local URLs:
 
-### Stop Services
+- Backend API: `http://localhost:8080`
+- Web console: `http://localhost:3000`
+- Agent service: `http://localhost:9090`
 
-```powershell
-.\stop.bat
+## Test
+
+```bash
+cd backend && go test ./...
+cd agent && go test ./...
+cd frontend && npm test -- --run
+cd frontend && npm run build
 ```
 
-This script will gracefully stop all running services.
+The recent validation suite covers backend deployment planning, repositories, authentication, password encryption, Agent middleware task routes, Agent metrics collection, frontend deployment helpers, role display, and flow-spec conversion.
 
----
+## Operations Notes
 
-## Notes
+- Long-running operations should be executed through backend APIs and Agent tasks.
+- Deployment progress should be read from deployment status and plan endpoints rather than inferred from frontend state only.
+- Middleware and tool failures after core database deployment can produce a `partial` deployment status while retaining created cluster resources.
+- Interrupted deployments are detected on backend startup and marked accordingly.
+- For MGR and PXC deployments, verify host package layout, MySQL data directories, plugin availability, and Agent version before redeploying.
 
-- **Architecture Principles**: Maintain the three-component architecture (backend, web-console, agent). No Django or Vue modules allowed.
-- **Security Principles**: All secrets are read from environment variables only. Sensitive data is encrypted with AES-GCM.
-- **Operations Principles**: Long-running operations should be executed via backend API and agent tasks, not directly through UI scripts.
-- **Version Requirements**: Go 1.25+ / Node.js 18+ / React 18
+## Documentation
 
----
+- Chinese documentation: [readme_ZH.md](readme_ZH.md)
+- English documentation: [readme_US.md](readme_US.md)
+- Screenshots: [docs/screenshots](docs/screenshots)
+- Secret scanning script: [scripts/scan-local-secrets.ps1](scripts/scan-local-secrets.ps1)
 
-## Related Links
+## Commercial Editions
 
-### Documentation
+- **CE**: Community Edition with core platform functionality.
+- **EE**: CE plus high availability, upgrade, migration, and audit features.
+- **UE**: EE plus AI-assisted operations and commercial features.
 
-- **Project Specification**: See the full specification system in the `specs/` directory
-- **API Documentation**: See the backend Swagger documentation
-- **Frontend Guide**: See component documentation in `web-console/docs/`
+## Contact
 
-### Development Resources
+- GitHub: submit issues or pull requests.
+- Support email: `support@dbops.io`
+- Enterprise consultation: `enterprise@dbops.io`
 
-- **Development Workflow**: Follow the OpenSpec + Superpowers development process
-- **Code Quality**: All code is verified through `make test`
-- **Security Guide**: See security practices in `SECURITY.md`
-
-### Community
-
-- **Contributing**: See `CONTRIBUTING.md` to participate in project development
-- **Issue Tracker**: Submit issues on GitHub
-- **Technical Discussions**: Join discussions and share best practices
-
----
-
-## Project Status
-
-[![Test Status][test-image]][test-url]
-[![Build Status][ci-image]][ci-url]
-[![Code Coverage][coverage-image]][coverage-url]
-
----
-
-## Community Participation
-
-### Issue Submission
-
-We welcome issue submissions to this project! We encourage community developers to discover and report problems.
-
-**How to Submit an Issue:**
-
-1. **Check Existing Issues** - Search the issue list to see if your problem has been reported or resolved
-2. **Use Issue Template** - Use the standard issue template to ensure sufficient information is provided
-3. **Fill in Required Information** - Include problem description, reproduction steps, expected results, and actual results
-4. **Attach Detailed Information** - Such as screenshots, log files, and system environment information
-5. **Select Appropriate Labels** - Choose appropriate category labels based on the issue type
-
-**Issue Template:**
-
-```yaml
-title: [Issue Type] Concise problem description
-
-## Problem Description
-
-## Reproduction Steps
-
-## Expected Results
-
-## Actual Results
-
-## System Environment Information
-
-## Additional Files
-```
-
-**Issue Resources:**
-
-- **Issue Tracking System** - Managed using GitHub Issues
-- **Community Discussions** - Join the technical discussion channel
-- **Contributing Guide** - See `CONTRIBUTING.md` for contribution guidelines
-
-### Enterprise Consultation
-
-If you are an enterprise user considering custom development or commercial solutions, our professional team will provide expert technical consulting services.
-
-**Enterprise Consulting Services:**
-
-- **Technical Consulting** - System architecture design and optimization solutions
-- **Custom Development** - Exclusive feature modules based on business requirements
-- **Upgrade & Migration** - Smooth transition from existing solutions
-- **Security Audit** - Assessment and enhancement of system security
-- **Training & Support** - Technical staff training and documentation
-
-**Contact Information:**
-
-- **Email** - enterprise@dbops.io
-- **Phone** - +86-400-123-4567
-- **Online** - Submit enterprise tickets through GitHub
-
-**Enterprise Service Process:**
-
-1. **Requirement Consultation** - Initial technical requirements communication and solution evaluation
-2. **Solution Design** - Custom development plan and technical architecture design
-3. **Project Kickoff** - Formal launch of custom development project
-4. **Project Delivery** - Iterative development and quality assurance
-5. **Acceptance** - Project acceptance and usage training
-6. **Ongoing Service** - Maintenance support and technical upgrades
-
-**Commercial Edition Advantages:**
-
-- **EE Edition** - Enterprise Edition includes all community features + HA/Upgrade/Migration/Audit
-- **UE Edition** - Ultimate Edition includes EE features + AI-powered intelligence
-- **Dedicated Technical Support** - 7x24 technical support services
-- **Security Assurance** - Enterprise-grade security solutions
-
-### Contact Us
-
-If you have any questions or needs, feel free to contact us:
-
-- **GitHub** - Submit Issues or Pull Requests
-- **Email** - support@dbops.io
-- **Website** - https://dbops.io
-- **Social Media** - Follow our official accounts for the latest updates
+[go-image]: https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go
+[go-url]: https://go.dev/
+[node-image]: https://img.shields.io/badge/Node.js-18+-339933?style=flat&logo=node.js
+[node-url]: https://nodejs.org/
+[license-image]: https://img.shields.io/badge/License-MIT-blue.svg
+[license-url]: https://opensource.org/licenses/MIT
+[lang-image]: https://img.shields.io/badge/Language-Go%20%7C%20TypeScript-blue
+[lang-url]: https://github.com/mingjia1/dbops
+[status-image]: https://img.shields.io/badge/Status-active-brightgreen.svg
+[status-url]: https://github.com/mingjia1/dbops
+[build-image]: https://img.shields.io/badge/Build-manual-lightgrey.svg
+[build-url]: https://github.com/mingjia1/dbops
