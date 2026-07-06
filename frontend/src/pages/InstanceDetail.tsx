@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+﻿import React, { useEffect, useState } from 'react'
 import {
   Alert,
   Button,
@@ -503,7 +503,7 @@ const InstanceDetail: React.FC = () => {
                             <Form
                               form={batchPasswordForm}
                               layout="inline"
-                              initialValues={{ host: '10.1.81.41', ports: '3307,3308', username: 'root', user_host: '%' }}
+                              initialValues={{ host: '192.0.2.41', ports: '3307,3308', username: 'root', user_host: '%' }}
                             >
                               <Form.Item name="host" rules={[{ required: true }]}>
                                 <Input placeholder="主机地址" style={{ width: 140 }} />
@@ -614,7 +614,7 @@ const InstanceDetail: React.FC = () => {
             />
           </Form.Item>
           <Form.Item name="host" label="连接地址" rules={[{ required: true, message: '请输入连接地址' }]}>
-            <Input placeholder="例如 10.1.81.16" />
+            <Input placeholder="例如 192.0.2.16" />
           </Form.Item>
           <Form.Item name="port" label="端口" rules={[{ required: true, message: '请输入端口' }]}>
             <InputNumber min={1} max={65535} style={{ width: '100%' }} />

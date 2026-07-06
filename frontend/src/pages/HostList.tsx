@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+﻿import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button, Card, Dropdown, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
 import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
@@ -516,7 +516,7 @@ const HostList: React.FC = () => {
                 {fields.map(({ key, name }) => (
                   <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 60px 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
                     <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="db-host-01" /></Form.Item>
-                    <Form.Item name={[name, 'address']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
+                    <Form.Item name={[name, 'address']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="192.0.2.41" /></Form.Item>
                     <Form.Item name={[name, 'ssh_port']} style={{ margin: 0 }} initialValue={22}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
                     <Form.Item name={[name, 'ssh_user']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
                     <Form.Item name={[name, 'ssh_password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="SSH密码" autoComplete="new-password" /></Form.Item>

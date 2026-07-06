@@ -1,4 +1,4 @@
-# MySQL Ops Platform 
+﻿# MySQL Ops Platform
 
 > **A commercial-grade DevOps platform for database architecture-level lifecycle management**
 > 
@@ -142,7 +142,7 @@ Copy `.env.example` to `.env` and set the required variables:
 
 ```env
 # Database Connection
-DBOPS_DB_URL=root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
+DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
 
 # Authentication
 DBOPS_JWT_SECRET=replace-with-at-least-32-chars
@@ -160,7 +160,7 @@ Configuration file is located at `platform-backend/config/config.yaml`. The syst
 # Example Configuration
 storage:
   mode: mysql
-  dsn: root:password@tcp(localhost:3306)/mysql_ops
+  dsn: dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops
 
 auth:
   jwt_secret: "your-jwt-secret-key"

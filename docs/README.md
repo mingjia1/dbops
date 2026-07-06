@@ -1,4 +1,4 @@
-# MySQL Ops Platform / MySQL 操作平台
+﻿# MySQL Ops Platform / MySQL 操作平台
 
 > **商业化数据库架构级生命周期管理平台 / A commercial-grade DevOps platform**
 > 
@@ -142,7 +142,7 @@ Makefile            组件构建/测试工具 / Build/test helpers for current c
 
 ```env
 # 数据库连接 / Database Connection
-DBOPS_DB_URL=root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
+DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
 
 # 认证密钥 / Authentication
 DBOPS_JWT_SECRET=replace-with-at-least-32-chars
@@ -160,7 +160,7 @@ DBOPS_ENCRYPTION_KEY=replace-with-at-least-32-chars
 # 示例配置 / Example Configuration
 storage:
   mode: mysql
-  dsn: root:password@tcp(localhost:3306)/mysql_ops
+  dsn: dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops
 
 auth:
   jwt_secret: "your-jwt-secret-key"

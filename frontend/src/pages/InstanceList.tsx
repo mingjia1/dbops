@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+﻿import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
@@ -49,6 +49,35 @@ const formatBatchHealthFailure = (instanceName: string, row: any) => {
     row?.task_id ? `task_id=${row.task_id}` : '',
   ].filter(Boolean)
   return parts.join(' | ')
+}
+
+const modalBodyStyle = { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' as const, overflowX: 'hidden' as const }
+const instanceFormGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 16px' }
+const fullWidthGridItem = { gridColumn: '1 / -1' }
+const batchRowGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 8, alignItems: 'end' }
+
+const clusterArchColor = (arch?: string) => {
+  switch ((arch || '').toLowerCase()) {
+    case 'ha':
+      return 'cyan'
+    case 'mha':
+      return 'blue'
+    case 'mgr':
+      return 'green'
+    case 'pxc':
+      return 'orange'
+    default:
+      return 'default'
+  }
+}
+
+const clusterRoleColor = (arch?: string, role?: string) => {
+  const normalizedArch = (arch || '').toLowerCase()
+  const normalizedRole = (role || '').toLowerCase()
+  if (normalizedArch === 'mha' && normalizedRole === 'manager') return 'purple'
+  if (['master', 'primary', 'bootstrap'].includes(normalizedRole)) return 'blue'
+  if (['replica', 'slave', 'secondary'].includes(normalizedRole)) return 'green'
+  return 'default'
 }
 
 const InstanceList: React.FC = () => {
@@ -131,6 +160,14 @@ const InstanceList: React.FC = () => {
     if (!clusterId) return undefined
     const cluster = clusters.find((item: any) => item.cluster_id === clusterId || item.deployment_id === clusterId)
     return cluster?.arch || cluster?.cluster_type
+  }
+
+  const instanceArch = (item: Instance) => archByClusterId(item.cluster_id) || item.topology?.replication_mode
+
+  const isComponentInstance = (item: Instance) => {
+    const arch = (instanceArch(item) || '').toLowerCase()
+    const role = (item.status?.role || '').toLowerCase()
+    return arch === 'mha' && role === 'manager'
   }
 
   const openCreate = () => {
@@ -347,7 +384,7 @@ const InstanceList: React.FC = () => {
       render: (_, r) => {
         const host = r.connection?.host || r.host || hostAddressById(r.host_id)
         const port = r.connection?.port || r.port || 3306
-        return host ? `${host}:${port}` : '-'
+        return host ? `${host}:${port}${isComponentInstance(r) ? ' (Agent)' : ''}` : '-'
       },
     },
     { title: '用户名', key: 'username', render: (_, r) => r.connection?.username || 'root' },
@@ -356,6 +393,7 @@ const InstanceList: React.FC = () => {
       key: 'password',
       width: 180,
       render: (_, r) => {
+        if (isComponentInstance(r)) return <Tag color="default">N/A</Tag>
         const visible = visiblePasswords.has(r.id)
         const cred = credentialsCache[r.id]
         const pw = visible ? (cred?.password || '...') : '••••••••'
@@ -376,13 +414,35 @@ const InstanceList: React.FC = () => {
         )
       },
     },
-    { title: '集群 ID', dataIndex: 'cluster_id', key: 'cluster_id', render: (v) => v || '-' },
+    {
+      title: '集群 / 架构',
+      dataIndex: 'cluster_id',
+      key: 'cluster_id',
+      render: (v, r) => {
+        const arch = instanceArch(r)
+        return (
+          <Space size={4} wrap>
+            <span>{v || '-'}</span>
+            {arch && <Tag color={clusterArchColor(arch)}>{String(arch).toUpperCase()}</Tag>}
+          </Space>
+        )
+      },
+    },
+    {
+      title: '角色',
+      key: 'role',
+      render: (_, r) => {
+        const arch = instanceArch(r)
+        const role = r.status?.role
+        return <Tag color={clusterRoleColor(arch, role)}>{formatClusterRole(arch, role)}</Tag>
+      },
+    },
     {
       title: '状态',
       key: 'status',
       render: (_, r) => {
         const role = r.status?.role
-        const displayRole = formatClusterRole(archByClusterId(r.cluster_id), role)
+        const displayRole = formatClusterRole(instanceArch(r), role)
         const health = r.status?.health_status
         const run = r.status?.run_status
         if (run === 'stopped') return <Tag color="error">已停止</Tag>
@@ -408,11 +468,11 @@ const InstanceList: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: 24, maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
       <Card
         title={<Space><DatabaseOutlined /><span>实例管理</span></Space>}
         extra={
-          <Space>
+          <Space wrap>
             <Select
               placeholder="按主机筛选"
               allowClear
@@ -448,8 +508,9 @@ const InstanceList: React.FC = () => {
         />
       </Card>
 
-      <Modal title="添加实例" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={handleCreate} confirmLoading={submitting} okText="创建" cancelText="取消" width={640}>
+      <Modal title="添加实例" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={handleCreate} confirmLoading={submitting} okText="创建" cancelText="取消" width="min(96vw, 760px)" styles={{ body: modalBodyStyle }}>
         <Form form={form} layout="vertical" autoComplete="off">
+          <div style={instanceFormGridStyle}>
           <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
             <Input placeholder="例如: order-db-01" />
           </Form.Item>
@@ -479,7 +540,7 @@ const InstanceList: React.FC = () => {
               options={clusters.map((c: any) => ({ value: c.cluster_id, label: `${c.cluster_id} (${c.arch || '未知架构'}) - ${c.node_count || 0}节点` }))}
             />
           </Form.Item>
-          <Divider plain>部署参数</Divider>
+          <Divider plain style={fullWidthGridItem}>部署参数</Divider>
           <Form.Item name="version_id" label="目标版本">
             <Select
               allowClear
@@ -491,30 +552,25 @@ const InstanceList: React.FC = () => {
           <Form.Item name="basedir" label="basedir"><Input placeholder="/opt/mysql-8.0.36" /></Form.Item>
           <Form.Item name="datadir" label="datadir"><Input placeholder="/data/mysql/3307" /></Form.Item>
           <Form.Item name="os_user" label="OS 用户" initialValue="mysql"><Input placeholder="mysql" /></Form.Item>
-          <Form.Item name="package_url" label="package_url"><Input placeholder="可留空，使用版本目录默认包地址" /></Form.Item>
+          <Form.Item name="package_url" label="package_url" style={fullWidthGridItem}><Input placeholder="可留空，使用版本目录默认包地址" /></Form.Item>
+          </div>
         </Form>
       </Modal>
 
-      <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width={900}>
+      <Modal title="批量添加实例" open={batchOpen} onCancel={() => setBatchOpen(false)} onOk={submitBatchCreate} confirmLoading={batchSubmitting} okText="批量添加" cancelText="取消" width="min(96vw, 980px)" styles={{ body: modalBodyStyle }}>
         <Form form={batchForm} layout="vertical">
           <Form.List name="instances" initialValue={[{ name: '', host: '', port: 3306, username: 'root', password: '', os_user: 'mysql' }]}>
             {(fields, { add, remove }) => (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 80px 1fr 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
-                  <span>实例名</span><span>地址</span><span>端口</span><span>用户</span><span>密码</span><span></span>
-                </div>
                 {fields.map(({ key, name }) => (
-                  <div key={key} style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 80px 1fr 40px', gap: 8, marginBottom: 4, alignItems: 'center' }}>
-                      <Form.Item name={[name, 'name']} style={{ margin: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
-                      <Form.Item name={[name, 'host']} style={{ margin: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="10.1.81.41" /></Form.Item>
-                      <Form.Item name={[name, 'port']} style={{ margin: 0 }} initialValue={3306}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
-                      <Form.Item name={[name, 'username']} style={{ margin: 0 }} initialValue="root"><Input size="small" /></Form.Item>
-                      <Form.Item name={[name, 'password']} style={{ margin: 0 }}><Input.Password size="small" placeholder="MySQL密码" autoComplete="new-password" /></Form.Item>
-                      <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr 80px 1.2fr', gap: 8 }}>
-                      <Form.Item name={[name, 'host_id']} style={{ margin: 0 }}>
+                  <div key={key} style={{ marginBottom: 12, padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, maxWidth: '100%', overflowX: 'hidden' }}>
+                    <div style={batchRowGridStyle}>
+                      <Form.Item name={[name, 'name']} label="实例名" style={{ marginBottom: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
+                      <Form.Item name={[name, 'host']} label="地址" style={{ marginBottom: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="192.0.2.41" /></Form.Item>
+                      <Form.Item name={[name, 'port']} label="端口" style={{ marginBottom: 0 }} initialValue={3306}><InputNumber size="small" min={1} max={65535} style={{ width: '100%' }} /></Form.Item>
+                      <Form.Item name={[name, 'username']} label="用户" style={{ marginBottom: 0 }} initialValue="root"><Input size="small" /></Form.Item>
+                      <Form.Item name={[name, 'password']} label="密码" style={{ marginBottom: 0 }}><Input.Password size="small" placeholder="MySQL密码" autoComplete="new-password" /></Form.Item>
+                      <Form.Item name={[name, 'host_id']} label="绑定主机" style={{ marginBottom: 0 }}>
                         <Select
                           size="small"
                           allowClear
@@ -530,7 +586,7 @@ const InstanceList: React.FC = () => {
                           }}
                         />
                       </Form.Item>
-                      <Form.Item name={[name, 'version_id']} style={{ margin: 0 }}>
+                      <Form.Item name={[name, 'version_id']} label="目标版本" style={{ marginBottom: 0 }}>
                         <Select
                           size="small"
                           allowClear
@@ -540,10 +596,11 @@ const InstanceList: React.FC = () => {
                           options={versions.map((v) => ({ value: v.id, label: `${v.flavor} ${v.version}` }))}
                         />
                       </Form.Item>
-                      <Form.Item name={[name, 'basedir']} style={{ margin: 0 }}><Input size="small" placeholder="basedir" /></Form.Item>
-                      <Form.Item name={[name, 'datadir']} style={{ margin: 0 }}><Input size="small" placeholder="datadir" /></Form.Item>
-                      <Form.Item name={[name, 'os_user']} style={{ margin: 0 }} initialValue="mysql"><Input size="small" placeholder="OS用户" /></Form.Item>
-                      <Form.Item name={[name, 'package_url']} style={{ margin: 0 }}><Input size="small" placeholder="package_url" /></Form.Item>
+                      <Form.Item name={[name, 'basedir']} label="basedir" style={{ marginBottom: 0 }}><Input size="small" placeholder="basedir" /></Form.Item>
+                      <Form.Item name={[name, 'datadir']} label="datadir" style={{ marginBottom: 0 }}><Input size="small" placeholder="datadir" /></Form.Item>
+                      <Form.Item name={[name, 'os_user']} label="OS用户" style={{ marginBottom: 0 }} initialValue="mysql"><Input size="small" placeholder="OS用户" /></Form.Item>
+                      <Form.Item name={[name, 'package_url']} label="package_url" style={{ marginBottom: 0 }}><Input size="small" placeholder="package_url" /></Form.Item>
+                      <Button size="small" danger type="text" disabled={fields.length <= 1} onClick={() => remove(name)} style={{ padding: 0, fontSize: 16 }}>×</Button>
                     </div>
                   </div>
                 ))}

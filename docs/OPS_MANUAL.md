@@ -1,4 +1,4 @@
-# DBOps 平台运维手册
+﻿# DBOps 平台运维手册
 
 > 版本: 1.0 | 最后更新: 2026-06-22
 
@@ -77,7 +77,7 @@
 
 ```
 Backend/Console ── 8080/3000 ──► 开发机 (Windows)
-Agent           ── 9090    ──► 被管理主机 (Linux, 如 10.1.81.21/22/32/41)
+Agent           ── 9090    ──► 被管理主机 (Linux, 如 192.0.2.21/22/32/41)
 MySQL 元数据库   ── 3306    ──► 可选，用作元数据存储
 ```
 
@@ -95,9 +95,9 @@ cd dbops
 # 2. 配置环境变量
 copy .env.example .env
 # 编辑 .env，至少设置：
-#   DBOPS_JWT_SECRET=你的JWT密钥(≥32字符)
-#   DBOPS_AGENT_TOKEN=你的Agent令牌(≥16字符)
-#   DBOPS_ENCRYPTION_KEY=你的加密密钥(≥32字符)
+#   DBOPS_JWT_SECRET=replace-with-strong-random-jwt-secret-at-least-32-chars
+#   DBOPS_AGENT_TOKEN=replace-with-strong-random-agent-token
+#   DBOPS_ENCRYPTION_KEY=replace-with-32-byte-random-encryption-key
 
 # 3. 一键构建并启动 (脚本会自动编译后端/Agent/前端)
 .\start.bat
@@ -120,8 +120,8 @@ GOOS=linux GOARCH=amd64 go build -o build/platform-backend-linux-amd64 ./platfor
 GOOS=linux GOARCH=amd64 go build -o build/agent-linux-amd64 ./agent/cmd/main.go
 
 # 2. 推送二进制到目标服务器
-scp build/platform-backend-linux-amd64 root@10.1.81.41:/opt/dbops-platform/
-scp build/agent-linux-amd64 root@10.1.81.21:/opt/dbops-agent/
+scp build/platform-backend-linux-amd64 root@192.0.2.41:/opt/dbops-platform/
+scp build/agent-linux-amd64 root@192.0.2.21:/opt/dbops-agent/
 
 # 3. 创建配置文件 (Backend: /opt/dbops-platform/config.yaml)
 cat > /opt/dbops-platform/config.yaml << 'EOF'
@@ -147,10 +147,10 @@ After=network.target
 Type=simple
 ExecStart=/opt/dbops-platform/platform-backend-linux-amd64
 WorkingDirectory=/opt/dbops-platform
-Environment=DBOPS_DB_URL=root:password@tcp(localhost:3306)/dbops_platform
-Environment=DBOPS_JWT_SECRET=your-jwt-secret
-Environment=DBOPS_AGENT_TOKEN=dbops-agent-token-16
-Environment=DBOPS_ENCRYPTION_KEY=your-encryption-key
+Environment=DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(localhost:3306)/dbops_platform
+Environment=DBOPS_JWT_SECRET=replace-with-strong-random-jwt-secret-at-least-32-chars
+Environment=DBOPS_AGENT_TOKEN=replace-with-strong-random-agent-token
+Environment=DBOPS_ENCRYPTION_KEY=replace-with-32-byte-random-encryption-key
 Restart=always
 User=root
 
@@ -176,7 +176,7 @@ After=network.target
 Type=simple
 ExecStart=/opt/dbops-agent/agent-linux-amd64
 WorkingDirectory=/opt/dbops-agent
-Environment=DBOPS_AGENT_TOKEN=dbops-agent-token-16
+Environment=DBOPS_AGENT_TOKEN=replace-with-strong-random-agent-token
 Restart=always
 User=root
 
@@ -360,92 +360,92 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 Invoke-RestMethod -Uri "http://localhost:8080/api/v1/hosts" `
   -Method Post -Headers @{Authorization="Bearer <jwt>"} `
   -ContentType "application/json" `
-  -Body '{"host":"10.1.81.21","port":22,"user":"root","password":"example_password","agent_port":9090}'
+  -Body '{"host":"192.0.2.21","port":22,"user":"root","password":"example_password","agent_port":9090}'
 
 # 验证主机连通性 (agent 健康检查)
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/health-check" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/health-check" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"}
 ```
 
 ### 5.3 单实例部署
 
 ```powershell
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/deploy" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"deploy-01","config":{"deploy_mode":"single","host":"10.1.81.21","port":3307,"mysql_pass":"example_password","mysql_version":"5.7.44"}}'
+  -Body '{"task_id":"deploy-01","config":{"deploy_mode":"single","host":"192.0.2.21","port":3307,"mysql_pass":"example_password","mysql_version":"5.7.44"}}'
 ```
 
 ### 5.4 版本检测
 
 ```powershell
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/version-detect" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/version-detect" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ver-01","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
+  -Body '{"task_id":"ver-01","config":{"target_host":"192.0.2.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 ```
 
 ### 5.5 HA 主从复制
 
 ```powershell
 # Step 1: 部署 master
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/deploy" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ha-master","config":{"deploy_mode":"ha-master","host":"10.1.81.21","port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password"}}'
+  -Body '{"task_id":"ha-master","config":{"deploy_mode":"ha-master","host":"192.0.2.21","port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password"}}'
 
 # Step 2: 部署 replica (需显式指定 server_id，否则从 slave 读取现有值)
-Invoke-RestMethod -Uri "http://10.1.81.22:9090/agent/tasks/deploy" `
+Invoke-RestMethod -Uri "http://192.0.2.22:9090/agent/tasks/deploy" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"ha-replica","config":{"deploy_mode":"ha-replica","master_host":"10.1.81.21","master_port":3307,"slave_host":"10.1.81.22","slave_port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password","server_id":2}}'
+  -Body '{"task_id":"ha-replica","config":{"deploy_mode":"ha-replica","master_host":"192.0.2.21","master_port":3307,"slave_host":"192.0.2.22","slave_port":3307,"mysql_pass":"example_password","replicate_user":"repl","replicate_pass":"example_password","server_id":2}}'
 ```
 
 ### 5.6 实例管理 (用户/授权)
 
 ```powershell
 # 创建用户
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"create-user","config":{"action":"create_user","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","password":"example_password"}}'
+  -Body '{"task_id":"create-user","config":{"action":"create_user","target_host":"192.0.2.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","password":"example_password"}}'
 
 # 用户列表
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"list-users","config":{"action":"list_users","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
+  -Body '{"task_id":"list-users","config":{"action":"list_users","target_host":"192.0.2.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 
 # 授权
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/instance-admin" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/instance-admin" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"grant","config":{"action":"grant_privileges","target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","privileges":"SELECT,INSERT,UPDATE,DELETE","scope":"*.*"}}'
+  -Body '{"task_id":"grant","config":{"action":"grant_privileges","target_host":"192.0.2.21","target_port":3307,"target_user":"root","target_pass":"example_password","username":"app_user","privileges":"SELECT,INSERT,UPDATE,DELETE","scope":"*.*"}}'
 ```
 
 ### 5.7 备份恢复
 
 ```powershell
 # 全量备份 (自动选择 mysqldump 或 xtrabackup)
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/backup" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/backup" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"backup-01","config":{"mysql_host":"10.1.81.21","mysql_port":3307,"mysql_user":"root","mysql_pass":"example_password"}}'
+  -Body '{"task_id":"backup-01","config":{"mysql_host":"192.0.2.21","mysql_port":3307,"mysql_user":"root","mysql_pass":"example_password"}}'
 
 # 恢复 (自动检测备份类型: .sql→mysqldump, 含 xtrabackup_checkpoints→xtrabackup)
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/restore" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/restore" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"restore-01","config":{"mysql_host":"10.1.81.21","mysql_port":3307,"backup_path":"/backup/mysql/full-xxx.sql"}}'
+  -Body '{"task_id":"restore-01","config":{"mysql_host":"192.0.2.21","mysql_port":3307,"backup_path":"/backup/mysql/full-xxx.sql"}}'
 ```
 
 ### 5.8 实例下线
 
 ```powershell
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/decommission" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/decommission" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
   -ContentType "application/json" `
-  -Body '{"task_id":"decom-01","config":{"target_host":"10.1.81.21","target_port":3307,"mysql_data_dir":"/data/mysql/3307"}}'
+  -Body '{"task_id":"decom-01","config":{"target_host":"192.0.2.21","target_port":3307,"mysql_data_dir":"/data/mysql/3307"}}'
 ```
 
 ---
@@ -513,8 +513,8 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/decommission" `
 ### 7.1 HA 主从架构
 
 ```
-10.1.81.21:3307 (master)  ←── 异步复制 ──→  10.1.81.22:3307 (slave)
-                                                        10.1.81.32:3307 (slave)
+192.0.2.21:3307 (master)  ←── 异步复制 ──→  192.0.2.22:3307 (slave)
+                                                        192.0.2.32:3307 (slave)
 ```
 
 **部署步骤:**
@@ -528,10 +528,10 @@ Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/decommission" `
 ### 7.2 MHA (Master High Availability)
 
 ```
-Manager (10.1.81.32)
+Manager (192.0.2.32)
     │
-    ├── Master (10.1.81.21:3307)
-    └── Slave  (10.1.81.22:3307)
+    ├── Master (192.0.2.21:3307)
+    └── Slave  (192.0.2.22:3307)
 ```
 
 **前置条件:**
@@ -544,18 +544,18 @@ Manager (10.1.81.32)
 **要求:** MySQL 8.0+ (5.7 不支持 Group Replication)
 
 ```
-Primary (10.1.81.21:3306)
+Primary (192.0.2.21:3306)
     │
-    ├── Secondary (10.1.81.22:3306)
-    └── Secondary (10.1.81.32:3306)
+    ├── Secondary (192.0.2.22:3306)
+    └── Secondary (192.0.2.32:3306)
 ```
 
 ### 7.4 PXC (Percona XtraDB Cluster)
 
 ```
-Node 1 (10.1.81.21:3306)  ←── 同步复制 ──→  Node 2 (10.1.81.22:3306)
+Node 1 (192.0.2.21:3306)  ←── 同步复制 ──→  Node 2 (192.0.2.22:3306)
       ↑                                             ↑
-      └──────────────── Node 3 (10.1.81.32:3306) ───┘
+      └──────────────── Node 3 (192.0.2.32:3306) ───┘
 ```
 
 ---
@@ -588,16 +588,16 @@ journalctl -u dbops-platform -f
 
 ```powershell
 # 直接调 Agent API (绕过 Backend)
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/health-check" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/health-check" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"}
 
 # 检查 Agent 路由
-Invoke-RestMethod -Uri "http://10.1.81.21:9090/agent/tasks/version-detect" `
+Invoke-RestMethod -Uri "http://192.0.2.21:9090/agent/tasks/version-detect" `
   -Method Post -Headers @{Authorization="Bearer dbops-agent-token-16"} `
-  -Body '{"task_id":"debug","config":{"target_host":"10.1.81.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
+  -Body '{"task_id":"debug","config":{"target_host":"192.0.2.21","target_port":3307,"target_user":"root","target_pass":"example_password"}}'
 
 # 检查 MySQL 连通性
-mysql -h 10.1.81.21 -P 3307 -u root -pexample_password -e "SELECT @@version, @@server_id"
+mysql -h 192.0.2.21 -P 3307 -u root -pexample_password -e "SELECT @@version, @@server_id"
 ```
 
 ### 8.4 已知限制
@@ -634,10 +634,10 @@ bash bin/stop.sh                # 停止全部
 ### .env 文件
 
 ```env
-DBOPS_DB_URL=root:password@tcp(10.1.81.41:3306)/dbops_platform
-DBOPS_JWT_SECRET=your-jwt-secret-key-at-least-32-characters-long
-DBOPS_AGENT_TOKEN=dbops-agent-token-16
-DBOPS_ENCRYPTION_KEY=your-encryption-key-at-least-32-characters-long
+DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(192.0.2.41:3306)/dbops_platform
+DBOPS_JWT_SECRET=replace-with-strong-random-jwt-secret-at-least-32-chars
+DBOPS_AGENT_TOKEN=replace-with-strong-random-agent-token
+DBOPS_ENCRYPTION_KEY=replace-with-32-byte-random-encryption-key
 ```
 
 ### Backend config.yaml
@@ -665,7 +665,7 @@ clickhouse:
 server:
   port: 9090
 platform:
-  url: "http://10.1.81.41:8080"
+  url: "http://192.0.2.41:8080"
 auth:
   token: "${DBOPS_AGENT_TOKEN}"
 ```
@@ -676,10 +676,10 @@ auth:
 
 | 主机 | IP | 角色 | MySQL 端口 | Agent 端口 |
 |------|-----|------|-----------|-----------|
-| tvy-dbtest-05 | 10.1.81.21 | Master / Agent | 3307 | 9090 |
-| tvy-dbtest-06 | 10.1.81.22 | Slave / Agent | 3307 | 9090 |
-| tvy-dbtest-07 | 10.1.81.32 | Slave / Agent | 3307 | 9090 |
-| tvy-dbtest-08 | 10.1.81.41 | Platform DB | 3306 | - |
+| tvy-dbtest-05 | 192.0.2.21 | Master / Agent | 3307 | 9090 |
+| tvy-dbtest-06 | 192.0.2.22 | Slave / Agent | 3307 | 9090 |
+| tvy-dbtest-07 | 192.0.2.32 | Slave / Agent | 3307 | 9090 |
+| tvy-dbtest-08 | 192.0.2.41 | Platform DB | 3306 | - |
 
 **统一密码:** `example_password` (SSH), `example_password` (MySQL root)  
 **Agent Token:** `dbops-agent-token-16`
