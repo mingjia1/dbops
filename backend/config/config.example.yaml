@@ -1,0 +1,20 @@
+# Local backend configuration example.
+# Keep real secrets outside the repository workspace or inject them via env vars.
+
+server:
+  port: 8080
+  log_level: info
+
+database:
+  url: "dbops_user:replace-with-strong-password@tcp(127.0.0.1:3306)/dbops_platform?parseTime=true&loc=Local"
+
+security:
+  jwt_secret: "replace-with-strong-random-jwt-secret-at-least-32-chars"
+  encryption_key: "replace-with-32-byte-random-encryption-key"
+  agent_token: "replace-with-strong-random-agent-token"
+
+defaults:
+  replication_user: repl
+  replication_password: "replace-with-replication-password"
+  sst_user: sst
+  sst_password: "replace-with-sst-password"

@@ -153,7 +153,17 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	ctx.Set("username", claims.Username)
 	ctx.Set("role", claims.Role)
 	ctx.Set("permissions", claims.Permissions)
+	ctx.Set("must_change_password", claims.MustChangePassword)
+	if claims.MustChangePassword && !isPasswordChangeAllowedPath(ctx.Request.URL.Path) {
+		utils.ErrorResponse(ctx, http.StatusForbidden, "Password change required before continuing", nil)
+		ctx.Abort()
+		return
+	}
 	ctx.Next()
+}
+
+func isPasswordChangeAllowedPath(path string) bool {
+	return strings.HasSuffix(path, "/auth/change-password") || strings.HasSuffix(path, "/auth/me")
 }
 
 func shouldUseSecureCookie(ctx *gin.Context) bool {

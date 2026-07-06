@@ -115,6 +115,49 @@ func TestAuthLoginReturnsPermissions(t *testing.T) {
 	require.Contains(t, resp.User.Permissions, "*")
 }
 
+func TestBootstrapAdminMustChangePasswordUntilRotated(t *testing.T) {
+	service, userRepo, _ := newAuthAuditTestService(t)
+	ctx := context.Background()
+
+	created, username, plain, err := service.SeedAdminIfEmpty(ctx)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, "admin", username)
+	require.NotEmpty(t, plain)
+
+	bootstrapUser, err := userRepo.GetByUsername(ctx, "admin")
+	require.NoError(t, err)
+	require.NotNil(t, bootstrapUser)
+	require.Equal(t, "bootstrap", bootstrapUser.Source)
+	require.Nil(t, bootstrapUser.PasswordChangedAt)
+
+	resp, err := service.Login(ctx, LoginRequest{Username: "admin", Password: plain})
+	require.NoError(t, err)
+	require.True(t, resp.MustChangePassword)
+	require.True(t, resp.User.MustChangePassword)
+	require.Equal(t, []string{"auth:change_password"}, resp.User.Permissions)
+
+	claims, err := service.ValidateToken(resp.Token)
+	require.NoError(t, err)
+	require.True(t, claims.MustChangePassword)
+	require.Equal(t, "password_change_required", claims.Role)
+
+	require.NoError(t, service.ChangePassword(context.WithValue(ctx, "user_id", bootstrapUser.ID), bootstrapUser.ID, ChangePasswordRequest{
+		CurrentPassword: plain,
+		NewPassword:     "Changed#1234",
+	}))
+
+	changedUser, err := userRepo.GetByUsername(ctx, "admin")
+	require.NoError(t, err)
+	require.NotNil(t, changedUser.PasswordChangedAt)
+
+	claims, err = service.ValidateToken(resp.Token)
+	require.NoError(t, err)
+	require.False(t, claims.MustChangePassword)
+	require.Equal(t, "admin", claims.Role)
+	require.Contains(t, claims.Permissions, "*")
+}
+
 func TestUserServiceCannotRemoveLastAdminViaUpdate(t *testing.T) {
 	db := newTestDB(t)
 	userRepo := repositories.NewUserRepository(db)

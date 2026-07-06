@@ -49,6 +49,7 @@ type ClusterDefaults struct {
 }
 
 func Load() (*Config, error) {
+	viper.Reset()
 	// Load .env file if present (supports multiple search paths)
 	_ = godotenv.Load("../../.env")
 	_ = godotenv.Load("../.env")
@@ -66,7 +67,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("tls_cert_path", "")
 	viper.SetDefault("tls_key_path", "")
 	viper.SetDefault("log_level", "warning")
-	viper.SetDefault("database_url", "root:password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local")
+	viper.SetDefault("database_url", "")
 	viper.SetDefault("sqlite_path", "") // 空表示使用 <DataDir>/dbops.db
 	viper.SetDefault("redis_url", "localhost:6379")
 	viper.SetDefault("redis_password", "")
@@ -93,16 +94,10 @@ func Load() (*Config, error) {
 	viper.SetDefault("server_timeouts.read_timeout_sec", 30)
 	viper.SetDefault("server_timeouts.write_timeout_sec", 60)
 	viper.SetDefault("server_timeouts.idle_timeout_sec", 120)
-	// B7: 强制从环境变量注入敏感配置. 即使 config.yaml 误提交, 环境变量也会覆盖.
+	// B7: 后端配置统一支持从根 .env 注入, 避免 config.yaml 分散保存敏感信息.
 	viper.SetDefault("agent_token", "")
-	viper.BindEnv("database_url", "DBOPS_DB_URL")
-	viper.BindEnv("jwt_secret", "DBOPS_JWT_SECRET")
-	viper.BindEnv("encryption_key", "DBOPS_ENCRYPTION_KEY")
-	viper.BindEnv("agent_token", "DBOPS_AGENT_TOKEN")
-	viper.BindEnv("storage_mode", "DBOPS_STORAGE_MODE")
-	viper.BindEnv("ai_api_key", "DBOPS_AI_API_KEY")
-	viper.BindEnv("ai_base_url", "DBOPS_AI_BASE_URL")
-	// JWT / 加密密钥故意不设默认值, 必须从 config.yaml 显式注入, 启动时校验.
+	bindBackendEnv()
+	// JWT / 加密密钥故意不设默认值, 必须从 .env / 环境变量显式注入, 启动时校验.
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -111,25 +106,25 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		ServerPort:    viper.GetString("server_port"),
-		TLSCertPath:   viper.GetString("tls_cert_path"),
-		TLSKeyPath:    viper.GetString("tls_key_path"),
-		LogLevel:      viper.GetString("log_level"),
-		DatabaseURL:   viper.GetString("database_url"),
-		SQLitePath:    viper.GetString("sqlite_path"),
-		StorageMode:   viper.GetString("storage_mode"),
-		RedisURL:      viper.GetString("redis_url"),
-		RedisPassword: viper.GetString("redis_password"),
-		RedisDB:       viper.GetInt("redis_db"),
-		JWTSecret:     viper.GetString("jwt_secret"),
-		EncryptionKey: viper.GetString("encryption_key"),
-		AgentToken:    viper.GetString("agent_token"),
-		ClickHouseURL: viper.GetString("clickhouse_url"),
-		DataDir:       viper.GetString("data_dir"),
-		AIBaseURL:     viper.GetString("ai_base_url"),
-		AIAPIKey:      viper.GetString("ai_api_key"),
-		AIModel:       viper.GetString("ai_model"),
-		AIMaxTokens:   viper.GetInt("ai_max_tokens"),
+		ServerPort:     viper.GetString("server_port"),
+		TLSCertPath:    viper.GetString("tls_cert_path"),
+		TLSKeyPath:     viper.GetString("tls_key_path"),
+		LogLevel:       viper.GetString("log_level"),
+		DatabaseURL:    viper.GetString("database_url"),
+		SQLitePath:     viper.GetString("sqlite_path"),
+		StorageMode:    viper.GetString("storage_mode"),
+		RedisURL:       viper.GetString("redis_url"),
+		RedisPassword:  viper.GetString("redis_password"),
+		RedisDB:        viper.GetInt("redis_db"),
+		JWTSecret:      viper.GetString("jwt_secret"),
+		EncryptionKey:  viper.GetString("encryption_key"),
+		AgentToken:     viper.GetString("agent_token"),
+		ClickHouseURL:  viper.GetString("clickhouse_url"),
+		DataDir:        viper.GetString("data_dir"),
+		AIBaseURL:      viper.GetString("ai_base_url"),
+		AIAPIKey:       viper.GetString("ai_api_key"),
+		AIModel:        viper.GetString("ai_model"),
+		AIMaxTokens:    viper.GetInt("ai_max_tokens"),
 		AllowedOrigins: splitCSV(viper.GetString("allowed_origins")),
 		ClusterDefaults: ClusterDefaults{
 			ReplicationUser: viper.GetString("cluster_defaults.replication_user"),
@@ -144,6 +139,42 @@ func Load() (*Config, error) {
 			IdleTimeoutSec:  viper.GetInt("server_timeouts.idle_timeout_sec"),
 		},
 	}, nil
+}
+
+func bindBackendEnv() {
+	bindings := map[string]string{
+		"server_port":                       "DBOPS_SERVER_PORT",
+		"tls_cert_path":                     "DBOPS_TLS_CERT_PATH",
+		"tls_key_path":                      "DBOPS_TLS_KEY_PATH",
+		"log_level":                         "DBOPS_LOG_LEVEL",
+		"database_url":                      "DBOPS_DB_URL",
+		"sqlite_path":                       "DBOPS_SQLITE_PATH",
+		"storage_mode":                      "DBOPS_STORAGE_MODE",
+		"redis_url":                         "DBOPS_REDIS_URL",
+		"redis_password":                    "DBOPS_REDIS_PASSWORD",
+		"redis_db":                          "DBOPS_REDIS_DB",
+		"jwt_secret":                        "DBOPS_JWT_SECRET",
+		"encryption_key":                    "DBOPS_ENCRYPTION_KEY",
+		"agent_token":                       "DBOPS_AGENT_TOKEN",
+		"clickhouse_url":                    "DBOPS_CLICKHOUSE_URL",
+		"data_dir":                          "DBOPS_DATA_DIR",
+		"allowed_origins":                   "DBOPS_ALLOWED_ORIGINS",
+		"ai_base_url":                       "DBOPS_AI_BASE_URL",
+		"ai_api_key":                        "DBOPS_AI_API_KEY",
+		"ai_model":                          "DBOPS_AI_MODEL",
+		"ai_max_tokens":                     "DBOPS_AI_MAX_TOKENS",
+		"cluster_defaults.replication_user": "DBOPS_REPLICATION_USER",
+		"cluster_defaults.replication_pass": "DBOPS_REPLICATION_PASS",
+		"cluster_defaults.sst_user":         "DBOPS_SST_USER",
+		"cluster_defaults.sst_pass":         "DBOPS_SST_PASS",
+		"cluster_defaults.ssh_user":         "DBOPS_SSH_USER",
+		"server_timeouts.read_timeout_sec":  "DBOPS_SERVER_READ_TIMEOUT_SEC",
+		"server_timeouts.write_timeout_sec": "DBOPS_SERVER_WRITE_TIMEOUT_SEC",
+		"server_timeouts.idle_timeout_sec":  "DBOPS_SERVER_IDLE_TIMEOUT_SEC",
+	}
+	for key, envName := range bindings {
+		_ = viper.BindEnv(key, envName)
+	}
 }
 
 func splitCSV(s string) []string {

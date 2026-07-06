@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Card, Col, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
-import { hostApi } from '../services/api'
+import { authApi, hostApi } from '../services/api'
 import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordEnabled, setDefaultMySQLCredential, setSecondaryPassword } from '../services/sessionSecrets'
 import { usePlatformSettings } from '../services/useSettings'
 
@@ -30,7 +30,60 @@ const parseFetchJson = async (res: Response) => {
 
 const SecurityTab: React.FC = () => {
   const [enabled, setEnabled] = useState(isSecondaryPasswordEnabled())
+  const [mustChangePlatformPassword, setMustChangePlatformPassword] = useState(currentUserMustChangePassword())
   const [form] = Form.useForm()
+  const [accountForm] = Form.useForm()
+
+  const handleChangePlatformPassword = async () => {
+    const values = await accountForm.validateFields()
+    if (values.new_password !== values.confirm_password) {
+      message.error('Passwords do not match')
+      return
+    }
+    await authApi.changePassword({
+      current_password: values.current_password,
+      new_password: values.new_password,
+    })
+    const user = readStoredUser()
+    if (user) {
+      localStorage.setItem('user', JSON.stringify({ ...user, must_change_password: false }))
+    }
+    accountForm.resetFields()
+    setMustChangePlatformPassword(false)
+    message.success('Platform password changed')
+  }
+
+  const accountPasswordCard = (
+    <Card type="inner" title="Platform Account Password" size="small">
+      {mustChangePlatformPassword && (
+        <Alert
+          type="warning"
+          showIcon
+          message="Password change required"
+          description="This bootstrap admin account can only change its password until a new password is saved."
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      <Form form={accountForm} layout="vertical" size="small">
+        <Form.Item name="current_password" label="Current Password" rules={[{ required: true }]}>
+          <Input.Password size="small" autoComplete="current-password" />
+        </Form.Item>
+        <Form.Item name="new_password" label="New Password" rules={[{ required: true, min: 8 }]}>
+          <Input.Password size="small" autoComplete="new-password" />
+        </Form.Item>
+        <Form.Item name="confirm_password" label="Confirm New Password" rules={[{ required: true }]}>
+          <Input.Password size="small" autoComplete="new-password" />
+        </Form.Item>
+        <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleChangePlatformPassword}>
+          Change Password
+        </Button>
+      </Form>
+    </Card>
+  )
+
+  if (mustChangePlatformPassword) {
+    return <Row gutter={16}><Col span={12}>{accountPasswordCard}</Col></Row>
+  }
 
   const handleSave = async () => {
     const values = await form.validateFields()
@@ -53,6 +106,9 @@ const SecurityTab: React.FC = () => {
 
   return (
     <Row gutter={16}>
+      <Col span={12}>
+        {accountPasswordCard}
+      </Col>
       <Col span={12}>
         <Card type="inner" title="Credential Guard" size="small">
           <Space align="center" style={{ marginBottom: 8 }}>
@@ -96,6 +152,17 @@ const SecurityTab: React.FC = () => {
     </Row>
   )
 }
+
+const readStoredUser = (): any | null => {
+  try {
+    const raw = localStorage.getItem('user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+const currentUserMustChangePassword = () => readStoredUser()?.must_change_password === true
 
 const POLICY_KEY = 'dbops_password_policy'
 const defaultPolicy = { min_length: 8, require_uppercase: true, require_lowercase: true, require_digit: true, require_special: true, max_age_days: 90, history_count: 5 }
@@ -495,10 +562,12 @@ const PackageTab: React.FC = () => {
 // ─── 主组件 ───────────────────────────────────────────────────────────────
 
 const SecuritySettings: React.FC = () => {
+  const user = readStoredUser()
+  const defaultTab = new URLSearchParams(window.location.search).get('tab') || (user?.must_change_password ? 'security' : 'packages')
   return (
     <div style={{ padding: 24 }}>
       <Card title={<Space><SettingOutlined /><span>系统设置</span></Space>}>
-        <Tabs defaultActiveKey="packages" items={[
+        <Tabs defaultActiveKey={defaultTab} items={[
           { key: 'packages', label: <Space><CloudOutlined />安装包管理</Space>, children: <PackageTab /> },
           { key: 'security', label: <Space><LockOutlined />安全设置</Space>, children: <SecurityTab /> },
           { key: 'metrics', label: <Space><DatabaseOutlined />监控指标</Space>, children: <MetricsTab /> },

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -41,7 +41,10 @@ func runSQLite() {
 }
 
 func runMySQL() {
-	dsn := "root:123456@tcp(10.1.81.42:23306)/dbops_platform?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := os.Getenv("DBOPS_DB_URL")
+	if dsn == "" {
+		log.Fatal("DBOPS_DB_URL is required for mysql mode")
+	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("Failed to connect to MySQL: %v", err)
@@ -79,7 +82,7 @@ func resetPassword(db *sql.DB) {
 	}
 	rows.Close()
 
-	password := "admin123"
+	password := adminPasswordFromInput()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("Failed to hash password: %v", err)
@@ -105,6 +108,17 @@ func resetPassword(db *sql.DB) {
 		affected, _ := result.RowsAffected()
 		fmt.Printf("Admin user created. Rows affected: %d\n", affected)
 	}
-	fmt.Printf("Password: %s\n", password)
+	fmt.Println("Password updated. Plaintext password was not logged.")
 	fmt.Println("======================")
+}
+
+func adminPasswordFromInput() string {
+	if len(os.Args) > 2 {
+		return os.Args[2]
+	}
+	if password := os.Getenv("DBOPS_ADMIN_PASSWORD"); password != "" {
+		return password
+	}
+	log.Fatal("new admin password is required as arg 2 or DBOPS_ADMIN_PASSWORD")
+	return ""
 }

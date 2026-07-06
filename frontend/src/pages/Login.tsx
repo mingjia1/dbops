@@ -24,11 +24,12 @@ const Login: React.FC = () => {
         password: values.password,
       })
       if (res && res.code === 200 && res.data) {
-        const { token, user } = res.data
+        const { token, user, must_change_password } = res.data
         if (token) localStorage.setItem('token', token)
-        if (user) localStorage.setItem('user', JSON.stringify(user))
+        const nextUser = user ? { ...user, must_change_password: user.must_change_password === true || must_change_password === true } : user
+        if (nextUser) localStorage.setItem('user', JSON.stringify(nextUser))
         message.success('欢迎回来，' + (user?.username || ''))
-        setTimeout(() => navigate('/dashboard', { replace: true }), 220)
+        setTimeout(() => navigate(must_change_password ? '/dashboard/security-settings?tab=security' : '/dashboard', { replace: true }), 220)
       } else {
         message.error(res?.message || '登录失败')
       }
@@ -168,7 +169,7 @@ const Login: React.FC = () => {
           </div>
           <Tabs items={tabItems} centered size="large" />
           <div className="login-card-foot">
-            首次使用?请查看后端启动日志中的默认 admin 密码
+            首次使用?请查看后端启动日志中的 bootstrap credential file
           </div>
         </div>
       </div>

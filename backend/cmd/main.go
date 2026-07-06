@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log"
@@ -30,6 +31,27 @@ import (
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"go.uber.org/zap"
 )
+
+func requireAgentToken(agentToken string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if agentToken == "" {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "agent_token not configured"})
+			return
+		}
+		const prefix = "Bearer "
+		header := c.GetHeader("Authorization")
+		if !strings.HasPrefix(header, prefix) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing bearer token"})
+			return
+		}
+		token := strings.TrimPrefix(header, prefix)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "invalid bearer token"})
+			return
+		}
+		c.Next()
+	}
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -127,14 +149,19 @@ func main() {
 	}
 	seedAuthSettings(context.Background(), db, logInstance)
 
-	// P0-2: 首次启动 seed admin 账号. 密码仅打印一次到日志.
+	// P0-2: 首次启动 seed admin 账号. 密码只写入本机 0600 bootstrap 文件, 不写日志.
 	if created, username, plain, err := authService.SeedAdminIfEmpty(context.Background()); err != nil {
 		logInstance.Warn("Failed to seed admin user: " + err.Error())
 	} else if created {
+		bootstrapPath, writeErr := writeBootstrapAdminCredential(cfg.DataDir, username, plain)
 		logInstance.Info("================================================================")
-		logInstance.Info(" Seeded initial admin user (please change password on first login):")
+		logInstance.Info(" Seeded initial admin user (please change password on first login)")
 		logInstance.Info("   username: " + username)
-		logInstance.Info("   password: " + plain)
+		if writeErr != nil {
+			logInstance.Warn("   bootstrap password file write failed: " + writeErr.Error())
+		} else {
+			logInstance.Info("   bootstrap credential file: " + bootstrapPath)
+		}
 		logInstance.Info("================================================================")
 	}
 
@@ -196,6 +223,7 @@ func main() {
 	}
 
 	monitorService := services.NewMonitorService(clickhouse)
+	monitorService.SetCollectionDependencies(instanceRepo, hostRepo, agentClient, cfg.EncryptionKey)
 	monitorController := controllers.NewMonitorController(monitorService)
 
 	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)
@@ -211,6 +239,7 @@ func main() {
 	clusterDeployService.SetHostService(hostService)
 
 	pluginExec := plugins.NewExecutor(pluginRegistry)
+	clusterDeployService.SetPluginExecutor(pluginExec)
 	credentialRepo := repositories.NewCredentialRepository(db)
 	credentialVault := services.NewCredentialVault(credentialRepo, cfg.EncryptionKey)
 	clusterDeployService.SetCredentialVault(credentialVault)
@@ -227,6 +256,10 @@ func main() {
 	topologyController := controllers.NewTopologyController(topologyService)
 
 	healthCheckService := services.NewHealthCheckService(db, cfg.EncryptionKey)
+	clusterDeployService.SetHealthCheckService(healthCheckService)
+	if err := clusterDeployService.MarkInterruptedDeployments(context.Background()); err != nil {
+		logInstance.Warn("Failed to mark interrupted deployments", zap.Error(err))
+	}
 	healthCheckController := controllers.NewHealthCheckController(healthCheckService, instanceService)
 
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
@@ -356,6 +389,11 @@ func main() {
 	// P1-8: 探活/就绪分流, 供 k8s livenessProbe / readinessProbe 使用.
 	// /health/live: 进程能响应 HTTP 即返回 200, 用于存活探针.
 	// /health/ready: 校验 db/redis 可达, 失败返 503, 用于就绪探针.
+	internal := r.Group("/internal", requireAgentToken(cfg.AgentToken))
+	{
+		internal.POST("/metrics/ingest", monitorController.IngestMetrics)
+	}
+
 	r.GET("/health/live", func(c *gin.Context) {
 		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "alive"}})
 	})
@@ -538,8 +576,8 @@ func main() {
 				deployments.GET("", clusterDeployController.List)
 				deployments.GET("/clusters", clusterDeployController.ListClusters)
 				deployments.GET("/clusters/:cluster_id", clusterDeployController.GetClusterDetail)
-				deployments.GET("/:id", clusterDeployController.GetDeploymentStatus)
-				deployments.GET("/:id/plan", clusterDeployController.GetDeployPlan)
+				deployments.GET("/:id", middleware.RequirePermission("admin"), clusterDeployController.GetDeploymentStatus)
+				deployments.GET("/:id/plan", middleware.RequirePermission("admin"), clusterDeployController.GetDeployPlan)
 				deployments.POST("/:id/change-password", middleware.RequirePermission("admin"), clusterDeployController.ChangeClusterPassword)
 				deployments.DELETE("/:id", middleware.RequirePermission("admin"), clusterDeployController.Destroy)
 				deployments.POST("/:id/scale-out", middleware.RequirePermission("admin"), clusterDeployController.ScaleOut)
@@ -1178,27 +1216,57 @@ func runMigrations(db *repositories.Database) error {
 // validateSecrets P0-1 防护: 任何缺省 / 短 / 明显示例值都直接拒启动.
 func validateSecrets(cfg *config.Config) error {
 	if cfg.DatabaseURL == "" || strings.Contains(cfg.DatabaseURL, "${DBOPS_DB_URL}") {
-		return fmt.Errorf("DBOPS_DB_URL env var must be set (got %q). Set it to a valid DSN, e.g. export DBOPS_DB_URL='root:s3cret@tcp(host:3306)/dbops?parseTime=true&loc=Local'", cfg.DatabaseURL)
+		return fmt.Errorf("DBOPS_DB_URL env var must be set (got %q). Set it to a valid DSN, e.g. export DBOPS_DB_URL='dbops_user:strong-random-password@tcp(host:3306)/dbops?parseTime=true&loc=Local'", cfg.DatabaseURL)
 	}
-	if len(cfg.JWTSecret) < 32 {
-		return fmt.Errorf("jwt_secret must be set and >= 32 chars (current len=%d). Set DBOPS_JWT_SECRET or generate with: openssl rand -hex 32", len(cfg.JWTSecret))
+	allowInsecureDevSecrets := os.Getenv("DBOPS_ALLOW_INSECURE_DEV_SECRETS") == "1"
+	if err := validateConfiguredSecret("database_url", "DBOPS_DB_URL", cfg.DatabaseURL, 1, allowInsecureDevSecrets); err != nil {
+		return err
 	}
-	if strings.Contains(cfg.JWTSecret, "PLEASE-CHANGE") || strings.Contains(cfg.JWTSecret, "INJECT_VIA_") {
-		return fmt.Errorf("jwt_secret is a placeholder (%q); set DBOPS_JWT_SECRET to a strong random value", cfg.JWTSecret)
+	if err := validateConfiguredSecret("jwt_secret", "DBOPS_JWT_SECRET", cfg.JWTSecret, 32, allowInsecureDevSecrets); err != nil {
+		return err
 	}
-	if len(cfg.EncryptionKey) < 32 {
-		return fmt.Errorf("encryption_key must be set and >= 32 chars (current len=%d). Set DBOPS_ENCRYPTION_KEY or generate with: openssl rand -hex 32", len(cfg.EncryptionKey))
+	if err := validateConfiguredSecret("encryption_key", "DBOPS_ENCRYPTION_KEY", cfg.EncryptionKey, 32, allowInsecureDevSecrets); err != nil {
+		return err
 	}
-	if strings.Contains(cfg.EncryptionKey, "PLEASE-CHANGE") || strings.Contains(cfg.EncryptionKey, "INJECT_VIA_") {
-		return fmt.Errorf("encryption_key is a placeholder (%q); set DBOPS_ENCRYPTION_KEY to a strong random value", cfg.EncryptionKey)
-	}
-	if cfg.AgentToken == "" || len(cfg.AgentToken) < 16 {
-		return fmt.Errorf("agent_token must be set and >= 16 chars. Set DBOPS_AGENT_TOKEN or generate with: openssl rand -hex 16")
-	}
-	if strings.Contains(cfg.AgentToken, "PLEASE-CHANGE") || strings.Contains(cfg.AgentToken, "INJECT_VIA_") {
-		return fmt.Errorf("agent_token is a placeholder (%q); set DBOPS_AGENT_TOKEN to a strong random value", cfg.AgentToken)
+	if err := validateConfiguredSecret("agent_token", "DBOPS_AGENT_TOKEN", cfg.AgentToken, 16, allowInsecureDevSecrets); err != nil {
+		return err
 	}
 	return nil
+}
+
+func validateConfiguredSecret(name, envName, value string, minLen int, allowInsecureDevSecrets bool) error {
+	if len(value) < minLen {
+		return fmt.Errorf("%s must be set and >= %d chars (current len=%d). Set %s to a strong random value", name, minLen, len(value), envName)
+	}
+	upper := strings.ToUpper(value)
+	if strings.Contains(upper, "PLEASE-CHANGE") || strings.Contains(upper, "INJECT_VIA_") {
+		return fmt.Errorf("%s is a placeholder (%q); set %s to a strong random value", name, value, envName)
+	}
+	if isWeakConfiguredSecret(value) && !allowInsecureDevSecrets {
+		return fmt.Errorf("%s looks like an insecure test/default value; set %s to a strong random value or set DBOPS_ALLOW_INSECURE_DEV_SECRETS=1 for local development only", name, envName)
+	}
+	return nil
+}
+
+func isWeakConfiguredSecret(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	weakMarkers := []string{
+		"test",
+		"example",
+		"changeme",
+		"change-me",
+		"default",
+		"password",
+		"123456",
+		"root:root",
+		"root:password",
+	}
+	for _, marker := range weakMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultInt(v, fallback int) int {
@@ -1206,6 +1274,21 @@ func defaultInt(v, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func writeBootstrapAdminCredential(dataDir, username, password string) (string, error) {
+	if dataDir == "" {
+		dataDir = "./data"
+	}
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dataDir, "admin-bootstrap-credential.txt")
+	content := fmt.Sprintf("username=%s\npassword=%s\n", username, password)
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func seedAuthSettings(ctx context.Context, db *repositories.Database, logInstance *zap.Logger) {

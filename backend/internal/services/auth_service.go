@@ -64,9 +64,10 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token     string   `json:"token"`
-	ExpiresAt int64    `json:"expires_at"`
-	User      UserInfo `json:"user"`
+	Token              string   `json:"token"`
+	ExpiresAt          int64    `json:"expires_at"`
+	User               UserInfo `json:"user"`
+	MustChangePassword bool     `json:"must_change_password,omitempty"`
 }
 
 type ChangePasswordRequest struct {
@@ -79,20 +80,22 @@ type ResetAllPasswordsRequest struct {
 }
 
 type UserInfo struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	DisplayName string   `json:"display_name"`
-	Email       string   `json:"email"`
-	Role        string   `json:"role"`
-	Roles       []string `json:"roles"`
-	Permissions []string `json:"permissions"`
+	ID                 string   `json:"id"`
+	Username           string   `json:"username"`
+	DisplayName        string   `json:"display_name"`
+	Email              string   `json:"email"`
+	Role               string   `json:"role"`
+	Roles              []string `json:"roles"`
+	Permissions        []string `json:"permissions"`
+	MustChangePassword bool     `json:"must_change_password,omitempty"`
 }
 
 type Claims struct {
-	UserID      string   `json:"user_id"`
-	Username    string   `json:"username"`
-	Role        string   `json:"role"`
-	Permissions []string `json:"permissions"`
+	UserID             string   `json:"user_id"`
+	Username           string   `json:"username"`
+	Role               string   `json:"role"`
+	Permissions        []string `json:"permissions"`
+	MustChangePassword bool     `json:"must_change_password,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -154,12 +157,20 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	}
 
 	permissions, roles := s.permissionsForUser(ctx, user)
+	mustChangePassword := userMustChangePassword(user)
+	tokenRole := user.Role
+	if mustChangePassword {
+		tokenRole = "password_change_required"
+		permissions = []string{"auth:change_password"}
+		roles = []string{"password_change_required"}
+	}
 	expiresAt := time.Now().Add(s.tokenExpiry)
 	claims := &Claims{
-		UserID:      user.ID,
-		Username:    user.Username,
-		Role:        user.Role,
-		Permissions: permissions,
+		UserID:             user.ID,
+		Username:           user.Username,
+		Role:               tokenRole,
+		Permissions:        permissions,
+		MustChangePassword: mustChangePassword,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -178,16 +189,18 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	s.auditAuth(auditCtx, "login", "login", "user", user.ID, "success", "", "source="+user.Source, req.IPAddress, req.UserAgent)
 
 	return &LoginResponse{
-		Token:     tokenString,
-		ExpiresAt: expiresAt.Unix(),
+		Token:              tokenString,
+		ExpiresAt:          expiresAt.Unix(),
+		MustChangePassword: mustChangePassword,
 		User: UserInfo{
-			ID:          user.ID,
-			Username:    user.Username,
-			DisplayName: user.DisplayName,
-			Email:       user.Email,
-			Role:        user.Role,
-			Roles:       roles,
-			Permissions: permissions,
+			ID:                 user.ID,
+			Username:           user.Username,
+			DisplayName:        user.DisplayName,
+			Email:              user.Email,
+			Role:               user.Role,
+			Roles:              roles,
+			Permissions:        permissions,
+			MustChangePassword: mustChangePassword,
 		},
 	}, nil
 }
@@ -214,9 +227,16 @@ func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 				return nil, errors.New("user account is not active")
 			}
 			permissions, _ := s.permissionsForUser(context.Background(), user)
+			mustChangePassword := userMustChangePassword(user)
+			if mustChangePassword {
+				permissions = []string{"auth:change_password"}
+				claims.Role = "password_change_required"
+			} else {
+				claims.Role = user.Role
+			}
 			claims.Permissions = permissions
-			claims.Role = user.Role
 			claims.Username = user.Username
+			claims.MustChangePassword = mustChangePassword
 		}
 		return claims, nil
 	}
@@ -357,8 +377,8 @@ func (s *AuthService) Register(ctx context.Context, username, password, email, r
 	return nil
 }
 
-// SeedAdminIfEmpty 首次启动 + users 表为空时, 创建一个 admin 账号并返回明文密码.
-// 密码仅返回一次, 调用方必须落到日志里提示用户首次登录后修改.
+// SeedAdminIfEmpty creates a bootstrap admin whose first token is restricted
+// until the password is changed.
 func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, username, plainPassword string, err error) {
 	if s.IsStandalone() || s.userRepo == nil {
 		return false, "", "", nil
@@ -380,13 +400,14 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 		return false, "", "", hashErr
 	}
 	if createErr := s.userRepo.Create(ctx, &models.User{
-		Username:  username,
-		Password:  string(hash),
-		Email:     "admin@localhost",
-		Role:      "admin",
-		Status:    "active",
-		Source:    "local",
-		CreatedAt: time.Now(),
+		Username:          username,
+		Password:          string(hash),
+		Email:             "admin@localhost",
+		Role:              "admin",
+		Status:            "active",
+		Source:            "bootstrap",
+		PasswordChangedAt: nil,
+		CreatedAt:         time.Now(),
 	}); createErr != nil {
 		return false, "", "", createErr
 	}
@@ -396,6 +417,10 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 		}
 	}
 	return true, username, plainPassword, nil
+}
+
+func userMustChangePassword(user *models.User) bool {
+	return user != nil && user.Source == "bootstrap" && user.PasswordChangedAt == nil
 }
 
 func (s *AuthService) CurrentUser(ctx context.Context, userID string) (*UserInfo, error) {
@@ -410,14 +435,20 @@ func (s *AuthService) CurrentUser(ctx context.Context, userID string) (*UserInfo
 		return nil, errors.New("user account is not active")
 	}
 	permissions, roles := s.permissionsForUser(ctx, user)
+	mustChangePassword := userMustChangePassword(user)
+	if mustChangePassword {
+		permissions = []string{"auth:change_password"}
+		roles = []string{"password_change_required"}
+	}
 	return &UserInfo{
-		ID:          user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		Email:       user.Email,
-		Role:        user.Role,
-		Roles:       roles,
-		Permissions: permissions,
+		ID:                 user.ID,
+		Username:           user.Username,
+		DisplayName:        user.DisplayName,
+		Email:              user.Email,
+		Role:               user.Role,
+		Roles:              roles,
+		Permissions:        permissions,
+		MustChangePassword: mustChangePassword,
 	}, nil
 }
 

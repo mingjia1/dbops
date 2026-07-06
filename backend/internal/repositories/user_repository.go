@@ -36,7 +36,7 @@ func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 		source = "local"
 	}
 	passwordChangedAt := user.PasswordChangedAt
-	if passwordChangedAt == nil {
+	if passwordChangedAt == nil && source != "bootstrap" {
 		now := time.Now()
 		passwordChangedAt = &now
 	}
