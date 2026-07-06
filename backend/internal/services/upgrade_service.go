@@ -151,7 +151,7 @@ func (s *UpgradeService) PlanUpgradePath(ctx context.Context, req PlanUpgradePat
 		estimatedTime = 120
 		riskLevel = "low"
 	case "rolling":
-		steps = s.planRollingUpgradeSteps(sourceVersion, targetVersion)
+		steps = s.planRollingUpgradeStepsForCluster(ctx, instance, sourceVersion, targetVersion)
 		estimatedTime = 60
 		riskLevel = "medium"
 	default:
@@ -1325,17 +1325,86 @@ func (s *UpgradeService) planLogicalMigrationSteps(source, target string) []Upgr
 }
 
 func (s *UpgradeService) planRollingUpgradeSteps(source, target string) []UpgradeStepInfo {
-	return []UpgradeStepInfo{
-		{Order: 1, Name: "Cluster Health Check", Type: "check", Description: "Verify cluster health and replication status"},
-		{Order: 2, Name: "Upgrade Slave 1", Type: "upgrade", Description: "Upgrade first slave instance"},
-		{Order: 3, Name: "Verify Slave 1", Type: "verify", Description: "Verify slave 1 replication and health"},
-		{Order: 4, Name: "Upgrade Slave 2", Type: "upgrade", Description: "Upgrade second slave instance"},
-		{Order: 5, Name: "Verify Slave 2", Type: "verify", Description: "Verify slave 2 replication and health"},
-		{Order: 6, Name: "Promote New Master", Type: "promote", Description: "Promote slave to master role"},
-		{Order: 7, Name: "Upgrade Old Master", Type: "upgrade", Description: "Upgrade former master instance"},
-		{Order: 8, Name: "Reconfigure Topology", Type: "configure", Description: "Update cluster topology"},
-		{Order: 9, Name: "Final Verification", Type: "verify", Description: "Verify cluster functionality"},
+	return rollingUpgradeStepsForInstances("ha", nil, source, target)
+}
+
+func (s *UpgradeService) planRollingUpgradeStepsForCluster(ctx context.Context, anchor *models.Instance, source, target string) []UpgradeStepInfo {
+	instances := []*models.Instance{}
+	if anchor != nil {
+		instances = append(instances, anchor)
 	}
+	if s.instanceRepo != nil && anchor != nil && strings.TrimSpace(anchor.ClusterID) != "" {
+		if clusterInstances, err := s.instanceRepo.ListByClusterID(ctx, anchor.ClusterID); err == nil && len(clusterInstances) > 0 {
+			instances = clusterInstances
+		}
+	}
+	clusterType := inferRollingClusterType(instances)
+	ordered := orderRollingUpgradeInstances(clusterType, instances)
+	return rollingUpgradeStepsForInstances(clusterType, ordered, source, target)
+}
+
+func rollingUpgradeStepsForInstances(clusterType string, instances []*models.Instance, source, target string) []UpgradeStepInfo {
+	steps := []UpgradeStepInfo{
+		{Order: 1, Name: "Cluster Health Check", Type: "check", Description: "Verify cluster health and replication status"},
+	}
+	order := 2
+	if len(instances) == 0 {
+		steps = append(steps,
+			UpgradeStepInfo{Order: order, Name: "Upgrade Secondary Nodes", Type: "upgrade", Description: fmt.Sprintf("Upgrade non-primary nodes from %s to %s", source, target)},
+			UpgradeStepInfo{Order: order + 1, Name: "Verify Secondary Nodes", Type: "verify", Description: "Verify upgraded non-primary nodes"},
+			UpgradeStepInfo{Order: order + 2, Name: "Upgrade Primary Node", Type: "upgrade", Description: fmt.Sprintf("Upgrade primary node from %s to %s", source, target)},
+		)
+		order += 3
+	} else {
+		for _, inst := range instances {
+			role := rollingDisplayRole(clusterType, inst.Status.Role)
+			label := rollingInstanceLabel(inst)
+			steps = append(steps,
+				UpgradeStepInfo{Order: order, Name: fmt.Sprintf("Upgrade %s %s", role, label), Type: "upgrade", Description: fmt.Sprintf("Upgrade %s node %s from %s to %s", role, label, source, target)},
+				UpgradeStepInfo{Order: order + 1, Name: fmt.Sprintf("Verify %s %s", role, label), Type: "verify", Description: fmt.Sprintf("Verify %s node %s after upgrade", role, label)},
+			)
+			order += 2
+		}
+	}
+	steps = append(steps,
+		UpgradeStepInfo{Order: order, Name: "Reconfigure Topology", Type: "configure", Description: fmt.Sprintf("Refresh %s topology metadata after rolling upgrade", strings.ToUpper(clusterType))},
+		UpgradeStepInfo{Order: order + 1, Name: "Final Verification", Type: "verify", Description: "Verify cluster functionality"},
+	)
+	return steps
+}
+
+func rollingDisplayRole(clusterType, role string) string {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	switch normalized {
+	case "slave", "replica":
+		return "Replica"
+	case "secondary", "donor", "joiner":
+		return "Secondary"
+	case "primary", "primary_master":
+		return "Primary"
+	case "bootstrap":
+		return "Bootstrap"
+	case "master":
+		if clusterType == "mgr" || clusterType == "pxc" {
+			return "Primary"
+		}
+		return "Master"
+	default:
+		if normalized == "" {
+			return "Node"
+		}
+		return strings.ToUpper(normalized[:1]) + normalized[1:]
+	}
+}
+
+func rollingInstanceLabel(inst *models.Instance) string {
+	if inst == nil {
+		return "node"
+	}
+	if strings.TrimSpace(inst.Name) != "" {
+		return inst.Name
+	}
+	return inst.ID
 }
 
 func (s *UpgradeService) generatePreCheckWarnings(instance *models.Instance, strategy, sourceVersion, targetVersion string) []string {

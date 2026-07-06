@@ -316,7 +316,7 @@ func (r *ClusterDeployRepository) UpdateClusterMeta(ctx context.Context, cluster
 
 func isFinalStatus(status string) bool {
 	switch status {
-	case "completed", "success", "failed", "destroyed", "cancelled":
+	case "completed", "success", "failed", "destroyed", "cancelled", "interrupted":
 		return true
 	default:
 		return false

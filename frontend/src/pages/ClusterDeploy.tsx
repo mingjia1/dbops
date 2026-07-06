@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Checkbox, Col, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tabs, Typography,
+  Button, Card, Checkbox, Col, Form, Input, InputNumber, message, Modal, Row, Segmented, Select, Space, Tabs, Typography,
 } from 'antd'
 import { ClusterOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
@@ -14,7 +14,7 @@ import {
   isCompletedDeployStatus, isFailedDeployStatus, isPartialDeployStatus, isTerminalDeployStatus,
   deploymentProgress,
   versionSupportsArch,
-  createMgrGroupName, normalizeDeployment, buildDeployPayload,
+  createMgrGroupName, normalizeDeployment, buildDeployPayload, deploymentPayloadFingerprint,
   STAGE_ORDER,
 } from '../services/deployHelpers'
 import PlanPreviewModal from '../components/PlanPreviewModal'
@@ -24,20 +24,24 @@ import MySQLPasswordModal from '../components/MySQLPasswordModal'
 import ClusterDeployProgress from '../components/ClusterDeployProgress'
 import DeploymentHistoryPanel from '../components/DeploymentHistoryPanel'
 import PrecheckResultTable from '../components/PrecheckResultTable'
+import ClusterDeployFlow from '../components/ClusterDeployFlow'
 
 const { Text } = Typography
+const halfColProps = { xs: 24, md: 12 }
+const thirdColProps = { xs: 24, md: 12, xl: 8 }
 
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
   const [versions, setVersions] = useState<VersionEntry[]>([])
   const [tab, setTab] = useState<ArchType>('ha')
+  const [deployView, setDeployView] = useState<'flow' | 'form'>('flow')
   const [submitting, setSubmitting] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [deployments, setDeployments] = useState<DeployResult[]>([])
   const [statusFilter, setStatusFilter] = useState<string[]>(['success', 'running'])
   const [archFilter, setArchFilter] = useState<ArchType | 'all'>('all')
-  const [showHistory, setShowHistory] = useState(true)
+  const [showHistory, setShowHistory] = useState(false)
   const [precheckResults, setPrecheckResults] = useState<any[] | null>(null)
   const [precheckLoading, setPrecheckLoading] = useState(false)
   const [precheckContext, setPrecheckContext] = useState<{ arch: ArchType; values: any } | null>(null)
@@ -73,12 +77,19 @@ const ClusterDeploy: React.FC = () => {
   const [planPreviewOpen, setPlanPreviewOpen] = useState(false)
   const [planPreviewData, setPlanPreviewData] = useState<any>(null)
   const [planPreviewArch, setPlanPreviewArch] = useState<ArchType>('ha')
+  const [planPreviewFingerprint, setPlanPreviewFingerprint] = useState('')
   const [planPreviewLoading, setPlanPreviewLoading] = useState(false)
 
   const [haForm] = Form.useForm()
   const [mhaForm] = Form.useForm()
   const [mgrForm] = Form.useForm()
   const [pxcForm] = Form.useForm()
+
+  const clearPlanPreview = () => {
+    setPlanPreviewData(null)
+    setPlanPreviewFingerprint('')
+    setPlanPreviewOpen(false)
+  }
 
   useEffect(() => {
     hostApi.list(100, 0).then((res: any) => setHosts(res?.data || [])).catch(() => { /* BUG-014: host list load failure is non-critical, page works with empty list */ })
@@ -96,6 +107,10 @@ const ClusterDeploy: React.FC = () => {
     if (mgrForm.getFieldValue('group_name')) return
     mgrForm.setFieldValue('group_name', createMgrGroupName())
   }, [mgrForm])
+
+  useEffect(() => {
+    clearPlanPreview()
+  }, [deployView, tab])
 
   useEffect(() => {
     if (historyPollRef.current) {
@@ -261,11 +276,13 @@ const ClusterDeploy: React.FC = () => {
       mgrForm.setFieldValue('group_name', nextValues.group_name)
     }
     const payload = buildDeployPayload(arch, nextValues, cred)
+    const fingerprint = deploymentPayloadFingerprint(payload)
     setPlanPreviewLoading(true)
     setPlanPreviewArch(arch)
     clusterDeployApi.validateCluster(payload).then((res: any) => {
       const plan = res?.data?.plan || res?.data
       setPlanPreviewData(plan)
+      setPlanPreviewFingerprint(fingerprint)
       setPlanPreviewOpen(true)
     }).catch((err: any) => {
       message.error(`计划验证失败: ${err?.response?.data?.message || err?.message}`)
@@ -326,6 +343,31 @@ const ClusterDeploy: React.FC = () => {
     }
   }
 
+  const previewDeployPayload = async (arch: ArchType, payload: Record<string, any>) => {
+    if (!credential.password) {
+      message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
+      return
+    }
+    if (!versionSupportsArch(arch, payload?.mysql?.version)) {
+      message.error('MGR 部署需要选择 MySQL 8.0+ 版本，MySQL 5.7 不支持 Group Replication')
+      return
+    }
+    setPlanPreviewLoading(true)
+    setPlanPreviewArch(arch)
+    const fingerprint = deploymentPayloadFingerprint(payload)
+    try {
+      const res: any = await clusterDeployApi.validateCluster(payload)
+      const plan = res?.data?.plan || res?.data
+      setPlanPreviewData(plan)
+      setPlanPreviewFingerprint(fingerprint)
+      setPlanPreviewOpen(true)
+    } catch (err: any) {
+      message.error(`计划验证失败: ${err?.response?.data?.message || err?.message}`)
+    } finally {
+      setPlanPreviewLoading(false)
+    }
+  }
+
   const viewDeploymentDetail = async (record: DeployResult) => {
     try {
       const res: any = await clusterDeployApi.getStatus(record.deployment_id)
@@ -344,8 +386,51 @@ const ClusterDeploy: React.FC = () => {
     setCurrentStep(0)
     setActiveDeployment(null)
     const payload = payloadOverride || buildDeployPayload(arch, values, cred)
+    const currentFingerprint = deploymentPayloadFingerprint(payload)
+    if (planPreviewData && planPreviewFingerprint && planPreviewFingerprint !== currentFingerprint) {
+      clearPlanPreview()
+      message.warning('Deployment plan changed. The current payload will be validated again before submit.')
+    }
+    let pendingDeploymentID = ''
     try {
-      await clusterDeployApi.validateCluster(payload)
+      const validationRes: any = await clusterDeployApi.validateCluster(payload)
+      const validatedPlan = validationRes?.data?.plan || validationRes?.data
+      pendingDeploymentID = payload?.cluster_id || values.cluster_id
+      if (validatedPlan?.steps?.length && pendingDeploymentID) {
+        setPlanPreviewArch(arch)
+        setPlanPreviewData(validatedPlan)
+        setPlanPreviewFingerprint(currentFingerprint)
+        const pendingDep: DeployResult = {
+          deployment_id: pendingDeploymentID,
+          cluster_id: pendingDeploymentID,
+          cluster_type: arch,
+          status: 'running',
+          progress: 0,
+          stage: STAGE_ORDER[0],
+          message: '部署任务已提交，正在等待后端执行进度',
+          started_at: new Date().toISOString(),
+          nodes: Array.isArray(validatedPlan.nodes)
+            ? validatedPlan.nodes.map((node: any) => ({
+              instance_id: node.id,
+              name: node.id,
+              host: node.host,
+              port: node.mysql_port,
+              role: node.role,
+              status: 'planned',
+            }))
+            : [],
+          steps: validatedPlan.steps.map((step: any) => ({ ...step, status: step.status || 'planned' })),
+          logs: [],
+        }
+        setActiveDeployment(pendingDep)
+        setDeployments((items) => {
+          const exists = items.some((item) => item.deployment_id === pendingDep.deployment_id)
+          return exists
+            ? items.map((item) => (item.deployment_id === pendingDep.deployment_id ? { ...pendingDep, _ts: Date.now() } : item))
+            : [{ ...pendingDep, _ts: Date.now() }, ...items]
+        })
+        startPolling(pendingDep)
+      }
       const res: any = await clusterDeployApi.deployCluster(payload)
       if (!res?.data?.deployment_id && !res?.data?.id) {
         throw new Error('backend did not return deployment_id')
@@ -390,6 +475,18 @@ const ClusterDeploy: React.FC = () => {
         if (failedStepIdx >= 0) setCurrentStep(Math.min(failedStepIdx, STAGE_ORDER.length - 1))
         await loadDeployments(false)
         showDeploymentResultMessage(dep)
+        return
+      }
+      if (pendingDeploymentID) {
+        const msg = err?.response?.data?.message || err?.message || '部署提交失败'
+        setActiveDeployment((current) => (current?.deployment_id === pendingDeploymentID ? {
+          ...current,
+          status: 'failed',
+          progress: deploymentProgress('failed', current.progress),
+          message: msg,
+        } : current))
+        stopPolling()
+        message.error(`${arch.toUpperCase()} 集群部署失败: ${msg}`)
         return
       }
       message.error(`提交部署失败: ${err?.response?.data?.message || err?.message}`)
@@ -473,9 +570,9 @@ const ClusterDeploy: React.FC = () => {
     onFinish: (values: any) => void,
     options?: { simpleReplica?: boolean },
   ) => (
-    <Form form={form} layout="horizontal" onFinish={onFinish}>
+    <Form form={form} layout="vertical" onFinish={onFinish} style={{ maxWidth: '100%', overflowX: 'hidden' }}>
       <Row gutter={16}>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Select
               placeholder="选择版本"
@@ -495,19 +592,19 @@ const ClusterDeploy: React.FC = () => {
             />
           </Form.Item>
         </Col>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="mysql_port" label="主节点端口" initialValue={3306} rules={[{ required: true, message: '请输入主节点端口' }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <InputNumber min={1} max={65535} style={{ width: '100%' }} />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="cluster_id" label="集群ID" rules={[{ required: true, message: '请输入集群ID' }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input placeholder={`${arch}-cluster-01`} />
           </Form.Item>
         </Col>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="master_host_id" label="主节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Select options={hostOptions} placeholder="选择主节点主机" />
           </Form.Item>
@@ -515,12 +612,12 @@ const ClusterDeploy: React.FC = () => {
       </Row>
       {!options?.simpleReplica && (
         <Row gutter={16}>
-          <Col span={12}>
+          <Col {...halfColProps}>
             <Form.Item name="replica_host_ids" label="从节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <Select mode="multiple" options={hostOptions} placeholder="至少选择1个从节点" maxTagCount={2} />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col {...halfColProps}>
             <Form.Item name="replica_port" label="从节点端口" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <InputNumber min={1} max={65535} placeholder="默认同主节点端口" style={{ width: '100%' }} />
             </Form.Item>
@@ -529,12 +626,12 @@ const ClusterDeploy: React.FC = () => {
       )}
       {options?.simpleReplica && (
         <Row gutter={16}>
-          <Col span={12}>
+          <Col {...halfColProps}>
             <Form.Item name="replica_host_id" label="从节点" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <Select options={hostOptions} placeholder="选择从节点主机" />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col {...halfColProps}>
             <Form.Item name="replica_port" label="从节点端口" initialValue={3310} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
               <InputNumber min={1} max={65535} style={{ width: '100%' }} />
             </Form.Item>
@@ -543,19 +640,19 @@ const ClusterDeploy: React.FC = () => {
       )}
       {extraFields && <Row gutter={16}>{extraFields}</Row>}
       <Row gutter={16}>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="repl_user" label="复制用户" initialValue="repl" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input placeholder="repl" />
           </Form.Item>
         </Col>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item name="repl_password" label="复制密码" initialValue="Repl#2024" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Input.Password placeholder="Repl#2024" />
           </Form.Item>
         </Col>
       </Row>
       <Row gutter={16}>
-        <Col span={12}>
+        <Col {...halfColProps}>
           <Form.Item label="中间件插件" tooltip="部署完成后自动装配所选中间件" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
             <Space>
               <Form.Item name="enable_keepalived" valuePropName="checked" noStyle>
@@ -567,7 +664,7 @@ const ClusterDeploy: React.FC = () => {
             </Space>
           </Form.Item>
         </Col>
-        <Col span={12} />
+        <Col {...halfColProps} />
       </Row>
       <Form.Item wrapperCol={{ offset: 0 }}>
         <Space>
@@ -599,8 +696,9 @@ const ClusterDeploy: React.FC = () => {
   })
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: '24px', maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
       <Card
+        styles={{ body: { overflowX: 'hidden' } }}
         title={
           <Space>
             <ClusterOutlined />
@@ -638,10 +736,33 @@ const ClusterDeploy: React.FC = () => {
             onDestroy={destroyDeployment}
           />
         ) : (
-          <Tabs
-            activeKey={tab}
-            onChange={(key) => setTab(key as ArchType)}
-            items={[
+          <Space direction="vertical" size={16} style={{ width: '100%', minWidth: 0 }}>
+            <Segmented
+              value={deployView}
+              options={[
+                { label: '流程编排', value: 'flow' },
+                { label: '表单部署', value: 'form' },
+              ]}
+              onChange={(value) => setDeployView(value as 'flow' | 'form')}
+            />
+            {deployView === 'flow' ? (
+              <ClusterDeployFlow
+                hosts={hosts}
+                versions={versions}
+                credential={credential}
+                activeDeployment={activeDeployment}
+                plan={planPreviewData}
+                planFingerprint={planPreviewFingerprint}
+                planLoading={planPreviewLoading}
+                submitting={submitting}
+                onPreview={previewDeployPayload}
+                onDeploy={(arch, payload) => doDeploy(arch, { cluster_id: payload.cluster_id }, payload)}
+              />
+            ) : (
+              <Tabs
+                activeKey={tab}
+                onChange={(key) => setTab(key as ArchType)}
+                items={[
               {
                 key: 'ha',
                 label: 'HA 主从',
@@ -655,37 +776,37 @@ const ClusterDeploy: React.FC = () => {
                 label: 'MHA 部署',
                 children: renderForm('mha', mhaForm,
                   <>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="manager_host_id" label="Manager主机" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Select options={hostOptions} placeholder="选择 Manager 主机" />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="manager_port" label="Manager端口" initialValue={3306} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={65535} placeholder="默认同主节点端口" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="vip" label="虚拟IP (VIP)" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input placeholder="如 192.168.1.100" />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="vip_interface" label="VIP网口" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input placeholder="如 eth0" />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="ssh_user" label="SSH用户" initialValue="root" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input placeholder="root" />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="ping_interval" label="健康检查间隔(s)" initialValue="3" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={60} style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="ping_retry" label="重试次数" initialValue="5" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={30} style={{ width: '100%' }} />
                       </Form.Item>
@@ -699,12 +820,12 @@ const ClusterDeploy: React.FC = () => {
                 label: 'MGR 部署',
                 children: renderForm('mgr', mgrForm,
                   <>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="group_name" label="MGR组名" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col {...halfColProps}>
                       <Form.Item name="local_port" label="组通信端口" initialValue={33061} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                       </Form.Item>
@@ -718,27 +839,27 @@ const ClusterDeploy: React.FC = () => {
                 label: 'PXC 部署',
                 children: renderForm('pxc', pxcForm,
                   <>
-                    <Col span={8}>
+                    <Col {...thirdColProps}>
                       <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
                         <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col span={8}>
+                    <Col {...thirdColProps}>
                       <Form.Item name="cluster_name" label="集群名称" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
                         <Input placeholder="默认使用集群ID" />
                       </Form.Item>
                     </Col>
-                    <Col span={8}>
+                    <Col {...thirdColProps}>
                       <Form.Item name="sst_method" label="SST方式" initialValue="xtrabackup-v2" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
                         <Select options={[{ value: 'xtrabackup-v2', label: 'xtrabackup-v2' }, { value: 'mariabackup', label: 'mariabackup' }]} />
                       </Form.Item>
                     </Col>
-                    <Col span={8}>
+                    <Col {...thirdColProps}>
                       <Form.Item name="wsrep_sst_port" label="SST端口" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
                         <InputNumber min={1} max={65535} placeholder="默认4444" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col span={8}>
+                    <Col {...thirdColProps}>
                       <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
                         <Checkbox>启用</Checkbox>
                       </Form.Item>
@@ -747,8 +868,10 @@ const ClusterDeploy: React.FC = () => {
                   (values) => runDeploy('pxc', values),
                 ),
               },
-            ]}
-          />
+                ]}
+              />
+            )}
+          </Space>
         )}
       </Card>
 

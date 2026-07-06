@@ -86,6 +86,90 @@ func TestDeployPXC_WithPreExistingInstancesSyncsManagementAndAudit(t *testing.T)
 	require.Equal(t, "inst-a", replica.Topology.MasterID)
 }
 
+func TestPlanNodesToPluginNodesExcludesMHAManager(t *testing.T) {
+	nodes := []PlanNode{
+		{ID: "manager", HostID: "host-manager", Host: "10.0.0.10", AgentPort: 9090, MySQLPort: 3306, Role: "manager"},
+		{ID: "master", HostID: "host-master", Host: "10.0.0.11", AgentPort: 9090, MySQLPort: 3306, Role: "master"},
+		{ID: "replica", HostID: "host-replica", Host: "10.0.0.12", AgentPort: 9090, MySQLPort: 3306, Role: "replica"},
+	}
+
+	pluginNodes := planNodesToPluginNodes(ClusterTypeMHA, nodes)
+
+	require.Len(t, pluginNodes, 2)
+	require.Equal(t, "master", pluginNodes[0].Role)
+	require.Equal(t, "replica", pluginNodes[1].Role)
+}
+
+func TestMarshalRedactedStringRemovesSensitiveValues(t *testing.T) {
+	raw := map[string]interface{}{
+		"cluster_id":     "safe-cluster",
+		"mysql_pass":     "Root#1234",
+		"repl_password":  "Repl#1234",
+		"empty_password": "",
+		"nested": map[string]interface{}{
+			"agent_token":   "agent-token",
+			"ssh_passwords": map[string]interface{}{"10.0.0.1": "ssh-secret"},
+			"package_url":   "https://repo.example/mysql.tar.gz",
+		},
+		"steps": []interface{}{
+			map[string]interface{}{"config": map[string]interface{}{"admin_pass": "admin-secret"}},
+		},
+	}
+
+	encoded := marshalRedactedString(raw)
+
+	require.NotContains(t, encoded, "Root#1234")
+	require.NotContains(t, encoded, "Repl#1234")
+	require.NotContains(t, encoded, "agent-token")
+	require.NotContains(t, encoded, "ssh-secret")
+	require.NotContains(t, encoded, "admin-secret")
+	require.Contains(t, encoded, `"mysql_pass":"[REDACTED]"`)
+	require.Contains(t, encoded, `"empty_password":""`)
+	require.Contains(t, encoded, "https://repo.example/mysql.tar.gz")
+}
+
+func TestMarkInterruptedDeploymentsMarksRunningPlanStep(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := repositories.NewClusterDeployRepository(db)
+	service := NewClusterDeployService(repo, nil, nil, nil, nil, config.ClusterDefaults{}, nil)
+	now := time.Now().Add(-1 * time.Minute)
+	plan := ClusterDeployPlan{
+		DeploymentID: "deploy-interrupted",
+		ClusterType:  "ha",
+		Mode:         DeployModeReal,
+		Steps: []PlanStep{
+			{ID: "validate_input", Name: "Validate", Type: "validate", Status: "completed"},
+			{ID: "bootstrap_master", Name: "Deploy master", Type: "bootstrap", TargetNode: "master", Status: "running"},
+		},
+	}
+	require.NoError(t, repo.Create(ctx, &models.ClusterDeployment{
+		ID:          "deploy-interrupted",
+		ClusterType: "ha",
+		Name:        "deploy-interrupted",
+		Status:      "running",
+		PlanJSON:    marshalString(plan),
+		StartedAt:   &now,
+		CreatedAt:   now,
+	}))
+
+	require.NoError(t, service.MarkInterruptedDeployments(ctx))
+
+	dep, err := repo.GetByID(ctx, "deploy-interrupted")
+	require.NoError(t, err)
+	require.Equal(t, "interrupted", dep.Status)
+	require.Contains(t, dep.ErrorMessage, "interrupted by backend restart")
+	require.NotNil(t, dep.FinishedAt)
+	persistedPlan, err := service.GetDeployPlan(ctx, "deploy-interrupted")
+	require.NoError(t, err)
+	require.Equal(t, "completed", persistedPlan.Steps[0].Status)
+	require.Equal(t, "failed", persistedPlan.Steps[1].Status)
+	require.Contains(t, persistedPlan.Steps[1].Message, "interrupted by backend restart")
+	status, err := service.GetDeploymentStatus(ctx, "deploy-interrupted")
+	require.NoError(t, err)
+	require.Equal(t, "failed", status.Status)
+}
+
 func TestDeployHARealModeSyncsManagedInstances(t *testing.T) {
 	ctx := context.Background()
 	payloads := make([]DeployTaskPayload, 0, 3)
@@ -533,14 +617,21 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 
 	instances, err := instRepo.ListByClusterID(ctx, "mha-three-node")
 	require.NoError(t, err)
-	require.Len(t, instances, 2)
+	require.Len(t, instances, 3)
 
-	var masterID, replicaID string
+	var managerID, masterID, replicaID string
 	for _, inst := range instances {
 		managed, err := instRepo.GetByID(ctx, inst.ID)
 		require.NoError(t, err)
 		conn, err := instRepo.GetConnection(ctx, inst.ID)
 		require.NoError(t, err)
+		if managed.Status.Role == "manager" {
+			managerID = inst.ID
+			require.Equal(t, agentPort, conn.Port)
+			require.Equal(t, "agent", conn.Username)
+			require.Empty(t, conn.PasswordEncrypted)
+			continue
+		}
 		require.Equal(t, "root", conn.Username)
 		plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
 		require.NoError(t, err)
@@ -558,15 +649,20 @@ func TestDeployMHACreatesManagedMySQLInstancesWithoutManager(t *testing.T) {
 			t.Fatalf("unexpected managed host %s", conn.Host)
 		}
 	}
+	require.NotEmpty(t, managerID)
 	require.NotEmpty(t, masterID)
 	require.NotEmpty(t, replicaID)
+	managerTopology, err := instRepo.GetTopology(ctx, managerID)
+	require.NoError(t, err)
+	require.Equal(t, masterID, managerTopology.MasterID)
+	require.Contains(t, managerTopology.SlaveIDs, replicaID)
 	replicaTopology, err := instRepo.GetTopology(ctx, replicaID)
 	require.NoError(t, err)
 	require.Equal(t, masterID, replicaTopology.MasterID)
 	require.Equal(t, "mha", replicaTopology.ReplicationMode)
 }
 
-func TestSyncClusterManagementFromPlanSkipsMHAManager(t *testing.T) {
+func TestSyncClusterManagementFromPlanSyncsMHAManagerAsComponent(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	instRepo := repositories.NewInstanceRepository(db)
@@ -584,7 +680,7 @@ func TestSyncClusterManagementFromPlanSkipsMHAManager(t *testing.T) {
 
 	instances, err := instRepo.ListByClusterID(ctx, "mha-sync")
 	require.NoError(t, err)
-	require.Len(t, instances, 2)
+	require.Len(t, instances, 3)
 
 	seenRoles := map[string]bool{}
 	for _, inst := range instances {
@@ -592,14 +688,27 @@ func TestSyncClusterManagementFromPlanSkipsMHAManager(t *testing.T) {
 		require.NoError(t, err)
 		conn, err := instRepo.GetConnection(ctx, inst.ID)
 		require.NoError(t, err)
-		require.NotEqual(t, "10.0.0.10", conn.Host)
 		seenRoles[managed.Status.Role] = true
+		if managed.Status.Role == "manager" {
+			require.Equal(t, "10.0.0.10", conn.Host)
+			require.Equal(t, 9090, conn.Port)
+			require.Equal(t, "agent", conn.Username)
+			require.Empty(t, conn.PasswordEncrypted)
+			require.Equal(t, "healthy", managed.Status.HealthStatus)
+			require.Equal(t, "mha", managed.Topology.ReplicationMode)
+			continue
+		}
 		plain, err := utils.Decrypt(conn.PasswordEncrypted, "test-encryption-key")
 		require.NoError(t, err)
 		require.Equal(t, "Root#2026", plain)
 	}
+	require.True(t, seenRoles["manager"])
 	require.True(t, seenRoles["master"])
 	require.True(t, seenRoles["replica"])
+
+	dbInstanceIDs, err := service.clusterDatabaseInstanceIDs(ctx, "mha-sync")
+	require.NoError(t, err)
+	require.Len(t, dbInstanceIDs, 2)
 }
 
 func TestSyncClusterManagementUpdatesExistingConnectionFromDeployConfig(t *testing.T) {

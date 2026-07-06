@@ -85,13 +85,17 @@ type PlanNode struct {
 }
 
 type PlanStep struct {
-	ID         string                 `json:"id"`
-	Name       string                 `json:"name"`
-	Type       string                 `json:"type"`
-	TargetNode string                 `json:"target_node,omitempty"`
-	AgentPath  string                 `json:"agent_path,omitempty"`
-	Config     map[string]interface{} `json:"config,omitempty"`
-	DependsOn  []string               `json:"depends_on,omitempty"`
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
+	TargetNode  string                 `json:"target_node,omitempty"`
+	AgentPath   string                 `json:"agent_path,omitempty"`
+	Config      map[string]interface{} `json:"config,omitempty"`
+	DependsOn   []string               `json:"depends_on,omitempty"`
+	Status      string                 `json:"status,omitempty"`
+	Message     string                 `json:"message,omitempty"`
+	StartedAt   *time.Time             `json:"started_at,omitempty"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
 }
 
 type UniversalDeployValidationResponse struct {
@@ -136,6 +140,57 @@ func (s *ClusterDeployService) DeployCluster(ctx context.Context, req UniversalC
 	// For real mode: execute the plan through the plan execution engine.
 	// This replaces the old dispatch to typed deploy methods.
 	return s.ExecuteClusterDeployPlan(ctx, plan, normalized)
+}
+
+func (s *ClusterDeployService) SubmitClusterDeploy(ctx context.Context, req UniversalClusterDeployRequest) (*DeployResponse, error) {
+	normalized, err := s.normalizeUniversalDeployRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if normalized.Mode == DeployModeValidateOnly {
+		return s.DeployCluster(ctx, normalized)
+	}
+	plan, err := s.BuildClusterDeployPlan(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	if normalized.ClusterType == ClusterTypeMHA {
+		if err := s.injectMHAStepPasswords(ctx, plan, normalized); err != nil {
+			return nil, err
+		}
+	}
+
+	go func() {
+		if _, err := s.ExecuteClusterDeployPlan(context.Background(), plan, normalized); err != nil {
+			log.Printf("ERROR: async cluster deployment %s failed to start: %v", plan.DeploymentID, err)
+		}
+	}()
+
+	if s.repo != nil {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if dep, err := s.repo.GetByID(ctx, plan.DeploymentID); err == nil && dep != nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	now := time.Now()
+	return &DeployResponse{
+		DeploymentID: plan.DeploymentID,
+		ClusterID:    plan.DeploymentID,
+		ClusterType:  plan.ClusterType,
+		Name:         normalized.Name,
+		Status:       "running",
+		Stage:        "submitted",
+		Progress:     0,
+		Message:      "cluster deployment submitted",
+		CreatedAt:    now,
+		StartedAt:    &now,
+		Nodes:        planNodesToDeployNodes(plan.Nodes),
+		Steps:        planStepsToDeploySteps(plan.Steps),
+	}, nil
 }
 
 func (s *ClusterDeployService) ValidateClusterDeploy(ctx context.Context, req UniversalClusterDeployRequest) (*UniversalDeployValidationResponse, error) {
@@ -707,10 +762,10 @@ func validateUniversalRoles(clusterType string, nodes []ClusterDeployNode, mode 
 		if counts["primary"]+counts["bootstrap"] != 1 {
 			return fmt.Errorf("mgr deployment requires exactly one primary or bootstrap node")
 		}
-			// Enforce minimum 3 nodes for split-brain protection.
-			if len(nodes) < 3 {
-				return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection")
-			}
+		// Enforce minimum 3 nodes for split-brain protection.
+		if len(nodes) < 3 {
+			return fmt.Errorf("mgr deployment requires at least 3 nodes for split-brain protection")
+		}
 	case ClusterTypePXC:
 		if counts["bootstrap"] != 1 {
 			return fmt.Errorf("pxc deployment requires exactly one bootstrap node")
@@ -786,7 +841,7 @@ func buildGenericPlanSteps(nodes []PlanNode, clusterType string) []PlanStep {
 
 // buildHAPlanSteps generates HA master-replica specific deployment steps.
 func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
-	steps := preamblePlanSteps()
+	steps := preamblePlanSteps(req)
 	var masterNode *PlanNode
 	var replicaNodes []PlanNode
 	for i := range nodes {
@@ -796,7 +851,7 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 			replicaNodes = append(replicaNodes, nodes[i])
 		}
 	}
-	last := "prepare_credentials"
+	last := initialDeployDependency(req)
 
 	// Master bootstrap step
 	// Note: master_host is "127.0.0.1" because the agent runs locally on the target host.
@@ -893,12 +948,12 @@ func buildHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pla
 		last = joinID
 	}
 
-	return appendPostambleSteps(steps, last)
+	return appendPostambleSteps(steps, last, req)
 }
 
 // buildMHAPlanSteps generates MHA-specific deployment steps.
 func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
-	steps := preamblePlanSteps()
+	steps := preamblePlanSteps(req)
 	var managerNode, masterNode *PlanNode
 	var replicaNodes []PlanNode
 	for i := range nodes {
@@ -911,7 +966,7 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 			replicaNodes = append(replicaNodes, nodes[i])
 		}
 	}
-	last := "prepare_credentials"
+	last := initialDeployDependency(req)
 
 	if masterNode != nil {
 		masterConfig := map[string]interface{}{
@@ -1093,15 +1148,15 @@ func buildMHAPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = id
 	}
 
-	return appendPostambleSteps(steps, last)
+	return appendPostambleSteps(steps, last, req)
 }
 
 // buildMGRPlanSteps generates MGR-specific deployment steps.
 // Uses a single-step-per-node approach with deploy_mode="single" and install_type="mgr".
 // C2: primary/bootstrap node is sorted to the front so its bootstrap step runs first.
 func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
-	steps := preamblePlanSteps()
-	last := "prepare_credentials"
+	steps := preamblePlanSteps(req)
+	last := initialDeployDependency(req)
 
 	groupName := ""
 	if gn, ok := stringCustom(req.Custom, "group_name"); ok {
@@ -1212,13 +1267,13 @@ func buildMGRPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = id
 	}
 
-	return appendPostambleSteps(steps, last)
+	return appendPostambleSteps(steps, last, req)
 }
 
 // buildPXCPlanSteps generates PXC-specific deployment steps.
 func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []PlanStep {
-	steps := preamblePlanSteps()
-	last := "prepare_credentials"
+	steps := preamblePlanSteps(req)
+	last := initialDeployDependency(req)
 
 	clusterName := ""
 	if cn, ok := stringCustom(req.Custom, "cluster_name"); ok {
@@ -1305,26 +1360,86 @@ func buildPXCPlanSteps(nodes []PlanNode, req UniversalClusterDeployRequest) []Pl
 		last = id
 	}
 
-	return appendPostambleSteps(steps, last)
+	return appendPostambleSteps(steps, last, req)
 }
 
 // preamblePlanSteps returns the common validation & preparation steps.
-func preamblePlanSteps() []PlanStep {
-	return []PlanStep{
+func preamblePlanSteps(req UniversalClusterDeployRequest) []PlanStep {
+	steps := []PlanStep{
 		{ID: "validate_input", Name: "校验部署参数", Type: "validate"},
 		{ID: "resolve_hosts", Name: "解析主机信息", Type: "validate", DependsOn: []string{"validate_input"}},
 		{ID: "check_conflicts", Name: "检查端口和路径冲突", Type: "validate", DependsOn: []string{"resolve_hosts"}},
 		{ID: "prepare_credentials", Name: "准备凭据", Type: "configure", DependsOn: []string{"check_conflicts"}},
 	}
+	if flowToolEnabled(req.Custom, "precheck") {
+		steps = append(steps, PlanStep{
+			ID:        "tool_precheck",
+			Name:      "部署前环境预检",
+			Type:      "tool",
+			DependsOn: []string{"prepare_credentials"},
+			Config:    map[string]interface{}{"tool": "precheck"},
+		})
+	}
+	return steps
+}
+
+func initialDeployDependency(req UniversalClusterDeployRequest) string {
+	if flowToolEnabled(req.Custom, "precheck") {
+		return "tool_precheck"
+	}
+	return "prepare_credentials"
 }
 
 // appendPostambleSteps appends the common verification, sync, and audit steps.
-func appendPostambleSteps(steps []PlanStep, lastDep string) []PlanStep {
-	return append(steps,
+func appendPostambleSteps(steps []PlanStep, lastDep string, req UniversalClusterDeployRequest) []PlanStep {
+	steps = append(steps,
 		PlanStep{ID: "verify_cluster", Name: "验证集群", Type: "verify", DependsOn: []string{lastDep}},
-		PlanStep{ID: "sync_metadata", Name: "同步元数据", Type: "sync", DependsOn: []string{"verify_cluster"}},
-		PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{"sync_metadata"}},
+		PlanStep{ID: "sync_metadata", Name: "同步元数据", Type: "metadata_sync", DependsOn: []string{"verify_cluster"}},
 	)
+	lastDep = "sync_metadata"
+
+	if flowMiddlewareEnabled(req.Custom, "keepalived") && (req.ClusterType == ClusterTypeHA || req.ClusterType == ClusterTypeMHA) {
+		steps = append(steps, PlanStep{
+			ID:        "middleware_keepalived",
+			Name:      "部署 Keepalived",
+			Type:      "middleware",
+			DependsOn: []string{lastDep},
+			Config:    map[string]interface{}{"middleware": "keepalived", "params": flowNestedMap(flowNestedMap(req.Custom, "middleware"), "keepalived")},
+		})
+		lastDep = "middleware_keepalived"
+	}
+	if flowMiddlewareEnabled(req.Custom, "proxysql") {
+		steps = append(steps, PlanStep{
+			ID:        "middleware_proxysql",
+			Name:      "部署 ProxySQL",
+			Type:      "middleware",
+			DependsOn: []string{lastDep},
+			Config:    map[string]interface{}{"middleware": "proxysql", "params": flowNestedMap(flowNestedMap(req.Custom, "middleware"), "proxysql")},
+		})
+		lastDep = "middleware_proxysql"
+	}
+	if flowToolEnabled(req.Custom, "health_check") {
+		steps = append(steps, PlanStep{
+			ID:        "tool_health_check",
+			Name:      "部署后健康检查",
+			Type:      "tool",
+			DependsOn: []string{lastDep},
+			Config:    map[string]interface{}{"tool": "health_check"},
+		})
+		lastDep = "tool_health_check"
+	}
+	if flowToolEnabled(req.Custom, "baseline_backup") {
+		steps = append(steps, PlanStep{
+			ID:        "tool_baseline_backup",
+			Name:      "部署后基线备份",
+			Type:      "tool",
+			DependsOn: []string{lastDep},
+			Config:    map[string]interface{}{"tool": "baseline_backup", "params": flowNestedMap(flowNestedMap(req.Custom, "tools"), "baseline_backup")},
+		})
+		lastDep = "tool_baseline_backup"
+	}
+
+	return append(steps, PlanStep{ID: "write_audit", Name: "Write audit log", Type: "sync", DependsOn: []string{lastDep}})
 }
 
 // mergeCommonDeployConfig merges MySQL version, package URL, checksum, and MySQL config
@@ -1474,6 +1589,9 @@ func allowedClusterCustomOptions(clusterType string) map[string]bool {
 		"package_checksum": true,
 		"relay_url":        true,
 		"relay_upload_url": true,
+		"flow_spec":        true,
+		"middleware":       true,
+		"tools":            true,
 	}
 	switch clusterType {
 	case ClusterTypeHA:
@@ -1710,6 +1828,47 @@ func stringCustom(custom map[string]interface{}, key string) (string, bool) {
 	}
 }
 
+func flowNestedMap(custom map[string]interface{}, key string) map[string]interface{} {
+	if custom == nil {
+		return nil
+	}
+	value, ok := custom[key]
+	if !ok || value == nil {
+		return nil
+	}
+	if typed, ok := value.(map[string]interface{}); ok {
+		return typed
+	}
+	return nil
+}
+
+func flowBool(custom map[string]interface{}, key string) bool {
+	value, ok := custom[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true") || strings.EqualFold(strings.TrimSpace(v), "yes") || strings.TrimSpace(v) == "1"
+	case int:
+		return v != 0
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
+}
+
+func flowMiddlewareEnabled(custom map[string]interface{}, name string) bool {
+	return flowBool(flowNestedMap(flowNestedMap(custom, "middleware"), name), "enabled")
+}
+
+func flowToolEnabled(custom map[string]interface{}, name string) bool {
+	return flowBool(flowNestedMap(flowNestedMap(custom, "tools"), name), "enabled")
+}
+
 // normalizeHost returns a lowercased, trimmed host string for consistent comparison.
 func normalizeHost(host string) string {
 	return strings.ToLower(strings.TrimSpace(host))
@@ -1747,7 +1906,17 @@ func planNodesToDeployNodes(nodes []PlanNode) []DeployNode {
 func planStepsToDeploySteps(steps []PlanStep) []DeployStep {
 	out := make([]DeployStep, 0, len(steps))
 	for _, step := range steps {
-		out = append(out, DeployStep{Name: step.Name, Status: "planned"})
+		out = append(out, DeployStep{
+			ID:          step.ID,
+			Name:        step.Name,
+			Type:        step.Type,
+			TargetNode:  step.TargetNode,
+			DependsOn:   append([]string(nil), step.DependsOn...),
+			Status:      defaultString(step.Status, "planned"),
+			Message:     step.Message,
+			StartedAt:   step.StartedAt,
+			CompletedAt: step.CompletedAt,
+		})
 	}
 	return out
 }

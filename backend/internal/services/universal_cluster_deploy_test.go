@@ -132,6 +132,113 @@ func TestUniversalClusterDeployBuildsMySQL8036PlansForAllClusterTypes(t *testing
 	}
 }
 
+func TestUniversalClusterDeployBuildsFlowMiddlewareAndToolSteps(t *testing.T) {
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+
+	plan, err := service.BuildClusterDeployPlan(context.Background(), UniversalClusterDeployRequest{
+		ClusterID:   "ha-flow",
+		ClusterType: "ha",
+		Mode:        DeployModeReal,
+		MySQL:       MySQLDeployOptions{Version: "8.0.36", User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Nodes: []ClusterDeployNode{
+			{InstanceID: "master", Host: "10.0.0.11", Role: "master", MySQLPort: 3306},
+			{InstanceID: "replica-1", Host: "10.0.0.12", Role: "replica", MySQLPort: 3306},
+		},
+		Custom: map[string]interface{}{
+			"flow_spec": map[string]interface{}{"nodes": []interface{}{}},
+			"middleware": map[string]interface{}{
+				"keepalived": map[string]interface{}{"enabled": true, "vip": "10.0.0.100", "vip_interface": "eth0"},
+				"proxysql":   map[string]interface{}{"enabled": true, "proxy_host": "10.0.0.20", "proxy_port": 6033, "proxy_agent_port": 9091},
+			},
+			"tools": map[string]interface{}{
+				"precheck":        map[string]interface{}{"enabled": true},
+				"health_check":    map[string]interface{}{"enabled": true},
+				"baseline_backup": map[string]interface{}{"enabled": true, "backup_type": "full"},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	ids := stepIDs(plan.Steps)
+	require.Contains(t, ids, "tool_precheck")
+	require.Contains(t, ids, "sync_metadata")
+	require.Contains(t, ids, "middleware_keepalived")
+	require.Contains(t, ids, "middleware_proxysql")
+	require.Contains(t, ids, "tool_health_check")
+	require.Contains(t, ids, "tool_baseline_backup")
+	require.Contains(t, ids, "write_audit")
+	require.Equal(t, 1, countStepID(plan.Steps, "sync_metadata"))
+
+	precheck := findStepByID(plan.Steps, "tool_precheck")
+	require.NotNil(t, precheck)
+	require.Equal(t, "tool", precheck.Type)
+	require.Equal(t, []string{"prepare_credentials"}, precheck.DependsOn)
+	require.Equal(t, "tool_precheck", findStepByID(plan.Steps, "bootstrap_master").DependsOn[0])
+	require.Equal(t, "metadata_sync", findStepByID(plan.Steps, "sync_metadata").Type)
+	require.Equal(t, "middleware", findStepByID(plan.Steps, "middleware_keepalived").Type)
+	require.Equal(t, []string{"sync_metadata"}, findStepByID(plan.Steps, "middleware_keepalived").DependsOn)
+	require.Equal(t, []string{"middleware_keepalived"}, findStepByID(plan.Steps, "middleware_proxysql").DependsOn)
+	require.Equal(t, []string{"middleware_proxysql"}, findStepByID(plan.Steps, "tool_health_check").DependsOn)
+	require.Equal(t, []string{"tool_health_check"}, findStepByID(plan.Steps, "tool_baseline_backup").DependsOn)
+}
+
+func TestUniversalClusterDeployFlowDisablesKeepalivedForMGRAndPXC(t *testing.T) {
+	service := NewClusterDeployService(nil, nil, nil, nil, nil, config.ClusterDefaults{})
+	cases := []struct {
+		clusterType string
+		nodes       []ClusterDeployNode
+		custom      map[string]interface{}
+	}{
+		{
+			clusterType: "mgr",
+			nodes: []ClusterDeployNode{
+				{InstanceID: "primary", Host: "10.0.1.11", Role: "primary", MySQLPort: 3306},
+				{InstanceID: "secondary-1", Host: "10.0.1.12", Role: "secondary", MySQLPort: 3306},
+				{InstanceID: "secondary-2", Host: "10.0.1.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"group_name": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+		},
+		{
+			clusterType: "pxc",
+			nodes: []ClusterDeployNode{
+				{InstanceID: "bootstrap", Host: "10.0.2.11", Role: "bootstrap", MySQLPort: 3306},
+				{InstanceID: "secondary-1", Host: "10.0.2.12", Role: "secondary", MySQLPort: 3306},
+				{InstanceID: "secondary-2", Host: "10.0.2.13", Role: "secondary", MySQLPort: 3306},
+			},
+			custom: map[string]interface{}{"cluster_name": "pxc-flow", "wsrep_port": 4567},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.clusterType, func(t *testing.T) {
+			custom := map[string]interface{}{
+				"middleware": map[string]interface{}{
+					"keepalived": map[string]interface{}{"enabled": true, "vip": "10.0.0.100", "vip_interface": "eth0"},
+					"proxysql":   map[string]interface{}{"enabled": true, "proxy_host": "10.0.0.20", "proxy_port": 6033},
+				},
+			}
+			for k, v := range tc.custom {
+				custom[k] = v
+			}
+			plan, err := service.BuildClusterDeployPlan(context.Background(), UniversalClusterDeployRequest{
+				ClusterID:   tc.clusterType + "-flow",
+				ClusterType: tc.clusterType,
+				Mode:        DeployModeReal,
+				MySQL:       MySQLDeployOptions{Version: "8.0.36", User: "root", Password: "rootpass"},
+				Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+				Nodes:       tc.nodes,
+				Custom:      custom,
+			})
+
+			require.NoError(t, err)
+			ids := stepIDs(plan.Steps)
+			require.NotContains(t, ids, "middleware_keepalived")
+			require.Contains(t, ids, "middleware_proxysql")
+		})
+	}
+}
+
 func TestUniversalClusterDeployDestroyedClustersCanBeRedeployed(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -605,6 +712,7 @@ func TestExecuteClusterDeployPlan_RealHA(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "success", resp.Status)
 	require.Equal(t, "execute-plan-ha", resp.DeploymentID)
+	require.Equal(t, 1, countDeployStepID(resp.Steps, "sync_metadata"))
 
 	// Verify deployment record was persisted
 	dep, err := clusterRepo.GetByID(ctx, "execute-plan-ha")
@@ -617,6 +725,146 @@ func TestExecuteClusterDeployPlan_RealHA(t *testing.T) {
 	instances, err := instRepo.ListByClusterID(ctx, "execute-plan-ha")
 	require.NoError(t, err)
 	require.Len(t, instances, 2)
+}
+
+func TestExecuteClusterDeployPlan_MiddlewareFailureReturnsPartial(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+
+	nodes := []PlanNode{
+		{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "master", AgentPort: agentPort},
+		{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "replica", AgentPort: agentPort},
+	}
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "flow-middleware-partial",
+		ClusterType: "ha",
+		Mode:        "real",
+		Name:        "flow-middleware-partial",
+		Nodes: []ClusterDeployNode{
+			{Host: agentHost, AgentPort: agentPort, Role: "master", MySQLPort: 3306},
+			{Host: agentHost, AgentPort: agentPort, Role: "replica", MySQLPort: 3307},
+		},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Custom: map[string]interface{}{
+			"middleware": map[string]interface{}{
+				"proxysql": map[string]interface{}{"enabled": true, "proxy_host": agentHost, "proxy_port": 6033, "proxy_agent_port": agentPort},
+			},
+		},
+	}
+	plan := &ClusterDeployPlan{
+		DeploymentID: req.ClusterID,
+		ClusterType:  req.ClusterType,
+		Mode:         req.Mode,
+		Nodes:        nodes,
+		Steps:        buildUniversalPlanSteps("ha", nodes, req),
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+
+	require.NoError(t, err)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "plugin executor not configured")
+	require.Equal(t, "failed", findDeployStepByID(resp.Steps, "middleware_proxysql").Status)
+	require.Equal(t, 1, countDeployStepID(resp.Steps, "sync_metadata"))
+}
+
+func TestExecuteClusterDeployPlan_HealthCheckFailureReturnsPartial(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+
+	nodes := []PlanNode{
+		{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "master", AgentPort: agentPort},
+		{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "replica", AgentPort: agentPort},
+	}
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "flow-health-partial",
+		ClusterType: "ha",
+		Mode:        "real",
+		Name:        "flow-health-partial",
+		Nodes: []ClusterDeployNode{
+			{Host: agentHost, AgentPort: agentPort, Role: "master", MySQLPort: 3306},
+			{Host: agentHost, AgentPort: agentPort, Role: "replica", MySQLPort: 3307},
+		},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Custom: map[string]interface{}{
+			"tools": map[string]interface{}{"health_check": map[string]interface{}{"enabled": true}},
+		},
+	}
+	plan := &ClusterDeployPlan{
+		DeploymentID: req.ClusterID,
+		ClusterType:  req.ClusterType,
+		Mode:         req.Mode,
+		Nodes:        nodes,
+		Steps:        buildUniversalPlanSteps("ha", nodes, req),
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+
+	require.NoError(t, err)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "health check service not configured")
+	require.Equal(t, "failed", findDeployStepByID(resp.Steps, "tool_health_check").Status)
+	require.Equal(t, 1, countDeployStepID(resp.Steps, "sync_metadata"))
+}
+
+func TestExecuteClusterDeployPlan_BaselineBackupFailureReturnsPartial(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(clusterDeployOKHandler(t))
+	defer server.Close()
+	agentHost, agentPort := splitTestServerHostPort(t, server.URL)
+	db := newTestDB(t)
+	clusterRepo := repositories.NewClusterDeployRepository(db)
+	instRepo := repositories.NewInstanceRepository(db)
+	service := NewClusterDeployService(clusterRepo, nil, nil, instRepo, NewAgentClient(""), config.ClusterDefaults{})
+
+	nodes := []PlanNode{
+		{ID: "node-1", Host: agentHost, MySQLPort: 3306, Role: "master", AgentPort: agentPort},
+		{ID: "node-2", Host: agentHost, MySQLPort: 3307, Role: "replica", AgentPort: agentPort},
+	}
+	req := UniversalClusterDeployRequest{
+		ClusterID:   "flow-backup-partial",
+		ClusterType: "ha",
+		Mode:        "real",
+		Name:        "flow-backup-partial",
+		Nodes: []ClusterDeployNode{
+			{Host: agentHost, AgentPort: agentPort, Role: "master", MySQLPort: 3306},
+			{Host: agentHost, AgentPort: agentPort, Role: "replica", MySQLPort: 3307},
+		},
+		MySQL:       MySQLDeployOptions{User: "root", Password: "rootpass"},
+		Replication: ReplicationOptions{User: "repl", Password: "replpass"},
+		Custom: map[string]interface{}{
+			"tools": map[string]interface{}{"baseline_backup": map[string]interface{}{"enabled": true, "backup_type": "full"}},
+		},
+	}
+	plan := &ClusterDeployPlan{
+		DeploymentID: req.ClusterID,
+		ClusterType:  req.ClusterType,
+		Mode:         req.Mode,
+		Nodes:        nodes,
+		Steps:        buildUniversalPlanSteps("ha", nodes, req),
+	}
+
+	resp, err := service.ExecuteClusterDeployPlan(ctx, plan, req)
+
+	require.NoError(t, err)
+	require.Equal(t, "partial", resp.Status)
+	require.Contains(t, resp.Message, "backup service not configured")
+	require.Equal(t, "failed", findDeployStepByID(resp.Steps, "tool_baseline_backup").Status)
+	require.Equal(t, 1, countDeployStepID(resp.Steps, "sync_metadata"))
 }
 
 func TestExecuteClusterDeployPlan_RealModeFailsWhenNoAgent(t *testing.T) {
@@ -847,6 +1095,35 @@ func findStepByID(steps []PlanStep, id string) *PlanStep {
 		}
 	}
 	return nil
+}
+
+func countStepID(steps []PlanStep, id string) int {
+	count := 0
+	for _, step := range steps {
+		if step.ID == id {
+			count++
+		}
+	}
+	return count
+}
+
+func findDeployStepByID(steps []DeployStep, id string) *DeployStep {
+	for i := range steps {
+		if steps[i].ID == id {
+			return &steps[i]
+		}
+	}
+	return nil
+}
+
+func countDeployStepID(steps []DeployStep, id string) int {
+	count := 0
+	for _, step := range steps {
+		if step.ID == id {
+			count++
+		}
+	}
+	return count
 }
 
 func planHasConfigValue(plan *ClusterDeployPlan, key, want string) bool {

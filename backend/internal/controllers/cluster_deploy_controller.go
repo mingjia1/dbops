@@ -57,7 +57,7 @@ func (c *ClusterDeployController) DeployCluster(ctx *gin.Context) {
 		return
 	}
 
-	response, err := c.service.DeployCluster(ctx.Request.Context(), req)
+	response, err := c.service.SubmitClusterDeploy(ctx.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy cluster", err)
 		return
@@ -128,7 +128,7 @@ func (c *ClusterDeployController) DeployMHA(ctx *gin.Context) {
 	}
 
 	universalReq := services.TypedMHARequestToUniversal(req)
-	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
+	response, err := c.service.SubmitClusterDeploy(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy MHA cluster", err)
 		return
@@ -148,7 +148,7 @@ func (c *ClusterDeployController) DeployMGR(ctx *gin.Context) {
 	}
 
 	universalReq := services.TypedMGRRequestToUniversal(req)
-	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
+	response, err := c.service.SubmitClusterDeploy(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy MGR cluster", err)
 		return
@@ -168,7 +168,7 @@ func (c *ClusterDeployController) DeployPXC(ctx *gin.Context) {
 	}
 
 	universalReq := services.TypedPXCRequestToUniversal(req)
-	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
+	response, err := c.service.SubmitClusterDeploy(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy PXC cluster", err)
 		return
@@ -188,7 +188,7 @@ func (c *ClusterDeployController) DeployHA(ctx *gin.Context) {
 	}
 
 	universalReq := services.TypedHARequestToUniversal(req)
-	response, err := c.service.DeployCluster(ctx.Request.Context(), universalReq)
+	response, err := c.service.SubmitClusterDeploy(ctx.Request.Context(), universalReq)
 	if err != nil {
 		utils.InternalServerErrorResponse(ctx, "Failed to deploy HA master-replica cluster", err)
 		return
@@ -286,7 +286,7 @@ func (c *ClusterDeployController) Destroy(ctx *gin.Context) {
 func (c *ClusterDeployController) ScaleOut(ctx *gin.Context) {
 	deploymentID := ctx.Param("id")
 	var req struct {
-		NodeCount int `json:"node_count"`
+		NodeCount int      `json:"node_count"`
 		HostIDs   []string `json:"host_ids"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {

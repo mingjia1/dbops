@@ -9,7 +9,7 @@ export const normalizeStatus = (status?: string): string => (status || '').trim(
 export const getStatusCategory = (status?: string): string => {
   const norm = normalizeStatus(status)
   if (['success', 'completed', 'succeeded', 'ok'].includes(norm)) return 'success'
-  if (['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(norm)) return 'failed'
+  if (['failed', 'error', 'timeout', 'cancelled', 'canceled', 'interrupted'].includes(norm)) return 'failed'
   if (['partial', 'partial_success'].includes(norm)) return 'partial'
   if (norm === 'destroyed') return 'destroyed'
   if (norm === 'skipped') return 'skipped'

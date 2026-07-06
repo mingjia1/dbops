@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
+	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
@@ -35,6 +36,8 @@ type ClusterDeployService struct {
 	scaleSvc    *ScaleService
 	rebuildSvc  *RebuildService
 	messageBus  *MessageBus
+	pluginExec  *plugins.Executor
+	healthSvc   *HealthCheckService
 }
 
 type ClusterDestroyOperationError struct {
@@ -100,6 +103,7 @@ type deploymentHost struct {
 type pseudoNode struct {
 	Host          string
 	Port          int
+	AgentPort     int
 	Role          string
 	HostID        string
 	DataDir       string
@@ -163,6 +167,62 @@ func (s *ClusterDeployService) SetRebuildService(svc *RebuildService) {
 
 func (s *ClusterDeployService) SetMessageBus(bus *MessageBus) {
 	s.messageBus = bus
+}
+
+func (s *ClusterDeployService) SetPluginExecutor(exec *plugins.Executor) {
+	s.pluginExec = exec
+}
+
+func (s *ClusterDeployService) SetHealthCheckService(svc *HealthCheckService) {
+	s.healthSvc = svc
+}
+
+func (s *ClusterDeployService) MarkInterruptedDeployments(ctx context.Context) error {
+	if s.repo == nil {
+		return nil
+	}
+	deployments, err := s.repo.List(ctx, 1000, 0)
+	if err != nil {
+		return err
+	}
+	const message = "deployment interrupted by backend restart before reaching terminal status"
+	var firstErr error
+	for _, dep := range deployments {
+		status := strings.ToLower(strings.TrimSpace(dep.Status))
+		if status != "running" && status != "in_progress" {
+			continue
+		}
+		if dep.PlanJSON != "" {
+			var plan ClusterDeployPlan
+			if err := json.Unmarshal([]byte(dep.PlanJSON), &plan); err == nil {
+				markInterruptedPlanSteps(&plan, message)
+				if err := s.repo.UpdatePlan(ctx, dep.ID, marshalRedactedString(plan)); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		if err := s.repo.UpdateStatusWithError(ctx, dep.ID, "interrupted", message); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func markInterruptedPlanSteps(plan *ClusterDeployPlan, message string) {
+	if plan == nil {
+		return
+	}
+	now := time.Now()
+	for i := range plan.Steps {
+		status := strings.ToLower(strings.TrimSpace(plan.Steps[i].Status))
+		if status == "running" || status == "in_progress" || status == "processing" {
+			plan.Steps[i].Status = "failed"
+			plan.Steps[i].Message = message
+			if plan.Steps[i].CompletedAt == nil {
+				plan.Steps[i].CompletedAt = &now
+			}
+		}
+	}
 }
 
 func (s *ClusterDeployService) ScaleInCluster(ctx context.Context, deploymentID, removeNodeID string) (*ScaleInResult, error) {
@@ -390,11 +450,31 @@ func (s *ClusterDeployService) addStep(deploymentID, name, status string) {
 	}
 }
 
+func (s *ClusterDeployService) addPlanStep(deploymentID string, step PlanStep, status string) {
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(deploymentID)
+	now := time.Now()
+	p.Steps = append(p.Steps, DeployStep{
+		ID:         step.ID,
+		Name:       step.Name,
+		Type:       step.Type,
+		TargetNode: step.TargetNode,
+		DependsOn:  append([]string(nil), step.DependsOn...),
+		Status:     status,
+		StartedAt:  &now,
+	})
+	if s.messageBus != nil {
+		s.messageBus.PublishStepEvent(deploymentID, step.Name, status, "")
+	}
+	s.progressMu.Unlock()
+	s.persistProgressSnapshot(deploymentID)
+}
+
 func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, message string) {
 	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
 	p, ok := s.progress[deploymentID]
 	if !ok {
+		s.progressMu.Unlock()
 		return
 	}
 	now := time.Now()
@@ -413,8 +493,76 @@ func (s *ClusterDeployService) updateStepStatus(deploymentID, name, status, mess
 					s.messageBus.PublishLog(deploymentID, fmt.Sprintf("%s: %s", name, message))
 				}
 			}
+			s.progressMu.Unlock()
+			s.persistProgressSnapshot(deploymentID)
 			return
 		}
+	}
+	s.progressMu.Unlock()
+}
+
+func (s *ClusterDeployService) progressStepsSnapshot(deploymentID string) []DeployStep {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	p := s.progress[deploymentID]
+	if p == nil || len(p.Steps) == 0 {
+		return nil
+	}
+	out := make([]DeployStep, len(p.Steps))
+	copy(out, p.Steps)
+	return out
+}
+
+func (s *ClusterDeployService) persistProgressSnapshot(deploymentID string) {
+	if s.repo == nil {
+		return
+	}
+	steps := s.progressStepsSnapshot(deploymentID)
+	if len(steps) == 0 {
+		return
+	}
+	ctx := context.Background()
+	dep, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil || dep == nil || dep.PlanJSON == "" {
+		return
+	}
+	var plan ClusterDeployPlan
+	if err := json.Unmarshal([]byte(dep.PlanJSON), &plan); err != nil {
+		log.Printf("WARN: failed to parse persisted deploy plan for progress update %s: %v", deploymentID, err)
+		return
+	}
+	overlayPlanStepStatus(&plan, steps)
+	if err := s.repo.UpdatePlan(ctx, deploymentID, marshalRedactedString(plan)); err != nil {
+		log.Printf("WARN: failed to persist deploy progress for %s: %v", deploymentID, err)
+	}
+}
+
+func overlayPlanStepStatus(plan *ClusterDeployPlan, steps []DeployStep) {
+	if plan == nil || len(plan.Steps) == 0 || len(steps) == 0 {
+		return
+	}
+	byID := map[string]DeployStep{}
+	byName := map[string]DeployStep{}
+	for _, step := range steps {
+		if step.ID != "" {
+			byID[step.ID] = step
+		}
+		if step.Name != "" {
+			byName[step.Name] = step
+		}
+	}
+	for i := range plan.Steps {
+		live, ok := byID[plan.Steps[i].ID]
+		if !ok {
+			live, ok = byName[plan.Steps[i].Name]
+		}
+		if !ok {
+			continue
+		}
+		plan.Steps[i].Status = live.Status
+		plan.Steps[i].Message = live.Message
+		plan.Steps[i].StartedAt = live.StartedAt
+		plan.Steps[i].CompletedAt = live.CompletedAt
 	}
 }
 
@@ -508,9 +656,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		Name:        name,
 		Status:      "running",
 		StartedAt:   &now,
-		RequestJSON: marshalString(req),
-		PlanJSON:    marshalString(plan),
-		CustomJSON:  marshalString(req.Custom),
+		RequestJSON: marshalRedactedString(req),
+		PlanJSON:    marshalRedactedString(plan),
+		CustomJSON:  marshalRedactedString(req.Custom),
 		CreatedAt:   now,
 	}
 	if err := s.repo.Create(ctx, dep); err != nil {
@@ -537,15 +685,61 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 	// Execute each step in order
 	totalSteps := len(plan.Steps)
+	if totalSteps == 0 {
+		totalSteps = 1
+	}
 
 	for i, step := range plan.Steps {
 		progressPct := 5 + (i * 85 / totalSteps)
 		s.updateProgress(clusterID, step.Name, fmt.Sprintf("Step %d/%d: %s", i+1, totalSteps, step.Name), progressPct)
-		s.addStep(clusterID, step.Name, "running")
+		s.addPlanStep(clusterID, step, "running")
 
 		switch step.Type {
 		case "validate", "sync":
 			// Backend-side steps: mark completed directly
+			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s 已完成", step.Name))
+
+		case "metadata_sync":
+			if err := s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, plan.Nodes, req); err != nil {
+				errMsg := fmt.Sprintf("元数据同步失败: %v", err)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				finish := time.Now()
+				resp := s.buildStatusResponse(ctx, clusterID, clusterType, name, dep, "partial", errMsg, &finish)
+				finalResp = resp
+				finalErr = err
+				return resp, nil
+			}
+			s.updateStepStatus(clusterID, step.Name, "completed", "元数据同步完成")
+
+		case "middleware":
+			if err := s.executeFlowMiddlewareStep(ctx, plan, req, step); err != nil {
+				errMsg := fmt.Sprintf("%s failed: %v", step.Name, err)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				finish := time.Now()
+				resp := s.buildStatusResponse(ctx, clusterID, clusterType, name, dep, "partial", errMsg, &finish)
+				finalResp = resp
+				finalErr = err
+				return resp, nil
+			}
+			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s 已完成", step.Name))
+
+		case "tool":
+			if err := s.executeFlowToolStep(ctx, clusterID, req, step, plan.Nodes); err != nil {
+				errMsg := fmt.Sprintf("%s failed: %v", step.Name, err)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				status := "partial"
+				if step.ID == "tool_precheck" {
+					status = "failed"
+				}
+				s.repo.UpdateStatusWithError(ctx, clusterID, status, errMsg)
+				finish := time.Now()
+				resp := s.buildStatusResponse(ctx, clusterID, clusterType, name, dep, status, errMsg, &finish)
+				finalResp = resp
+				finalErr = err
+				return resp, nil
+			}
 			s.updateStepStatus(clusterID, step.Name, "completed", fmt.Sprintf("%s 已完成", step.Name))
 
 		case "bootstrap", "join", "deploy", "configure":
@@ -617,33 +811,6 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		}
 	}
 
-	// Sync cluster management metadata (register instances, topology, etc.)
-	if err := s.syncClusterManagementFromPlan(ctx, clusterType, clusterID, plan.Nodes, req); err != nil {
-		errMsg := fmt.Sprintf("元数据同步失败: %v", err)
-		s.repo.UpdateStatus(ctx, clusterID, "partial")
-		finish := time.Now()
-		prog := s.getProgress(clusterID)
-		partialResp := &DeployResponse{
-			DeploymentID: clusterID,
-			ClusterType:  clusterType,
-			Name:         name,
-			Status:       "partial",
-			Message:      errMsg,
-			ErrorMessage: errMsg,
-			StartedAt:    dep.StartedAt,
-			FinishedAt:   &finish,
-			CreatedAt:    dep.CreatedAt,
-		}
-		if prog != nil {
-			partialResp.Steps = prog.Steps
-			partialResp.Logs = prog.Logs
-		}
-		s.clearProgress(clusterID)
-		finalResp = partialResp
-		finalErr = err
-		return partialResp, nil
-	}
-
 	// Success
 	s.repo.UpdateStatus(ctx, clusterID, "completed")
 	defer s.clearProgress(clusterID)
@@ -694,12 +861,18 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context, clusterType, clusterID string, planNodes []PlanNode, req UniversalClusterDeployRequest) error {
 	nodes := make([]pseudoNode, 0, len(planNodes))
 	for _, pn := range planNodes {
-		if !isMySQLDeployRole(clusterType, pn.Role) {
+		if !isManagedDeployRole(clusterType, pn.Role) {
 			continue
 		}
+		user := req.MySQL.User
+		password := req.MySQL.Password
+		if clusterType == ClusterTypeMHA && pn.Role == "manager" {
+			user = "agent"
+			password = ""
+		}
 		nodes = append(nodes, pseudoNode{
-			Host: pn.Host, Port: pn.MySQLPort, Role: pn.Role, HostID: pn.HostID, DataDir: pn.DataDir, Basedir: pn.Basedir,
-			MySQLUser: req.MySQL.User, MySQLPassword: req.MySQL.Password,
+			Host: pn.Host, Port: managedNodePort(clusterType, pn), AgentPort: pn.AgentPort, Role: pn.Role, HostID: pn.HostID, DataDir: pn.DataDir, Basedir: pn.Basedir,
+			MySQLUser: user, MySQLPassword: password,
 		})
 	}
 	if len(nodes) == 0 {
@@ -708,13 +881,53 @@ func (s *ClusterDeployService) syncClusterManagementFromPlan(ctx context.Context
 	return s.syncClusterManagement(ctx, clusterType, clusterID, nodes)
 }
 
-func isMySQLDeployRole(clusterType, role string) bool {
+func isManagedDeployRole(clusterType, role string) bool {
+	switch clusterType {
+	case ClusterTypeMHA:
+		return role == "manager" || role == "master" || role == "replica"
+	default:
+		return role != "manager"
+	}
+}
+
+func isDatabaseDeployRole(clusterType, role string) bool {
 	switch clusterType {
 	case ClusterTypeMHA:
 		return role == "master" || role == "replica"
 	default:
 		return role != "manager"
 	}
+}
+
+func managedNodePort(clusterType string, node PlanNode) int {
+	if clusterType == ClusterTypeMHA && node.Role == "manager" {
+		if node.AgentPort > 0 {
+			return node.AgentPort
+		}
+		return 9090
+	}
+	return node.MySQLPort
+}
+
+func managedNodeDefaultUser(node pseudoNode) string {
+	if node.Role == "manager" {
+		return "agent"
+	}
+	return "root"
+}
+
+func managedNodeRunStatus(node pseudoNode) string {
+	if node.Role == "manager" {
+		return "running"
+	}
+	return "running"
+}
+
+func managedNodeHealthStatus(node pseudoNode) string {
+	if node.Role == "manager" {
+		return "healthy"
+	}
+	return "healthy"
 }
 
 type PreCheckResult struct {
@@ -773,7 +986,7 @@ func (s *ClusterDeployService) PreCheck(ctx context.Context, clusterType string,
 	clusterType = strings.ToLower(strings.TrimSpace(clusterType))
 	nodeByHostID := map[string][]ClusterDeployCheckNode{}
 	for _, node := range nodes {
-		if node.MySQLPort == 0 {
+		if node.MySQLPort == 0 && node.Role != "manager" {
 			node.MySQLPort = 3306
 		}
 		if node.HostID != "" {
@@ -1029,7 +1242,7 @@ func dedupeStrings(values []string) []string {
 
 func (s *ClusterDeployService) appendPreCheckPortResults(ctx context.Context, result *PreCheckResult, host string, nodes []ClusterDeployCheckNode, instanceEndpoints []instanceEndpoint, activeClusters map[string]bool) {
 	for _, node := range nodes {
-		if node.MySQLPort == 0 {
+		if node.Role == "manager" || node.MySQLPort == 0 {
 			continue
 		}
 		if conflict := findManagedPortConflictInEndpoints(host, node.MySQLPort, "", instanceEndpoints, activeClusters); conflict != "" {
@@ -1129,6 +1342,231 @@ func findPlanNode(nodes []PlanNode, id string) *PlanNode {
 	return nil
 }
 
+func (s *ClusterDeployService) executeFlowMiddlewareStep(ctx context.Context, plan *ClusterDeployPlan, req UniversalClusterDeployRequest, step PlanStep) error {
+	if s.pluginExec == nil {
+		return fmt.Errorf("plugin executor not configured")
+	}
+	middlewareName, _ := step.Config["middleware"].(string)
+	if middlewareName == "" {
+		return fmt.Errorf("middleware name is required")
+	}
+	params := copyMap(flowNestedMap(step.Config, "params"))
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	if middlewareName == "proxysql" {
+		if proxyHostID, _ := params["proxy_host_id"].(string); proxyHostID != "" {
+			resolved, err := s.resolveHostRef(ctx, proxyHostID, "")
+			if err != nil {
+				return fmt.Errorf("resolve proxysql host: %w", err)
+			}
+			params["proxy_host"] = resolved.Address
+			if _, ok := params["agent_port"]; !ok {
+				params["agent_port"] = resolved.AgentPort
+			}
+			if _, ok := params["proxy_agent_port"]; !ok {
+				params["proxy_agent_port"] = resolved.AgentPort
+			}
+		}
+		if _, ok := params["agent_port"]; !ok {
+			if proxyAgentPort, exists := params["proxy_agent_port"]; exists {
+				params["agent_port"] = proxyAgentPort
+			}
+		}
+		if _, ok := params["proxy_agent_port"]; !ok {
+			if agentPort, exists := params["agent_port"]; exists {
+				params["proxy_agent_port"] = agentPort
+			}
+		}
+		if _, ok := params["proxy_host"]; !ok {
+			return fmt.Errorf("proxy_host or proxy_host_id is required")
+		}
+	}
+	env := plugins.PluginEnv{
+		ClusterID: req.ClusterID,
+		Nodes:     planNodesToPluginNodes(req.ClusterType, plan.Nodes),
+		Credentials: plugins.CredentialSet{
+			RootUser:     req.MySQL.User,
+			RootPassword: req.MySQL.Password,
+			ReplUser:     req.Replication.User,
+			ReplPassword: req.Replication.Password,
+		},
+		Custom: req.Custom,
+	}
+	pluginName := middlewareName + "-addon"
+	_, err := s.pluginExec.RunExecute(ctx, pluginName, env, params)
+	return err
+}
+
+func (s *ClusterDeployService) executeFlowToolStep(ctx context.Context, clusterID string, req UniversalClusterDeployRequest, step PlanStep, planNodes []PlanNode) error {
+	toolName, _ := step.Config["tool"].(string)
+	switch toolName {
+	case "precheck":
+		return s.executeFlowPrecheck(ctx, req.ClusterType, planNodes)
+	case "health_check":
+		return s.executeFlowHealthCheck(ctx, clusterID)
+	case "baseline_backup":
+		params := flowNestedMap(step.Config, "params")
+		backupType, _ := params["backup_type"].(string)
+		if backupType == "" {
+			backupType = "full"
+		}
+		return s.executeFlowBaselineBackup(ctx, clusterID, backupType)
+	default:
+		return fmt.Errorf("unsupported tool %q", toolName)
+	}
+}
+
+func (s *ClusterDeployService) executeFlowPrecheck(ctx context.Context, clusterType string, planNodes []PlanNode) error {
+	hostIDs := make([]string, 0, len(planNodes))
+	nodes := make([]ClusterDeployCheckNode, 0, len(planNodes))
+	for _, node := range planNodes {
+		if node.HostID != "" {
+			hostIDs = append(hostIDs, node.HostID)
+		}
+		nodes = append(nodes, ClusterDeployCheckNode{
+			HostID:    node.HostID,
+			Host:      node.Host,
+			Role:      node.Role,
+			MySQLPort: node.MySQLPort,
+			DataDir:   node.DataDir,
+			Basedir:   node.Basedir,
+		})
+	}
+	results, err := s.PreCheck(ctx, clusterType, hostIDs, nodes)
+	if err != nil {
+		return err
+	}
+	var failures []string
+	for _, result := range results {
+		if strings.EqualFold(result.Status, "fail") {
+			failures = append(failures, fmt.Sprintf("%s: %s", result.Host, result.Message))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) executeFlowHealthCheck(ctx context.Context, clusterID string) error {
+	if s.healthSvc == nil {
+		return fmt.Errorf("health check service not configured")
+	}
+	instanceIDs, err := s.clusterInstanceIDs(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	if len(instanceIDs) == 0 {
+		return fmt.Errorf("cluster has no managed instances for health check")
+	}
+	results, err := s.healthSvc.BatchHealthCheck(ctx, instanceIDs)
+	if err != nil {
+		return err
+	}
+	var failures []string
+	for _, result := range results {
+		if !result.IsHealthy {
+			failures = append(failures, fmt.Sprintf("%s: %s", result.InstanceID, result.ErrorMessage))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) executeFlowBaselineBackup(ctx context.Context, clusterID, backupType string) error {
+	if s.backupSvc == nil {
+		return fmt.Errorf("backup service not configured")
+	}
+	instanceIDs, err := s.clusterDatabaseInstanceIDs(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	if len(instanceIDs) == 0 {
+		return fmt.Errorf("cluster has no managed instances for backup")
+	}
+	var failures []string
+	for _, instanceID := range instanceIDs {
+		result, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{InstanceID: instanceID, BackupType: backupType})
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", instanceID, err))
+			continue
+		}
+		if result != nil && isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
+			failures = append(failures, fmt.Sprintf("%s: %s", instanceID, result.Message))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func (s *ClusterDeployService) clusterInstanceIDs(ctx context.Context, clusterID string) ([]string, error) {
+	if s.instRepo == nil {
+		return nil, fmt.Errorf("instance repository not configured")
+	}
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		if instance != nil && instance.ID != "" {
+			ids = append(ids, instance.ID)
+		}
+	}
+	return ids, nil
+}
+
+func (s *ClusterDeployService) clusterDatabaseInstanceIDs(ctx context.Context, clusterID string) ([]string, error) {
+	if s.instRepo == nil {
+		return nil, fmt.Errorf("instance repository not configured")
+	}
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		if instance == nil || instance.ID == "" {
+			continue
+		}
+		managed := instance
+		if full, err := s.instRepo.GetByID(ctx, instance.ID); err == nil {
+			managed = full
+		}
+		role := strings.ToLower(strings.TrimSpace(managed.Status.Role))
+		mode := strings.ToLower(strings.TrimSpace(managed.Topology.ReplicationMode))
+		if mode == ClusterTypeMHA && role == "manager" {
+			continue
+		}
+		ids = append(ids, managed.ID)
+	}
+	return ids, nil
+}
+
+func planNodesToPluginNodes(clusterType string, nodes []PlanNode) []plugins.PluginNode {
+	out := make([]plugins.PluginNode, 0, len(nodes))
+	for _, node := range nodes {
+		if !isDatabaseDeployRole(clusterType, node.Role) {
+			continue
+		}
+		out = append(out, plugins.PluginNode{
+			HostID:    node.HostID,
+			Address:   node.Host,
+			AgentPort: node.AgentPort,
+			MySQLPort: node.MySQLPort,
+			Role:      node.Role,
+			DataDir:   node.DataDir,
+			Basedir:   node.Basedir,
+		})
+	}
+	return out
+}
+
 // Helper: marshal a value to JSON string; returns "{}" on error
 func marshalString(v interface{}) string {
 	data, err := json.Marshal(v)
@@ -1138,16 +1576,81 @@ func marshalString(v interface{}) string {
 	return string(data)
 }
 
+func marshalRedactedString(v interface{}) string {
+	return marshalString(redactSensitiveForJSON(v))
+}
+
+func redactSensitiveForJSON(v interface{}) interface{} {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return map[string]interface{}{}
+	}
+	return redactSensitiveValue(decoded)
+}
+
+func redactSensitiveValue(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for key, value := range typed {
+			if isSensitiveJSONKey(key) {
+				out[key] = redactSensitiveLeaf(value)
+				continue
+			}
+			out[key] = redactSensitiveValue(value)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for i, item := range typed {
+			out[i] = redactSensitiveValue(item)
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func redactSensitiveLeaf(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return typed
+		}
+	case nil:
+		return nil
+	}
+	return "[REDACTED]"
+}
+
+func isSensitiveJSONKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
+	for _, marker := range []string{"password", "passwd", "pass", "token", "secret", "credential"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildPartialResponse creates a DeployResponse for a failed/partial deployment.
 func (s *ClusterDeployService) buildPartialResponse(ctx context.Context, clusterID, clusterType, name string, dep *models.ClusterDeployment, errMsg string, finishedAt *time.Time) *DeployResponse {
+	return s.buildStatusResponse(ctx, clusterID, clusterType, name, dep, "failed", errMsg, finishedAt)
+}
+
+func (s *ClusterDeployService) buildStatusResponse(ctx context.Context, clusterID, clusterType, name string, dep *models.ClusterDeployment, status, msg string, finishedAt *time.Time) *DeployResponse {
 	prog := s.getProgress(clusterID)
 	resp := &DeployResponse{
 		DeploymentID: clusterID,
 		ClusterType:  clusterType,
 		Name:         name,
-		Status:       "failed",
-		Message:      errMsg,
-		ErrorMessage: errMsg,
+		Status:       status,
+		Message:      msg,
+		ErrorMessage: msg,
 		StartedAt:    dep.StartedAt,
 		FinishedAt:   finishedAt,
 		CreatedAt:    dep.CreatedAt,
@@ -1196,6 +1699,10 @@ func (s *ClusterDeployService) GetDeployPlan(ctx context.Context, deploymentID s
 	if err := json.Unmarshal([]byte(dep.PlanJSON), &plan); err != nil {
 		return nil, fmt.Errorf("failed to parse plan for deployment %s: %w", deploymentID, err)
 	}
+	data, err := json.Marshal(redactSensitiveForJSON(plan))
+	if err == nil {
+		_ = json.Unmarshal(data, &plan)
+	}
 	return &plan, nil
 }
 
@@ -1239,6 +1746,11 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 			}
 		}
 	}
+	if prog == nil {
+		if steps := deployStepsFromPlanJSON(dep.PlanJSON); len(steps) > 0 {
+			resp.Steps = steps
+		}
+	}
 	// Merge DB-persisted node status for nodes not covered by in-memory progress
 	dbNodes := s.loadNodesFromDB(ctx, deploymentID)
 	if len(dbNodes) > 0 && prog == nil {
@@ -1259,6 +1771,17 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 		}
 	}
 	return resp, nil
+}
+
+func deployStepsFromPlanJSON(planJSON string) []DeployStep {
+	if strings.TrimSpace(planJSON) == "" {
+		return nil
+	}
+	var plan ClusterDeployPlan
+	if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+		return nil
+	}
+	return planStepsToDeploySteps(plan.Steps)
 }
 
 func (s *ClusterDeployService) ListDeployments(ctx context.Context, limit, offset int) ([]DeployResponse, error) {
@@ -1844,7 +2367,11 @@ type DeployNode struct {
 }
 
 type DeployStep struct {
+	ID          string     `json:"id,omitempty"`
 	Name        string     `json:"name"`
+	Type        string     `json:"type,omitempty"`
+	TargetNode  string     `json:"target_node,omitempty"`
+	DependsOn   []string   `json:"depends_on,omitempty"`
 	Status      string     `json:"status"`
 	Message     string     `json:"message,omitempty"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
@@ -2013,8 +2540,8 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			log.Printf("syncClusterManagement: skipping Update error, continuing with topology")
 		}
 		if err := s.instRepo.UpsertStatus(ctx, inst.ID, &models.InstanceStatus{
-			RunStatus:           "running",
-			HealthStatus:        "healthy",
+			RunStatus:           managedNodeRunStatus(node),
+			HealthStatus:        managedNodeHealthStatus(node),
 			Role:                node.Role,
 			ReplicationStatus:   clusterType,
 			SecondsBehindMaster: 0,
@@ -2057,6 +2584,8 @@ func (s *ClusterDeployService) syncClusterManagement(ctx context.Context, cluste
 			}
 			switch role {
 			case "manager":
+				topology.MasterID = masterID
+				topology.SlaveIDs = string(slaveJSON)
 			case "master":
 				topology.SlaveIDs = string(slaveJSON)
 			case "replica":
@@ -2153,7 +2682,7 @@ func (s *ClusterDeployService) createManagedInstanceForDeployNode(ctx context.Co
 	hostID := strings.TrimSpace(node.HostID)
 	username := strings.TrimSpace(node.MySQLUser)
 	if username == "" {
-		username = "root"
+		username = managedNodeDefaultUser(node)
 	}
 	passwordEncrypted := ""
 	if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
@@ -2194,7 +2723,7 @@ func (s *ClusterDeployService) syncManagedInstanceConnection(ctx context.Context
 	if err != nil {
 		username := strings.TrimSpace(node.MySQLUser)
 		if username == "" {
-			username = "root"
+			username = managedNodeDefaultUser(node)
 		}
 		passwordEncrypted := ""
 		if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
@@ -2220,7 +2749,7 @@ func (s *ClusterDeployService) syncManagedInstanceConnection(ctx context.Context
 	if username := strings.TrimSpace(node.MySQLUser); username != "" {
 		conn.Username = username
 	} else if strings.TrimSpace(conn.Username) == "" {
-		conn.Username = "root"
+		conn.Username = managedNodeDefaultUser(node)
 	}
 	if strings.TrimSpace(node.MySQLPassword) != "" && s.encKey != "" {
 		enc, encErr := utils.Encrypt(node.MySQLPassword, s.encKey)
@@ -2297,7 +2826,7 @@ func normalizeDeployStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "completed", "success", "succeeded", "ok":
 		return "success"
-	case "failed", "error", "timeout", "cancelled", "canceled", "unhealthy":
+	case "failed", "error", "timeout", "cancelled", "canceled", "unhealthy", "interrupted":
 		return "failed"
 	case "partial", "partial_success":
 		return "partial"

@@ -17,11 +17,42 @@ import {
   versionSupportsArch,
   createMgrGroupName,
   parseMySQLConfig,
+  deploymentPayloadFingerprint,
   normalizeDeployment,
   buildDeployPayload,
   type DeployStepView,
   type ArchType,
 } from './deployHelpers'
+
+describe('deploymentPayloadFingerprint', () => {
+  const basePayload = {
+    cluster_id: 'cluster-1',
+    cluster_type: 'ha',
+    mysql: { version: '8.0.36', password: 'secret' },
+    nodes: [
+      { host_id: 'host-1', role: 'master', mysql_port: 3306 },
+      { host_id: 'host-2', role: 'replica', mysql_port: 3306 },
+    ],
+    custom: {
+      middleware: { proxysql: { enabled: false } },
+      tools: { health_check: { enabled: true } },
+    },
+  }
+
+  it('ignores secret-only changes', () => {
+    expect(deploymentPayloadFingerprint(basePayload)).toBe(deploymentPayloadFingerprint({
+      ...basePayload,
+      mysql: { ...basePayload.mysql, password: 'changed' },
+    }))
+  })
+
+  it('changes when topology changes', () => {
+    expect(deploymentPayloadFingerprint(basePayload)).not.toBe(deploymentPayloadFingerprint({
+      ...basePayload,
+      nodes: [...basePayload.nodes, { host_id: 'host-3', role: 'replica', mysql_port: 3307 }],
+    }))
+  })
+})
 
 // ---- normalizeStatus ----
 
@@ -55,6 +86,7 @@ describe('getStatusCategory', () => {
     expect(getStatusCategory('timeout')).toBe('failed')
     expect(getStatusCategory('cancelled')).toBe('failed')
     expect(getStatusCategory('canceled')).toBe('failed')
+    expect(getStatusCategory('interrupted')).toBe('failed')
   })
 
   it('maps partial to "partial"', () => {
@@ -84,6 +116,7 @@ describe('isCompletedDeployStatus', () => {
 
 describe('isFailedDeployStatus', () => {
   it('returns true for failed', () => { expect(isFailedDeployStatus('failed')).toBe(true) })
+  it('returns true for interrupted', () => { expect(isFailedDeployStatus('interrupted')).toBe(true) })
   it('returns false for success', () => { expect(isFailedDeployStatus('success')).toBe(false) })
 })
 
@@ -91,6 +124,7 @@ describe('isTerminalDeployStatus', () => {
   it('returns true for success/failed/partial/destroyed', () => {
     expect(isTerminalDeployStatus('success')).toBe(true)
     expect(isTerminalDeployStatus('failed')).toBe(true)
+    expect(isTerminalDeployStatus('interrupted')).toBe(true)
     expect(isTerminalDeployStatus('partial')).toBe(true)
     expect(isTerminalDeployStatus('destroyed')).toBe(true)
   })

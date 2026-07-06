@@ -124,7 +124,7 @@ export const stepStatusToAntd = (status?: string): 'wait' | 'process' | 'finish'
   const norm = normalizeStatus(status)
   if (['completed', 'success', 'succeeded', 'ok', 'done'].includes(norm)) return 'finish'
   if (['running', 'processing', 'active'].includes(norm)) return 'process'
-  if (['failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(norm)) return 'error'
+  if (['failed', 'error', 'timeout', 'cancelled', 'canceled', 'interrupted'].includes(norm)) return 'error'
   return 'wait'
 }
 
@@ -171,6 +171,33 @@ export const parseMySQLConfig = (text?: string): Record<string, string> => {
     config[item.slice(0, idx).trim()] = item.slice(idx + 1).trim()
   })
   return config
+}
+
+export const deploymentPayloadFingerprint = (payload: any): string => stableStringify({
+  cluster_id: payload?.cluster_id,
+  cluster_type: payload?.cluster_type,
+  mysql_version: payload?.mysql?.version,
+  nodes: (payload?.nodes || []).map((node: any) => ({
+    instance_id: node.instance_id,
+    host_id: node.host_id,
+    host: node.host,
+    role: node.role,
+    mysql_port: node.mysql_port,
+    data_dir: node.data_dir,
+    basedir: node.basedir,
+    server_id: node.server_id,
+    custom: node.custom,
+  })),
+  middleware: payload?.custom?.middleware,
+  tools: payload?.custom?.tools,
+})
+
+const stableStringify = (value: any): string => {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 export const normalizeDeployment = (data: any): DeployResult => ({

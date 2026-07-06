@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -17,6 +18,14 @@ import (
 
 type MockTaskRepo struct {
 	mock.Mock
+}
+
+func upgradeStepNames(steps []UpgradeStepInfo) []string {
+	names := make([]string, 0, len(steps))
+	for _, step := range steps {
+		names = append(names, step.Name)
+	}
+	return names
 }
 
 func (m *MockTaskRepo) Create(ctx context.Context, task *models.Task) error {
@@ -135,9 +144,33 @@ func TestUpgradeService_PlanUpgradePath_RollingStrategy(t *testing.T) {
 	assert.Equal(t, "rolling", resp.Strategy)
 	assert.Equal(t, 60, resp.EstimatedTime)
 	assert.Equal(t, "medium", resp.RiskLevel)
-	assert.Len(t, resp.UpgradePath, 9)
+	assert.NotEmpty(t, resp.UpgradePath)
+	assert.NotContains(t, strings.Join(upgradeStepNames(resp.UpgradePath), " "), "Slave")
 
 	mockInstanceRepo.AssertExpectations(t)
+}
+
+func TestRollingUpgradeStepsUseClusterRoles(t *testing.T) {
+	steps := rollingUpgradeStepsForInstances("mgr", []*models.Instance{
+		{ID: "mgr-secondary-1", Name: "mgr-secondary-1", Status: models.InstanceStatus{Role: "secondary"}},
+		{ID: "mgr-secondary-2", Name: "mgr-secondary-2", Status: models.InstanceStatus{Role: "secondary"}},
+		{ID: "mgr-primary", Name: "mgr-primary", Status: models.InstanceStatus{Role: "primary"}},
+	}, "8.0.34", "8.0.36")
+
+	names := strings.Join(upgradeStepNames(steps), " ")
+	assert.Contains(t, names, "Upgrade Secondary mgr-secondary-1")
+	assert.Contains(t, names, "Upgrade Primary mgr-primary")
+	assert.NotContains(t, names, "Slave")
+	assert.NotContains(t, names, "Promote New Master")
+
+	pxcSteps := rollingUpgradeStepsForInstances("pxc", []*models.Instance{
+		{ID: "pxc-secondary", Name: "pxc-secondary", Status: models.InstanceStatus{Role: "secondary"}},
+		{ID: "pxc-bootstrap", Name: "pxc-bootstrap", Status: models.InstanceStatus{Role: "bootstrap"}},
+	}, "8.0.34", "8.0.36")
+	pxcNames := strings.Join(upgradeStepNames(pxcSteps), " ")
+	assert.Contains(t, pxcNames, "Upgrade Secondary pxc-secondary")
+	assert.Contains(t, pxcNames, "Upgrade Bootstrap pxc-bootstrap")
+	assert.NotContains(t, pxcNames, "Slave")
 }
 
 func TestUpgradeService_PlanUpgradePath_InstanceNotFound(t *testing.T) {
