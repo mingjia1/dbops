@@ -331,7 +331,8 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 		TaskID:     taskID,
 		StartedAt:  now,
 	}
-	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
+	// 备份常 >2min；用 long timeout，避免大库被默认 callAgent 掐死。
+	result, err := s.agentClient.callAgentLong(ctx, agentHost, agentPort, "/agent/tasks/backup", map[string]interface{}{
 		"task_id":     taskID,
 		"instance_id": req.InstanceID,
 		"config":      config,
@@ -707,7 +708,8 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 	if s.agentClient == nil {
 		out.Message = "agent client not configured"
 	} else {
-		result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/restore", map[string]interface{}{
+		// 恢复含 prepare/copy-back，必须长超时且见 agent 侧不重试。
+		result, err := s.agentClient.callAgentLong(ctx, agentHost, agentPort, "/agent/tasks/restore", map[string]interface{}{
 			"task_id":     taskID,
 			"instance_id": req.TargetInstanceID,
 			"config": map[string]interface{}{

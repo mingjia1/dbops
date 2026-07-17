@@ -205,7 +205,7 @@ func (c *AgentClient) ExecuteBackup(ctx context.Context, hostAddr string, agentP
 		InstanceID: instanceID,
 		Config:     config,
 	}
-	return c.callAgent(ctx, hostAddr, agentPort, "/agent/tasks/backup", payload)
+	return c.callAgentLong(ctx, hostAddr, agentPort, "/agent/tasks/backup", payload)
 }
 
 func (c *AgentClient) callAgent(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}) (*AgentTaskResult, error) {
@@ -309,6 +309,25 @@ func (c *AgentClient) GetAgentHealth(ctx context.Context, hostAddr string, agent
 	return resp.StatusCode == http.StatusOK, nil
 }
 
+// agentTaskPathNonIdempotent: POST 可能已在 agent 侧生效，超时重试会重复执行（备份/恢复/部署）。
+func agentTaskPathNonIdempotent(path string) bool {
+	switch path {
+	case "/agent/tasks/backup",
+		"/agent/tasks/restore",
+		"/agent/tasks/deploy",
+		"/agent/tasks/deploy-cluster",
+		"/agent/tasks/switch",
+		"/agent/tasks/role-switch",
+		"/agent/tasks/promote",
+		"/agent/tasks/demote",
+		"/agent/tasks/install-tools",
+		"/agent/tasks/upgrade":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
 	url := c.buildURL(hostAddr, agentPort, path)
 
@@ -317,7 +336,11 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	const maxRetries = 2
+	// 幂等探活可重试；任务类路径不重试，避免双备份/双 wipe。
+	maxRetries := 2
+	if agentTaskPathNonIdempotent(path) {
+		maxRetries = 0
+	}
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
@@ -355,6 +378,10 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 		result, err := readAgentResponse(resp)
 		if err != nil {
 			lastErr = err
+			// 业务/解析错误也不对非幂等路径重试（请求可能已执行）。
+			if maxRetries == 0 {
+				return nil, lastErr
+			}
 			continue
 		}
 		return result, nil

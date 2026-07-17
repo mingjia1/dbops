@@ -546,7 +546,7 @@ export const backupApi = {
     api.get(`/backups?instance_id=${instanceId}`),
 
   restore: (data: { backup_id: string; target_instance_id: string; target_type?: string; confirm_overwrite?: boolean }) =>
-    api.post('/backups/restore', data).then(rejectBusinessError).then(rejectFailedTaskData),
+        api.post('/backups/restore', data, { timeout: 300000 }).then(rejectBusinessError).then(rejectFailedTaskData),
 
   delete: (id: string) =>
     api.delete(`/backups/${id}`),

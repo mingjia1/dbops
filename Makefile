@@ -42,13 +42,16 @@ test-agent:
 	make -C agent test
 
 docker-up:
-	docker-compose -f docker-compose.dev.yml up -d
+	@echo "docker-compose.dev.yml not in repo; use bin/*/start-all.sh or add compose file"
+	@exit 1
 
 docker-down:
-	docker-compose -f docker-compose.dev.yml down
+	@echo "docker-compose.dev.yml not in repo"
+	@exit 1
 
 docker-logs:
-	docker-compose -f docker-compose.dev.yml logs -f
+	@echo "docker-compose.dev.yml not in repo"
+	@exit 1
 
 clean:
 	make -C backend clean
@@ -71,8 +74,7 @@ dist: build-backend build-agent build-web
 	cp backend/bin/platform dist/bin/dbops-backend
 	cp agent/bin/agent dist/bin/dbops-agent
 	cp -r backend/config/*.yaml dist/config/ 2>/dev/null || true
-	cp scripts/upgrade-platform.sh scripts/start.sh scripts/stop.sh dist/scripts/
-	cp docker-compose.dev.yml dist/
+	cp -r bin dist/scripts/bin 2>/dev/null || true
 	cp frontend/build dist/web -r 2>/dev/null || cp -r frontend/dist dist/web 2>/dev/null || true
 	tar -czf dbops-offline-$(shell date +%Y%m%d).tar.gz dist/
 	@echo "Offline package: dbops-offline-$(shell date +%Y%m%d).tar.gz"

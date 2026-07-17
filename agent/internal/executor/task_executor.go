@@ -2747,13 +2747,15 @@ func (e *TaskExecutor) executeXtrabackupRestore(ctx context.Context, config Rest
 
 // assertSafeRestoreDatadir rejects empty/root-like paths before wipe.
 func assertSafeRestoreDatadir(datadir string) error {
-	clean := filepath.Clean(strings.TrimSpace(datadir))
+	// ToSlash：Windows 上 Clean("/var") 会变成 \var，需统一比较。
+	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(datadir)))
 	if clean == "" || clean == "." || clean == "/" || clean == `\` {
 		return fmt.Errorf("datadir is unsafe for wipe: %q", datadir)
 	}
 	// 拒绝明显系统根路径
 	switch clean {
-	case "/var", "/usr", "/etc", "/home", "/root", "/opt", "/data":
+	case "/var", "/usr", "/etc", "/home", "/root", "/opt", "/data",
+		`\var`, `\usr`, `\etc`, `\home`, `\root`, `\opt`, `\data`:
 		return fmt.Errorf("datadir is too broad for wipe: %q", clean)
 	}
 	return nil

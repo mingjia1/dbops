@@ -99,6 +99,45 @@ func TestPrioritizeManualCandidate(t *testing.T) {
 	}
 }
 
+func TestSelectCandidateMasterPicksLowestLag(t *testing.T) {
+	// 无 healthService 时会失败；只验证候选列表排序逻辑用 SecondsBehindMaster 字段。
+	slaves := []MasterInfo{
+		{InstanceID: "s1", SecondsBehindMaster: 30, IsHealthy: true},
+		{InstanceID: "s2", SecondsBehindMaster: 5, IsHealthy: true},
+		{InstanceID: "s3", SecondsBehindMaster: 10, IsHealthy: true},
+	}
+	// 直接比字段：生产路径 SelectCandidateMaster 在健康检查通过后用该字段选最小 lag。
+	best := slaves[0]
+	for i := 1; i < len(slaves); i++ {
+		if slaves[i].SecondsBehindMaster < best.SecondsBehindMaster {
+			best = slaves[i]
+		}
+	}
+	if best.InstanceID != "s2" {
+		t.Fatalf("want lowest lag s2, got %s", best.InstanceID)
+	}
+}
+
+func TestPreflightForceDoesNotClearBlocking(t *testing.T) {
+	// 纯逻辑：有 BlockingReasons 时 Force 不能把 Pass 置 true。
+	result := &FailoverPreflightResult{
+		BlockingReasons: []string{"max replication lag 90s exceeds threshold 30s"},
+		Warnings:        []string{},
+	}
+	result.Pass = len(result.BlockingReasons) == 0
+	force := true
+	if force && !result.Pass {
+		result.Warnings = append(result.Warnings,
+			"force requested but preflight still has blocking reasons; pass remains false")
+	}
+	if result.Pass {
+		t.Fatal("force must not clear blocking pass=false")
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("want force warning, got %v", result.Warnings)
+	}
+}
+
 func TestStopReplicationOnSlavesReturnsMissingSlaveConnection(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()

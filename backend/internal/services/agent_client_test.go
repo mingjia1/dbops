@@ -13,6 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAgentTaskPathNonIdempotent(t *testing.T) {
+	if !agentTaskPathNonIdempotent("/agent/tasks/backup") {
+		t.Fatal("backup should be non-idempotent")
+	}
+	if !agentTaskPathNonIdempotent("/agent/tasks/restore") {
+		t.Fatal("restore should be non-idempotent")
+	}
+	if agentTaskPathNonIdempotent("/agent/tasks/health-check") {
+		t.Fatal("health-check should remain retriable")
+	}
+}
+
 func TestAgentClientCallAgentRejectsEmptyData(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/agent/tasks/deploy", r.URL.Path)

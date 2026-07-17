@@ -55,7 +55,7 @@ fi
 log_step "2. 检查 Go 编译环境"
 
 export GOPROXY=https://goproxy.cn,direct
-GO_REQUIRED="1.22"
+GO_REQUIRED="1.25"
 
 check_go_version() {
     local go_cmd="${1:-go}"
