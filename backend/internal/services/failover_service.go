@@ -828,11 +828,8 @@ func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []
 }
 
 func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, newMaster *MasterInfo, slaves []MasterInfo, newConn *models.InstanceConnection) error {
-	masterBinlogPos, err := s.GetMasterBinlogPosition(newMaster, newConn)
-	if err != nil {
-		return fmt.Errorf("failed to get master binlog position: %w", err)
-	}
-
+	// 平台部署默认 gtid_mode=ON；file/pos 重建在 GTID 拓扑下易追错位点。
+	// ponytail: 仅 GTID AUTO_POSITION；非 GTID 集群需单独路径。
 	var failures []string
 	for _, slave := range slaves {
 		if slave.InstanceID == newMaster.InstanceID {
@@ -857,9 +854,6 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 			continue
 		}
 
-		// B1: 用 ? 占位符, 杜绝 Sprintf 拼接造成的注入 + 密码 ' 转义.
-		// PasswordEncrypted 在这里已经被 dsnForConnection 解密到 plain, 但 CHANGE MASTER
-		// 的 MASTER_PASSWORD 是明文参数, 需要解密 newConn 同理.
 		newPlain, err := utils.Decrypt(newConn.PasswordEncrypted, s.encryptionKey)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s decrypt new master password: %v", slave.InstanceID, err))
@@ -867,9 +861,8 @@ func (s *FailoverService) RebuildReplication(ctx context.Context, oldMaster, new
 			continue
 		}
 		_, err = db.ExecContext(ctx,
-			"CHANGE MASTER TO MASTER_HOST=?, MASTER_PORT=?, MASTER_USER=?, MASTER_PASSWORD=?, MASTER_LOG_FILE=?, MASTER_LOG_POS=?",
+			"CHANGE MASTER TO MASTER_HOST=?, MASTER_PORT=?, MASTER_USER=?, MASTER_PASSWORD=?, MASTER_AUTO_POSITION=1",
 			newMaster.Host, newMaster.Port, newConn.Username, newPlain,
-			masterBinlogPos.File, masterBinlogPos.Position,
 		)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s change master: %v", slave.InstanceID, err))
