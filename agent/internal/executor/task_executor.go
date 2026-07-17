@@ -2663,9 +2663,43 @@ func (e *TaskExecutor) executeRestore(ctx context.Context, config RestoreConfig)
 }
 
 func (e *TaskExecutor) executeXtrabackupRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {
+	if !config.ConfirmOverwrite {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   "restore requires confirm_overwrite=true",
+			Timestamp: time.Now(),
+		}, nil
+	}
 	datadir := config.DataDir
 	if datadir == "" {
 		datadir = "/var/lib/mysql"
+	}
+	if err := assertSafeRestoreDatadir(datadir); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  0,
+			Message:   err.Error(),
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	// 停实例：在线 copy-back 会损坏运行中的 datadir。
+	if err := stopMySQLForRestore(ctx, config); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  5,
+			Message:   fmt.Sprintf("stop mysql before restore failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	if err := emptyDirContents(datadir); err != nil {
+		return &TaskResult{
+			Status:    "failed",
+			Progress:  10,
+			Message:   fmt.Sprintf("empty datadir failed: %v", err),
+			Timestamp: time.Now(),
+		}, nil
 	}
 
 	prepareCmd := exec.CommandContext(ctx, "xtrabackup", "--prepare", "--target-dir="+config.BackupPath)
@@ -2704,6 +2738,67 @@ func (e *TaskExecutor) executeXtrabackupRestore(ctx context.Context, config Rest
 		Message:   fmt.Sprintf("Xtrabackup restore completed to %s from %s", datadir, config.BackupPath),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// assertSafeRestoreDatadir rejects empty/root-like paths before wipe.
+func assertSafeRestoreDatadir(datadir string) error {
+	clean := filepath.Clean(strings.TrimSpace(datadir))
+	if clean == "" || clean == "." || clean == "/" || clean == `\` {
+		return fmt.Errorf("datadir is unsafe for wipe: %q", datadir)
+	}
+	// 拒绝明显系统根路径
+	switch clean {
+	case "/var", "/usr", "/etc", "/home", "/root", "/opt", "/data":
+		return fmt.Errorf("datadir is too broad for wipe: %q", clean)
+	}
+	return nil
+}
+
+func stopMySQLForRestore(ctx context.Context, config RestoreConfig) error {
+	// best-effort service stop; then mysqladmin shutdown if still reachable
+	_ = exec.CommandContext(ctx, "systemctl", "stop", "mysqld").Run()
+	_ = exec.CommandContext(ctx, "systemctl", "stop", "mysql").Run()
+
+	host := config.MySQLHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := config.MySQLPort
+	if port == 0 {
+		port = 3306
+	}
+	user := config.MySQLUser
+	if user == "" {
+		user = "root"
+	}
+	args := []string{"-h", host, "-P", fmt.Sprintf("%d", port), "-u", user, "shutdown"}
+	cmd := exec.CommandContext(ctx, "mysqladmin", args...)
+	if config.MySQLPass != "" {
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.MySQLPass)
+	}
+	// 已停则失败可忽略
+	_ = cmd.Run()
+	return nil
+}
+
+func emptyDirContents(dir string) error {
+	if err := assertSafeRestoreDatadir(dir); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.MkdirAll(dir, 0750)
+		}
+		return err
+	}
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	return nil
 }
 
 func (e *TaskExecutor) executeLogicalRestore(ctx context.Context, config RestoreConfig) (*TaskResult, error) {

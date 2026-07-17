@@ -716,6 +716,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 				"mysql_port":        conn.Port,
 				"mysql_user":        conn.Username,
 				"mysql_pass":        password,
+				"datadir":           conn.Datadir,
 				"target_type":       firstNonEmpty(req.TargetType, backup.BackupType),
 				"confirm_overwrite": req.ConfirmOverwrite,
 			},
