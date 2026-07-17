@@ -1098,6 +1098,8 @@ func main() {
 			tasks := protected.Group("/tasks")
 			{
 				tasks.GET("/:id", taskController.GetByID)
+				tasks.GET("/:id/status", taskController.GetStatus)
+				tasks.GET("/:id/logs", taskController.GetLogs)
 				tasks.GET("", taskController.ListByInstance)
 			}
 

@@ -68,6 +68,10 @@ func (r *TaskRepository) GetByID(ctx context.Context, id string) (*models.Task, 
 		}
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
+	logs, err := r.ListLogs(ctx, id, 200, 0)
+	if err == nil {
+		task.Logs = logs
+	}
 
 	return task, nil
 }
@@ -147,6 +151,45 @@ func (r *TaskRepository) AddLog(ctx context.Context, taskLog *models.TaskLog) er
 	}
 
 	return nil
+}
+
+func (r *TaskRepository) ListLogs(ctx context.Context, taskID string, limit, offset int) ([]models.TaskLog, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := `
+		SELECT id, task_id, log_id, timestamp, level, message, context
+		FROM task_logs
+		WHERE task_id = ?
+		ORDER BY timestamp ASC, id ASC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := r.db.Pool.QueryContext(ctx, query, taskID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list task logs: %w", err)
+	}
+	defer rows.Close()
+
+	logs := []models.TaskLog{}
+	for rows.Next() {
+		var taskLog models.TaskLog
+		if err := rows.Scan(&taskLog.ID, &taskLog.TaskID, &taskLog.LogID, &taskLog.Timestamp, &taskLog.Level, &taskLog.Message, &taskLog.Context); err != nil {
+			return nil, err
+		}
+		logs = append(logs, taskLog)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 func (r *TaskRepository) List(ctx context.Context, instanceID string, limit, offset int) ([]models.Task, error) {

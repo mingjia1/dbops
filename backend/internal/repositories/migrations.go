@@ -124,6 +124,7 @@ var InitialSchema = []string{
 		context TEXT,
 		FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE INDEX IF NOT EXISTS idx_task_logs_task_time ON task_logs(task_id, timestamp)`,
 
 	`CREATE TABLE IF NOT EXISTS backup_policies (
 		id VARCHAR(64) PRIMARY KEY,
@@ -850,6 +851,7 @@ var schemaSQLite = []string{
 		message TEXT NOT NULL,
 		context TEXT
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_logs_task_time ON task_logs(task_id, timestamp)`,
 
 	`CREATE TABLE IF NOT EXISTS backup_policies (
 		id TEXT PRIMARY KEY,

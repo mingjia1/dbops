@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
@@ -35,6 +36,26 @@ func (c *TaskController) GetByID(ctx *gin.Context) {
 		"message": "success",
 		"data":    task,
 	})
+}
+
+func (c *TaskController) GetStatus(ctx *gin.Context) {
+	c.GetByID(ctx)
+}
+
+func (c *TaskController) GetLogs(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "task id required"})
+		return
+	}
+	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "200"))
+	offset, _ := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
+	logs, err := c.taskRepo.ListLogs(ctx.Request.Context(), id, limit, offset)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"code": 200, "data": logs})
 }
 
 // ListByInstance 给前端展示某实例的所有任务历史.

@@ -57,6 +57,16 @@ func (s *InstanceService) SetMessageBus(bus *MessageBus) {
 }
 
 func (s *InstanceService) publishDeployProgress(taskID string, progress int, stage, status, message string) {
+	if s.taskRepo != nil && message != "" {
+		_ = s.taskRepo.AddLog(context.Background(), &models.TaskLog{
+			TaskID:    taskID,
+			LogID:     uuid.New().String(),
+			Timestamp: time.Now(),
+			Level:     "info",
+			Message:   message,
+			Context:   fmt.Sprintf(`{"stage":%q,"status":%q,"progress":%d}`, stage, status, progress),
+		})
+	}
 	// 失败时不把进度打回 0，保留最后有效进度，避免 UI 回退。
 	if (status == "failed" || status == "error") && progress <= 0 && s.taskRepo != nil {
 		if existing, err := s.taskRepo.GetByID(context.Background(), taskID); err == nil && existing != nil && existing.Progress > 0 {
@@ -728,23 +738,23 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		prevStatus, _ := s.repo.GetStatus(ctx, id)
 		if prevStatus != nil && prevStatus.HealthStatus == "healthy" {
 			log.Printf("HealthCheck [%s]: agent unreachable (%v) but instance was healthy, keeping status", id, err)
-				return &InstanceAdminResult{
-					TaskID:   "health-check-" + uuid.New().String(),
-					Status:   "completed",
-					Message:  "agent unreachable but instance previously healthy",
-					Data:     connectionData,
-					Progress: 100,
-				}, nil
-			}
-		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
 			return &InstanceAdminResult{
 				TaskID:   "health-check-" + uuid.New().String(),
-				Status:   "failed",
-				Message:  err.Error(),
+				Status:   "completed",
+				Message:  "agent unreachable but instance previously healthy",
 				Data:     connectionData,
 				Progress: 100,
 			}, nil
 		}
+		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
+		return &InstanceAdminResult{
+			TaskID:   "health-check-" + uuid.New().String(),
+			Status:   "failed",
+			Message:  err.Error(),
+			Data:     connectionData,
+			Progress: 100,
+		}, nil
+	}
 	connectionData = healthCheckConnectionData(result.Data, conn, agentHost, agentPort, targetHost)
 	if isFailedTaskStatus(result.Status) {
 		_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
@@ -766,14 +776,14 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 			})
 			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready=ON") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
 				_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
-					return &InstanceAdminResult{
-						TaskID:   result.TaskID,
-						Status:   "unhealthy",
-						Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
-						Data:     connectionData,
-						Progress: 100,
-					}, nil
-				}
+				return &InstanceAdminResult{
+					TaskID:   result.TaskID,
+					Status:   "unhealthy",
+					Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
+					Data:     connectionData,
+					Progress: 100,
+				}, nil
+			}
 		}
 		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")
 	}
@@ -815,11 +825,11 @@ func (s *InstanceService) ReplicationStatus(ctx context.Context, id string) (map
 	}
 
 	cfg := map[string]interface{}{
-		"action":      "show_replication_status",
-		"target_host": targetHost,
-		"target_port": conn.Port,
-		"target_user": conn.Username,
-		"target_pass": password,
+		"action":       "show_replication_status",
+		"target_host":  targetHost,
+		"target_port":  conn.Port,
+		"target_user":  conn.Username,
+		"target_pass":  password,
 		"cluster_type": clusterType,
 	}
 	result, err := s.agentClient.callAgent(ctx, agentHost, agentPort, "/agent/tasks/instance-admin", map[string]interface{}{
@@ -1829,7 +1839,6 @@ func parseShowVariableOutput(message, varName string) string {
 	}
 	return ""
 }
-
 
 // UpdateInstanceStatusRequest 用于更新实例的角色、运行状态和复制状态。
 // 通过 PUT /api/v1/instances/:id/status 使用，无需经过 Agent。

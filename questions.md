@@ -35,7 +35,21 @@
 | O6 | P2 | fixed | Makefile 引用不存在 compose/scripts | 根 `Makefile` | 坏目标明确 fail；dist 用 bin/ |
 | O7 | P1 | fixed | Windows 下 `assertSafeRestoreDatadir("/var")` 漏拦 | `task_executor.go` | `filepath.ToSlash` 统一路径 |
 
+## 日志采集全流程（运维 / 测试）
+
+扫描范围：Agent/任务日志 → MessageBus/SSE → 后端 task logs/status API → 前端进度展示。
+
+| ID | 严重度 | 状态 | 问题 | 位置 | 修复/备注 |
+|----|--------|------|------|------|-----------|
+| L1 | P0 | open | 前端调用 `/tasks/:id/status`、`/tasks/:id/logs`，后端未注册，进度/日志轮询会 404 卡死 | `api.ts` / `task_controller.go` / `main.go` | 待修复 |
+| L2 | P0 | open | MessageBus 取消订阅时 close channel，Publish 并发可能 `send on closed channel` panic | `message_bus.go` | 待修复 |
+| L3 | P1 | open | `task_logs` 只写不读，`Task.Logs` 永远为空，日志闭环断开 | `task_repository.go` | 待修复 |
+| L4 | P1 | open | 部署进度只推内存事件，关键日志未持久化，刷新/晚进入丢上下文 | `instance_service.go` | 待修复 |
+| L5 | P1 | open | `task_logs` 缺少 `(task_id,timestamp)` 查询索引，长任务日志查询会慢 | `migrations.go` | 待修复 |
+| L6 | P1 | open | SSE bridge 依赖 channel close 退出，取消订阅不 close 后需用 request context 退出 | `ws_controller.go` | 待修复 |
+
 ## 进度
 
 - [x] Q1–Q13
 - [x] O1–O7
+- [x] L1–L6

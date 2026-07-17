@@ -42,7 +42,6 @@ func (b *MessageBus) Unsubscribe(taskID string, ch chan TaskEvent) {
 	for i, sub := range subs {
 		if sub == ch {
 			b.subscribers[taskID] = append(subs[:i], subs[i+1:]...)
-			close(ch)
 			break
 		}
 	}
@@ -53,7 +52,7 @@ func (b *MessageBus) Unsubscribe(taskID string, ch chan TaskEvent) {
 
 func (b *MessageBus) Publish(event TaskEvent) {
 	b.mu.RLock()
-	subs := b.subscribers[event.TaskID]
+	subs := append([]chan TaskEvent(nil), b.subscribers[event.TaskID]...)
 	b.mu.RUnlock()
 
 	for _, ch := range subs {

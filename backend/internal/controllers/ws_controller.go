@@ -29,13 +29,19 @@ func (c *WSController) HandleTaskStream(ctx *gin.Context) {
 	ch := c.messageBus.Subscribe(taskID)
 	defer c.messageBus.Unsubscribe(taskID, ch)
 
+	done := ctx.Request.Context().Done()
 	go func() {
-		for event := range ch {
-			msg := services.WSMessage{
-				Type: event.EventType,
-				Data: event,
+		for {
+			select {
+			case <-done:
+				return
+			case event := <-ch:
+				msg := services.WSMessage{
+					Type: event.EventType,
+					Data: event,
+				}
+				c.hub.Broadcast(taskID, msg)
 			}
-			c.hub.Broadcast(taskID, msg)
 		}
 	}()
 
