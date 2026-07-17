@@ -196,11 +196,14 @@ func TestConfigRenderer_MGRConfig(t *testing.T) {
 	cfg.Basedir = "/opt/mysql"
 	cfg.ReportHost = "10.0.0.1"
 	cfg.GroupReplication = true
+	cfg.GroupName = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	cfg.GroupLocalAddr = "10.0.0.1:33061"
 	cfg.GroupSeeds = "10.0.0.1:33061,10.0.0.2:33061,10.0.0.3:33061"
 
 	output, err := r.Render(cfg)
 	require.NoError(t, err)
+	assert.Contains(t, output, "group_replication_group_name=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	assert.Contains(t, output, "group_replication_group_seeds=10.0.0.1:33061,10.0.0.2:33061,10.0.0.3:33061")
 	assert.Contains(t, output, "group_replication_local_address=10.0.0.1:33061")
 	assert.Contains(t, output, "group_replication_start_on_boot=OFF")
 }

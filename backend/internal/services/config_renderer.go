@@ -112,6 +112,7 @@ type MySQLConfig struct {
 	ReportHost        string
 	ReportPort        int
 	GroupReplication  bool
+	GroupName         string // UUID required by MySQL
 	GroupLocalAddr    string
 	GroupSeeds        string
 }
@@ -215,7 +216,7 @@ default_authentication_plugin={{.AuthPlugin}}
 {{- end }}
 {{- if .GroupReplication }}
 plugin_load_add='group_replication.so'
-group_replication_group_name={{.GroupSeeds}}
+group_replication_group_name={{.GroupName}}
 group_replication_local_address={{.GroupLocalAddr}}
 group_replication_group_seeds={{.GroupSeeds}}
 group_replication_start_on_boot=OFF
