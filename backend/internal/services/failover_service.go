@@ -674,26 +674,8 @@ func (s *FailoverService) GetCurrentMaster(ctx context.Context, clusterID string
 		}, nil
 	}
 
-	// Fallback: if no explicit primary found, use the first instance as master
-	// This handles cases where role was not set during deployment
-	if len(instances) > 0 {
-		inst, err := s.instanceRepo.GetByID(ctx, instances[0].ID)
-		if err == nil {
-			conn, connErr := s.getInstanceConnection(ctx, inst.ID)
-			if connErr == nil {
-				failureState := s.healthService.GetFailureState(inst.ID)
-				return &MasterInfo{
-					InstanceID: inst.ID,
-					Host:       conn.Host,
-					Port:       conn.Port,
-					Role:       "master",
-					IsHealthy:  inst.Status.HealthStatus != "unhealthy" && (failureState == nil || !failureState.IsMarkedFailed),
-				}, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("master not found for cluster %s", clusterID)
+	// 禁止“第一台当主”：角色未写入时误切主/误写库。调用方应先补全 topology role。
+	return nil, fmt.Errorf("master not found for cluster %s: no instance with primary role", clusterID)
 }
 
 func (s *FailoverService) GetSlaves(ctx context.Context, clusterID string) ([]MasterInfo, error) {
