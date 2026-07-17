@@ -4,7 +4,7 @@ import {
   DesktopOutlined, DatabaseOutlined, CloudOutlined, SettingOutlined,
   CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
   ArrowRightOutlined, AlertOutlined, AuditOutlined, SafetyCertificateOutlined,
-  ClusterOutlined, ApartmentOutlined, HeartOutlined, BarChartOutlined,
+  ClusterOutlined, ApartmentOutlined, HeartOutlined, BarChartOutlined, RocketOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -96,12 +96,12 @@ const Home: React.FC = () => {
   ]
 
   const quickActions = [
-    { step: '01', title: '添加空主机', desc: '录入一台尚未安装数据库的服务器', icon: <DesktopOutlined />, color: palette.accent.blue, path: '/dashboard/hosts/new' },
-    { step: '02', title: '环境检测', desc: '检查 SSH、端口、目录和部署依赖', icon: <SettingOutlined />, color: palette.accent.orange, path: '/dashboard/env-check' },
-    { step: '03', title: '部署集群', desc: '选择 MHA、MGR 或 PXC 创建集群', icon: <ClusterOutlined />, color: palette.accent.green, path: '/dashboard/cluster-deploy' },
-    { step: '04', title: '确认拓扑', desc: '查看主从、角色和实例关联关系', icon: <ApartmentOutlined />, color: palette.accent.purple, path: '/dashboard/topology' },
-    { step: '05', title: '集群管理', desc: '执行高可用巡检、切换和故障恢复', icon: <HeartOutlined />, color: palette.accent.red, path: '/dashboard/ha' },
-    { step: '06', title: '监控备份', desc: '接入指标告警并配置备份策略', icon: <BarChartOutlined />, color: palette.accent.cyan, path: '/dashboard/monitor' },
+    { step: '01', title: '部署数据库', desc: '小白向导：选场景、选机器、一键装 MySQL', icon: <RocketOutlined />, color: palette.accent.green, path: '/dashboard/deploy-wizard' },
+    { step: '02', title: '添加空主机', desc: '录入一台尚未安装数据库的服务器', icon: <DesktopOutlined />, color: palette.accent.blue, path: '/dashboard/hosts/new' },
+    { step: '03', title: '环境检测', desc: '检查 SSH、端口、目录和部署依赖', icon: <SettingOutlined />, color: palette.accent.orange, path: '/dashboard/env-check' },
+    { step: '04', title: '高级集群部署', desc: 'MHA / MGR / PXC 流程图编排', icon: <ClusterOutlined />, color: palette.accent.purple, path: '/dashboard/cluster-deploy' },
+    { step: '05', title: '确认拓扑', desc: '查看主从、角色和实例关联关系', icon: <ApartmentOutlined />, color: palette.accent.cyan, path: '/dashboard/topology' },
+    { step: '06', title: '监控备份', desc: '接入指标告警并配置备份策略', icon: <BarChartOutlined />, color: palette.accent.orange, path: '/dashboard/monitor' },
   ]
 
   if (loading) {

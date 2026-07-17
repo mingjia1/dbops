@@ -25,6 +25,7 @@ const AlertRuleList = lazy(() => import('./pages/AlertRuleList'))
 const TopologyView = lazy(() => import('./pages/TopologyView'))
 const MigrationManage = lazy(() => import('./pages/MigrationManage'))
 const ClusterDeploy = lazy(() => import('./pages/ClusterDeploy'))
+const DeployWizard = lazy(() => import('./pages/DeployWizard'))
 const HAManage = lazy(() => import('./pages/HAManage'))
 const RoleSwitch = lazy(() => import('./pages/RoleSwitch'))
 const DataStorage = lazy(() => import('./pages/DataStorage'))
@@ -76,6 +77,7 @@ function App() {
             <Route path="alert-rules" element={<AlertRuleList />} />
             <Route path="topology" element={<TopologyView />} />
             <Route path="migration" element={<MigrationManage />} />
+            <Route path="deploy-wizard" element={<DeployWizard />} />
             <Route path="cluster-deploy" element={<ClusterDeploy />} />
             <Route path="ha" element={<HAManage />} />
             <Route path="role-switch" element={<RoleSwitch />} />

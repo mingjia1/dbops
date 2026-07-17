@@ -3,7 +3,7 @@ import {
   AlertOutlined, ApartmentOutlined, AuditOutlined, BarChartOutlined,
   CloudOutlined, ClusterOutlined, DashboardOutlined, DatabaseOutlined, DesktopOutlined,
   FileTextOutlined, HddOutlined, HeartOutlined,
-  AppstoreOutlined, RetweetOutlined, SettingOutlined, SwapOutlined, PartitionOutlined,
+  AppstoreOutlined, RetweetOutlined, RocketOutlined, SettingOutlined, SwapOutlined, PartitionOutlined,
   SafetyOutlined, UserOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
@@ -25,7 +25,8 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
   },
   { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
   { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
-  { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
+  { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '部署向导' },
+  { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署（高级）' },
   { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
   { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
   { key: '/dashboard/upgrade', icon: <SwapOutlined />, label: '升级管理' },
