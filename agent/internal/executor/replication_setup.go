@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type ReplicationSetup struct{}
@@ -31,6 +32,10 @@ func (s *ReplicationSetup) SetupReplication(ctx context.Context, host string, po
 		cfg.AutoPos = true
 	}
 
+	// 密码用单引号转义，避免 ' 打断 SQL；默认 GTID AUTO_POSITION。
+	esc := func(s string) string {
+		return strings.ReplaceAll(s, "'", "''")
+	}
 	autoPos := ""
 	if cfg.AutoPos {
 		autoPos = ", MASTER_AUTO_POSITION=1"
@@ -38,7 +43,7 @@ func (s *ReplicationSetup) SetupReplication(ctx context.Context, host string, po
 
 	changeMaster := fmt.Sprintf(
 		"CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%d, MASTER_USER='%s', MASTER_PASSWORD='%s'%s",
-		cfg.MasterHost, cfg.MasterPort, cfg.ReplUser, cfg.ReplPass, autoPos,
+		esc(cfg.MasterHost), cfg.MasterPort, esc(cfg.ReplUser), esc(cfg.ReplPass), autoPos,
 	)
 
 	queries := []string{
