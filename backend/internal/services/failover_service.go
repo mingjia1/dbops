@@ -776,21 +776,20 @@ func (s *FailoverService) PromoteToMaster(ctx context.Context, master *MasterInf
 	}
 	defer db.Close()
 
-	_, err = db.Exec("STOP SLAVE")
-	if err != nil {
+	// 全停 IO+SQL，再放写；8.0 常开 super_read_only，只关 read_only 不够。
+	if _, err = db.ExecContext(ctx, "STOP SLAVE"); err != nil {
 		return fmt.Errorf("failed to stop slave: %w", err)
 	}
-
-	_, err = db.Exec("SET GLOBAL read_only = OFF")
-	if err != nil {
+	// super_read_only 可能在旧版本不存在；失败时继续尝试 read_only。
+	if _, err = db.ExecContext(ctx, "SET GLOBAL super_read_only = OFF"); err != nil {
+		// ignore: 5.7 无此变量时由下一句兜底
+	}
+	if _, err = db.ExecContext(ctx, "SET GLOBAL read_only = OFF"); err != nil {
 		return fmt.Errorf("failed to disable read_only: %w", err)
 	}
-
-	_, err = db.Exec("RESET SLAVE ALL")
-	if err != nil {
+	if _, err = db.ExecContext(ctx, "RESET SLAVE ALL"); err != nil {
 		return fmt.Errorf("failed to reset slave: %w", err)
 	}
-
 	return nil
 }
 
