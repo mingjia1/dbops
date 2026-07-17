@@ -345,6 +345,7 @@ func main() {
 	messageBus := services.NewMessageBus()
 	wsController := controllers.NewWSController(wsHub, messageBus)
 	clusterDeployService.SetMessageBus(messageBus)
+	instanceService.SetMessageBus(messageBus)
 
 	// Plugin management API.
 	pluginController := controllers.NewPluginController(pluginRegistry)

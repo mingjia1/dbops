@@ -1112,4 +1112,52 @@ export const pluginApi = {
   get: (name: string) => api.get(`/plugins/${encodeURIComponent(name)}`),
 }
 
+export const taskApi = {
+  list: (limit = 50, offset = 0) =>
+    api.get('/tasks', { params: { limit, offset } }).then(rejectBusinessError),
+  get: (id: string) =>
+    api.get(`/tasks/${id}`).then(rejectBusinessError),
+  getLogs: (id: string) =>
+    api.get(`/tasks/${id}/logs`).then(rejectBusinessError),
+  getStatus: (id: string) =>
+    api.get(`/tasks/${id}/status`).then(rejectBusinessError),
+}
+
+/** 是否任务终态（供进度 UI 判断）。 */
+export function isTaskTerminalStatus(status?: string): boolean {
+  const st = String(status || '').toLowerCase()
+  return ['completed', 'success', 'failed', 'error', 'cancelled', 'canceled'].includes(st)
+}
+
+/** 轮询任务直到终态；onTick 每次更新 UI。返回最终 task 对象。 */
+export async function pollTaskUntilDone(
+  taskId: string,
+  onTick?: (t: { status?: string; progress?: number; message?: string; stage?: string }) => void,
+  opts?: { intervalMs?: number; maxAttempts?: number },
+): Promise<any> {
+  const intervalMs = opts?.intervalMs ?? 1500
+  const maxAttempts = opts?.maxAttempts ?? 240
+  let last: any = null
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res: any = await taskApi.getStatus(taskId)
+      const t = res?.data || res || {}
+      last = t
+      onTick?.({
+        status: t.status,
+        progress: typeof t.progress === 'number' ? t.progress : undefined,
+        message: t.message || t.error_message || t.stage,
+        stage: t.stage || t.current_stage,
+      })
+      if (isTaskTerminalStatus(t.status)) {
+        return t
+      }
+    } catch {
+      // keep polling
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  return last
+}
+
 export default api

@@ -30,6 +30,7 @@ type InstanceService struct {
 	auditSvc    *AuditService
 	encKey      string
 	deployRepo  *repositories.ClusterDeployRepository
+	messageBus  *MessageBus
 }
 
 func NewInstanceService(repo *repositories.InstanceRepository, hostRepo *repositories.HostRepository, taskRepo *repositories.TaskRepository, agentClient *AgentClient, auditSvc *AuditService, encKey string) *InstanceService {
@@ -49,6 +50,26 @@ func (s *InstanceService) SetBackupService(backupSvc *BackupService) {
 
 func (s *InstanceService) SetDeployRepo(repo *repositories.ClusterDeployRepository) {
 	s.deployRepo = repo
+}
+
+func (s *InstanceService) SetMessageBus(bus *MessageBus) {
+	s.messageBus = bus
+}
+
+func (s *InstanceService) publishDeployProgress(taskID string, progress int, stage, status, message string) {
+	if s.taskRepo != nil {
+		_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, status, progress, message)
+	}
+	if s.messageBus == nil || taskID == "" {
+		return
+	}
+	s.messageBus.PublishProgress(taskID, progress, stage, status)
+	if message != "" {
+		s.messageBus.PublishLog(taskID, message)
+	}
+	if status == "completed" || status == "failed" || status == "success" {
+		s.messageBus.PublishStatus(taskID, status)
+	}
 }
 
 func (s *InstanceService) Create(ctx context.Context, req CreateInstanceRequest) (*models.Instance, error) {
@@ -480,12 +501,11 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
-	taskRepo := s.taskRepo
-	taskRepo.UpdateStatus(ctx, task.ID, "running", 0)
+	// 立即返回 task_id；后台跑 agent，前端轮询/SSE 看动态进度。
+	s.publishDeployProgress(task.ID, 5, "准备部署", "running", "任务已创建，正在解析 Agent 与凭据")
 
 	var agentHost string
 	var agentPort int
-
 	if instance.HostID != nil && *instance.HostID != "" {
 		host, err := s.hostRepo.GetByID(ctx, *instance.HostID)
 		if err == nil {
@@ -498,83 +518,84 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 		agentPort = 9090
 	}
 	if s.agentClient == nil {
-		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
 		msg := "Deploy failed: agent client not configured"
+		s.publishDeployProgress(task.ID, 0, "失败", "failed", msg)
 		s.auditDeploy(ctx, id, task.ID, "failed", 0, msg, "agent client not configured", map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
 		})
-		return &DeployResult{
-			TaskID:   task.ID,
-			Status:   "failed",
-			Progress: 0,
-			Message:  msg,
-		}, nil
+		return &DeployResult{TaskID: task.ID, Status: "failed", Progress: 0, Message: msg}, nil
 	}
 
 	mysqlPassword, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
-		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
-		resp := &DeployResult{
-			TaskID:   task.ID,
-			Status:   "failed",
-			Progress: 0,
-			Message:  fmt.Sprintf("Deploy failed: decrypt instance password: %v", err),
-		}
-		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, err.Error(), map[string]interface{}{
+		msg := fmt.Sprintf("Deploy failed: decrypt instance password: %v", err)
+		s.publishDeployProgress(task.ID, 0, "失败", "failed", msg)
+		s.auditDeploy(ctx, id, task.ID, "failed", 0, msg, err.Error(), map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
 		})
-		return resp, nil
+		return &DeployResult{TaskID: task.ID, Status: "failed", Progress: 0, Message: msg}, nil
 	}
 	instance.Connection = *conn
 
-	result, deployErr := s.agentClient.DeployInstance(ctx, agentHost, agentPort, instance, task.ID, mysqlPassword)
+	go s.runInstanceDeployAsync(id, task.ID, agentHost, agentPort, instance, mysqlPassword, conn.Port)
+
+	return &DeployResult{
+		TaskID:   task.ID,
+		Status:   "running",
+		Progress: 5,
+		Message:  "部署任务已提交，正在后台安装 MySQL",
+	}, nil
+}
+
+func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost string, agentPort int, instance *models.Instance, mysqlPassword string, mysqlPort int) {
+	s.publishDeployProgress(taskID, 15, "连接 Agent", "running", fmt.Sprintf("连接 %s:%d", agentHost, agentPort))
+	s.publishDeployProgress(taskID, 30, "安装二进制", "running", "Agent 开始安装/初始化 MySQL")
+
+	result, deployErr := s.agentClient.DeployInstance(context.Background(), agentHost, agentPort, instance, taskID, mysqlPassword)
 	if deployErr != nil {
-		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
-		resp := &DeployResult{
-			TaskID:   task.ID,
-			Status:   "failed",
-			Progress: 0,
-			Message:  fmt.Sprintf("Deploy failed: %v", deployErr),
-		}
-		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, deployErr.Error(), map[string]interface{}{
+		msg := fmt.Sprintf("Deploy failed: %v", deployErr)
+		s.publishDeployProgress(taskID, 0, "失败", "failed", msg)
+		s.auditDeploy(context.Background(), instanceID, taskID, "failed", 0, msg, deployErr.Error(), map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
-			"mysql_port": conn.Port,
+			"mysql_port": mysqlPort,
 		})
-		return resp, nil
+		return
 	}
 	if result == nil {
-		taskRepo.UpdateStatus(ctx, task.ID, "failed", 0)
-		resp := &DeployResult{
-			TaskID:   task.ID,
-			Status:   "failed",
-			Progress: 0,
-			Message:  "Deploy failed: empty agent result",
-		}
-		s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, "empty agent result", map[string]interface{}{
+		msg := "Deploy failed: empty agent result"
+		s.publishDeployProgress(taskID, 0, "失败", "failed", msg)
+		s.auditDeploy(context.Background(), instanceID, taskID, "failed", 0, msg, "empty agent result", map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
-			"mysql_port": conn.Port,
+			"mysql_port": mysqlPort,
 		})
-		return resp, nil
+		return
 	}
 
-	taskRepo.UpdateStatus(ctx, task.ID, result.Status, result.Progress)
-
-	resp := &DeployResult{
-		TaskID:   task.ID,
-		Status:   result.Status,
-		Progress: result.Progress,
-		Message:  "MySQL instance deploy: " + result.Message,
+	status := result.Status
+	if status == "" {
+		status = "completed"
 	}
-	s.auditDeploy(ctx, id, task.ID, resp.Status, resp.Progress, resp.Message, "", map[string]interface{}{
+	progress := result.Progress
+	if progress <= 0 && (status == "completed" || status == "success") {
+		progress = 100
+	}
+	stage := "完成"
+	if status == "failed" || status == "error" {
+		stage = "失败"
+	} else if status == "running" || status == "pending" {
+		stage = "安装中"
+	}
+	msg := "MySQL instance deploy: " + result.Message
+	s.publishDeployProgress(taskID, progress, stage, status, msg)
+	s.auditDeploy(context.Background(), instanceID, taskID, status, progress, msg, "", map[string]interface{}{
 		"agent_host": agentHost,
 		"agent_port": agentPort,
-		"mysql_port": conn.Port,
+		"mysql_port": mysqlPort,
 	})
-	return resp, nil
 }
 
 func (s *InstanceService) auditDeploy(ctx context.Context, instanceID, taskID, status string, progress int, message, errMsg string, details map[string]interface{}) {

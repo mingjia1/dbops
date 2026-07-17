@@ -92,8 +92,11 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
   useEffect(() => {
     if (!enabled || !taskID) return
 
-    const url = `${baseURL}/tasks/stream/${taskID}`
-    const source = new EventSource(url)
+    // EventSource 不能自定义 Header；用 query token 兼容鉴权（cookie 也会自动带上）。
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
+    const qs = token ? `?token=${encodeURIComponent(token)}` : ''
+    const url = `${baseURL}/tasks/stream/${taskID}${qs}`
+    const source = new EventSource(url, { withCredentials: true })
     sourceRef.current = source
 
     source.onopen = () => setConnected(true)

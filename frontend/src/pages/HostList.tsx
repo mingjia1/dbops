@@ -5,6 +5,7 @@ import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOu
 import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'
 import { hostApi, instanceApi, type Host, type HostScanResult, type HostTestResult } from '../services/api'
+import LiveDeployTracker from '../components/LiveDeployTracker'
 
 const longRunningAgentActions = new Set(['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove'])
 const isFailedAgentStatus = (status?: string) => {
@@ -38,6 +39,7 @@ const HostList: React.FC = () => {
   const [batchSubmitting, setBatchSubmitting] = useState(false)
   const [testRows, setTestRows] = useState<Record<string, HostTestResult & { host_name?: string; address?: string }>>({})
   const [batchForm] = Form.useForm()
+  const [liveTaskIds, setLiveTaskIds] = useState<string[]>([])
   const pollRef = useRef<Record<string, number>>({})
   const testPollRef = useRef<Record<string, number>>({})
 
@@ -299,7 +301,9 @@ const HostList: React.FC = () => {
             const version = inst.version?.version || inst.version?.full_version || '未知版本'
             occupiedPorts.push(`${host.name || host.address}:${portInfo} (${version})`)
             try {
-              await instanceApi.deploy(inst.id)
+              const dr: any = await instanceApi.deploy(inst.id)
+              const tid = dr?.data?.task_id || dr?.task_id
+              if (tid) setLiveTaskIds((prev) => [...prev, tid])
               deployed += 1
             } catch { /* skip */ }
           }
@@ -308,14 +312,16 @@ const HostList: React.FC = () => {
     }
 
     if (deployed > 0) {
-      Modal.success({
-        title: `已提交 ${deployed} 个实例部署任务`,
+      Modal.info({
+        title: `已提交 ${deployed} 个实例部署任务（下方可看实时进度）`,
+        width: 640,
         content: (
           <div>
             <p>部署中的实例：</p>
-            <ul style={{ maxHeight: 200, overflow: 'auto', paddingLeft: 20 }}>
+            <ul style={{ maxHeight: 120, overflow: 'auto', paddingLeft: 20 }}>
               {occupiedPorts.map((p, i) => <li key={i}>{p}</li>)}
             </ul>
+            <p style={{ marginTop: 8 }}>请关闭后查看列表下方进度卡片；任务在后台继续执行。</p>
           </div>
         ),
       })
@@ -530,6 +536,17 @@ const HostList: React.FC = () => {
           </Form.List>
         </Form>
       </Modal>
+
+      {liveTaskIds.length > 0 && (
+        <Card title="实时安装进度" style={{ marginTop: 16 }}>
+          <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            {liveTaskIds.map((tid) => (
+              <LiveDeployTracker key={tid} taskId={tid} title={`任务 ${tid}`} />
+            ))}
+            <Button size="small" onClick={() => setLiveTaskIds([])}>清空进度卡片</Button>
+          </Space>
+        </Card>
+      )}
     </div>
   )
 }

@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, Input, Progress, Radio, Result, Row, Select,
+  Alert, Button, Card, Col, Input, Radio, Result, Row, Select,
   Space, Steps, Typography, message,
 } from 'antd'
 import {
   CheckCircleOutlined, CloudServerOutlined, RocketOutlined, SafetyOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { clusterDeployApi, hostApi, instanceApi, type Host } from '../services/api'
+import {
+  clusterDeployApi, hostApi, instanceApi, type Host,
+} from '../services/api'
 import {
   WIZARD_DEFAULTS,
   WIZARD_TEMPLATES,
@@ -19,12 +21,7 @@ import {
   makeWizardName,
   type WizardScenario,
 } from '../services/deployWizardTemplates'
-import {
-  isCompletedDeployStatus,
-  isFailedDeployStatus,
-  isTerminalDeployStatus,
-  normalizeDeployment,
-} from '../services/deployHelpers'
+import LiveDeployTracker from '../components/LiveDeployTracker'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -40,11 +37,12 @@ const DeployWizard: React.FC = () => {
   const [port] = useState(WIZARD_DEFAULTS.port)
 
   const [submitting, setSubmitting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [statusMsg, setStatusMsg] = useState('')
   const [resultOk, setResultOk] = useState(false)
   const [resultFail, setResultFail] = useState('')
   const [connInfo, setConnInfo] = useState<{ host: string; port: number; user: string; password: string; name: string } | null>(null)
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const [activeDeploymentId, setActiveDeploymentId] = useState<string | null>(null)
+  const [pendingName, setPendingName] = useState('')
 
   const template = useMemo(() => getWizardTemplate(scenario), [scenario])
 
@@ -57,14 +55,12 @@ const DeployWizard: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    // 换场景时裁剪已选主机数量
     setSelectedHostIds((ids) => ids.slice(0, template.maxHosts))
   }, [scenario, template.maxHosts])
 
   const hostOptions = hosts.map((h) => ({
     value: h.id,
     label: `${h.name || h.address} (${h.address})`,
-    host: h,
   }))
 
   const selectedHosts = selectedHostIds
@@ -82,111 +78,88 @@ const DeployWizard: React.FC = () => {
     password,
   })
 
-  const pollDeployment = async (deploymentId: string) => {
-    for (let i = 0; i < 180; i++) {
-      await new Promise((r) => setTimeout(r, 2000))
-      try {
-        const res: any = await clusterDeployApi.getStatus(deploymentId)
-        const dep = normalizeDeployment(res?.data || {})
-        setProgress(typeof dep.progress === 'number' ? dep.progress : Math.min(95, i + 5))
-        setStatusMsg(dep.message || dep.status || '部署中…')
-        if (isTerminalDeployStatus(dep.status)) {
-          if (isCompletedDeployStatus(dep.status)) return dep
-          throw new Error(dep.message || `部署失败: ${dep.status}`)
-        }
-      } catch (e: any) {
-        if (i > 5 && e?.message && !String(e.message).includes('Network')) {
-          // 短暂失败继续轮询；明确业务失败再抛
-          if (String(e.message).startsWith('部署失败') || isFailedDeployStatus(e?.status)) throw e
-        }
-      }
-    }
-    throw new Error('部署超时，请到「集群部署」查看进度')
-  }
-
-  const runSingle = async () => {
-    const host = selectedHosts[0]
-    if (!host) throw new Error('请选择主机')
-    const name = makeWizardName(scenario)
-    const createBody = buildSingleInstanceCreate({
-      hostId: host.id,
-      hostAddress: host.address,
-      password,
-      name,
-      port,
-    })
-    setStatusMsg('创建实例…')
-    setProgress(10)
-    const created: any = await instanceApi.create(createBody)
-    const instanceId = created?.data?.id || created?.data?.ID || created?.id
-    if (!instanceId) throw new Error('创建实例未返回 ID')
-    setStatusMsg('正在主机上安装 MySQL…')
-    setProgress(30)
-    const deployRes: any = await instanceApi.deploy(instanceId)
-    const status = deployRes?.data?.status || deployRes?.status
-    setProgress(90)
-    if (status && isFailedDeployStatus(status)) {
-      throw new Error(deployRes?.data?.message || deployRes?.message || '单机部署失败')
-    }
-    // agent 可能同步返回 completed
-    setProgress(100)
-    setConnInfo({
-      host: host.address,
-      port,
-      user: WIZARD_DEFAULTS.username,
-      password,
-      name,
-    })
-  }
-
-  const runHa = async () => {
-    if (selectedHosts.length < 2) throw new Error('HA 至少需要 2 台主机')
-    const master = selectedHosts[0]
-    const replicas = selectedHosts.slice(1)
-    const clusterId = makeWizardName('prod-ha')
-    const payload = buildHaWizardPayload({
-      masterHostId: master.id,
-      replicaHostIds: replicas.map((h) => h.id),
-      password,
-      clusterId,
-      port,
-    })
-    setStatusMsg('提交主从部署…')
-    setProgress(15)
-    const res: any = await clusterDeployApi.deployCluster(payload)
-    const deploymentId = res?.data?.deployment_id || res?.data?.id
-    if (!deploymentId) throw new Error('未返回 deployment_id')
-    setStatusMsg('部署进行中…')
-    await pollDeployment(deploymentId)
-    setProgress(100)
-    setConnInfo({
-      host: master.address,
-      port,
-      user: WIZARD_DEFAULTS.username,
-      password,
-      name: clusterId,
-    })
-  }
-
   const startDeploy = async () => {
     setSubmitting(true)
     setResultOk(false)
     setResultFail('')
-    setProgress(0)
+    setActiveTaskId(null)
+    setActiveDeploymentId(null)
+    setConnInfo(null)
     setStep(3)
     try {
-      if (template.mode === 'single') await runSingle()
-      else await runHa()
-      setResultOk(true)
-      setStatusMsg('部署成功')
-      message.success('部署成功')
+      if (template.mode === 'single') {
+        const host = selectedHosts[0]
+        if (!host) throw new Error('请选择主机')
+        const name = makeWizardName(scenario)
+        setPendingName(name)
+        const createBody = buildSingleInstanceCreate({
+          hostId: host.id,
+          hostAddress: host.address,
+          password,
+          name,
+          port,
+        })
+        const created: any = await instanceApi.create(createBody)
+        const instanceId = created?.data?.id || created?.data?.ID || created?.id
+        if (!instanceId) throw new Error('创建实例未返回 ID')
+        const deployRes: any = await instanceApi.deploy(instanceId)
+        const taskId = deployRes?.data?.task_id || deployRes?.task_id
+        if (!taskId) {
+          // 兼容旧同步：直接成功/失败
+          const st = String(deployRes?.data?.status || deployRes?.status || '').toLowerCase()
+          if (['failed', 'error'].includes(st)) {
+            throw new Error(deployRes?.data?.message || '单机部署失败')
+          }
+          setResultOk(true)
+          setConnInfo({
+            host: host.address, port, user: WIZARD_DEFAULTS.username, password, name,
+          })
+          message.success('部署成功')
+          return
+        }
+        setActiveTaskId(taskId)
+        setConnInfo({
+          host: host.address, port, user: WIZARD_DEFAULTS.username, password, name,
+        })
+      } else {
+        if (selectedHosts.length < 2) throw new Error('HA 至少需要 2 台主机')
+        const master = selectedHosts[0]
+        const replicas = selectedHosts.slice(1)
+        const clusterId = makeWizardName('prod-ha')
+        setPendingName(clusterId)
+        const payload = buildHaWizardPayload({
+          masterHostId: master.id,
+          replicaHostIds: replicas.map((h) => h.id),
+          password,
+          clusterId,
+          port,
+        })
+        const res: any = await clusterDeployApi.deployCluster(payload)
+        const deploymentId = res?.data?.deployment_id || res?.data?.id
+        if (!deploymentId) throw new Error('未返回 deployment_id')
+        setActiveDeploymentId(deploymentId)
+        setConnInfo({
+          host: master.address, port, user: WIZARD_DEFAULTS.username, password, name: clusterId,
+        })
+      }
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || '部署失败'
       setResultFail(msg)
-      setStatusMsg(msg)
       message.error(msg)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const onTrackerTerminal = (ok: boolean, msg?: string) => {
+    if (ok) {
+      setResultOk(true)
+      setResultFail('')
+      message.success('部署成功')
+    } else {
+      setResultFail(msg || '部署失败')
+      setResultOk(false)
+      message.error(msg || '部署失败')
     }
   }
 
@@ -196,7 +169,7 @@ const DeployWizard: React.FC = () => {
         <RocketOutlined /> 部署数据库向导
       </Title>
       <Paragraph type="secondary">
-        不用懂 MySQL：选场景 → 选机器 → 确认 → 完成。高级选项请用「集群部署」。
+        选场景 → 选机器 → 确认 → 实时看安装过程。高级选项请用「集群部署（高级）」。
       </Paragraph>
 
       <Steps
@@ -206,7 +179,7 @@ const DeployWizard: React.FC = () => {
           { title: '选场景' },
           { title: '选机器' },
           { title: '确认' },
-          { title: '完成' },
+          { title: '进度' },
         ]}
       />
 
@@ -310,13 +283,19 @@ const DeployWizard: React.FC = () => {
       )}
 
       {step === 3 && (
-        <Card>
-          {!resultOk && !resultFail && (
-            <>
-              <Paragraph>{statusMsg || '部署中，请勿关闭页面…'}</Paragraph>
-              <Progress percent={progress} status="active" />
-            </>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          {(activeTaskId || activeDeploymentId) && (
+            <LiveDeployTracker
+              taskId={activeTaskId}
+              deploymentId={activeDeploymentId}
+              title={pendingName ? `安装进度 · ${pendingName}` : '安装进度'}
+              onTerminal={onTrackerTerminal}
+            />
           )}
+          {!activeTaskId && !activeDeploymentId && !resultOk && !resultFail && (
+            <Card loading>正在提交部署任务…</Card>
+          )}
+
           {resultOk && connInfo && (
             <Result
               status="success"
@@ -325,7 +304,11 @@ const DeployWizard: React.FC = () => {
               icon={<CheckCircleOutlined />}
               extra={[
                 <Button type="primary" key="inst" onClick={() => navigate('/dashboard/instances')}>查看实例</Button>,
-                <Button key="again" onClick={() => { setStep(0); setResultOk(false); setConnInfo(null); setPassword(generateRootPassword()) }}>再部署一套</Button>,
+                <Button key="again" onClick={() => {
+                  setStep(0); setResultOk(false); setConnInfo(null)
+                  setActiveTaskId(null); setActiveDeploymentId(null)
+                  setPassword(generateRootPassword())
+                }}>再部署一套</Button>,
               ]}
             >
               <Card size="small" style={{ textAlign: 'left', maxWidth: 480, margin: '0 auto' }}>
@@ -350,7 +333,7 @@ const DeployWizard: React.FC = () => {
               ]}
             />
           )}
-        </Card>
+        </Space>
       )}
     </div>
   )
