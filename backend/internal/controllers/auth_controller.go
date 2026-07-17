@@ -115,15 +115,17 @@ func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
 
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	// B1 (cookie): 优先读 Authorization header, fallback 到 HttpOnly cookie "auth_token".
-	// SSE/EventSource 不能带 Header：允许 ?token= 查询参数（仅用于 stream 等场景）。
+	// EventSource 不能带 Header：仅 /tasks/stream/ 允许 ?token=（不开放给其它 API）。
 	headerToken := ctx.GetHeader("Authorization")
 	cookieToken := ""
 	if c, err := ctx.Cookie("auth_token"); err == nil && c != "" {
 		cookieToken = "Bearer " + c
 	}
 	queryToken := ""
-	if q := ctx.Query("token"); q != "" {
-		queryToken = "Bearer " + q
+	if strings.Contains(ctx.Request.URL.Path, "/tasks/stream/") {
+		if q := ctx.Query("token"); q != "" {
+			queryToken = "Bearer " + q
+		}
 	}
 	token := headerToken
 	if token == "" {

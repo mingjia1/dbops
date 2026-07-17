@@ -57,6 +57,12 @@ func (s *InstanceService) SetMessageBus(bus *MessageBus) {
 }
 
 func (s *InstanceService) publishDeployProgress(taskID string, progress int, stage, status, message string) {
+	// 失败时不把进度打回 0，保留最后有效进度，避免 UI 回退。
+	if (status == "failed" || status == "error") && progress <= 0 && s.taskRepo != nil {
+		if existing, err := s.taskRepo.GetByID(context.Background(), taskID); err == nil && existing != nil && existing.Progress > 0 {
+			progress = existing.Progress
+		}
+	}
 	if s.taskRepo != nil {
 		_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, status, progress, message)
 	}
@@ -539,7 +545,7 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 	}
 	instance.Connection = *conn
 
-	go s.runInstanceDeployAsync(id, task.ID, agentHost, agentPort, instance, mysqlPassword, conn.Port)
+	go s.runInstanceDeployAsync(id, task.ID, agentHost, agentPort, instance, mysqlPassword, conn.Port, userIDFromCtx(ctx))
 
 	return &DeployResult{
 		TaskID:   task.ID,
@@ -549,15 +555,43 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 	}, nil
 }
 
-func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost string, agentPort int, instance *models.Instance, mysqlPassword string, mysqlPort int) {
-	s.publishDeployProgress(taskID, 15, "连接 Agent", "running", fmt.Sprintf("连接 %s:%d", agentHost, agentPort))
-	s.publishDeployProgress(taskID, 30, "安装二进制", "running", "Agent 开始安装/初始化 MySQL")
+func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost string, agentPort int, instance *models.Instance, mysqlPassword string, mysqlPort int, userID string) {
+	auditCtx := context.Background()
+	if userID != "" {
+		auditCtx = context.WithValue(auditCtx, "user_id", userID)
+	}
+
+	s.publishDeployProgress(taskID, 10, "连接 Agent", "running", fmt.Sprintf("连接 %s:%d", agentHost, agentPort))
+	s.publishDeployProgress(taskID, 20, "Agent 执行中", "running", "等待 Agent 安装/初始化 MySQL")
+
+	// Agent 调用期间发心跳，避免 UI 长时间卡在固定百分比。
+	stopHeartbeat := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		p := 25
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ticker.C:
+				if p < 90 {
+					p += 5
+				}
+				s.publishDeployProgress(taskID, p, "Agent 执行中", "running",
+					fmt.Sprintf("Agent 安装进行中 (%d%%)", p))
+			}
+		}
+	}()
 
 	result, deployErr := s.agentClient.DeployInstance(context.Background(), agentHost, agentPort, instance, taskID, mysqlPassword)
+	close(stopHeartbeat)
+
 	if deployErr != nil {
 		msg := fmt.Sprintf("Deploy failed: %v", deployErr)
+		// progress<=0 → publishDeployProgress 会保留已有进度
 		s.publishDeployProgress(taskID, 0, "失败", "failed", msg)
-		s.auditDeploy(context.Background(), instanceID, taskID, "failed", 0, msg, deployErr.Error(), map[string]interface{}{
+		s.auditDeploy(auditCtx, instanceID, taskID, "failed", 0, msg, deployErr.Error(), map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
 			"mysql_port": mysqlPort,
@@ -567,7 +601,7 @@ func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost s
 	if result == nil {
 		msg := "Deploy failed: empty agent result"
 		s.publishDeployProgress(taskID, 0, "失败", "failed", msg)
-		s.auditDeploy(context.Background(), instanceID, taskID, "failed", 0, msg, "empty agent result", map[string]interface{}{
+		s.auditDeploy(auditCtx, instanceID, taskID, "failed", 0, msg, "empty agent result", map[string]interface{}{
 			"agent_host": agentHost,
 			"agent_port": agentPort,
 			"mysql_port": mysqlPort,
@@ -583,6 +617,9 @@ func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost s
 	if progress <= 0 && (status == "completed" || status == "success") {
 		progress = 100
 	}
+	if (status == "failed" || status == "error") && progress <= 0 {
+		progress = 0 // publish 侧会回填 last progress
+	}
 	stage := "完成"
 	if status == "failed" || status == "error" {
 		stage = "失败"
@@ -591,7 +628,7 @@ func (s *InstanceService) runInstanceDeployAsync(instanceID, taskID, agentHost s
 	}
 	msg := "MySQL instance deploy: " + result.Message
 	s.publishDeployProgress(taskID, progress, stage, status, msg)
-	s.auditDeploy(context.Background(), instanceID, taskID, status, progress, msg, "", map[string]interface{}{
+	s.auditDeploy(auditCtx, instanceID, taskID, status, progress, msg, "", map[string]interface{}{
 		"agent_host": agentHost,
 		"agent_port": agentPort,
 		"mysql_port": mysqlPort,

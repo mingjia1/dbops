@@ -26,6 +26,7 @@ type agentStub struct {
 	failPath      string
 	statusByPath  map[string]string
 	messageByPath map[string]string
+	delayByPath   map[string]time.Duration
 }
 
 type agentStubCall struct {
@@ -42,6 +43,11 @@ func newAgentStub() *agentStub {
 			var body map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			s.calls = append(s.calls, agentStubCall{Path: r.URL.Path, Body: body})
+			if s.delayByPath != nil {
+				if d := s.delayByPath[r.URL.Path]; d > 0 {
+					time.Sleep(d)
+				}
+			}
 			if s.failPath != "" && strings.HasSuffix(r.URL.Path, s.failPath) {
 				http.Error(w, "agent failure", http.StatusInternalServerError)
 				return

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
@@ -200,6 +201,43 @@ func newInstanceDeployTestService(t *testing.T, passwordEncrypted string, agent 
 	return NewInstanceService(instRepo, hostRepo, taskRepo, NewAgentClient(""), auditSvc, "test-encryption-key"), auditRepo, instanceID
 }
 
+func waitDeployTaskStatus(t *testing.T, service *InstanceService, taskID string, want string) *models.Task {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		task, err := service.taskRepo.GetByID(context.Background(), taskID)
+		require.NoError(t, err)
+		if task.Status == want {
+			return task
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	task, err := service.taskRepo.GetByID(context.Background(), taskID)
+	require.NoError(t, err)
+	require.Equal(t, want, task.Status, "task %s last status=%s progress=%d msg=%s", taskID, task.Status, task.Progress, task.ErrorMessage)
+	return task
+}
+
+func TestDeployReturnsRunningImmediately(t *testing.T) {
+	agent := newAgentStub()
+	defer agent.Close()
+	// 拖住 agent，确保 Deploy 返回时后台未结束
+	agent.delayByPath = map[string]time.Duration{"/agent/tasks/deploy": 300 * time.Millisecond}
+	password, err := utils.Encrypt("rootpass", "test-encryption-key")
+	require.NoError(t, err)
+	service, _, instanceID := newInstanceDeployTestService(t, password, agent)
+
+	result, err := service.Deploy(context.Background(), instanceID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "running", result.Status)
+	assert.NotEmpty(t, result.TaskID)
+	assert.GreaterOrEqual(t, result.Progress, 1)
+	// 契约：立即返回时 agent 可能尚未被调用完
+	_ = waitDeployTaskStatus(t, service, result.TaskID, "completed")
+}
+
 func TestInstanceDeployWritesSuccessAuditLog(t *testing.T) {
 	agent := newAgentStub()
 	defer agent.Close()
@@ -212,9 +250,21 @@ func TestInstanceDeployWritesSuccessAuditLog(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "completed", result.Status)
-	logs, err := auditRepo.ListByResource(context.Background(), "instance_deploy_task", result.TaskID, 10, 0)
-	require.NoError(t, err)
+	assert.Equal(t, "running", result.Status)
+	assert.NotEmpty(t, result.TaskID)
+	_ = waitDeployTaskStatus(t, service, result.TaskID, "completed")
+
+	// 审计在异步 goroutine 写入，稍等
+	var logs []models.AuditLog
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		logs, err = auditRepo.ListByResource(context.Background(), "instance_deploy_task", result.TaskID, 10, 0)
+		require.NoError(t, err)
+		if len(logs) >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	require.Len(t, logs, 1)
 	assert.Equal(t, "deploy-user", logs[0].UserID)
 	assert.Equal(t, "deploy_instance", logs[0].Operation)
@@ -236,7 +286,13 @@ func TestInstanceDeployDoesNotRetryWithMutatedPortOnExistingDirectory(t *testing
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "failed", result.Status)
+	assert.Equal(t, "running", result.Status)
+	task := waitDeployTaskStatus(t, service, result.TaskID, "failed")
+	assert.Greater(t, task.Progress, 0, "failed deploy should keep last progress")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(agent.calls) == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
 	require.Len(t, agent.calls, 1)
 	config, ok := agent.calls[0].Body["config"].(map[string]interface{})
 	require.True(t, ok)

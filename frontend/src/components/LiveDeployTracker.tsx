@@ -1,14 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Alert, Card, Progress, Space, Timeline, Typography } from 'antd'
 import { LoadingOutlined } from '@ant-design/icons'
-import { clusterDeployApi, pollTaskUntilDone } from '../services/api'
+import { clusterDeployApi, isTaskTerminalStatus, pollTaskUntilDone } from '../services/api'
 import {
   isCompletedDeployStatus,
   isFailedDeployStatus,
   isTerminalDeployStatus,
   normalizeDeployment,
 } from '../services/deployHelpers'
-import { useTaskSSE } from '../services/useTaskSSE'
 
 const { Text } = Typography
 
@@ -28,7 +27,7 @@ export interface LiveDeployTrackerProps {
 }
 
 /**
- * 统一实时进度：SSE + 轮询双通道，安装过程全程可见。
+ * 安装进度：任务与集群均走轮询（单一通道，终态只触发一次）。
  */
 const LiveDeployTracker: React.FC<LiveDeployTrackerProps> = ({
   taskId,
@@ -62,36 +61,7 @@ const LiveDeployTracker: React.FC<LiveDeployTrackerProps> = ({
     onTerminal?.(ok, message)
   }
 
-  useTaskSSE({
-    taskID: taskId || '',
-    enabled: !!taskId && !deploymentId,
-    onProgress: (ev) => {
-      if (typeof ev.progress === 'number') setProgress(ev.progress)
-      if (ev.stage) {
-        setStage(ev.stage)
-        pushLog(`${ev.stage} (${ev.progress}%)`)
-      }
-    },
-    onLog: (ev) => {
-      if (ev.log_line) {
-        setStatusMsg(ev.log_line)
-        pushLog(ev.log_line)
-      }
-    },
-    onStatus: (ev) => {
-      if (ev.status) setStatusMsg(ev.status)
-      const st = String(ev.status || '').toLowerCase()
-      if (['completed', 'success'].includes(st)) {
-        setProgress(100)
-        markTerminal(true, '完成')
-      }
-      if (['failed', 'error', 'cancelled', 'canceled'].includes(st)) {
-        markTerminal(false, ev.status)
-      }
-    },
-  })
-
-  // 任务轮询兜底
+  // 单机任务：只轮询
   useEffect(() => {
     if (!taskId || deploymentId) return
     let cancelled = false
@@ -100,24 +70,26 @@ const LiveDeployTracker: React.FC<LiveDeployTrackerProps> = ({
         if (cancelled) return
         if (typeof t.progress === 'number') setProgress(t.progress)
         if (t.stage) setStage(t.stage)
-        if (t.message) {
-          setStatusMsg(t.message)
-          pushLog(t.stage ? `${t.stage}: ${t.message}` : t.message)
+        const msg = t.message || t.stage
+        if (msg) {
+          setStatusMsg(msg)
+          pushLog(t.stage && t.message ? `${t.stage}: ${t.message}` : msg)
         }
       })
       if (cancelled) return
       const st = String(finalTask?.status || '').toLowerCase()
+      const msg = finalTask?.message || finalTask?.error_message || finalTask?.status
       if (['completed', 'success'].includes(st)) {
         setProgress(100)
-        markTerminal(true, finalTask?.message || '完成')
-      } else if (['failed', 'error', 'cancelled', 'canceled'].includes(st)) {
-        markTerminal(false, finalTask?.message || finalTask?.error_message || '失败')
+        markTerminal(true, msg || '完成')
+      } else if (isTaskTerminalStatus(st)) {
+        markTerminal(false, msg || '失败')
       }
     })()
     return () => { cancelled = true }
   }, [taskId, deploymentId])
 
-  // 集群部署轮询
+  // 集群部署：只轮询
   useEffect(() => {
     if (!deploymentId) return
     let cancelled = false
@@ -132,13 +104,14 @@ const LiveDeployTracker: React.FC<LiveDeployTrackerProps> = ({
           setStatusMsg(msg)
           setStage(raw.current_stage || raw.stage || msg)
           if (i === 0 || i % 2 === 0) pushLog(msg)
-          // 子步骤摘要
           const steps = raw.steps || raw.plan_steps || []
           if (Array.isArray(steps) && steps.length) {
-            const running = steps.find((s: any) => ['running', 'process', 'in_progress'].includes(String(s.status || '').toLowerCase()))
+            const running = steps.find((s: any) =>
+              ['running', 'process', 'in_progress'].includes(String(s.status || '').toLowerCase()),
+            )
             if (running) {
               const line = `${running.name || running.id || '步骤'}: ${running.message || running.status || ''}`
-              setStage(running.name || running.id || stage)
+              setStage(running.name || running.id || '')
               pushLog(line)
             }
           }
