@@ -46,7 +46,8 @@ func (a *VersionAdapter) GetConfigHints(flavor, version string) *VersionConfigHi
 		hints.BinaryName = "mysqld"
 		hints.GTIDMode = true
 		hints.GTIDDomainID = false
-		hints.AuthPlugin = "mysql_native_password"
+		// 不强制 native；需要兼容客户端时由部署显式设置。
+		hints.AuthPlugin = ""
 		hints.MysqlUpgrade = a.needsMysqlUpgrade(mm)
 		hints.InnodbDefaults["innodb_buffer_pool_chunk_size"] = "128M"
 	default:
@@ -54,11 +55,7 @@ func (a *VersionAdapter) GetConfigHints(flavor, version string) *VersionConfigHi
 		hints.GTIDMode = true
 		hints.GTIDDomainID = false
 		hints.MysqlUpgrade = a.needsMysqlUpgrade(mm)
-		if mm == "5.7" {
-			hints.AuthPlugin = ""
-		} else {
-			hints.AuthPlugin = "mysql_native_password"
-		}
+		hints.AuthPlugin = ""
 		hints.InnodbDefaults["innodb_buffer_pool_chunk_size"] = "128M"
 		if mm == "8.4" {
 			hints.Notes = "MySQL 8.4 is LTS until 2032"

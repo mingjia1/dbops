@@ -142,17 +142,15 @@ func NewMySQLConfig(flavor, version string, port, serverID int) *MySQLConfig {
 	case "percona":
 		cfg.GTIDMode = true
 		cfg.EnforceGTID = true
-		cfg.AuthPlugin = "mysql_native_password"
+		// 8.0 默认 caching_sha2；需要 native 时由部署方显式设置 AuthPlugin。
+		cfg.AuthPlugin = ""
 		cfg.BinaryName = "mysqld"
 	default:
 		cfg.GTIDMode = true
 		cfg.EnforceGTID = true
 		cfg.BinaryName = "mysqld"
-		if cfg.MajorMinor == "5.7" {
-			cfg.AuthPlugin = ""
-		} else {
-			cfg.AuthPlugin = "mysql_native_password"
-		}
+		// 不强制 default_authentication_plugin，沿用服务端默认。
+		cfg.AuthPlugin = ""
 	}
 	return cfg
 }
@@ -170,8 +168,9 @@ port={{.Port}}
 server-id={{.ServerID}}
 datadir={{.Datadir}}
 basedir={{.Basedir}}
-socket=/tmp/mysql_{{.Port}}.sock
-pid-file=/tmp/mysql_{{.Port}}.pid
+socket={{.Datadir}}/mysql.sock
+pid-file={{.Datadir}}/mysql.pid
+log-error={{.Datadir}}/error.log
 
 gtid_mode=ON
 enforce_gtid_consistency=ON
@@ -179,14 +178,19 @@ enforce_gtid_consistency=ON
 {{- if .LogBin }}
 log_bin={{.Datadir}}/binlog
 binlog_format={{.BinlogFormat}}
+expire_logs_days=7
+sync_binlog=1
 {{- end }}
 relay_log={{.Datadir}}/relay-log
+relay_log_recovery=ON
 report_host={{.ReportHost}}
 report_port={{.ReportPort}}
 
 character-set-server={{.CharacterSet}}
 max_connections={{.MaxConnections}}
 innodb_buffer_pool_size={{.InnodbBufferPool}}
+innodb_flush_log_at_trx_commit=1
+skip_name_resolve=ON
 `
 
 var mysql80Inline = `[mysqld]
@@ -194,8 +198,9 @@ port={{.Port}}
 server-id={{.ServerID}}
 datadir={{.Datadir}}
 basedir={{.Basedir}}
-socket=/tmp/mysql_{{.Port}}.sock
-pid-file=/tmp/mysql_{{.Port}}.pid
+socket={{.Datadir}}/mysql.sock
+pid-file={{.Datadir}}/mysql.pid
+log-error={{.Datadir}}/error.log
 
 gtid_mode=ON
 enforce_gtid_consistency=ON
@@ -203,14 +208,19 @@ enforce_gtid_consistency=ON
 {{- if .LogBin }}
 log_bin={{.Datadir}}/binlog
 binlog_format={{.BinlogFormat}}
+binlog_expire_logs_seconds=604800
+sync_binlog=1
 {{- end }}
 relay_log={{.Datadir}}/relay-log
+relay_log_recovery=ON
 report_host={{.ReportHost}}
 report_port={{.ReportPort}}
 
 character-set-server={{.CharacterSet}}
 max_connections={{.MaxConnections}}
 innodb_buffer_pool_size={{.InnodbBufferPool}}
+innodb_flush_log_at_trx_commit=1
+skip_name_resolve=ON
 {{- if .AuthPlugin }}
 default_authentication_plugin={{.AuthPlugin}}
 {{- end }}
@@ -228,22 +238,28 @@ port={{.Port}}
 server-id={{.ServerID}}
 datadir={{.Datadir}}
 basedir={{.Basedir}}
-socket=/tmp/mysql_{{.Port}}.sock
-pid-file=/tmp/mysql_{{.Port}}.pid
+socket={{.Datadir}}/mysql.sock
+pid-file={{.Datadir}}/mysql.pid
+log-error={{.Datadir}}/error.log
 
 gtid_domain_id={{.GTIDDomainID}}
 
 {{- if .LogBin }}
 log_bin={{.Datadir}}/binlog
 binlog_format={{.BinlogFormat}}
+expire_logs_days=7
+sync_binlog=1
 {{- end }}
 relay_log={{.Datadir}}/relay-log
+relay_log_recovery=ON
 report_host={{.ReportHost}}
 report_port={{.ReportPort}}
 
 character-set-server={{.CharacterSet}}
 max_connections={{.MaxConnections}}
 innodb_buffer_pool_size={{.InnodbBufferPool}}
+innodb_flush_log_at_trx_commit=1
+skip_name_resolve=ON
 `
 
 var perconaInline = `[mysqld]
@@ -251,8 +267,9 @@ port={{.Port}}
 server-id={{.ServerID}}
 datadir={{.Datadir}}
 basedir={{.Basedir}}
-socket=/tmp/mysql_{{.Port}}.sock
-pid-file=/tmp/mysql_{{.Port}}.pid
+socket={{.Datadir}}/mysql.sock
+pid-file={{.Datadir}}/mysql.pid
+log-error={{.Datadir}}/error.log
 
 gtid_mode=ON
 enforce_gtid_consistency=ON
@@ -260,14 +277,19 @@ enforce_gtid_consistency=ON
 {{- if .LogBin }}
 log_bin={{.Datadir}}/binlog
 binlog_format={{.BinlogFormat}}
+binlog_expire_logs_seconds=604800
+sync_binlog=1
 {{- end }}
 relay_log={{.Datadir}}/relay-log
+relay_log_recovery=ON
 report_host={{.ReportHost}}
 report_port={{.ReportPort}}
 
 character-set-server={{.CharacterSet}}
 max_connections={{.MaxConnections}}
 innodb_buffer_pool_size={{.InnodbBufferPool}}
+innodb_flush_log_at_trx_commit=1
+skip_name_resolve=ON
 {{- if .AuthPlugin }}
 default_authentication_plugin={{.AuthPlugin}}
 {{- end }}

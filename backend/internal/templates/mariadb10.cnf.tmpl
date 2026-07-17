@@ -3,22 +3,28 @@ port={{.Port}}
 server-id={{.ServerID}}
 datadir={{.Datadir}}
 basedir={{.Basedir}}
-socket=/tmp/mysql_{{.Port}}.sock
-pid-file=/tmp/mysql_{{.Port}}.pid
+socket={{.Datadir}}/mysql.sock
+pid-file={{.Datadir}}/mysql.pid
+log-error={{.Datadir}}/error.log
 
 gtid_domain_id={{.GTIDDomainID}}
 
 {{- if .LogBin }}
 log_bin={{.Datadir}}/binlog
 binlog_format={{.BinlogFormat}}
+expire_logs_days=7
+sync_binlog=1
 {{- end }}
 relay_log={{.Datadir}}/relay-log
+relay_log_recovery=ON
 report_host={{.ReportHost}}
 report_port={{.ReportPort}}
 
 character-set-server={{.CharacterSet}}
 max_connections={{.MaxConnections}}
 innodb_buffer_pool_size={{.InnodbBufferPool}}
+innodb_flush_log_at_trx_commit=1
+skip_name_resolve=ON
 
 # MariaDB specific: uses mariadbd instead of mysqld
 # GTID is handled via gtid_domain_id, not gtid_mode/enforce_gtid_consistency

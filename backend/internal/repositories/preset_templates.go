@@ -204,15 +204,15 @@ var presetTemplateParameters = map[string][]models.ParameterTemplateParameter{
 	"large-instance": []models.ParameterTemplateParameter{
 		{
 			ParameterName: "innodb_buffer_pool_size",
-			Value:         "8G",
+			Value:         "16G",
 			DataType:      string(models.DataTypeSize),
-			Description:   "InnoDB 缓冲池大小，建议设置为总内存的 50-70%",
+			Description:   "InnoDB 缓冲池大小，建议设置为总内存的 50-70%（16–64GB 内存约 16G 起）",
 			IsDynamic:     false,
 			Category:      "memory",
 		},
 		{
 			ParameterName: "innodb_log_file_size",
-			Value:         "512M",
+			Value:         "1G",
 			DataType:      string(models.DataTypeSize),
 			Description:   "InnoDB 日志文件大小",
 			IsDynamic:     false,

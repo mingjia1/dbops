@@ -159,10 +159,10 @@ func TestEndToEnd_ConfigRenderer_AllFlavors(t *testing.T) {
 		version string
 		checks  []string
 	}{
-		{"mysql", "5.7.44", []string{"gtid_mode=ON", "server-id=1", "innodb_buffer_pool_size=2G"}},
-		{"mysql", "8.0.36", []string{"gtid_mode=ON", "default_authentication_plugin=mysql_native_password"}},
-		{"mariadb", "10.11.4", []string{"gtid_domain_id=1", "innodb_buffer_pool_size=2G"}},
-		{"percona", "8.0.36-28", []string{"gtid_mode=ON", "default_authentication_plugin=mysql_native_password"}},
+		{"mysql", "5.7.44", []string{"gtid_mode=ON", "server-id=1", "innodb_buffer_pool_size=2G", "sync_binlog=1"}},
+		{"mysql", "8.0.36", []string{"gtid_mode=ON", "sync_binlog=1", "binlog_expire_logs_seconds=604800"}},
+		{"mariadb", "10.11.4", []string{"gtid_domain_id=1", "innodb_buffer_pool_size=2G", "sync_binlog=1"}},
+		{"percona", "8.0.36-28", []string{"gtid_mode=ON", "sync_binlog=1"}},
 	}
 
 	for _, tc := range flavors {

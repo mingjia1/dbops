@@ -1781,6 +1781,7 @@ func (e *TaskExecutor) ExecuteBackup(ctx context.Context, req DeployTaskRequest)
 	case "mysqlbinlog":
 		return e.executeGTIDIncrementalBackup(ctx, config)
 	case "xtrabackup":
+		// 显式 xtrabackup：缺工具即失败，禁止静默降级 mysqldump。
 		return e.executeXtrabackup(ctx, config, false)
 	case "cold_datadir":
 		return e.executeColdDatadirBackup(ctx, config)
@@ -1815,6 +1816,10 @@ func (e *TaskExecutor) selectBackupMethod(ctx context.Context, config BackupConf
 		}
 	}
 	if size > xtrabackupSizeThresholdBytes {
+		// auto 大库优先物理备份；若无 xtrabackup，由调用方走 mysqldump 需显式 method。
+		if _, err := exec.LookPath("xtrabackup"); err != nil {
+			return "mysqldump", nil
+		}
 		return "xtrabackup", nil
 	}
 	return "mysqldump", nil

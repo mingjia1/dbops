@@ -132,7 +132,9 @@ func TestConfigRenderer_MySQL80(t *testing.T) {
 	output, err := r.Render(cfg)
 	require.NoError(t, err)
 	assert.Contains(t, output, "gtid_mode=ON")
-	assert.Contains(t, output, "default_authentication_plugin=mysql_native_password")
+	assert.NotContains(t, output, "default_authentication_plugin=mysql_native_password")
+	assert.Contains(t, output, "sync_binlog=1")
+	assert.Contains(t, output, "socket="+cfg.Datadir+"/mysql.sock")
 }
 
 func TestConfigRenderer_MariaDB(t *testing.T) {
@@ -159,7 +161,9 @@ func TestConfigRenderer_Percona(t *testing.T) {
 	output, err := r.Render(cfg)
 	require.NoError(t, err)
 	assert.Contains(t, output, "gtid_mode=ON")
-	assert.Contains(t, output, "default_authentication_plugin=mysql_native_password")
+	assert.NotContains(t, output, "default_authentication_plugin=mysql_native_password")
+	assert.Contains(t, output, "sync_binlog=1")
+	assert.Contains(t, output, "socket="+cfg.Datadir+"/mysql.sock")
 }
 
 func TestNewMySQLConfig_Defaults(t *testing.T) {

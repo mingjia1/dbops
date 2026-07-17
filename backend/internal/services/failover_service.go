@@ -420,8 +420,10 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 	}
 
 	result.Pass = len(result.BlockingReasons) == 0
-	if req.Force {
-		result.Pass = true
+	// Force 不清除 blocking：仅记 warning，真正强制由执行入口单独处理。
+	if req.Force && !result.Pass {
+		result.Warnings = append(result.Warnings,
+			"force requested but preflight still has blocking reasons; pass remains false")
 	}
 	return result, nil
 }

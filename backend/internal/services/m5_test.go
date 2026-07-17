@@ -25,7 +25,7 @@ func TestVersionAdapter_MySQL80(t *testing.T) {
 
 	assert.Equal(t, "8.0", hints.MajorMinor)
 	assert.True(t, hints.GTIDMode)
-	assert.Equal(t, "mysql_native_password", hints.AuthPlugin)
+	assert.Equal(t, "", hints.AuthPlugin)
 	assert.False(t, hints.MysqlUpgrade)
 }
 
@@ -34,7 +34,7 @@ func TestVersionAdapter_MySQL84(t *testing.T) {
 	hints := a.GetConfigHints("mysql", "8.4.0")
 
 	assert.Equal(t, "8.4", hints.MajorMinor)
-	assert.Equal(t, "mysql_native_password", hints.AuthPlugin)
+	assert.Equal(t, "", hints.AuthPlugin)
 	assert.Contains(t, hints.Notes, "LTS")
 }
 
@@ -64,7 +64,7 @@ func TestVersionAdapter_Percona80(t *testing.T) {
 
 	assert.Equal(t, "mysqld", hints.BinaryName)
 	assert.True(t, hints.GTIDMode)
-	assert.Equal(t, "mysql_native_password", hints.AuthPlugin)
+	assert.Equal(t, "", hints.AuthPlugin)
 	assert.False(t, hints.MysqlUpgrade)
 }
 
