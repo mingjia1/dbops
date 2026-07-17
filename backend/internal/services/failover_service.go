@@ -116,11 +116,12 @@ type VIPSwitchResult struct {
 }
 
 type MasterInfo struct {
-	InstanceID string `json:"instance_id"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Role       string `json:"role"`
-	IsHealthy  bool   `json:"is_healthy"`
+	InstanceID          string `json:"instance_id"`
+	Host                string `json:"host"`
+	Port                int    `json:"port"`
+	Role                string `json:"role"`
+	IsHealthy           bool   `json:"is_healthy"`
+	SecondsBehindMaster int    `json:"seconds_behind_master"`
 }
 
 func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverRequest) (*FailoverResult, error) {
@@ -814,10 +815,11 @@ func (s *FailoverService) StopReplicationOnSlaves(ctx context.Context, slaves []
 			continue
 		}
 
-		_, execErr := db.ExecContext(ctx, "STOP SLAVE IO_THREAD")
+		// 全停 IO+SQL，避免切主窗口 SQL 仍在 apply 导致事务集不一致。
+		_, execErr := db.ExecContext(ctx, "STOP SLAVE")
 		_ = db.Close()
 		if execErr != nil {
-			failures = append(failures, fmt.Sprintf("%s stop slave io: %v", slave.InstanceID, execErr))
+			failures = append(failures, fmt.Sprintf("%s stop slave: %v", slave.InstanceID, execErr))
 		}
 	}
 	if len(failures) > 0 {
