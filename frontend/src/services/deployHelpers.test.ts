@@ -20,9 +20,18 @@ import {
   deploymentPayloadFingerprint,
   normalizeDeployment,
   buildDeployPayload,
+  currentStageIndex,
   type DeployStepView,
   type ArchType,
 } from './deployHelpers'
+
+describe('deployHelpers', () => {
+  it('falls back stage index from progress when backend stage is raw step name', () => {
+    expect(currentStageIndex('部署主节点 10.0.0.1', 35)).toBe(1)
+    expect(currentStageIndex('部署 ProxySQL', 80)).toBe(3)
+    expect(currentStageIndex('集群验证', 10)).toBe(4)
+  })
+})
 
 describe('deploymentPayloadFingerprint', () => {
   const basePayload = {

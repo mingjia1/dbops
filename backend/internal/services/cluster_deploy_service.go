@@ -757,6 +757,10 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
 
+			if s.nodeRepo != nil {
+				_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "running", step.Name, "节点部署中", "")
+			}
+
 			// Real mode: call the agent
 			if s.agentClient == nil {
 				errMsg := "agent client not configured"
@@ -802,6 +806,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 			nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
 			s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
+			if s.nodeRepo != nil {
+				_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, nodeReadyMsg, "")
+			}
 
 		case "verify":
 			s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")

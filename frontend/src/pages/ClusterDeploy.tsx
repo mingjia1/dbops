@@ -15,7 +15,7 @@ import {
   deploymentProgress,
   versionSupportsArch,
   createMgrGroupName, normalizeDeployment, buildDeployPayload, deploymentPayloadFingerprint,
-  STAGE_ORDER,
+  currentStageIndex, STAGE_ORDER,
 } from '../services/deployHelpers'
 import PlanPreviewModal from '../components/PlanPreviewModal'
 import DeployCredentialsModal from '../components/DeployCredentialsModal'

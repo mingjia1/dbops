@@ -1,5 +1,5 @@
 import type { ArchType, DeployResult, DeployStepView } from './deployHelpers'
-import { createMgrGroupName } from './deployHelpers'
+import { applyRelayConfig, createMgrGroupName } from './deployHelpers'
 
 export type FlowNodeKind = 'database' | 'middleware' | 'tool'
 
@@ -99,7 +99,8 @@ export const createDefaultFlowSpec = (arch: ArchType): DeployFlowSpec => {
     ] as DeployFlowMiddlewareNode[],
     tools: [
       { id: 'precheck', kind: 'tool', enabled: true },
-      { id: 'health_check', kind: 'tool', enabled: true },
+      // 默认关闭：后置健康检查失败会使部署标记 partial，用户按需开启。
+      { id: 'health_check', kind: 'tool', enabled: false },
       { id: 'baseline_backup', kind: 'tool', enabled: false, backup_type: 'full' },
     ] as DeployFlowToolNode[],
   }
@@ -192,7 +193,7 @@ export const flowSpecToDeployPayload = (spec: DeployFlowSpec, credential: FlowCr
     baseline_backup: toolPayload(spec, 'baseline_backup'),
   }
 
-  return {
+  return applyRelayConfig({
     cluster_id: spec.cluster_id,
     name: spec.cluster_id,
     cluster_type: spec.arch,
@@ -226,7 +227,7 @@ export const flowSpecToDeployPayload = (spec: DeployFlowSpec, credential: FlowCr
       middleware,
       tools,
     },
-  }
+  })
 }
 
 export const flowSpecToGraphSnapshot = (spec: DeployFlowSpec): DeployFlowSnapshot => {

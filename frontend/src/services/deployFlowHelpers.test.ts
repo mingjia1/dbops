@@ -17,7 +17,18 @@ const withHosts = (spec: DeployFlowSpec): DeployFlowSpec => ({
 })
 
 describe('deploy flow helpers', () => {
-  it('converts HA flow spec to deployment payload with middleware and tools', () => {
+  it('converts renamed relay node in HA flow spec to deployment payload', () => {
+    const spec = withHosts(createDefaultFlowSpec('ha'))
+    spec.nodes[1] = { ...spec.nodes[1], id: 'relay', role: 'replica' }
+
+    const payload = flowSpecToDeployPayload(spec, credential)
+
+    expect(payload.nodes.map((node: any) => node.instance_id)).toContain('relay')
+    expect(payload.nodes.find((node: any) => node.instance_id === 'relay')?.role).toBe('replica')
+    expect(payload.custom.flow_spec.nodes.map((node: any) => node.id)).toContain('relay')
+  })
+
+  it('converts flow spec to universal deploy payload', () => {
     const spec = withHosts(createDefaultFlowSpec('ha'))
     const keepalived = middlewareByID(spec, 'keepalived')
     if (keepalived) {
@@ -42,9 +53,9 @@ describe('deploy flow helpers', () => {
     expect(payload.custom.middleware.proxysql.agent_port).toBe(9091)
     expect(payload.custom.middleware.proxysql.proxy_agent_port).toBe(9091)
     expect(payload.custom.tools.precheck.enabled).toBe(true)
-    expect(payload.custom.tools.health_check.enabled).toBe(true)
+    expect(payload.custom.tools.health_check.enabled).toBe(false)
     expect(payload.custom.flow_spec.nodes.map((node: any) => node.id)).toContain('master')
-    expect(payload.custom.flow_spec.edges.map((edge: any) => edge.target)).toContain('keepalived')
+    expect(payload.custom.flow_spec.nodes.map((node: any) => node.id)).toContain('keepalived')
     expect(payload.custom.flow_spec.repl_password).toBeUndefined()
   })
 

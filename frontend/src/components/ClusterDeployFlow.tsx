@@ -181,6 +181,42 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
     }))
   }
 
+  const addDbNode = () => {
+    setSpec((current) => {
+      const role = current.arch === 'ha' || current.arch === 'mha' ? 'replica' : 'secondary'
+      const count = current.nodes.filter((node) => node.role === role).length + 1
+      const id = `${role}-${count}`
+      const nextPort = current.arch === 'mgr'
+        ? 33060 + current.nodes.length + 1
+        : undefined
+      return {
+        ...current,
+        nodes: [
+          ...current.nodes,
+          {
+            id,
+            kind: 'database',
+            role,
+            mysql_port: current.mysql_port,
+            custom: nextPort ? { local_port: nextPort } : undefined,
+          },
+        ],
+      }
+    })
+  }
+
+  const removeDbNode = (nodeID: string) => {
+    setSpec((current) => {
+      const node = current.nodes.find((item) => item.id === nodeID)
+      if (!node || !['replica', 'secondary'].includes(node.role)) return current
+      return { ...current, nodes: current.nodes.filter((item) => item.id !== nodeID) }
+    })
+    if (selectedNodeID === nodeID) {
+      setSelectedNodeID(null)
+      setDrawerOpen(false)
+    }
+  }
+
   const buildPayload = () => {
     if (!credential.password) {
       message.error('Set the MySQL root password first')
@@ -308,7 +344,12 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                   <Space direction="vertical" size={6} style={{ width: '100%' }}>
                     <Space style={{ justifyContent: 'space-between', width: '100%' }}>
                       <Text>{roleLabel(node.role)}</Text>
-                      <Button size="small" icon={<SettingOutlined />} onClick={() => { setSelectedNodeID(node.id); setDrawerOpen(true) }} />
+                      <Space>
+                        {['replica', 'secondary'].includes(node.role) && (
+                          <Button size="small" danger onClick={() => removeDbNode(node.id)}>删除</Button>
+                        )}
+                        <Button size="small" icon={<SettingOutlined />} onClick={() => { setSelectedNodeID(node.id); setDrawerOpen(true) }} />
+                      </Space>
                     </Space>
                     <Select
                       value={node.host_id}

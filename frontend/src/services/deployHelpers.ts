@@ -31,6 +31,20 @@ export {
 export const STAGE_ORDER = ['环境检查', '安装二进制', '配置集群', '启动节点', '集群验证'] as const
 export type StageName = (typeof STAGE_ORDER)[number]
 
+export function stageIndexFromProgress(progress?: number): number {
+  const p = Math.max(0, Math.min(100, Number(progress || 0)))
+  if (p >= 95) return 4
+  if (p >= 75) return 3
+  if (p >= 50) return 2
+  if (p >= 20) return 1
+  return 0
+}
+
+export function currentStageIndex(stage?: string, progress?: number): number {
+  const idx = stage ? STAGE_ORDER.indexOf(stage as StageName) : -1
+  return idx >= 0 ? idx : stageIndexFromProgress(progress)
+}
+
 export const STEP_TYPE_CN: Record<string, string> = {
   validate: '校验',
   sync: '同步',
@@ -216,6 +230,52 @@ export const normalizeDeployment = (data: any): DeployResult => ({
   steps: Array.isArray(data.steps) ? data.steps : [],
   logs: Array.isArray(data.logs) ? data.logs : [],
 })
+
+export function applyRelayConfig(payload: Record<string, any>) {
+  const custom = payload.custom || (payload.custom = {})
+
+  // Auto-inject relay_url from system settings if configured
+  try {
+    const relayCfg = localStorage.getItem('dbops_relay_server')
+    if (relayCfg) {
+      const parsed = JSON.parse(relayCfg)
+      const platformIp = typeof window !== 'undefined' ? window.location.hostname || '10.3.67.52' : '10.3.67.52'
+      const defaultVersion = parsed.default_version || payload?.mysql?.version || '8.0.36'
+      const resolveVars = (url: string) => {
+        const parts = defaultVersion.split('.')
+        const majorMinor = parts.length >= 2 ? `${parts[0]}.${parts[1]}` : defaultVersion
+        return url
+          .replace(/\$\{platform_ip\}/g, platformIp)
+          .replace(/\$\{version\}/g, defaultVersion)
+          .replace(/\$\{major_minor\}/g, majorMinor)
+          .replace(/\$\{major\}/g, parts[0] || defaultVersion)
+          .replace(/\$\{minor\}/g, parts[1] || '')
+      }
+      // Build relay_url from sources (new format) or legacy relay_url (old format)
+      let relayUrl = ''
+      if (parsed.sources && parsed.sources.length > 0) {
+        const firstEnabled = parsed.sources.find((s: any) => s.enabled && s.url)
+        if (firstEnabled) relayUrl = resolveVars(firstEnabled.url).replace(/\/+$/, '')
+      } else if (parsed.relay_url) {
+        relayUrl = resolveVars(parsed.relay_url).replace(/\/+$/, '')
+      }
+      if (relayUrl && parsed.relay_path) {
+        relayUrl += '/' + parsed.relay_path.replace(/^\/+/, '').replace(/\/+$/, '')
+      }
+      if (relayUrl) custom.relay_url = relayUrl
+      if (typeof window !== 'undefined') custom.relay_upload_url = window.location.origin + '/api/v1/relay/upload'
+    }
+  } catch { /* ignore */ }
+
+  // Propagate relay_url to each node for precheck repair
+  if (custom.relay_url && Array.isArray(payload.nodes)) {
+    for (const node of payload.nodes) {
+      if (!node.relay_url) node.relay_url = custom.relay_url
+    }
+  }
+
+  return payload
+}
 
 /**
  * Build deployment payload from form values.

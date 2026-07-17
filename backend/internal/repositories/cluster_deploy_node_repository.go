@@ -151,6 +151,27 @@ func (r *ClusterDeployNodeRepository) UpdateStatusWithError(ctx context.Context,
 	return err
 }
 
+func (r *ClusterDeployNodeRepository) UpdateStatusByInstanceID(ctx context.Context, deploymentID, instanceID, status, currentStep, message, errorMessage string) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	now := time.Now()
+	query := `UPDATE cluster_deploy_nodes SET status = ?, current_step = ?, message = ?, started_at = COALESCE(started_at, ?)`
+	args := []interface{}{status, currentStep, message, now}
+	if errorMessage != "" {
+		query += `, error_message = ?`
+		args = append(args, errorMessage)
+	}
+	if isFinalNodeStatus(status) {
+		query += `, finished_at = ?`
+		args = append(args, now)
+	}
+	query += ` WHERE deployment_id = ? AND instance_id = ?`
+	args = append(args, deploymentID, instanceID)
+	_, err := r.db.Pool.ExecContext(ctx, query, args...)
+	return err
+}
+
 func (r *ClusterDeployNodeRepository) DeleteByDeploymentID(ctx context.Context, deploymentID string) error {
 	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
