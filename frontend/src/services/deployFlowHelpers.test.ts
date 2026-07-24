@@ -56,6 +56,7 @@ describe('deploy flow helpers', () => {
     expect(payload.custom.tools.health_check.enabled).toBe(false)
     expect(payload.custom.flow_spec.nodes.map((node: any) => node.id)).toContain('master')
     expect(payload.custom.flow_spec.nodes.map((node: any) => node.id)).toContain('keepalived')
+    expect(payload.custom.flow_spec.edges.map((edge: any) => edge.target)).toContain('keepalived')
     expect(payload.custom.flow_spec.repl_password).toBeUndefined()
   })
 
