@@ -212,7 +212,11 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
     setSpec((current) => {
       const node = current.nodes.find((item) => item.id === nodeID)
       if (!node || !['replica', 'secondary'].includes(node.role)) return current
-      return { ...current, nodes: current.nodes.filter((item) => item.id !== nodeID) }
+      const remaining = current.nodes.filter((item) => item.id !== nodeID)
+      const replicaCount = remaining.filter((item) => item.role === node.role).length
+      if (current.arch === 'mgr' && replicaCount < 2) return current
+      if (replicaCount < 1) return current
+      return { ...current, nodes: remaining }
     })
     if (selectedNodeID === nodeID) {
       setSelectedNodeID(null)
