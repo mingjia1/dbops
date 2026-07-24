@@ -232,7 +232,8 @@ export const normalizeDeployment = (data: any): DeployResult => ({
 })
 
 export function applyRelayConfig(payload: Record<string, any>) {
-  const custom = payload.custom || (payload.custom = {})
+  const result: Record<string, any> = { ...payload, custom: { ...(payload.custom || {}) } }
+  const custom = result.custom
 
   // Auto-inject relay_url from system settings if configured
   try {
@@ -269,12 +270,13 @@ export function applyRelayConfig(payload: Record<string, any>) {
 
   // Propagate relay_url to each node for precheck repair
   if (custom.relay_url && Array.isArray(payload.nodes)) {
-    for (const node of payload.nodes) {
-      if (!node.relay_url) node.relay_url = custom.relay_url
-    }
+    result.nodes = payload.nodes.map((node: any) => {
+      if (!node.relay_url) return { ...node, relay_url: custom.relay_url }
+      return node
+    })
   }
 
-  return payload
+  return result
 }
 
 /**
