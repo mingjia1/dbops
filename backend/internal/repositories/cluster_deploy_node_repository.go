@@ -165,6 +165,8 @@ func (r *ClusterDeployNodeRepository) UpdateStatusByInstanceID(ctx context.Conte
 	if isFinalNodeStatus(status) {
 		query += `, finished_at = ?`
 		args = append(args, now)
+	} else {
+		query += `, finished_at = NULL`
 	}
 	query += ` WHERE deployment_id = ? AND instance_id = ?`
 	args = append(args, deploymentID, instanceID)
