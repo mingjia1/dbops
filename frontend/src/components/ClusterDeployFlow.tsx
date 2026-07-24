@@ -189,6 +189,8 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
       const nextPort = current.arch === 'mgr'
         ? 33060 + current.nodes.length + 1
         : undefined
+      const usedHostIds = new Set(current.nodes.map((node) => node.host_id).filter(Boolean))
+      const firstAvailableHost = hosts.find((host) => !usedHostIds.has(host.id))
       return {
         ...current,
         nodes: [
@@ -198,6 +200,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
             kind: 'database',
             role,
             mysql_port: current.mysql_port,
+            host_id: firstAvailableHost?.id,
             custom: nextPort ? { local_port: nextPort } : undefined,
           },
         ],
