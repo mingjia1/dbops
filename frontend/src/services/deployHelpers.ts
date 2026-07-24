@@ -41,7 +41,7 @@ export function stageIndexFromProgress(progress?: number): number {
 }
 
 export function currentStageIndex(stage?: string, progress?: number): number {
-  const idx = stage ? STAGE_ORDER.indexOf(stage as StageName) : -1
+  const idx = stage ? STAGE_ORDER.findIndex((s) => s === stage) : -1
   return idx >= 0 ? idx : stageIndexFromProgress(progress)
 }
 
