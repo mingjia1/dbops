@@ -14,8 +14,8 @@ import {
   isCompletedDeployStatus, isFailedDeployStatus, isPartialDeployStatus, isTerminalDeployStatus,
   deploymentProgress,
   versionSupportsArch,
-  createMgrGroupName, normalizeDeployment, buildDeployPayload, deploymentPayloadFingerprint,
-  currentStageIndex, STAGE_ORDER,
+createMgrGroupName, normalizeDeployment, buildDeployPayload, deploymentPayloadFingerprint,
+  STAGE_ORDER,
 } from '../services/deployHelpers'
 import PlanPreviewModal from '../components/PlanPreviewModal'
 import DeployCredentialsModal from '../components/DeployCredentialsModal'
