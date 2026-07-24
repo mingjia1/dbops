@@ -766,6 +766,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				errMsg := "agent client not configured"
 				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
 				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				if s.nodeRepo != nil {
+					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
+				}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
@@ -785,6 +788,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				errMsg := fmt.Sprintf("agent call failed on %s: %v", targetNode.Host, err)
 				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
 				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+				if s.nodeRepo != nil {
+					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
+				}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
@@ -799,6 +805,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
 				} else {
 					s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				}
+				if s.nodeRepo != nil {
+					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
 				}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
