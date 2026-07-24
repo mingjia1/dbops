@@ -187,7 +187,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
       const count = current.nodes.filter((node) => node.role === role).length + 1
       const id = `${role}-${count}`
       const nextPort = current.arch === 'mgr'
-        ? 33060 + current.nodes.length + 1
+        ? Math.max(33060, ...current.nodes.map((n) => n.custom?.local_port).filter((p): p is number => typeof p === 'number')) + 1
         : undefined
       const usedHostIds = new Set(current.nodes.map((node) => node.host_id).filter(Boolean))
       const firstAvailableHost = hosts.find((host) => !usedHostIds.has(host.id))
