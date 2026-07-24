@@ -757,18 +757,22 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
 
-			if s.nodeRepo != nil {
-				_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "running", step.Name, "节点部署中", "")
+		if s.nodeRepo != nil {
+			if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "running", step.Name, "节点部署中", ""); err != nil {
+				log.Printf("WARN: failed to update node %s status to running: %v", targetNode.ID, err)
 			}
+		}
 
-			// Real mode: call the agent
-			if s.agentClient == nil {
-				errMsg := "agent client not configured"
-				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
-				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
-				if s.nodeRepo != nil {
-					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
+		// Real mode: call the agent
+		if s.agentClient == nil {
+			errMsg := "agent client not configured"
+			s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+			s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
+			if s.nodeRepo != nil {
+				if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg); err != nil {
+					log.Printf("WARN: failed to update node %s status to failed: %v", targetNode.ID, err)
 				}
+			}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
@@ -789,7 +793,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
 				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
 				if s.nodeRepo != nil {
-					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
+					if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg); err != nil {
+						log.Printf("WARN: failed to update node %s status to failed: %v", targetNode.ID, err)
+					}
 				}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
@@ -807,35 +813,43 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 					s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
 				}
 				if s.nodeRepo != nil {
-					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg)
+					if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg); err != nil {
+						log.Printf("WARN: failed to update node %s status to failed: %v", targetNode.ID, err)
+					}
 				}
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
 			}
 
-			nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
-			s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
-			if s.nodeRepo != nil {
-				_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, nodeReadyMsg, "")
+		nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
+		s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
+		if s.nodeRepo != nil {
+			if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, nodeReadyMsg, ""); err != nil {
+				log.Printf("WARN: failed to update node %s status to completed: %v", targetNode.ID, err)
 			}
+		}
 
-		case "verify":
-			s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
-			if step.TargetNode != "" && s.nodeRepo != nil {
-				targetNode := findPlanNode(plan.Nodes, step.TargetNode)
-				if targetNode != nil {
-					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "验证完成", "")
+	case "verify":
+		s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
+		if step.TargetNode != "" && s.nodeRepo != nil {
+			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
+			if targetNode != nil {
+				if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "验证完成", ""); err != nil {
+					log.Printf("WARN: failed to update node %s status to completed: %v", targetNode.ID, err)
 				}
 			}
+		}
 
-		default:
-			s.updateStepStatus(clusterID, step.Name, "completed", "Step completed")
-			if step.TargetNode != "" && s.nodeRepo != nil {
-				targetNode := findPlanNode(plan.Nodes, step.TargetNode)
-				if targetNode != nil {
-					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "Step completed", "")
+	default:
+		s.updateStepStatus(clusterID, step.Name, "completed", "Step completed")
+		if step.TargetNode != "" && s.nodeRepo != nil {
+			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
+			if targetNode != nil {
+				if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "Step completed", ""); err != nil {
+					log.Printf("WARN: failed to update node %s status to completed: %v", targetNode.ID, err)
 				}
 			}
+		}
 		}
 	}
 
