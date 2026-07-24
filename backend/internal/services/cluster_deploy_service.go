@@ -821,9 +821,21 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 		case "verify":
 			s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
+			if step.TargetNode != "" && s.nodeRepo != nil {
+				targetNode := findPlanNode(plan.Nodes, step.TargetNode)
+				if targetNode != nil {
+					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "验证完成", "")
+				}
+			}
 
 		default:
 			s.updateStepStatus(clusterID, step.Name, "completed", "Step completed")
+			if step.TargetNode != "" && s.nodeRepo != nil {
+				targetNode := findPlanNode(plan.Nodes, step.TargetNode)
+				if targetNode != nil {
+					_ = s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, "Step completed", "")
+				}
+			}
 		}
 	}
 
