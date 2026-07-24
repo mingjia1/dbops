@@ -161,6 +161,8 @@ func (r *ClusterDeployNodeRepository) UpdateStatusByInstanceID(ctx context.Conte
 	if errorMessage != "" {
 		query += `, error_message = ?`
 		args = append(args, errorMessage)
+	} else {
+		query += `, error_message = NULL`
 	}
 	if isFinalNodeStatus(status) {
 		query += `, finished_at = ?`
