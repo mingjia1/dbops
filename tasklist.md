@@ -7,7 +7,7 @@
 | 1 | OceanBase | 已最小实现 | 小 | 已完成 flavor 识别和基础标签展示；不含部署编排 |
 | 2 | TiDB | 未实现 | 小 | 当前不提供 flavor 识别、版本目录或部署能力 |
 | 3 | GaussDB(for MySQL) | 已最小实现 | 小到中 | 已完成 MySQL 握手 flavor 识别和基础标签展示；不含云托管部署编排 |
-| 4 | PolarDB(for MySQL) | 未实现 | 小到中 | 按 MySQL 兼容数据库接入；补云托管形态识别和展示 |
+| 4 | PolarDB(for MySQL) | 已最小实现 | 小到中 | 已完成 MySQL 握手 flavor 识别和基础标签展示；不含云托管部署编排 |
 | 5 | TDSQL(MySQL 兼容) | 未实现 | 中 | 增加 flavor、兼容连接探测、实例/拓扑展示、部署边界 |
 | 6 | Kingbase ES | 未实现 | 中 | PostgreSQL 兼容驱动接入、backend 元数据库方言验证、连接/迁移适配 |
 | 7 | openGauss | 未实现 | 中 | PostgreSQL 兼容驱动接入、backend 元数据库方言验证、连接/迁移适配 |

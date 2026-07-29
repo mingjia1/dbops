@@ -366,6 +366,7 @@ const HostDetail: React.FC = () => {
 		if (f === 'mariadb') return <Tag color="purple">MariaDB</Tag>
 		if (f === 'oceanbase') return <Tag color="gold">OceanBase</Tag>
 		if (f === 'gaussdb-mysql') return <Tag color="geekblue">GaussDB for MySQL</Tag>
+		if (f === 'polardb-mysql') return <Tag color="magenta">PolarDB for MySQL</Tag>
         if (f === 'unknown') return <Tag>未知</Tag>
         return f || '-'
       },
