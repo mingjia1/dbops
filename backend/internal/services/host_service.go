@@ -1428,7 +1428,9 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 							if instances[i].Port == port {
 								instances[i].VersionFull = vFull
 								instances[i].Version = normalizeVersionString(vFull)
-								if strings.Contains(strings.ToLower(vFull), "mariadb") {
+								if strings.Contains(strings.ToLower(vFull), "oceanbase") {
+									instances[i].Flavor = "oceanbase"
+								} else if strings.Contains(strings.ToLower(vFull), "mariadb") {
 									instances[i].Flavor = "mariadb"
 								} else if strings.Contains(strings.ToLower(vFull), "tidb") {
 									instances[i].Flavor = "tidb"
@@ -1531,7 +1533,9 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		si.VersionFull = string(rest[:idx])
 		si.Version = normalizeVersionString(si.VersionFull)
 	}
-	if i := strings.Index(strings.ToLower(si.VersionFull), "mariadb"); i >= 0 {
+	if i := strings.Index(strings.ToLower(si.VersionFull), "oceanbase"); i >= 0 {
+		si.Flavor = "oceanbase"
+	} else if i := strings.Index(strings.ToLower(si.VersionFull), "mariadb"); i >= 0 {
 		si.Flavor = "mariadb"
 	} else if i := strings.Index(strings.ToLower(si.VersionFull), "tidb"); i >= 0 {
 		si.Flavor = "tidb"

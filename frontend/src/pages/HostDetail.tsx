@@ -362,9 +362,10 @@ const HostDetail: React.FC = () => {
     {
       title: '类型', dataIndex: 'flavor', key: 'flavor',
       render: (f: string) => {
-        if (f === 'mysql') return <Tag color="success">MySQL</Tag>
-        if (f === 'mariadb') return <Tag color="purple">MariaDB</Tag>
-        if (f === 'tidb') return <Tag color="cyan">TiDB</Tag>
+		if (f === 'mysql') return <Tag color="success">MySQL</Tag>
+		if (f === 'mariadb') return <Tag color="purple">MariaDB</Tag>
+		if (f === 'oceanbase') return <Tag color="gold">OceanBase</Tag>
+		if (f === 'tidb') return <Tag color="cyan">TiDB</Tag>
         if (f === 'unknown') return <Tag>未知</Tag>
         return f || '-'
       },
