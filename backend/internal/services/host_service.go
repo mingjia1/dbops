@@ -1428,12 +1428,12 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 							if instances[i].Port == port {
 								instances[i].VersionFull = vFull
 								instances[i].Version = normalizeVersionString(vFull)
-								if strings.Contains(strings.ToLower(vFull), "oceanbase") {
+								if strings.Contains(strings.ToLower(vFull), "gaussdb") {
+									instances[i].Flavor = "gaussdb-mysql"
+								} else if strings.Contains(strings.ToLower(vFull), "oceanbase") {
 									instances[i].Flavor = "oceanbase"
 								} else if strings.Contains(strings.ToLower(vFull), "mariadb") {
 									instances[i].Flavor = "mariadb"
-								} else if strings.Contains(strings.ToLower(vFull), "tidb") {
-									instances[i].Flavor = "tidb"
 								} else {
 									instances[i].Flavor = "mysql"
 								}
@@ -1533,12 +1533,12 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		si.VersionFull = string(rest[:idx])
 		si.Version = normalizeVersionString(si.VersionFull)
 	}
-	if i := strings.Index(strings.ToLower(si.VersionFull), "oceanbase"); i >= 0 {
+	if i := strings.Index(strings.ToLower(si.VersionFull), "gaussdb"); i >= 0 {
+		si.Flavor = "gaussdb-mysql"
+	} else if i := strings.Index(strings.ToLower(si.VersionFull), "oceanbase"); i >= 0 {
 		si.Flavor = "oceanbase"
 	} else if i := strings.Index(strings.ToLower(si.VersionFull), "mariadb"); i >= 0 {
 		si.Flavor = "mariadb"
-	} else if i := strings.Index(strings.ToLower(si.VersionFull), "tidb"); i >= 0 {
-		si.Flavor = "tidb"
 	} else {
 		si.Flavor = "mysql"
 	}
