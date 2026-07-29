@@ -368,6 +368,7 @@ const HostDetail: React.FC = () => {
 		if (f === 'gaussdb-mysql') return <Tag color="geekblue">GaussDB for MySQL</Tag>
 		if (f === 'polardb-mysql') return <Tag color="magenta">PolarDB for MySQL</Tag>
 		if (f === 'tdsql-mysql') return <Tag color="volcano">TDSQL for MySQL</Tag>
+		if (f === 'kingbase') return <Tag color="cyan">Kingbase ES</Tag>
         if (f === 'unknown') return <Tag>未知</Tag>
         return f || '-'
       },

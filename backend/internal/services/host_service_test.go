@@ -17,6 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractKingbasePort(t *testing.T) {
+	assert.Equal(t, 54322, extractKingbasePort("kingbase -D /data/kingbase -p 54322"))
+	assert.Zero(t, extractKingbasePort("kingbase -D /data/kingbase"))
+}
+
 func TestBatchAgentActionAsyncReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
 	repo := repositories.NewHostRepository(newTestDB(t))

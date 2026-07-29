@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld[_ ]|[m]ysqld$' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1334,8 +1334,15 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		rssKB, _ := strconv.Atoi(fields[2])
 		cmdline := strings.Join(fields[3:], " ")
 
+		flavor := "mysql"
 		port := extractMysqldPort(cmdline)
-		if port == 0 {
+		if strings.Contains(strings.ToLower(cmdline), "kingbase") {
+			flavor = "kingbase"
+			port = extractKingbasePort(cmdline)
+			if port == 0 {
+				port = 54321
+			}
+		} else if port == 0 {
 			port = 3306
 		}
 		if seen[port] {
@@ -1344,10 +1351,13 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		seen[port] = true
 
 		datadir := extractMysqldArg(cmdline, "--datadir=")
+		if flavor == "kingbase" {
+			datadir = extractMysqldArg(cmdline, "-D")
+		}
 		socket := extractMysqldArg(cmdline, "--socket=")
 		configPath := extractMysqldArg(cmdline, "--defaults-file=")
 
-		if datadir == "" {
+		if datadir == "" && flavor == "mysql" {
 			defPaths := []string{
 				fmt.Sprintf("/var/lib/mysql%s", func() string {
 					if port == 3306 {
@@ -1365,7 +1375,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			}
 		}
 
-		if configPath == "" {
+		if configPath == "" && flavor == "mysql" {
 			candidates := []string{
 				fmt.Sprintf("/etc/my.cnf.d/mysqld-%d.cnf", port),
 				fmt.Sprintf("/etc/mysql/mysql-%d.cnf", port),
@@ -1392,6 +1402,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 
 		si := ScannedInstance{
 			Port:       port,
+			Flavor:     flavor,
 			Running:    true,
 			PID:        pid,
 			MemoryMB:   rssKB / 1024,
@@ -1458,6 +1469,18 @@ func extractMysqldPort(cmdline string) int {
 		if strings.HasPrefix(part, "--port=") {
 			if p, err := strconv.Atoi(strings.TrimPrefix(part, "--port=")); err == nil && p > 0 && p <= 65535 {
 				return p
+			}
+		}
+	}
+	return 0
+}
+
+func extractKingbasePort(cmdline string) int {
+	fields := strings.Fields(cmdline)
+	for i, field := range fields {
+		if field == "-p" && i+1 < len(fields) {
+			if port, err := strconv.Atoi(fields[i+1]); err == nil && port > 0 && port <= 65535 {
+				return port
 			}
 		}
 	}
