@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1342,6 +1342,12 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			if port == 0 {
 				port = 54321
 			}
+		} else if strings.Contains(strings.ToLower(cmdline), "gaussdb") {
+			flavor = "opengauss"
+			port = extractKingbasePort(cmdline)
+			if port == 0 {
+				port = 5432
+			}
 		} else if port == 0 {
 			port = 3306
 		}
@@ -1351,7 +1357,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		seen[port] = true
 
 		datadir := extractMysqldArg(cmdline, "--datadir=")
-		if flavor == "kingbase" {
+		if flavor == "kingbase" || flavor == "opengauss" {
 			datadir = extractMysqldArg(cmdline, "-D")
 		}
 		socket := extractMysqldArg(cmdline, "--socket=")

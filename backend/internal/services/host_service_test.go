@@ -19,6 +19,7 @@ import (
 
 func TestExtractKingbasePort(t *testing.T) {
 	assert.Equal(t, 54322, extractKingbasePort("kingbase -D /data/kingbase -p 54322"))
+	assert.Equal(t, 5432, extractKingbasePort("gaussdb -D /data/opengauss -p 5432"))
 	assert.Zero(t, extractKingbasePort("kingbase -D /data/kingbase"))
 }
 
