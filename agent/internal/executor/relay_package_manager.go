@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -341,7 +342,7 @@ func (r *RelayPackageManager) FetchAndCache(ctx context.Context, req RelayPackag
 		Type:         req.Type,
 		Version:      req.Version,
 		OS:           "linux",
-		Arch:         "x86_64",
+		Arch:         runtime.GOARCH,
 		SourceURL:    req.URL,
 		SizeBytes:    fileSize,
 		SHA256:        sha256Hash,

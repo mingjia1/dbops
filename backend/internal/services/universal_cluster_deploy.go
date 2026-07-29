@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -194,6 +195,9 @@ func (s *ClusterDeployService) SubmitClusterDeploy(ctx context.Context, req Univ
 }
 
 func (s *ClusterDeployService) ValidateClusterDeploy(ctx context.Context, req UniversalClusterDeployRequest) (*UniversalDeployValidationResponse, error) {
+	if req.ClusterType == "mgr" && runtime.GOARCH != "amd64" {
+		return nil, fmt.Errorf("MGR deployment is only supported on amd64 hosts at this time")
+	}
 	normalized, err := s.normalizeUniversalDeployRequest(ctx, req)
 	if err != nil {
 		return nil, err

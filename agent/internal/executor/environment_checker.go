@@ -147,6 +147,10 @@ func (e *EnvironmentChecker) checkOS() OSInfo {
 				info.Distribution = "rhel"
 			} else if strings.Contains(content, "Rocky") {
 				info.Distribution = "rocky"
+			} else if strings.Contains(content, "Kylin") || strings.Contains(content, "Kylin Linux") {
+				info.Distribution = "kylin"
+			} else if strings.Contains(content, "UOS") || strings.Contains(content, "UnionTech") {
+				info.Distribution = "uos"
 			}
 
 			// 提取版本号

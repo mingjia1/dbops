@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -60,14 +61,19 @@ func (d *RelayDownloader) tarballName(branch, version string) string {
 	} else if strings.Contains(branch, "percona") {
 		flavor = "percona"
 	}
-
+	arch := "x86_64"
+	if strings.Contains(runtime.GOARCH, "arm64") || strings.Contains(runtime.GOARCH, "aarch64") {
+		arch = "aarch64"
+	} else if strings.Contains(runtime.GOARCH, "loong64") {
+		arch = "loongarch64"
+	}
 	switch flavor {
 	case "mariadb":
-		return fmt.Sprintf("mariadb-%s-linux-x86_64.tar.gz", version)
+		return fmt.Sprintf("mariadb-%s-linux-%s.tar.gz", version, arch)
 	case "percona":
-		return fmt.Sprintf("Percona-Server-%s-Linux.x86_64.glibc2.17.tar.gz", version)
+		return fmt.Sprintf("Percona-Server-%s-Linux.%s.glibc2.17.tar.gz", version, arch)
 	default:
-		return fmt.Sprintf("mysql-%s-linux-glibc2.17-x86_64.tar.xz", version)
+		return fmt.Sprintf("mysql-%s-linux-glibc2.17-%s.tar.xz", version, arch)
 	}
 }
 
