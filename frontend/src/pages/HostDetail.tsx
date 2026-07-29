@@ -370,6 +370,7 @@ const HostDetail: React.FC = () => {
 		if (f === 'tdsql-mysql') return <Tag color="volcano">TDSQL for MySQL</Tag>
 		if (f === 'kingbase') return <Tag color="cyan">Kingbase ES</Tag>
 		if (f === 'opengauss') return <Tag color="blue">openGauss</Tag>
+		if (f === 'highgo') return <Tag color="purple">HighGo</Tag>
         if (f === 'unknown') return <Tag>未知</Tag>
         return f || '-'
       },
