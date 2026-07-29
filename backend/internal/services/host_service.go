@@ -1428,7 +1428,9 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 							if instances[i].Port == port {
 								instances[i].VersionFull = vFull
 								instances[i].Version = normalizeVersionString(vFull)
-								if strings.Contains(strings.ToLower(vFull), "polardb") {
+								if strings.Contains(strings.ToLower(vFull), "tdsql") {
+									instances[i].Flavor = "tdsql-mysql"
+								} else if strings.Contains(strings.ToLower(vFull), "polardb") {
 									instances[i].Flavor = "polardb-mysql"
 								} else if strings.Contains(strings.ToLower(vFull), "gaussdb") {
 									instances[i].Flavor = "gaussdb-mysql"
@@ -1535,7 +1537,9 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		si.VersionFull = string(rest[:idx])
 		si.Version = normalizeVersionString(si.VersionFull)
 	}
-	if i := strings.Index(strings.ToLower(si.VersionFull), "polardb"); i >= 0 {
+	if i := strings.Index(strings.ToLower(si.VersionFull), "tdsql"); i >= 0 {
+		si.Flavor = "tdsql-mysql"
+	} else if i := strings.Index(strings.ToLower(si.VersionFull), "polardb"); i >= 0 {
 		si.Flavor = "polardb-mysql"
 	} else if i := strings.Index(strings.ToLower(si.VersionFull), "gaussdb"); i >= 0 {
 		si.Flavor = "gaussdb-mysql"
