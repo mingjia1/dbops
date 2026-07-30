@@ -58,15 +58,20 @@ type ScaleOutRequest struct {
 }
 
 type ScaleOutResult struct {
-	ClusterID   string   `json:"cluster_id"`
-	NewInstIDs  []string `json:"new_instance_ids"`
-	Status      string   `json:"status"`
-	Message     string   `json:"message"`
+	ClusterID  string   `json:"cluster_id"`
+	NewInstIDs []string `json:"new_instance_ids"`
+	Status     string   `json:"status"`
+	Message    string   `json:"message"`
 }
 
 func (s *ScaleService) ScaleOut(ctx context.Context, req ScaleOutRequest) (*ScaleOutResult, error) {
 	if len(req.NewNodes) == 0 {
 		return nil, fmt.Errorf("at least one new node is required")
+	}
+	// Scale-out provisions new nodes through the MySQL kernel and architecture
+	// plugins. Refuse engines that have no such plugins before touching any host.
+	if err := RequireCapability(resolveClusterFlavor(ctx, s.instRepo, req.ClusterID), CapScale); err != nil {
+		return nil, err
 	}
 
 	creds, err := s.orchestrator.ensureCredentials(ctx, DeployOrchestratorRequest{
@@ -313,10 +318,10 @@ type ScaleInRequest struct {
 }
 
 type ScaleInResult struct {
-	ClusterID   string `json:"cluster_id"`
-	RemovedID   string `json:"removed_id"`
-	Status      string `json:"status"`
-	Message     string `json:"message"`
+	ClusterID string `json:"cluster_id"`
+	RemovedID string `json:"removed_id"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
 }
 
 func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleInResult, error) {
@@ -326,6 +331,16 @@ func (s *ScaleService) ScaleIn(ctx context.Context, req ScaleInRequest) (*ScaleI
 
 	if req.IsPrimary {
 		return nil, fmt.Errorf("cannot remove primary node directly: perform role switch first")
+	}
+
+	// Scale-in runs the architecture plugin's leave handler and then deletes the
+	// instance record. Refuse engines with no such plugin before either happens.
+	flavor := resolveInstanceFlavor(ctx, s.instRepo, req.RemoveNodeID)
+	if flavor == "" {
+		flavor = resolveClusterFlavor(ctx, s.instRepo, req.ClusterID)
+	}
+	if err := RequireCapability(flavor, CapScale); err != nil {
+		return nil, err
 	}
 
 	if req.ArchType != "" && req.ArchType != "single" {
@@ -403,6 +418,16 @@ type RebuildResult struct {
 
 func (s *ScaleService) RebuildNode(ctx context.Context, req RebuildRequest) (*RebuildResult, error) {
 	start := time.Now()
+
+	// Node rebuild reprovisions data through the MySQL kernel plugin. Refuse
+	// engines with no such plugin before any credential or host work.
+	flavor := resolveInstanceFlavor(ctx, s.instRepo, req.InstanceID)
+	if flavor == "" {
+		flavor = resolveClusterFlavor(ctx, s.instRepo, req.ClusterID)
+	}
+	if err := RequireCapability(flavor, CapNodeRebuild); err != nil {
+		return nil, err
+	}
 
 	creds, err := s.orchestrator.ensureCredentials(ctx, DeployOrchestratorRequest{
 		ClusterID: req.ClusterID,

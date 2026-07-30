@@ -24,12 +24,12 @@ func NewRebuildService(pluginExec *plugins.Executor, vault *CredentialVault, ins
 }
 
 type RebuildServiceRequest struct {
-	ClusterID   string
-	InstanceID  string
-	Flavor      string
-	ArchType    string
-	EncKey      string
-	Node        OrchestratorNode
+	ClusterID  string
+	InstanceID string
+	Flavor     string
+	ArchType   string
+	EncKey     string
+	Node       OrchestratorNode
 }
 
 type RebuildServiceResult struct {
@@ -42,6 +42,16 @@ type RebuildServiceResult struct {
 
 func (s *RebuildService) RebuildNode(ctx context.Context, req RebuildServiceRequest) (*RebuildServiceResult, error) {
 	start := time.Now()
+
+	// This path calls RunTeardown before RunExecute, destroying the node's data.
+	// The capability check must therefore happen before anything else runs.
+	flavor := resolveInstanceFlavor(ctx, s.instRepo, req.InstanceID)
+	if flavor == "" {
+		flavor = resolveClusterFlavor(ctx, s.instRepo, req.ClusterID)
+	}
+	if err := RequireCapability(flavor, CapNodeRebuild); err != nil {
+		return nil, err
+	}
 
 	creds, err := s.loadCredentials(ctx, req.ClusterID, req.EncKey)
 	if err != nil {

@@ -510,6 +510,13 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
+	// Logical migration drives mysqldump/mysqlpump. Refuse engines whose dump
+	// tooling and SQL dialect differ.
+	if err := RequireCapability(instance.Version.Flavor, CapLogicalUpgrade); err != nil {
+		s.auditUpgrade(ctx, "execute_logical_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	if req.Parallelism == 0 {
 		req.Parallelism = 4
 	}
@@ -611,6 +618,13 @@ type rollingUpgradeNodeConfig struct {
 
 func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteRollingUpgradeRequest) (*ExecuteRollingUpgradeResponse, error) {
 	if _, err := s.requireKnownPlan(req.PlanID, "", "rolling"); err != nil {
+		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
+	// Rolling upgrade swaps MySQL binaries node by node; normalizeRequestedTargetVersion
+	// below hard-codes the mysql flavor, so this path is MySQL-only by design.
+	if err := RequireCapability(resolveClusterFlavor(ctx, s.instanceRepo, req.ClusterID), CapInPlaceUpgrade); err != nil {
 		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
 			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
 		return nil, err

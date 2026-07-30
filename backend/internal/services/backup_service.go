@@ -679,6 +679,11 @@ func (s *BackupService) RestoreBackup(ctx context.Context, req RestoreBackupRequ
 	if err != nil {
 		return nil, fmt.Errorf("target instance not found: %w", err)
 	}
+	// Physical restore overwrites the target datadir with an xtrabackup image.
+	// Refuse engines that cannot consume it, before touching the target.
+	if err := RequireCapability(target.Version.Flavor, CapPhysicalBackup); err != nil {
+		return nil, err
+	}
 	conn, err := s.instRepo.GetConnection(ctx, req.TargetInstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("target instance connection not found: %w", err)

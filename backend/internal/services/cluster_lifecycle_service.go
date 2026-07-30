@@ -10,10 +10,10 @@ import (
 )
 
 type ClusterLifecycleService struct {
-	orchestrator   *DeployOrchestrator
-	pluginExec     *plugins.Executor
+	orchestrator    *DeployOrchestrator
+	pluginExec      *plugins.Executor
 	credentialVault *CredentialVault
-	instRepo       InstanceRepositoryInterface
+	instRepo        InstanceRepositoryInterface
 }
 
 func NewClusterLifecycleService(
@@ -39,10 +39,10 @@ type DestroyRequest struct {
 }
 
 type DestroyResult struct {
-	ClusterID string `json:"cluster_id"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	DurationMs int64 `json:"duration_ms"`
+	ClusterID  string `json:"cluster_id"`
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 func (s *ClusterLifecycleService) DestroyCluster(ctx context.Context, req DestroyRequest) (*DestroyResult, error) {
@@ -93,13 +93,19 @@ type RebuildClusterRequest struct {
 }
 
 type RebuildClusterResult struct {
-	ClusterID string             `json:"cluster_id"`
-	Status    string             `json:"status"`
-	Message   string             `json:"message"`
+	ClusterID string              `json:"cluster_id"`
+	Status    string              `json:"status"`
+	Message   string              `json:"message"`
 	Deploy    *OrchestratorResult `json:"deploy,omitempty"`
 }
 
 func (s *ClusterLifecycleService) RebuildCluster(ctx context.Context, req RebuildClusterRequest) (*RebuildClusterResult, error) {
+	// Rebuild destroys the cluster and redeploys it through the MySQL plugins.
+	// Gate before DestroyCluster so a refused engine loses nothing.
+	if err := RequireCapability(resolveClusterFlavor(ctx, s.instRepo, req.OriginalReq.ClusterID), CapNodeRebuild); err != nil {
+		return nil, err
+	}
+
 	destroyReq := DestroyRequest{
 		ClusterID: req.OriginalReq.ClusterID,
 		Flavor:    req.OriginalReq.Flavor,

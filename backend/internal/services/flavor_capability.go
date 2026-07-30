@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -28,28 +29,50 @@ const (
 	CapInPlaceUpgrade Capability = "upgrade_inplace"
 	// CapSQLHealthCheck covers establishing a SQL connection for health checks.
 	CapSQLHealthCheck Capability = "health_sql"
+	// CapScale covers adding and removing cluster nodes, which drives the MySQL
+	// kernel and architecture plugins.
+	CapScale Capability = "scale"
+	// CapNodeRebuild covers tearing down and reprovisioning a node's data via the
+	// MySQL kernel plugin.
+	CapNodeRebuild Capability = "node_rebuild"
+	// CapInstanceDeploy covers deploying a single MySQL instance onto a host.
+	CapInstanceDeploy Capability = "instance_deploy"
+	// CapLogicalUpgrade covers mysqldump/mysqlpump based logical upgrade migration.
+	CapLogicalUpgrade Capability = "upgrade_logical"
+	// CapParameterTemplate covers pushing my.cnf parameter templates to an instance.
+	CapParameterTemplate Capability = "parameter_template"
 )
 
 // capabilityLabels provides human-readable Chinese names used in error messages.
 var capabilityLabels = map[Capability]string{
-	CapReplication:    "主从复制搭建",
-	CapFailover:       "故障切换",
-	CapClusterDeploy:  "集群架构部署",
-	CapPhysicalBackup: "物理备份 (xtrabackup)",
-	CapInPlaceUpgrade: "原地版本升级",
-	CapSQLHealthCheck: "SQL 连接健康检测",
+	CapReplication:       "主从复制搭建",
+	CapFailover:          "故障切换",
+	CapClusterDeploy:     "集群架构部署",
+	CapPhysicalBackup:    "物理备份/恢复 (xtrabackup)",
+	CapInPlaceUpgrade:    "原地版本升级",
+	CapSQLHealthCheck:    "SQL 连接健康检测",
+	CapScale:             "集群节点扩缩容",
+	CapNodeRebuild:       "节点重建",
+	CapInstanceDeploy:    "单实例部署",
+	CapLogicalUpgrade:    "逻辑迁移升级",
+	CapParameterTemplate: "参数模板下发",
 }
 
 // mysqlProtocolCapabilities is the capability set granted to engines that speak
 // the MySQL wire protocol and accept MySQL-compatible administrative SQL.
 func mysqlProtocolCapabilities() map[Capability]bool {
 	return map[Capability]bool{
-		CapReplication:    true,
-		CapFailover:       true,
-		CapClusterDeploy:  true,
-		CapPhysicalBackup: true,
-		CapInPlaceUpgrade: true,
-		CapSQLHealthCheck: true,
+		CapReplication:       true,
+		CapFailover:          true,
+		CapClusterDeploy:     true,
+		CapPhysicalBackup:    true,
+		CapInPlaceUpgrade:    true,
+		CapSQLHealthCheck:    true,
+		CapScale:             true,
+		CapNodeRebuild:       true,
+		CapInstanceDeploy:    true,
+		CapLogicalUpgrade:    true,
+		CapParameterTemplate: true,
 	}
 }
 
@@ -59,12 +82,17 @@ func mysqlProtocolCapabilities() map[Capability]bool {
 // no usable Go driver at all and can only be probed over TCP.
 func tieredOnboardingCapabilities(sqlHealthCheck bool) map[Capability]bool {
 	return map[Capability]bool{
-		CapReplication:    false,
-		CapFailover:       false,
-		CapClusterDeploy:  false,
-		CapPhysicalBackup: false,
-		CapInPlaceUpgrade: false,
-		CapSQLHealthCheck: sqlHealthCheck,
+		CapReplication:       false,
+		CapFailover:          false,
+		CapClusterDeploy:     false,
+		CapPhysicalBackup:    false,
+		CapInPlaceUpgrade:    false,
+		CapSQLHealthCheck:    sqlHealthCheck,
+		CapScale:             false,
+		CapNodeRebuild:       false,
+		CapInstanceDeploy:    false,
+		CapLogicalUpgrade:    false,
+		CapParameterTemplate: false,
 	}
 }
 
@@ -133,4 +161,67 @@ func RequireCapability(flavor string, capability Capability) error {
 	}
 	return fmt.Errorf("数据库类型 %s 不支持%s (capability %s); 该类型当前仅支持纳管、健康检测与拓扑展示",
 		normalizeFlavor(flavor), label, capability)
+}
+
+// allCapabilities lists every capability the platform gates on. It exists so that
+// tests can assert the matrix is complete for every registered flavor.
+func allCapabilities() []Capability {
+	return []Capability{
+		CapReplication,
+		CapFailover,
+		CapClusterDeploy,
+		CapPhysicalBackup,
+		CapInPlaceUpgrade,
+		CapSQLHealthCheck,
+		CapScale,
+		CapNodeRebuild,
+		CapInstanceDeploy,
+		CapLogicalUpgrade,
+		CapParameterTemplate,
+	}
+}
+
+// resolveClusterFlavor returns the engine flavor of a cluster by hydrating its
+// instances. ListByClusterID does not populate the version record, so each
+// instance is re-read through GetByID.
+//
+// An empty result means "unknown", which HasCapability treats as
+// MySQL-compatible, so pre-existing clusters are never blocked.
+func resolveClusterFlavor(ctx context.Context, repo InstanceRepositoryInterface, clusterID string) string {
+	if repo == nil || strings.TrimSpace(clusterID) == "" {
+		return ""
+	}
+	items, err := repo.ListByClusterID(ctx, clusterID)
+	if err != nil {
+		return ""
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if v := strings.ToLower(strings.TrimSpace(item.Version.Flavor)); v != "" {
+			return v
+		}
+		full, err := repo.GetByID(ctx, item.ID)
+		if err != nil || full == nil {
+			continue
+		}
+		if v := strings.ToLower(strings.TrimSpace(full.Version.Flavor)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// resolveInstanceFlavor returns the engine flavor of a single instance, or an
+// empty string when it cannot be determined.
+func resolveInstanceFlavor(ctx context.Context, repo InstanceRepositoryInterface, instanceID string) string {
+	if repo == nil || strings.TrimSpace(instanceID) == "" {
+		return ""
+	}
+	inst, err := repo.GetByID(ctx, instanceID)
+	if err != nil || inst == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(inst.Version.Flavor))
 }

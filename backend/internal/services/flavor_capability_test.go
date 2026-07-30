@@ -11,20 +11,32 @@ func TestHasCapabilityTreatsUnknownAndEmptyFlavorAsMySQL(t *testing.T) {
 	// Instances registered before flavor persistence carry an empty flavor and
 	// must keep their full capability set.
 	for _, flavor := range []string{"", "   ", "some-future-engine"} {
-		assert.True(t, HasCapability(flavor, CapFailover), "flavor %q should allow failover", flavor)
-		assert.True(t, HasCapability(flavor, CapReplication), "flavor %q should allow replication", flavor)
-		assert.True(t, HasCapability(flavor, CapClusterDeploy), "flavor %q should allow cluster deploy", flavor)
-		assert.True(t, HasCapability(flavor, CapPhysicalBackup), "flavor %q should allow physical backup", flavor)
-		assert.True(t, HasCapability(flavor, CapInPlaceUpgrade), "flavor %q should allow in-place upgrade", flavor)
-		assert.True(t, HasCapability(flavor, CapSQLHealthCheck), "flavor %q should allow SQL health check", flavor)
+		for _, capability := range allCapabilities() {
+			assert.True(t, HasCapability(flavor, capability),
+				"flavor %q should allow %s", flavor, capability)
+		}
 	}
 }
 
 func TestHasCapabilityForMySQLCompatibleFlavors(t *testing.T) {
 	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
-		assert.True(t, HasCapability(flavor, CapFailover), "%s should allow failover", flavor)
-		assert.True(t, HasCapability(flavor, CapClusterDeploy), "%s should allow cluster deploy", flavor)
-		assert.True(t, HasCapability(flavor, CapSQLHealthCheck), "%s should allow SQL health check", flavor)
+		for _, capability := range allCapabilities() {
+			assert.True(t, HasCapability(flavor, capability), "%s should allow %s", flavor, capability)
+		}
+	}
+}
+
+func TestEveryCapabilityIsLabelledAndRegistered(t *testing.T) {
+	// A capability without a label produces an opaque error message, and a
+	// capability missing from a flavor's map silently reads as false.
+	for _, capability := range allCapabilities() {
+		assert.NotEmpty(t, capabilityLabels[capability], "capability %s needs a label", capability)
+	}
+	for flavor, caps := range flavorCapabilities {
+		for _, capability := range allCapabilities() {
+			_, ok := caps[capability]
+			assert.True(t, ok, "flavor %s is missing an explicit entry for %s", flavor, capability)
+		}
 	}
 }
 
@@ -44,11 +56,15 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.flavor, func(t *testing.T) {
-			assert.False(t, HasCapability(tt.flavor, CapFailover), "%s must not allow failover", tt.flavor)
-			assert.False(t, HasCapability(tt.flavor, CapReplication), "%s must not allow replication", tt.flavor)
-			assert.False(t, HasCapability(tt.flavor, CapClusterDeploy), "%s must not allow cluster deploy", tt.flavor)
-			assert.False(t, HasCapability(tt.flavor, CapPhysicalBackup), "%s must not allow physical backup", tt.flavor)
-			assert.False(t, HasCapability(tt.flavor, CapInPlaceUpgrade), "%s must not allow in-place upgrade", tt.flavor)
+			// Every MySQL-specific operation must be refused regardless of whether
+			// the engine has a usable driver.
+			for _, capability := range allCapabilities() {
+				if capability == CapSQLHealthCheck {
+					continue
+				}
+				assert.False(t, HasCapability(tt.flavor, capability),
+					"%s must not allow %s", tt.flavor, capability)
+			}
 			assert.Equal(t, tt.wantSQLHealtheck, HasCapability(tt.flavor, CapSQLHealthCheck))
 		})
 	}

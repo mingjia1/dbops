@@ -156,6 +156,13 @@ func (s *ParameterTemplateService) Apply(ctx context.Context, req ApplyParameter
 	if s.instanceService == nil {
 		return nil, fmt.Errorf("instance service is not configured")
 	}
+	// Templates carry MySQL system variables applied via SET GLOBAL / my.cnf.
+	// Refuse engines with a different configuration model.
+	if instance, err := s.instanceService.GetByID(ctx, req.InstanceID); err == nil && instance != nil {
+		if err := RequireCapability(instance.Version.Flavor, CapParameterTemplate); err != nil {
+			return nil, err
+		}
+	}
 	params := req.Parameters
 	if len(params) == 0 {
 		template, err := s.GetByID(ctx, req.TemplateID)

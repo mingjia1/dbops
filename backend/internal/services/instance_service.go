@@ -365,6 +365,13 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	// Check if version already exists - update instead of creating new record
 	existingVersion, _ := s.repo.GetVersion(ctx, id)
 
+	// Non-MySQL engines cannot answer "SELECT @@version, @@version_comment", which
+	// is what the agent's version-detect task runs. Dispatch them through their own
+	// connector instead of sending MySQL syntax to a PostgreSQL or Dameng server.
+	if !isMySQLProtocolFlavor(instance.Version.Flavor) {
+		return s.detectVersionViaConnector(ctx, id, instance.Version.Flavor, conn, existingVersion)
+	}
+
 	// P0: 之前返 error "agent not yet wired", 阻断所有升级路径.
 	// 修: 调 agent POST /agent/tasks/version-detect, 真跑 SELECT @@version, @@version_comment.
 	if s.agentClient == nil {
@@ -492,11 +499,114 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	return versionRow, nil
 }
 
+// detectVersionViaConnector reads the server version of a non-MySQL engine through
+// its DBConnector, which issues the engine's own version query (for example
+// "SELECT version()" on PostgreSQL-compatible engines).
+//
+// Engines with no usable Go driver (Dameng DM, GBase 8s) return an explicit
+// unsupported error rather than an opaque SQL failure from the agent.
+func (s *InstanceService) detectVersionViaConnector(
+	ctx context.Context,
+	id string,
+	flavor string,
+	conn *models.InstanceConnection,
+	existingVersion *models.InstanceVersion,
+) (*models.InstanceVersion, error) {
+	normalized := normalizeFlavor(flavor)
+	if !HasCapability(flavor, CapSQLHealthCheck) {
+		return nil, fmt.Errorf("数据库类型 %s 无可用驱动, 不支持自动版本检测; 请手动维护实例版本信息", normalized)
+	}
+	if strings.TrimSpace(conn.Host) == "" {
+		return nil, fmt.Errorf("instance %s has no host/port to probe", id)
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+	}
+
+	connector, err := NewConnector(ConnectorTarget{
+		Flavor:   flavor,
+		Host:     conn.Host,
+		Port:     conn.Port,
+		Username: conn.Username,
+		Password: password,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("version detect for %s failed: %w", normalized, err)
+	}
+	defer connector.Close()
+
+	fullVersion, err := connector.ServerVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("version detect for %s failed: %w", normalized, err)
+	}
+	fullVersion = strings.TrimSpace(fullVersion)
+
+	versionRow := &models.InstanceVersion{
+		InstanceID:  id,
+		Flavor:      normalized,
+		Version:     shortVersionFromBanner(fullVersion),
+		FullVersion: fullVersion,
+		ReleaseDate: time.Now(),
+		EOLDate:     time.Now().AddDate(3, 0, 0),
+		Features:    "auto-detected via " + normalized + " connector",
+	}
+	if existingVersion != nil {
+		existingVersion.Flavor = versionRow.Flavor
+		existingVersion.Version = versionRow.Version
+		existingVersion.FullVersion = versionRow.FullVersion
+		existingVersion.IsLTS = versionRow.IsLTS
+		existingVersion.ReleaseDate = versionRow.ReleaseDate
+		existingVersion.EOLDate = versionRow.EOLDate
+		existingVersion.Features = versionRow.Features
+		existingVersion.Engines = versionRow.Engines
+		if err := s.repo.UpdateVersion(ctx, existingVersion); err != nil {
+			return nil, fmt.Errorf("failed to update version: %w", err)
+		}
+		return existingVersion, nil
+	}
+	if err := s.repo.CreateVersion(ctx, versionRow); err != nil {
+		return nil, fmt.Errorf("failed to create version: %w", err)
+	}
+	return versionRow, nil
+}
+
+// shortVersionFromBanner extracts a dotted numeric version from a server version
+// banner. PostgreSQL-compatible engines return prose such as
+// "KingbaseES V008R006C008B0014 on x86_64-pc-linux-gnu" or
+// "PostgreSQL 9.2.4 (openGauss 5.0.0 build 123) on x86_64", so the first
+// dotted-numeric token is used and the full banner is preserved separately.
+func shortVersionFromBanner(banner string) string {
+	for _, token := range strings.Fields(banner) {
+		trimmed := strings.Trim(token, "(),;")
+		if !strings.Contains(trimmed, ".") {
+			continue
+		}
+		digitsOnly := true
+		for _, c := range trimmed {
+			if (c < '0' || c > '9') && c != '.' {
+				digitsOnly = false
+				break
+			}
+		}
+		if digitsOnly && trimmed != "." {
+			return trimmed
+		}
+	}
+	return banner
+}
+
 func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		s.auditDeploy(ctx, id, "", "failed", 0, "", fmt.Sprintf("instance not found: %v", err), nil)
 		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	// Instance deployment installs and initializes a MySQL server. Refuse engines
+	// the platform cannot install before creating a task.
+	if err := RequireCapability(instance.Version.Flavor, CapInstanceDeploy); err != nil {
+		s.auditDeploy(ctx, id, "", "failed", 0, "", err.Error(), nil)
+		return nil, err
 	}
 
 	conn, err := s.repo.GetConnection(ctx, id)
@@ -799,6 +909,10 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 func (s *InstanceService) ReplicationStatus(ctx context.Context, id string) (map[string]interface{}, error) {
 	instance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	// Replication status reads SHOW SLAVE STATUS and MySQL replication variables.
+	if err := RequireCapability(instance.Version.Flavor, CapReplication); err != nil {
 		return nil, err
 	}
 	conn, err := s.repo.GetConnection(ctx, id)
