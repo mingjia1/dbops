@@ -27,6 +27,56 @@ func TestExtractKingbasePort(t *testing.T) {
 	assert.Zero(t, extractKingbasePort("gclusterd -D /opt/gbase/gcluster"))
 }
 
+func TestExtractDMIniPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmdline string
+		want    string
+	}{
+		{
+			name:    "positional dm.ini path",
+			cmdline: "/opt/dmdbms/bin/dmserver /opt/dmdbms/data/DAMENG/dm.ini -noconsole",
+			want:    "/opt/dmdbms/data/DAMENG/dm.ini",
+		},
+		{
+			name:    "PATH= form",
+			cmdline: "/opt/dmdbms/bin/dmserver PATH=/opt/dmdbms/data/DM01/dm.ini -noconsole",
+			want:    "/opt/dmdbms/data/DM01/dm.ini",
+		},
+		{
+			name:    "no ini on command line",
+			cmdline: "/opt/dmdbms/bin/dmserver -noconsole",
+			want:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractDMIniPath(tt.cmdline))
+		})
+	}
+}
+
+func TestParseDMPortNum(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want int
+	}{
+		{name: "spaced assignment", line: "PORT_NUM = 5237", want: 5237},
+		{name: "tight assignment", line: "PORT_NUM=5236", want: 5236},
+		{name: "leading whitespace", line: "   PORT_NUM   =   5238   ", want: 5238},
+		{name: "trailing comment", line: "PORT_NUM = 5239  #instance port", want: 5239},
+		{name: "no assignment", line: "PORT_NUM", want: 0},
+		{name: "non numeric", line: "PORT_NUM = auto", want: 0},
+		{name: "out of range", line: "PORT_NUM = 99999", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseDMPortNum(tt.line))
+		})
+	}
+}
+
 func TestIsMySQLProtocolFlavor(t *testing.T) {
 	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
 		assert.True(t, isMySQLProtocolFlavor(flavor), "%s speaks the MySQL protocol", flavor)

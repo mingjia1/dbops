@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)|[d]mserver([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1372,6 +1372,18 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = gbase8aNodeDefaultPort
+			}
+		} else if strings.Contains(strings.ToLower(cmdline), "dmserver") {
+			// Dameng DM takes its dm.ini path as a positional argument and reads
+			// PORT_NUM from it; the port never appears on the command line.
+			flavor = "dm"
+			port = 0
+			if iniPath := extractDMIniPath(cmdline); iniPath != "" {
+				out, _ := runSSHCommand(client, fmt.Sprintf("grep -i '^[[:space:]]*PORT_NUM' %s 2>/dev/null | head -1", shellQuotePath(iniPath)))
+				port = parseDMPortNum(out)
+			}
+			if port == 0 {
+				port = dmDefaultPort
 			}
 		} else if port == 0 {
 			port = 3306
@@ -1502,6 +1514,47 @@ const (
 	gbase8aClusterDefaultPort = 5258
 	gbase8aNodeDefaultPort    = 5050
 )
+
+// dmDefaultPort is Dameng DM's default listener. DM reads PORT_NUM from dm.ini,
+// so this is only the fallback when dm.ini cannot be read.
+const dmDefaultPort = 5236
+
+// extractDMIniPath returns the dm.ini path Dameng DM was started with. dmserver
+// takes it as a positional argument, either bare or via the PATH= form.
+func extractDMIniPath(cmdline string) string {
+	for _, part := range strings.Fields(cmdline) {
+		candidate := part
+		if idx := strings.Index(strings.ToUpper(candidate), "PATH="); idx == 0 {
+			candidate = candidate[len("PATH="):]
+		}
+		if strings.HasSuffix(strings.ToLower(candidate), "dm.ini") {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// parseDMPortNum extracts the port from a dm.ini PORT_NUM line, e.g.
+// "PORT_NUM = 5237" or "PORT_NUM=5237  #comment".
+func parseDMPortNum(line string) int {
+	idx := strings.Index(line, "=")
+	if idx < 0 {
+		return 0
+	}
+	value := strings.TrimSpace(line[idx+1:])
+	digits := strings.Builder{}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			break
+		}
+		digits.WriteRune(c)
+	}
+	port, err := strconv.Atoi(digits.String())
+	if err != nil || port <= 0 || port > 65535 {
+		return 0
+	}
+	return port
+}
 
 // mysqlProtocolFlavors lists engines that speak the MySQL wire protocol and can
 // therefore be probed with a MySQL handshake.
