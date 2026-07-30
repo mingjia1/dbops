@@ -255,3 +255,6 @@ r2.md
 bin/ubuntu/*.tar.gz
 backend/packages/mysql/
 tree-sitter.wasm
+tasklist.md
+kilo
+.kilo/
