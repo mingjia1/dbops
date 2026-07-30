@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1359,6 +1359,20 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			// listener port lives in sqlhosts, not on the command line.
 			flavor = "gbase8s"
 			port = gbase8sDefaultPort
+		} else if strings.Contains(strings.ToLower(cmdline), "gclusterd") {
+			// GBase 8a MPP coordinator node (gcluster layer).
+			flavor = "gbase8a"
+			port = extractKingbasePort(cmdline)
+			if port == 0 {
+				port = gbase8aClusterDefaultPort
+			}
+		} else if strings.Contains(strings.ToLower(cmdline), "gbased") {
+			// GBase 8a MPP data node (gnode layer).
+			flavor = "gbase8a"
+			port = extractKingbasePort(cmdline)
+			if port == 0 {
+				port = gbase8aNodeDefaultPort
+			}
 		} else if port == 0 {
 			port = 3306
 		}
@@ -1368,7 +1382,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		seen[port] = true
 
 		datadir := extractMysqldArg(cmdline, "--datadir=")
-		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" {
+		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" || flavor == "gbase8a" {
 			datadir = extractMysqldArg(cmdline, "-D")
 		}
 		socket := extractMysqldArg(cmdline, "--socket=")
@@ -1481,6 +1495,13 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 // port. GBase 8s reads its listener from sqlhosts rather than argv, so this is a
 // fallback used when the command line carries no port.
 const gbase8sDefaultPort = 9088
+
+// GBase 8a is an MPP cluster with two layers that listen on different ports:
+// gclusterd is the coordinator clients connect to, gbased is the data node.
+const (
+	gbase8aClusterDefaultPort = 5258
+	gbase8aNodeDefaultPort    = 5050
+)
 
 // mysqlProtocolFlavors lists engines that speak the MySQL wire protocol and can
 // therefore be probed with a MySQL handshake.

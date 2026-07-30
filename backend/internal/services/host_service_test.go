@@ -21,7 +21,10 @@ func TestExtractKingbasePort(t *testing.T) {
 	assert.Equal(t, 54322, extractKingbasePort("kingbase -D /data/kingbase -p 54322"))
 	assert.Equal(t, 5432, extractKingbasePort("gaussdb -D /data/opengauss -p 5432"))
 	assert.Equal(t, 5433, extractKingbasePort("highgo -D /data/highgo -p 5433"))
+	assert.Equal(t, 5258, extractKingbasePort("gclusterd -D /opt/gbase/gcluster -p 5258"))
+	assert.Equal(t, 5050, extractKingbasePort("gbased -D /opt/gbase/gnode -p 5050"))
 	assert.Zero(t, extractKingbasePort("kingbase -D /data/kingbase"))
+	assert.Zero(t, extractKingbasePort("gclusterd -D /opt/gbase/gcluster"))
 }
 
 func TestIsMySQLProtocolFlavor(t *testing.T) {
