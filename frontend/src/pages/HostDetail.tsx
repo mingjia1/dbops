@@ -376,6 +376,7 @@ const HostDetail: React.FC = () => {
 		if (f === 'gbase8s') return <Tag color="orange">GBase 8s</Tag>
 		if (f === 'gbase8a') return <Tag color="gold">GBase 8a</Tag>
 		if (f === 'dm') return <Tag color="red">达梦 DM</Tag>
+		if (f === 'shentong') return <Tag color="lime">神舟通用</Tag>
         if (f === 'unknown') return <Tag>未知</Tag>
         return f || '-'
       },

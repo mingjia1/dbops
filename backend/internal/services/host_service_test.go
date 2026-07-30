@@ -23,6 +23,7 @@ func TestExtractKingbasePort(t *testing.T) {
 	assert.Equal(t, 5433, extractKingbasePort("highgo -D /data/highgo -p 5433"))
 	assert.Equal(t, 5258, extractKingbasePort("gclusterd -D /opt/gbase/gcluster -p 5258"))
 	assert.Equal(t, 5050, extractKingbasePort("gbased -D /opt/gbase/gnode -p 5050"))
+	assert.Equal(t, 2003, extractKingbasePort("oscarserver -D /opt/shentong/data -p 2003"))
 	assert.Zero(t, extractKingbasePort("kingbase -D /data/kingbase"))
 	assert.Zero(t, extractKingbasePort("gclusterd -D /opt/gbase/gcluster"))
 }

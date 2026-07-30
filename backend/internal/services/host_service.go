@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)|[d]mserver([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)|[d]mserver([_ ]|$)|[o]scarserver([_ ]|$)|[o]srvr([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1385,6 +1385,13 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			if port == 0 {
 				port = dmDefaultPort
 			}
+		} else if strings.Contains(strings.ToLower(cmdline), "oscarserver") || strings.Contains(strings.ToLower(cmdline), "osrvr") {
+			// ShenTong (OSCAR) is PostgreSQL-compatible and accepts the -p flag.
+			flavor = "shentong"
+			port = extractKingbasePort(cmdline)
+			if port == 0 {
+				port = shentongDefaultPort
+			}
 		} else if port == 0 {
 			port = 3306
 		}
@@ -1394,7 +1401,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		seen[port] = true
 
 		datadir := extractMysqldArg(cmdline, "--datadir=")
-		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" || flavor == "gbase8a" {
+		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" || flavor == "gbase8a" || flavor == "shentong" {
 			datadir = extractMysqldArg(cmdline, "-D")
 		}
 		socket := extractMysqldArg(cmdline, "--socket=")
@@ -1518,6 +1525,10 @@ const (
 // dmDefaultPort is Dameng DM's default listener. DM reads PORT_NUM from dm.ini,
 // so this is only the fallback when dm.ini cannot be read.
 const dmDefaultPort = 5236
+
+// shentongDefaultPort is the default listener for ShenTong (OSCAR), which is
+// PostgreSQL-compatible and normally started with an explicit -p flag.
+const shentongDefaultPort = 2003
 
 // extractDMIniPath returns the dm.ini path Dameng DM was started with. dmserver
 // takes it as a positional argument, either bare or via the PATH= form.
