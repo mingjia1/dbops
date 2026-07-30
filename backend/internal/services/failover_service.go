@@ -127,6 +127,13 @@ type MasterInfo struct {
 func (s *FailoverService) ExecuteAutoFailover(ctx context.Context, req FailoverRequest) (*FailoverResult, error) {
 	startTime := time.Now()
 
+	// Failover is built on MySQL-specific statements (STOP SLAVE, RESET SLAVE ALL,
+	// CHANGE MASTER, SHOW MASTER STATUS). Refuse engines that do not speak them
+	// before any connection or agent call is made.
+	if err := RequireCapability(s.inferClusterFlavor(ctx, req.ClusterID), CapFailover); err != nil {
+		return nil, err
+	}
+
 	clusterType := s.inferClusterType(ctx, req.ClusterID)
 
 	if clusterType == "mgr" || clusterType == "pxc" {
@@ -279,6 +286,9 @@ func (s *FailoverService) PreflightFailover(ctx context.Context, req FailoverPre
 	}
 	if len(instances) == 0 {
 		return nil, fmt.Errorf("cluster %s has no managed instances", req.ClusterID)
+	}
+	if err := RequireCapability(clusterFlavorFromInstances(instances), CapFailover); err != nil {
+		return nil, err
 	}
 
 	clusterType := inferFailoverClusterType(instances)
@@ -1063,6 +1073,32 @@ func (s *FailoverService) inferClusterType(ctx context.Context, clusterID string
 			return v
 		}
 		if v := strings.ToLower(strings.TrimSpace(inst.Status.ReplicationStatus)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// inferClusterFlavor resolves the engine flavor of a cluster for capability
+// checks. It hydrates instances because ListByClusterID does not populate the
+// version record.
+func (s *FailoverService) inferClusterFlavor(ctx context.Context, clusterID string) string {
+	instances, err := s.listHydratedClusterInstances(ctx, clusterID)
+	if err != nil {
+		return ""
+	}
+	return clusterFlavorFromInstances(instances)
+}
+
+// clusterFlavorFromInstances returns the first non-empty flavor found in a
+// cluster. An empty result means "unknown", which HasCapability treats as
+// MySQL-compatible so that pre-existing clusters are never blocked.
+func clusterFlavorFromInstances(instances []*models.Instance) string {
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		if v := strings.ToLower(strings.TrimSpace(inst.Version.Flavor)); v != "" {
 			return v
 		}
 	}

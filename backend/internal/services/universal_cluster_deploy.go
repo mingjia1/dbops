@@ -380,6 +380,9 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 	if err := validateUniversalRoles(req.ClusterType, req.Nodes, req.Mode); err != nil {
 		return req, err
 	}
+	if err := s.validateNodeFlavorCapability(ctx, req.Nodes); err != nil {
+		return req, err
+	}
 	if err := validateDeployCustomOptions(req.ClusterType, req.Custom, req.MySQL.Config, req.Nodes); err != nil {
 		return req, err
 	}
@@ -387,6 +390,29 @@ func (s *ClusterDeployService) normalizeUniversalDeployRequest(ctx context.Conte
 		return req, err
 	}
 	return req, nil
+}
+
+// validateNodeFlavorCapability refuses cluster deployment when a node targets an
+// already-managed instance whose engine does not support MySQL cluster
+// architectures. Nodes without an instance_id deploy fresh MySQL and are exempt.
+func (s *ClusterDeployService) validateNodeFlavorCapability(ctx context.Context, nodes []ClusterDeployNode) error {
+	if s.instRepo == nil {
+		return nil
+	}
+	for _, node := range nodes {
+		id := strings.TrimSpace(node.InstanceID)
+		if id == "" {
+			continue
+		}
+		inst, err := s.instRepo.GetByID(ctx, id)
+		if err != nil || inst == nil {
+			continue
+		}
+		if err := RequireCapability(inst.Version.Flavor, CapClusterDeploy); err != nil {
+			return fmt.Errorf("instance %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func (s *ClusterDeployService) checkDeployConflicts(ctx context.Context, req UniversalClusterDeployRequest) error {

@@ -216,6 +216,11 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	if err != nil {
 		return nil, fmt.Errorf("instance not found: %w", err)
 	}
+	// Physical backup runs xtrabackup, which only supports MySQL/Percona.
+	// Refuse other engines before dispatching any agent task.
+	if err := RequireCapability(inst.Version.Flavor, CapPhysicalBackup); err != nil {
+		return nil, err
+	}
 
 	var agentHost string
 	agentPort := 9090

@@ -141,6 +141,11 @@ func (s *SwitchService) executeSwitch(ctx context.Context, req SwitchClusterRequ
 	if err != nil {
 		return nil, fmt.Errorf("instance not found: %w", err)
 	}
+	// Architecture switching builds MySQL clusters (MHA / MGR / PXC). Refuse
+	// engines that do not support MySQL cluster architectures.
+	if err := RequireCapability(inst.Version.Flavor, CapClusterDeploy); err != nil {
+		return nil, err
+	}
 
 	hostInfo, err := s.resolveAgentHost(ctx, inst)
 	if err != nil {
@@ -210,6 +215,9 @@ func (s *SwitchService) executeMultiInstanceSwitch(ctx context.Context, req Swit
 		inst, err := s.instRepo.GetByID(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("instance %s not found: %w", id, err)
+		}
+		if err := RequireCapability(inst.Version.Flavor, CapClusterDeploy); err != nil {
+			return nil, fmt.Errorf("instance %s: %w", id, err)
 		}
 		if inst.ClusterID != "" && inst.ClusterID != clusterID && !req.ForceReconfigure {
 			return nil, fmt.Errorf("instance %s already belongs to cluster %s", id, inst.ClusterID)
@@ -389,6 +397,13 @@ func (s *SwitchService) SwitchRoleWithinCluster(ctx context.Context, req RoleSwi
 	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
 	if err != nil {
 		result := s.failedResult(req, clusterType, "unknown", startedAt, fmt.Sprintf("instance not found: %v", err))
+		s.recordHistory(ctx, result)
+		return result, nil
+	}
+
+	// Role switching drives MySQL promote/demote and replication rebuild.
+	if err := RequireCapability(inst.Version.Flavor, CapReplication); err != nil {
+		result := s.failedResult(req, clusterType, "unknown", startedAt, err.Error())
 		s.recordHistory(ctx, result)
 		return result, nil
 	}

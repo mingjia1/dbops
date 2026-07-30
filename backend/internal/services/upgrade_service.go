@@ -417,6 +417,13 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
 		return nil, fmt.Errorf("failed to get instance: %w", err)
 	}
+	// In-place upgrade runs mysql_upgrade and swaps MySQL binaries. Refuse engines
+	// that do not support it before creating a task or dispatching to the agent.
+	if err := RequireCapability(instance.Version.Flavor, CapInPlaceUpgrade); err != nil {
+		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s", req.InstanceID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
 	// Read source version from the instance — no hard-coded "5.7.40" anymore.
 	sourceVersion, sourceFlavor, err := s.readSourceVersion(ctx, req.InstanceID)
 	if err != nil {
