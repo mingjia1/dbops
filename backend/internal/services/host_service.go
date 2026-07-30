@@ -1615,6 +1615,8 @@ type RegisterScannedInstanceRequest struct {
 	Password   string `json:"password" binding:"required"`
 	ClusterID  string `json:"cluster_id"`
 	VersionID  string `json:"version_id"`
+	Flavor     string `json:"flavor"`
+	Version    string `json:"version"`
 	Basedir    string `json:"basedir"`
 	Datadir    string `json:"datadir"`
 	OSUser     string `json:"os_user"`
@@ -1684,6 +1686,20 @@ func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string
 	}
 	if err := s.instanceRepo.CreateConnection(ctx, conn); err != nil {
 		return "", fmt.Errorf("failed to create connection: %w", err)
+	}
+	// Persist the scanned engine flavor. Without this the scanner's flavor
+	// detection (kingbase / opengauss / oceanbase / ...) is discarded at
+	// registration time and downstream capability checks have nothing to read.
+	flavor := strings.ToLower(strings.TrimSpace(req.Flavor))
+	if flavor == "" {
+		flavor = "mysql"
+	}
+	if err := s.instanceRepo.CreateVersion(ctx, &models.InstanceVersion{
+		InstanceID: inst.ID,
+		Flavor:     flavor,
+		Version:    strings.TrimSpace(req.Version),
+	}); err != nil {
+		log.Printf("WARN: failed to persist flavor %q for instance %s: %v", flavor, inst.ID, err)
 	}
 	return inst.ID, nil
 }

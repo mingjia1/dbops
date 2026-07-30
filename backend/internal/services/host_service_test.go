@@ -389,3 +389,53 @@ func TestRegisterScannedInstancePersistsScanMetadata(t *testing.T) {
 	assert.Equal(t, host.Address, conn.Host)
 	assert.Equal(t, 3307, conn.Port)
 }
+
+func TestRegisterScannedInstancePersistsFlavor(t *testing.T) {
+	tests := []struct {
+		name        string
+		flavor      string
+		version     string
+		wantFlavor  string
+		wantVersion string
+	}{
+		{name: "kingbase flavor persisted", flavor: "kingbase", version: "", wantFlavor: "kingbase", wantVersion: ""},
+		{name: "opengauss flavor persisted", flavor: "opengauss", version: "5.0.0", wantFlavor: "opengauss", wantVersion: "5.0.0"},
+		{name: "empty flavor falls back to mysql", flavor: "", version: "8.0.36", wantFlavor: "mysql", wantVersion: "8.0.36"},
+		{name: "flavor is normalized to lowercase", flavor: "  HighGo ", version: "", wantFlavor: "highgo", wantVersion: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := newTestDB(t)
+			hostRepo := repositories.NewHostRepository(db)
+			instanceRepo := repositories.NewInstanceRepository(db)
+			service := NewHostService(hostRepo, "test-encryption-key")
+			service.SetInstanceRepo(instanceRepo)
+
+			host := &models.Host{
+				ID:      "host-scan-flavor",
+				Name:    "host-scan-flavor",
+				Address: "10.0.0.41",
+				SSHPort: 22,
+				SSHUser: "root",
+			}
+			require.NoError(t, hostRepo.Create(ctx, host))
+
+			instanceID, err := service.RegisterScannedInstance(ctx, host.ID, RegisterScannedInstanceRequest{
+				Port:     54321,
+				Name:     "scanned-54321",
+				Username: "root",
+				Password: "secret-password",
+				Flavor:   tt.flavor,
+				Version:  tt.version,
+			})
+			require.NoError(t, err)
+
+			version, err := instanceRepo.GetVersion(ctx, instanceID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantFlavor, version.Flavor)
+			assert.Equal(t, tt.wantVersion, version.Version)
+		})
+	}
+}

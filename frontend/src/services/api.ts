@@ -464,6 +464,8 @@ export const hostApi = {
     password: string
     cluster_id?: string
     version_id?: string
+    flavor?: string
+    version?: string
     basedir?: string
     datadir?: string
     os_user?: string
@@ -478,6 +480,8 @@ export const hostApi = {
     password: string
     cluster_id?: string
     version_id?: string
+    flavor?: string
+    version?: string
     basedir?: string
     datadir?: string
     os_user?: string

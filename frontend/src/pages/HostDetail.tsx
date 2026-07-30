@@ -228,6 +228,8 @@ const HostDetail: React.FC = () => {
     const version = (s.version || '').trim().split('-')[0]
     const flavor = (s.flavor || '').trim()
     return {
+      flavor: flavor || undefined,
+      version: version || undefined,
       version_id: flavor && version ? `${flavor}-${version}` : undefined,
       datadir: s.datadir || undefined,
     }
@@ -773,6 +775,7 @@ const HostDetail: React.FC = () => {
               username: values.username,
               password: values.password,
               cluster_id: values.cluster_id || undefined,
+              ...buildScannedInstanceMetadata(item),
             }))
             const res: any = await hostApi.registerScannedInstances(id, payload)
             const rows = res?.data?.rows || []
@@ -826,6 +829,7 @@ const HostDetail: React.FC = () => {
               username: values.username,
               password: values.password,
               cluster_id: values.cluster_id || undefined,
+              ...buildScannedInstanceMetadata(registerTarget),
             })
             message.success(`实例 ${values.name} 已纳管`)
             setRegisterOpen(false)
