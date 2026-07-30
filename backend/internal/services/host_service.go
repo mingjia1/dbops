@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1354,6 +1354,11 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 			if port == 0 {
 				port = 5432
 			}
+		} else if strings.Contains(strings.ToLower(cmdline), "oninit") {
+			// GBase 8s is Informix-derived: the server process is oninit and its
+			// listener port lives in sqlhosts, not on the command line.
+			flavor = "gbase8s"
+			port = gbase8sDefaultPort
 		} else if port == 0 {
 			port = 3306
 		}
@@ -1426,8 +1431,16 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		instances = append(instances, si)
 	}
 
+	// Re-probe discovered ports with a MySQL handshake to refine the flavor and
+	// read the server version. Only MySQL-protocol engines are probed: sending a
+	// MySQL greeting to a PostgreSQL, Dameng or Informix port is meaningless, and
+	// the fallback branch below would overwrite the flavor the process scan
+	// already identified correctly.
 	probePorts := make([]int, 0, len(instances))
 	for _, inst := range instances {
+		if !isMySQLProtocolFlavor(inst.Flavor) {
+			continue
+		}
 		probePorts = append(probePorts, inst.Port)
 	}
 	for _, port := range probePorts {
@@ -1448,22 +1461,10 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 					if idx := indexByte(rest, 0); idx > 0 {
 						vFull := string(rest[:idx])
 						for i := range instances {
-							if instances[i].Port == port {
+							if instances[i].Port == port && isMySQLProtocolFlavor(instances[i].Flavor) {
 								instances[i].VersionFull = vFull
 								instances[i].Version = normalizeVersionString(vFull)
-								if strings.Contains(strings.ToLower(vFull), "tdsql") {
-									instances[i].Flavor = "tdsql-mysql"
-								} else if strings.Contains(strings.ToLower(vFull), "polardb") {
-									instances[i].Flavor = "polardb-mysql"
-								} else if strings.Contains(strings.ToLower(vFull), "gaussdb") {
-									instances[i].Flavor = "gaussdb-mysql"
-								} else if strings.Contains(strings.ToLower(vFull), "oceanbase") {
-									instances[i].Flavor = "oceanbase"
-								} else if strings.Contains(strings.ToLower(vFull), "mariadb") {
-									instances[i].Flavor = "mariadb"
-								} else {
-									instances[i].Flavor = "mysql"
-								}
+								instances[i].Flavor = mysqlFlavorFromVersionString(vFull)
 							}
 						}
 					}
@@ -1474,6 +1475,49 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 
 	return instances
+}
+
+// gbase8sDefaultPort is the conventional GBase 8s (Informix-derived) listener
+// port. GBase 8s reads its listener from sqlhosts rather than argv, so this is a
+// fallback used when the command line carries no port.
+const gbase8sDefaultPort = 9088
+
+// mysqlProtocolFlavors lists engines that speak the MySQL wire protocol and can
+// therefore be probed with a MySQL handshake.
+var mysqlProtocolFlavors = map[string]bool{
+	"mysql":         true,
+	"mariadb":       true,
+	"percona":       true,
+	"oceanbase":     true,
+	"gaussdb-mysql": true,
+	"polardb-mysql": true,
+	"tdsql-mysql":   true,
+}
+
+// isMySQLProtocolFlavor reports whether a discovered flavor speaks the MySQL wire
+// protocol. An empty flavor is treated as MySQL, matching the scanner's default.
+func isMySQLProtocolFlavor(flavor string) bool {
+	return mysqlProtocolFlavors[normalizeFlavor(flavor)]
+}
+
+// mysqlFlavorFromVersionString maps a MySQL handshake version banner to a flavor.
+// It is only meaningful for engines that speak the MySQL protocol.
+func mysqlFlavorFromVersionString(versionFull string) string {
+	v := strings.ToLower(versionFull)
+	switch {
+	case strings.Contains(v, "tdsql"):
+		return "tdsql-mysql"
+	case strings.Contains(v, "polardb"):
+		return "polardb-mysql"
+	case strings.Contains(v, "gaussdb"):
+		return "gaussdb-mysql"
+	case strings.Contains(v, "oceanbase"):
+		return "oceanbase"
+	case strings.Contains(v, "mariadb"):
+		return "mariadb"
+	default:
+		return "mysql"
+	}
 }
 
 func extractMysqldPort(cmdline string) int {

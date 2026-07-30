@@ -24,6 +24,38 @@ func TestExtractKingbasePort(t *testing.T) {
 	assert.Zero(t, extractKingbasePort("kingbase -D /data/kingbase"))
 }
 
+func TestIsMySQLProtocolFlavor(t *testing.T) {
+	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
+		assert.True(t, isMySQLProtocolFlavor(flavor), "%s speaks the MySQL protocol", flavor)
+	}
+	// An empty flavor is the scanner's default and must be probed as MySQL.
+	assert.True(t, isMySQLProtocolFlavor(""))
+
+	for _, flavor := range []string{"kingbase", "opengauss", "highgo", "gbase8s", "gbase8a", "dm", "shentong"} {
+		assert.False(t, isMySQLProtocolFlavor(flavor), "%s does not speak the MySQL protocol", flavor)
+	}
+}
+
+func TestMySQLFlavorFromVersionString(t *testing.T) {
+	tests := []struct {
+		versionFull string
+		want        string
+	}{
+		{versionFull: "8.0.36", want: "mysql"},
+		{versionFull: "5.7.44-log", want: "mysql"},
+		{versionFull: "10.11.4-MariaDB", want: "mariadb"},
+		{versionFull: "5.7.25-OceanBase-v4.5.0", want: "oceanbase"},
+		{versionFull: "8.0.18-TDSQL-20231201", want: "tdsql-mysql"},
+		{versionFull: "8.0.18-PolarDB-1.0", want: "polardb-mysql"},
+		{versionFull: "8.0.22-GaussDB-1.0", want: "gaussdb-mysql"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.versionFull, func(t *testing.T) {
+			assert.Equal(t, tt.want, mysqlFlavorFromVersionString(tt.versionFull))
+		})
+	}
+}
+
 func TestBatchAgentActionAsyncReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
 	repo := repositories.NewHostRepository(newTestDB(t))
