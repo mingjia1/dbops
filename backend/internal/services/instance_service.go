@@ -256,8 +256,24 @@ func (s *InstanceService) Update(ctx context.Context, id string, req UpdateInsta
 }
 
 func (s *InstanceService) Delete(ctx context.Context, id string) error {
-	if _, err := s.repo.GetByID(ctx, id); err != nil {
+	instance, err := s.repo.GetByID(ctx, id)
+	if err != nil {
 		return err
+	}
+
+	// Tiered-onboarding engines were never provisioned by the platform: there is no
+	// xtrabackup image to take and no datadir the platform may remove. Deleting
+	// such an instance de-registers it from inventory only, leaving the remote
+	// database untouched. Without this branch Delete is permanently blocked for
+	// these engines, because the removal backup is refused by the capability gate.
+	if !HasCapability(instance.Version.Flavor, CapPhysicalBackup) {
+		if err := s.repo.Delete(ctx, id); err != nil {
+			return err
+		}
+		s.auditInstanceDelete(ctx, id, "success", "",
+			fmt.Sprintf("deregistered_only=true flavor=%s reason=engine_not_provisioned_by_platform",
+				normalizeFlavor(instance.Version.Flavor)))
+		return nil
 	}
 
 	// 尝试备份和退役
@@ -1360,6 +1376,12 @@ func (s *InstanceService) AdminAction(ctx context.Context, id string, req Instan
 	if err != nil {
 		return nil, err
 	}
+	// The agent's instance-admin task family runs MySQL DDL/DCL (CREATE USER,
+	// GRANT, SET GLOBAL), reads and writes my.cnf, and controls mysqld. Refuse
+	// engines that speak a different protocol before dispatching to the agent.
+	if err := RequireCapability(instance.Version.Flavor, CapInstanceAdmin); err != nil {
+		return nil, err
+	}
 	conn, err := s.repo.GetConnection(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("instance connection not found: %w", err)
@@ -1726,6 +1748,19 @@ func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPass
 		if connErr != nil || conn.Host != req.Host || !portSet[conn.Port] {
 			continue
 		}
+		// repo.List does not hydrate the version record, so read the flavor
+		// explicitly. Non-MySQL engines have no MySQL account model to update.
+		if err := RequireCapability(resolveInstanceFlavor(ctx, s.repo, instance.ID), CapInstanceAdmin); err != nil {
+			results = append(results, map[string]interface{}{
+				"instance_id": instance.ID,
+				"name":        instance.Name,
+				"host":        conn.Host,
+				"port":        conn.Port,
+				"status":      "skipped",
+				"message":     err.Error(),
+			})
+			continue
+		}
 		candidates := s.passwordCandidates(conn, req.CurrentPassword)
 		var lastErr error
 		var actionResult *InstanceAdminResult
@@ -1774,15 +1809,25 @@ func (s *InstanceService) BatchUpdatePassword(ctx context.Context, req BatchPass
 		}
 		results = append(results, row)
 	}
+	skippedCount := 0
+	for _, row := range results {
+		if row["status"] == "skipped" {
+			skippedCount++
+		}
+	}
 	status := "completed"
 	if len(results) == 0 || successCount != len(results) {
 		status = "failed"
+	}
+	message := fmt.Sprintf("matched %d instances, updated %d", len(results), successCount)
+	if skippedCount > 0 {
+		message = fmt.Sprintf("%s, skipped %d (unsupported database type)", message, skippedCount)
 	}
 	return &InstanceAdminResult{
 		TaskID:   "batch-password-" + uuid.New().String(),
 		Status:   status,
 		Progress: 100,
-		Message:  fmt.Sprintf("matched %d instances, updated %d", len(results), successCount),
+		Message:  message,
 		Data:     map[string]interface{}{"rows": results},
 	}, nil
 }

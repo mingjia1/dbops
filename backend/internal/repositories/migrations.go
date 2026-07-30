@@ -35,8 +35,8 @@ var InitialSchema = []string{
 		id VARCHAR(64) PRIMARY KEY,
 		instance_id VARCHAR(64) UNIQUE NOT NULL,
 		flavor VARCHAR(32) NOT NULL,
-		version VARCHAR(32) NOT NULL,
-		full_version VARCHAR(64) NOT NULL,
+		version VARCHAR(64) NOT NULL,
+		full_version VARCHAR(512) NOT NULL,
 		release_date DATE,
 		eol_date DATE,
 		is_lts TINYINT(1) DEFAULT 0,
@@ -734,6 +734,16 @@ var InitialSchema = []string{
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
 		FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// Widen version columns for non-MySQL engines. PostgreSQL-compatible engines
+	// return a prose banner from SELECT version() (for example
+	// "PostgreSQL 9.2.4 (openGauss 5.0.0 build 91b48c00) compiled at ... on x86_64-unknown-linux-gnu",
+	// ~100 chars) and Kingbase reports "KingbaseES V008R006C008B0014 ..." as its
+	// version. The original VARCHAR(32)/VARCHAR(64) sizes truncate or, under
+	// STRICT_TRANS_TABLES, reject those values. MODIFY COLUMN is idempotent so
+	// this is safe to re-run.
+	`ALTER TABLE instance_versions MODIFY COLUMN version VARCHAR(64) NOT NULL`,
+	`ALTER TABLE instance_versions MODIFY COLUMN full_version VARCHAR(512) NOT NULL`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.

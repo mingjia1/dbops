@@ -51,6 +51,16 @@ describe('hasCapability', () => {
     }
   })
 
+  it('refuses instance admin operations for every tiered onboarding engine', () => {
+    // The agent instance-admin family runs MySQL DDL/DCL and manages my.cnf.
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...DRIVERLESS_FLAVORS]) {
+      expect(hasCapability(flavor, 'instance_admin')).toBe(false)
+    }
+    for (const flavor of MYSQL_FLAVORS) {
+      expect(hasCapability(flavor, 'instance_admin')).toBe(true)
+    }
+  })
+
   it('refuses every capability including SQL health check for driverless engines', () => {
     for (const flavor of DRIVERLESS_FLAVORS) {
       for (const capability of ALL_CAPABILITIES) {

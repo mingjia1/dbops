@@ -22,6 +22,7 @@ export type Capability =
   | 'instance_deploy'
   | 'upgrade_logical'
   | 'parameter_template'
+  | 'instance_admin'
 
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   replication: '主从复制搭建',
@@ -35,6 +36,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   instance_deploy: '单实例部署',
   upgrade_logical: '逻辑迁移升级',
   parameter_template: '参数模板下发',
+  instance_admin: '实例管理操作 (账号/参数/配置/服务控制)',
 }
 
 /** Engines speaking the MySQL wire protocol get every capability. */

@@ -22,7 +22,7 @@
 「已分层纳管」指平台提供纳管、健康检测、拓扑与类型展示，但不提供 MySQL 专属运维能力。
 
 能力边界由 `backend/internal/services/flavor_capability.go` 的静态表统一约束，
-在 19 处服务入口拒绝并返回可读错误，不会对非 MySQL 引擎执行 MySQL 语句或调度 MySQL 专属 agent 任务。
+在 21 处服务入口拒绝并返回可读错误，不会对非 MySQL 引擎执行 MySQL 语句或调度 MySQL 专属 agent 任务。
 
 前端 `frontend/src/services/flavorCapability.ts` 镜像同一张表，用于禁用注定会被拒绝的操作入口；
 **后端 gate 始终是权威**，前端仅做体验优化。
@@ -42,6 +42,7 @@
 | 节点重建 `node_rebuild` | 是 | 否 | 否 |
 | 单实例部署 `instance_deploy` | 是 | 否 | 否 |
 | 参数模板下发 `parameter_template` | 是 | 否 | 否 |
+| 实例管理操作 `instance_admin` | 是 | 否 | 否 |
 
 flavor 为空或未登记的实例一律按 MySQL 兼容处理，保证既有纳管实例零回归。
 
@@ -51,7 +52,16 @@ flavor 为空或未登记的实例一律按 MySQL 兼容处理，保证既有纳
 `universal_cluster_deploy.go`（集群部署）、`backup_service.go`（物理备份、物理恢复）、
 `upgrade_service.go`（原地升级、逻辑迁移、滚动升级）、`scale_service.go`（扩容、缩容、节点重建）、
 `rebuild_service.go`（节点重建，gate 早于 teardown）、`cluster_lifecycle_service.go`（集群重建，gate 早于 destroy）、
-`instance_service.go`（单实例部署、复制状态）、`parameter_template_service.go`（参数下发）
+`instance_service.go`（单实例部署、复制状态、实例管理操作、批量改密）、`parameter_template_service.go`（参数下发）
+
+`instance_admin` 覆盖 agent 的 instance-admin 任务族：`create_user` / `grant_privileges` / `set_variable` /
+`read_config` / `write_config` / `service_control` / `decommission` 等，均为 MySQL DDL/DCL 与 my.cnf 操作。
+
+### 实例删除
+
+分层纳管的实例并非由平台部署，不存在可取的 xtrabackup 镜像，也不应由平台删除远端 datadir。
+`InstanceService.Delete` 对这些引擎走**仅注销**路径：删除平台侧记录并写审计
+（`deregistered_only=true`），远端数据库不受影响。MySQL 实例仍保持「先全量备份 + 退役，再删除」的约束。
 
 ### 版本检测
 
@@ -78,6 +88,16 @@ flavor 为空或未登记的实例一律按 MySQL 兼容处理，保证既有纳
 - 主从复制搭建、自动故障切换、MGR/PXC/MHA 架构部署
 - xtrabackup 物理备份、mysql_upgrade 原地升级
 - 将 backend 元数据库迁移到国产数据库
+
+## 元数据库 schema
+
+`instance_versions` 的版本列已放宽以容纳非 MySQL 引擎的版本串：
+
+- `version` VARCHAR(64)、`full_version` VARCHAR(512)
+- 原因：PG 兼容引擎的 `SELECT version()` 返回散文式 banner（openGauss 约 100 字符），
+  Kingbase 返回 `KingbaseES V008R006C008B0014 ...`；原 VARCHAR(32)/VARCHAR(64) 在
+  `STRICT_TRANS_TABLES` 下会直接报错
+- 已有 MySQL 部署通过幂等的 `ALTER TABLE ... MODIFY COLUMN` 在启动时自动升级
 
 ## 备注
 

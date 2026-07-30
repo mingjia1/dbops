@@ -377,8 +377,10 @@ const InstanceDetail: React.FC = () => {
   const flavor = version?.flavor
   const canReplication = hasCapability(flavor, 'replication')
   const canParameterTemplate = hasCapability(flavor, 'parameter_template')
+  const canInstanceAdmin = hasCapability(flavor, 'instance_admin')
   const replicationDisabledReason = capabilityDisabledReason(flavor, 'replication')
   const parameterDisabledReason = capabilityDisabledReason(flavor, 'parameter_template')
+  const instanceAdminDisabledReason = capabilityDisabledReason(flavor, 'instance_admin')
   const tcpOnlyHealthCheck = isDriverlessFlavor(flavor)
 
   if (loading) return <Spin style={{ display: 'block', margin: '100px auto' }} />
@@ -507,6 +509,14 @@ const InstanceDetail: React.FC = () => {
             label: '全局管理',
             children: (
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                {!canInstanceAdmin && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="该数据库类型不支持实例管理操作"
+                    description={instanceAdminDisabledReason}
+                  />
+                )}
                 <Tabs
                   items={[
                     {

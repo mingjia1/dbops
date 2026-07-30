@@ -41,6 +41,9 @@ const (
 	CapLogicalUpgrade Capability = "upgrade_logical"
 	// CapParameterTemplate covers pushing my.cnf parameter templates to an instance.
 	CapParameterTemplate Capability = "parameter_template"
+	// CapInstanceAdmin covers the agent instance-admin task family: MySQL account
+	// management, SET GLOBAL, my.cnf read/write, service control and decommission.
+	CapInstanceAdmin Capability = "instance_admin"
 )
 
 // capabilityLabels provides human-readable Chinese names used in error messages.
@@ -56,6 +59,7 @@ var capabilityLabels = map[Capability]string{
 	CapInstanceDeploy:    "单实例部署",
 	CapLogicalUpgrade:    "逻辑迁移升级",
 	CapParameterTemplate: "参数模板下发",
+	CapInstanceAdmin:     "实例管理操作 (账号/参数/配置/服务控制)",
 }
 
 // mysqlProtocolCapabilities is the capability set granted to engines that speak
@@ -73,6 +77,7 @@ func mysqlProtocolCapabilities() map[Capability]bool {
 		CapInstanceDeploy:    true,
 		CapLogicalUpgrade:    true,
 		CapParameterTemplate: true,
+		CapInstanceAdmin:     true,
 	}
 }
 
@@ -93,6 +98,7 @@ func tieredOnboardingCapabilities(sqlHealthCheck bool) map[Capability]bool {
 		CapInstanceDeploy:    false,
 		CapLogicalUpgrade:    false,
 		CapParameterTemplate: false,
+		CapInstanceAdmin:     false,
 	}
 }
 
@@ -178,6 +184,7 @@ func allCapabilities() []Capability {
 		CapInstanceDeploy,
 		CapLogicalUpgrade,
 		CapParameterTemplate,
+		CapInstanceAdmin,
 	}
 }
 
