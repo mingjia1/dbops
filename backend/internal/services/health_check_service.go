@@ -138,14 +138,14 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 				result.ErrorMessage = tcpResult.ErrorMessage
 			}
 		case "mysql":
-			mysqlResult := s.checkMySQL(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, config.Timeout)
-			result.Details.MySQLAlive = mysqlResult.IsHealthy
-			if !mysqlResult.IsHealthy && result.ErrorMessage == "" {
-				result.ErrorMessage = mysqlResult.ErrorMessage
+			sqlResult := s.checkSQL(ctx, instance.Version.Flavor, conn, config.Timeout)
+			result.Details.MySQLAlive = sqlResult.IsHealthy
+			if !sqlResult.IsHealthy && result.ErrorMessage == "" {
+				result.ErrorMessage = sqlResult.ErrorMessage
 			}
-			if mysqlResult.IsHealthy {
-				result.Details.ConnectionCount = mysqlResult.Details.ConnectionCount
-				result.Details.QPS = mysqlResult.Details.QPS
+			if sqlResult.IsHealthy {
+				result.Details.ConnectionCount = sqlResult.Details.ConnectionCount
+				result.Details.QPS = sqlResult.Details.QPS
 			}
 		case "replication":
 			if isReplicationReplicaRole(instance.Status.Role) {
@@ -157,6 +157,13 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 				}
 			}
 		}
+	}
+
+	// When the engine has no usable driver, only TCP reachability was measured.
+	// Say so explicitly: a reachable port is not proof the instance is serving.
+	if !HasCapability(instance.Version.Flavor, CapSQLHealthCheck) && result.ErrorMessage == "" {
+		result.ErrorMessage = fmt.Sprintf("数据库类型 %s 无可用驱动, 仅完成 TCP 端口探测, 未验证实例可服务性",
+			normalizeFlavor(instance.Version.Flavor))
 	}
 
 	result.IsHealthy = true
@@ -279,6 +286,64 @@ func (s *HealthCheckService) checkTCP(ctx context.Context, host string, port int
 
 	return &HealthCheckResult{
 		CheckType:    "tcp",
+		IsHealthy:    true,
+		ResponseTime: time.Since(startTime),
+	}
+}
+
+// checkSQL runs the SQL-level liveness probe for an instance, dispatching on
+// engine flavor. MySQL-protocol engines keep the original checkMySQL path so that
+// connection-count and QPS details are still collected. Other engines get a
+// generic ping plus version read through their connector.
+func (s *HealthCheckService) checkSQL(ctx context.Context, flavor string, conn *models.InstanceConnection, timeout time.Duration) *HealthCheckResult {
+	if HasCapability(flavor, CapReplication) {
+		// MySQL-protocol engine: preserve the existing behaviour exactly.
+		return s.checkMySQL(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, timeout)
+	}
+
+	startTime := time.Now()
+	checkCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	plain, err := utils.Decrypt(conn.PasswordEncrypted, s.encryptionKey)
+	if err != nil {
+		return &HealthCheckResult{
+			CheckType:    "mysql",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: fmt.Sprintf("Failed to decrypt password: %v", err),
+		}
+	}
+
+	connector, err := NewConnector(ConnectorTarget{
+		Flavor:   flavor,
+		Host:     conn.Host,
+		Port:     conn.Port,
+		Username: conn.Username,
+		Password: plain,
+		Timeout:  timeout,
+	})
+	if err != nil {
+		return &HealthCheckResult{
+			CheckType:    "mysql",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: err.Error(),
+		}
+	}
+	defer connector.Close()
+
+	if err := connector.Ping(checkCtx); err != nil {
+		return &HealthCheckResult{
+			CheckType:    "mysql",
+			IsHealthy:    false,
+			ResponseTime: time.Since(startTime),
+			ErrorMessage: fmt.Sprintf("%s ping failed: %v", connector.Flavor(), err),
+		}
+	}
+
+	return &HealthCheckResult{
+		CheckType:    "mysql",
 		IsHealthy:    true,
 		ResponseTime: time.Since(startTime),
 	}
@@ -588,7 +653,36 @@ func effectiveHealthCheckTypes(instance *models.Instance, requested []string) []
 	if strings.EqualFold(instance.Topology.ReplicationMode, ClusterTypeMHA) && strings.EqualFold(instance.Status.Role, "manager") {
 		return []string{"tcp"}
 	}
-	return requested
+	return filterHealthCheckTypesByCapability(instance.Version.Flavor, requested)
+}
+
+// filterHealthCheckTypesByCapability drops check types the engine cannot support.
+// Engines under tiered onboarding have no MySQL replication, and some have no Go
+// driver at all, in which case only TCP reachability is meaningful. Dropping the
+// check rather than letting it fail keeps a reachable instance from being
+// reported as unhealthy.
+func filterHealthCheckTypesByCapability(flavor string, requested []string) []string {
+	allowSQL := HasCapability(flavor, CapSQLHealthCheck)
+	allowReplication := HasCapability(flavor, CapReplication)
+	if allowSQL && allowReplication {
+		return requested
+	}
+	out := make([]string, 0, len(requested))
+	for _, checkType := range requested {
+		switch strings.ToLower(strings.TrimSpace(checkType)) {
+		case "mysql":
+			if allowSQL {
+				out = append(out, checkType)
+			}
+		case "replication":
+			if allowReplication {
+				out = append(out, checkType)
+			}
+		default:
+			out = append(out, checkType)
+		}
+	}
+	return out
 }
 
 func healthCheckTypeSet(checkTypes []string) map[string]bool {
