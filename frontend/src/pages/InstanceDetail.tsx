@@ -39,6 +39,7 @@ import {
   formatTaskMessage, formatBatchRows,
   checkPasswordComplexity, getPasswordStrength,
 } from '../services/instanceHelpers'
+import { hasCapability, capabilityDisabledReason, isDriverlessFlavor } from '../services/flavorCapability'
 import ReplicationMonitor from '../components/ReplicationMonitor'
 
 interface AdminRow {
@@ -370,6 +371,15 @@ const InstanceDetail: React.FC = () => {
 
   const version = instance?.version
   const hasVersion = !!version?.full_version
+  // Engine flavor drives which operations the backend will accept. The backend
+  // gate is authoritative; this only avoids offering actions that would be
+  // refused. See services/flavorCapability.ts.
+  const flavor = version?.flavor
+  const canReplication = hasCapability(flavor, 'replication')
+  const canParameterTemplate = hasCapability(flavor, 'parameter_template')
+  const replicationDisabledReason = capabilityDisabledReason(flavor, 'replication')
+  const parameterDisabledReason = capabilityDisabledReason(flavor, 'parameter_template')
+  const tcpOnlyHealthCheck = isDriverlessFlavor(flavor)
 
   if (loading) return <Spin style={{ display: 'block', margin: '100px auto' }} />
   if (!instance) return <Card>实例不存在</Card>
@@ -418,7 +428,17 @@ const InstanceDetail: React.FC = () => {
             key: 'basic',
             label: '基本信息',
             children: (
-              <Descriptions bordered column={2}>
+              <>
+                {tcpOnlyHealthCheck && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="该数据库类型无可用驱动，健康检测仅执行 TCP 端口探测"
+                    description="端口可达不代表实例可正常提供服务；版本信息需手动维护。"
+                  />
+                )}
+                <Descriptions bordered column={2}>
                 <Descriptions.Item label="实例 ID">{instance.id}</Descriptions.Item>
                 <Descriptions.Item label="实例名称">{instance.name}</Descriptions.Item>
                 <Descriptions.Item label="主机地址">{instance.connection?.host || '-'}</Descriptions.Item>
@@ -445,6 +465,7 @@ const InstanceDetail: React.FC = () => {
                 <Descriptions.Item label="创建时间">{new Date(instance.created_at).toLocaleString()}</Descriptions.Item>
                 <Descriptions.Item label="更新时间">{new Date(instance.updated_at).toLocaleString()}</Descriptions.Item>
               </Descriptions>
+              </>
             ),
           },
           {
@@ -452,11 +473,21 @@ const InstanceDetail: React.FC = () => {
             label: '同步监控',
             children: (
               <Spin spinning={replLoading}>
+                {!canReplication && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="该数据库类型不支持复制状态查询"
+                    description={replicationDisabledReason}
+                  />
+                )}
                 <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <Button icon={<ReloadOutlined />} onClick={fetchReplStatus}>刷新</Button>
+                  <Button icon={<ReloadOutlined />} onClick={fetchReplStatus} disabled={!canReplication}>刷新</Button>
                   <Button
                     icon={replAutoRefresh ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
                     type={replAutoRefresh ? 'primary' : 'default'}
+                    disabled={!canReplication}
                     onClick={() => setReplAutoRefresh(!replAutoRefresh)}
                   >
                     {replAutoRefresh ? '停止自动刷新' : '自动刷新 (10s)'}
@@ -542,12 +573,20 @@ const InstanceDetail: React.FC = () => {
                       label: '运行参数',
                       children: (
                         <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                          {!canParameterTemplate && (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              message="该数据库类型不支持参数下发"
+                              description={parameterDisabledReason}
+                            />
+                          )}
                           <Form form={variableForm} layout="inline" initialValues={{ pattern: '%' }}>
                             <Form.Item name="pattern"><Input placeholder="参数匹配，如 max_connections" style={{ width: 240 }} /></Form.Item>
-                            <Button onClick={loadVariables} loading={adminLoading}>查询参数</Button>
+                            <Button onClick={loadVariables} loading={adminLoading} disabled={!canParameterTemplate}>查询参数</Button>
                             <Form.Item name="name"><Input placeholder="参数名" /></Form.Item>
                             <Form.Item name="value"><Input placeholder="新值" /></Form.Item>
-                            <Button onClick={() => variableForm.validateFields(['name', 'value']).then((values) => runAdmin({ action: 'set_variable', ...values }).then(loadVariables))} loading={adminLoading}>设置全局参数</Button>
+                            <Button onClick={() => variableForm.validateFields(['name', 'value']).then((values) => runAdmin({ action: 'set_variable', ...values }).then(loadVariables))} loading={adminLoading} disabled={!canParameterTemplate}>设置全局参数</Button>
                           </Form>
                           <Table columns={variableColumns} dataSource={variables.map((row, index) => ({ ...row, key: String(index) }))} size="small" pagination={{ pageSize: 10 }} />
                         </Space>

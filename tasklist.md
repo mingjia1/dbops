@@ -22,15 +22,45 @@
 「已分层纳管」指平台提供纳管、健康检测、拓扑与类型展示，但不提供 MySQL 专属运维能力。
 
 能力边界由 `backend/internal/services/flavor_capability.go` 的静态表统一约束，
-在服务入口 (failover / 角色切换 / 架构切换 / 集群部署 / 物理备份 / 原地升级) 处拒绝并返回可读错误，
-不会对非 MySQL 引擎执行 MySQL 语句。
+在 19 处服务入口拒绝并返回可读错误，不会对非 MySQL 引擎执行 MySQL 语句或调度 MySQL 专属 agent 任务。
 
-| flavor | SQL 健康检测 | 进程发现 | 复制 | 故障切换 | 集群部署 | 物理备份 | 原地升级 |
-|---|---|---|---|---|---|---|---|
-| Kingbase / openGauss / HighGo / GBase 8a / 神舟通用 | 是 (pgx) | 是 | 否 | 否 | 否 | 否 | 否 |
-| 达梦 DM / GBase 8s | 否 (仅 TCP) | 是 | 否 | 否 | 否 | 否 | 否 |
+前端 `frontend/src/services/flavorCapability.ts` 镜像同一张表，用于禁用注定会被拒绝的操作入口；
+**后端 gate 始终是权威**，前端仅做体验优化。
+
+### 能力矩阵
+
+| 能力 | MySQL 兼容 | Kingbase / openGauss / HighGo / GBase 8a / 神舟 | 达梦 DM / GBase 8s |
+|---|---|---|---|
+| SQL 健康检测 `health_sql` | 是 | 是 (pgx) | 否 (仅 TCP) |
+| 主从复制 `replication` | 是 | 否 | 否 |
+| 故障切换 `failover` | 是 | 否 | 否 |
+| 集群架构部署 `cluster_deploy` | 是 | 否 | 否 |
+| 物理备份/恢复 `backup_physical` | 是 | 否 | 否 |
+| 原地升级 `upgrade_inplace` | 是 | 否 | 否 |
+| 逻辑迁移升级 `upgrade_logical` | 是 | 否 | 否 |
+| 节点扩缩容 `scale` | 是 | 否 | 否 |
+| 节点重建 `node_rebuild` | 是 | 否 | 否 |
+| 单实例部署 `instance_deploy` | 是 | 否 | 否 |
+| 参数模板下发 `parameter_template` | 是 | 否 | 否 |
 
 flavor 为空或未登记的实例一律按 MySQL 兼容处理，保证既有纳管实例零回归。
+
+### 已受 gate 约束的服务入口
+
+`failover_service.go`（自动/手动切换、preflight）、`switch_service.go`（架构切换单/多实例、角色切换）、
+`universal_cluster_deploy.go`（集群部署）、`backup_service.go`（物理备份、物理恢复）、
+`upgrade_service.go`（原地升级、逻辑迁移、滚动升级）、`scale_service.go`（扩容、缩容、节点重建）、
+`rebuild_service.go`（节点重建，gate 早于 teardown）、`cluster_lifecycle_service.go`（集群重建，gate 早于 destroy）、
+`instance_service.go`（单实例部署、复制状态）、`parameter_template_service.go`（参数下发）
+
+### 版本检测
+
+`instance_service.go` 的 `DetectVersion` 按 flavor 分派：
+
+- MySQL 协议引擎：走 agent `version-detect` 任务（`SELECT @@version, @@version_comment`），行为不变
+- PG 兼容引擎：走 `DBConnector.ServerVersion()`（`SELECT version()`）
+- 无驱动引擎（达梦 / GBase 8s）：返回「不支持自动版本检测」，需手动维护版本信息
+
 
 ## 连接层
 
