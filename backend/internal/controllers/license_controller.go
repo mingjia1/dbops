@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"io"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
@@ -26,9 +27,9 @@ func (c *LicenseController) GetLicenseInfo(ctx *gin.Context) {
 }
 
 func (c *LicenseController) UploadLicense(ctx *gin.Context) {
-	body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, 1<<20))
+	body, err := licensePayload(ctx)
 	if err != nil {
-		utils.BadRequestResponse(ctx, "Failed to read request body")
+		utils.BadRequestResponse(ctx, err.Error())
 		return
 	}
 	if len(body) == 0 {
@@ -51,6 +52,23 @@ func (c *LicenseController) UploadLicense(ctx *gin.Context) {
 		"issued_to":  l.IssuedTo,
 		"expires_at": l.ExpiresAt,
 	})
+}
+
+func licensePayload(ctx *gin.Context) ([]byte, error) {
+	if strings.HasPrefix(ctx.GetHeader("Content-Type"), "multipart/form-data") {
+		file, err := ctx.FormFile("license")
+		if err != nil {
+			return nil, err
+		}
+		opened, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer opened.Close()
+		return io.ReadAll(io.LimitReader(opened, 1<<20))
+	}
+
+	return io.ReadAll(io.LimitReader(ctx.Request.Body, 1<<20))
 }
 
 func (c *LicenseController) GetFeatures(ctx *gin.Context) {
