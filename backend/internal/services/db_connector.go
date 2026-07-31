@@ -31,13 +31,14 @@ type DBConnector interface {
 // ConnectorTarget describes where and how to connect. Password must already be
 // decrypted by the caller; connectors never touch the encryption key.
 type ConnectorTarget struct {
-	Flavor   string
-	Host     string
-	Port     int
-	Username string
-	Password string
-	Database string
-	Timeout  time.Duration
+	Flavor     string
+	Host       string
+	Port       int
+	Username   string
+	Password   string
+	Database   string
+	SSLEnabled bool
+	Timeout    time.Duration
 }
 
 const defaultConnectorTimeout = 5 * time.Second
@@ -57,8 +58,8 @@ func (t ConnectorTarget) timeout() time.Duration {
 //   - PostgreSQL protocol: kingbase, opengauss, highgo, gbase8a, shentong
 //   - dm and gbase8s have no usable pure-Go driver and return ErrNoSQLConnector
 //
-// Unknown flavors fall back to the MySQL connector, matching HasCapability's
-// treatment of unknown flavors as MySQL-compatible.
+// Unknown flavors have no established protocol and must be identified before a
+// connector can issue SQL against them.
 func NewConnector(t ConnectorTarget) (DBConnector, error) {
 	if t.Host == "" {
 		return nil, fmt.Errorf("connector target host is required")
@@ -84,6 +85,6 @@ func NewConnector(t ConnectorTarget) (DBConnector, error) {
 		// Informix protocol: no pure-Go driver exists. Same degradation as dm.
 		return nil, fmt.Errorf("%w: %s speaks the Informix protocol", ErrNoSQLConnector, flavor)
 	default:
-		return newMySQLConnector(t)
+		return nil, fmt.Errorf("%w: %s is not a recognized database flavor", ErrNoSQLConnector, flavor)
 	}
 }

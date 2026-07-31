@@ -51,9 +51,11 @@ func buildPostgresDSN(t ConnectorTarget) string {
 	}
 	query := url.Values{}
 	query.Set("connect_timeout", fmt.Sprintf("%d", timeoutSeconds))
-	// Prefer TLS when the server offers it, but do not fail when it does not.
-	// Vendor defaults vary and a health check must not be the thing that breaks.
-	query.Set("sslmode", "prefer")
+	if t.SSLEnabled {
+		query.Set("sslmode", "require")
+	} else {
+		query.Set("sslmode", "disable")
+	}
 
 	dsn := url.URL{
 		Scheme:   "postgres",

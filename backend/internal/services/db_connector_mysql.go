@@ -33,6 +33,9 @@ func buildMySQLDSN(t ConnectorTarget) string {
 	cfg.Timeout = timeout
 	cfg.ReadTimeout = timeout
 	cfg.WriteTimeout = timeout
+	if t.SSLEnabled {
+		cfg.TLSConfig = "true"
+	}
 	return cfg.FormatDSN()
 }
 

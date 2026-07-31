@@ -541,11 +541,12 @@ func (s *InstanceService) detectVersionViaConnector(
 	}
 
 	connector, err := NewConnector(ConnectorTarget{
-		Flavor:   flavor,
-		Host:     conn.Host,
-		Port:     conn.Port,
-		Username: conn.Username,
-		Password: password,
+		Flavor:     flavor,
+		Host:       conn.Host,
+		Port:       conn.Port,
+		Username:   conn.Username,
+		Password:   password,
+		SSLEnabled: conn.SSLEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("version detect for %s failed: %w", normalized, err)

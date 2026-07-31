@@ -34,9 +34,8 @@ func TestNewConnectorDispatchesByFlavor(t *testing.T) {
 		{flavor: "highgo", wantType: "*services.postgresConnector"},
 		{flavor: "gbase8a", wantType: "*services.postgresConnector"},
 		{flavor: "shentong", wantType: "*services.postgresConnector"},
-		// Unknown flavors follow HasCapability and are treated as MySQL.
+		// Empty flavor retains the legacy MySQL behavior.
 		{flavor: "", wantType: "*services.mysqlConnector"},
-		{flavor: "some-future-engine", wantType: "*services.mysqlConnector"},
 	}
 
 	for _, tt := range tests {
@@ -61,7 +60,7 @@ func TestNewConnectorReturnsErrNoSQLConnectorForDriverlessFlavors(t *testing.T) 
 	// gbase8s speaks Informix; dm is behind the dm_driver build tag and is not
 	// compiled by default. Both must degrade to TCP+SSH, signalled by a sentinel
 	// error the caller can test for.
-	for _, flavor := range []string{"gbase8s", "dm"} {
+	for _, flavor := range []string{"gbase8s", "dm", "some-future-engine"} {
 		t.Run(flavor, func(t *testing.T) {
 			connector, err := NewConnector(ConnectorTarget{
 				Flavor:   flavor,
@@ -111,6 +110,11 @@ func TestBuildMySQLDSNAppliesDefaultTimeout(t *testing.T) {
 	assert.Contains(t, dsn, "timeout=5s")
 }
 
+func TestBuildMySQLDSNHonorsTLS(t *testing.T) {
+	dsn := buildMySQLDSN(ConnectorTarget{Flavor: "mysql", Host: "10.0.0.54", Port: 3306, SSLEnabled: true})
+	assert.Contains(t, dsn, "tls=true")
+}
+
 func TestBuildPostgresDSNUsesVendorDefaultDatabase(t *testing.T) {
 	tests := []struct {
 		flavor       string
@@ -150,6 +154,13 @@ func TestBuildPostgresDSNHonoursExplicitDatabase(t *testing.T) {
 	})
 	assert.Contains(t, dsn, "/appdb")
 	assert.NotContains(t, dsn, "/test")
+}
+
+func TestBuildPostgresDSNHonorsTLS(t *testing.T) {
+	tlsDSN := buildPostgresDSN(ConnectorTarget{Flavor: "kingbase", Host: "10.0.0.56", Port: 54321, SSLEnabled: true})
+	plainDSN := buildPostgresDSN(ConnectorTarget{Flavor: "kingbase", Host: "10.0.0.56", Port: 54321})
+	assert.Contains(t, tlsDSN, "sslmode=require")
+	assert.Contains(t, plainDSN, "sslmode=disable")
 }
 
 func TestBuildPostgresDSNEscapesSpecialCharactersInPassword(t *testing.T) {

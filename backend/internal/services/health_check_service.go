@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
@@ -149,7 +148,7 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 			}
 		case "replication":
 			if isReplicationReplicaRole(instance.Status.Role) {
-				replResult := s.checkReplication(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, config.Timeout)
+				replResult := s.checkReplication(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, conn.SSLEnabled, config.Timeout)
 				result.Details.ReplWorking = replResult.IsHealthy
 				result.Details.SecondsBehind = replResult.Details.SecondsBehind
 				if !replResult.IsHealthy && result.ErrorMessage == "" {
@@ -298,7 +297,7 @@ func (s *HealthCheckService) checkTCP(ctx context.Context, host string, port int
 func (s *HealthCheckService) checkSQL(ctx context.Context, flavor string, conn *models.InstanceConnection, timeout time.Duration) *HealthCheckResult {
 	if HasCapability(flavor, CapReplication) {
 		// MySQL-protocol engine: preserve the existing behaviour exactly.
-		return s.checkMySQL(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, timeout)
+		return s.checkMySQL(ctx, conn.Host, conn.Port, conn.Username, conn.PasswordEncrypted, conn.SSLEnabled, timeout)
 	}
 
 	startTime := time.Now()
@@ -316,12 +315,13 @@ func (s *HealthCheckService) checkSQL(ctx context.Context, flavor string, conn *
 	}
 
 	connector, err := NewConnector(ConnectorTarget{
-		Flavor:   flavor,
-		Host:     conn.Host,
-		Port:     conn.Port,
-		Username: conn.Username,
-		Password: plain,
-		Timeout:  timeout,
+		Flavor:     flavor,
+		Host:       conn.Host,
+		Port:       conn.Port,
+		Username:   conn.Username,
+		Password:   plain,
+		SSLEnabled: conn.SSLEnabled,
+		Timeout:    timeout,
 	})
 	if err != nil {
 		return &HealthCheckResult{
@@ -349,7 +349,7 @@ func (s *HealthCheckService) checkSQL(ctx context.Context, flavor string, conn *
 	}
 }
 
-func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port int, username, password string, timeout time.Duration) *HealthCheckResult {
+func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port int, username, password string, sslEnabled bool, timeout time.Duration) *HealthCheckResult {
 	startTime := time.Now()
 
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -366,18 +366,9 @@ func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port i
 		}
 	}
 
-	// B1: 用 mysql.Config.FormatDSN() 自动转义 @ / : 等 DSN 特殊字符, 杜绝 Sprintf 拼接注入.
-	cfg := mysql.NewConfig()
-	cfg.User = username
-	cfg.Passwd = plain
-	cfg.Net = "tcp"
-	cfg.Addr = net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	cfg.ParseTime = true
-	cfg.Loc = time.Local
-	cfg.Timeout = timeout
-	cfg.ReadTimeout = timeout
-	cfg.WriteTimeout = timeout
-	dsn := cfg.FormatDSN()
+	dsn := buildMySQLDSN(ConnectorTarget{
+		Host: host, Port: port, Username: username, Password: plain, SSLEnabled: sslEnabled, Timeout: timeout,
+	})
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -424,7 +415,7 @@ func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port i
 	}
 }
 
-func (s *HealthCheckService) checkReplication(ctx context.Context, host string, port int, username, password string, timeout time.Duration) *HealthCheckResult {
+func (s *HealthCheckService) checkReplication(ctx context.Context, host string, port int, username, password string, sslEnabled bool, timeout time.Duration) *HealthCheckResult {
 	startTime := time.Now()
 
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -441,18 +432,9 @@ func (s *HealthCheckService) checkReplication(ctx context.Context, host string, 
 		}
 	}
 
-	// B1: 用 mysql.Config.FormatDSN(), 同 checkMySQL.
-	cfg := mysql.NewConfig()
-	cfg.User = username
-	cfg.Passwd = plain
-	cfg.Net = "tcp"
-	cfg.Addr = net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	cfg.ParseTime = true
-	cfg.Loc = time.Local
-	cfg.Timeout = timeout
-	cfg.ReadTimeout = timeout
-	cfg.WriteTimeout = timeout
-	dsn := cfg.FormatDSN()
+	dsn := buildMySQLDSN(ConnectorTarget{
+		Host: host, Port: port, Username: username, Password: plain, SSLEnabled: sslEnabled, Timeout: timeout,
+	})
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
