@@ -435,7 +435,13 @@ func (s *UpgradeService) ExecuteInPlaceUpgrade(ctx context.Context, req ExecuteI
 	if targetVersion == "" {
 		return nil, fmt.Errorf("target_version is required")
 	}
-	targetVersion, _ = normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
+	targetVersion, targetFlavor := normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
+	if allowed, reason := IsValidUpgradePath(sourceFlavor, sourceVersion, targetFlavor, targetVersion); !allowed {
+		err := fmt.Errorf("in-place upgrade path is invalid: %s", reason)
+		s.auditUpgrade(ctx, "execute_in_place_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s source=%s %s target=%s %s", req.InstanceID, req.PlanID, sourceFlavor, sourceVersion, targetFlavor, targetVersion))
+		return nil, err
+	}
 
 	steps := s.planInPlaceUpgradeSteps(sourceVersion, targetVersion)
 	if len(steps) == 0 {
@@ -536,6 +542,11 @@ func (s *UpgradeService) ExecuteLogicalMigration(ctx context.Context, req Execut
 		return nil, fmt.Errorf("target_version is required")
 	}
 	targetVersion, targetFlavor := normalizeRequestedTargetVersion(targetVersion, req.TargetFlavor, sourceFlavor)
+	if err := RequireCapability(targetFlavor, CapLogicalUpgrade); err != nil {
+		s.auditUpgrade(ctx, "execute_logical_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("instance_id=%s plan_id=%s target_version=%s target_flavor=%s", req.InstanceID, req.PlanID, targetVersion, targetFlavor))
+		return nil, err
+	}
 
 	steps := s.planLogicalMigrationSteps(sourceVersion, targetVersion)
 	// P0: 派发前落 task 表.

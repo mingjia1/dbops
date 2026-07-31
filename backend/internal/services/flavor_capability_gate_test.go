@@ -116,6 +116,26 @@ func TestExecuteBackupAllowsMySQLFlavorPastCapabilityGate(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent host")
 }
 
+func TestBackupPolicyAndScanRefuseNonMySQLFlavor(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	hostRepo := repositories.NewHostRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	backupRepo := repositories.NewBackupRepository(db)
+	seedInstanceWithFlavor(t, ctx, instanceRepo, "inst-backup-policy-dm", "cluster-backup-policy", "dm")
+	service := NewBackupService(hostRepo, instanceRepo, backupRepo, nil, "test-encryption-key")
+
+	_, err := service.CreatePolicy(ctx, CreateBackupPolicyRequest{
+		InstanceID: "inst-backup-policy-dm", BackupType: "full", Schedule: "0 2 * * *",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), string(CapPhysicalBackup))
+
+	_, err = service.ScanBackups(ctx, "inst-backup-policy-dm")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), string(CapPhysicalBackup))
+}
+
 func TestSwitchRoleWithinClusterRefusedForNonMySQLFlavor(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

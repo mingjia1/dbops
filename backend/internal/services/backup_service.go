@@ -127,6 +127,9 @@ type BackupScanResult struct {
 
 // CreatePolicy P0-4: 真实写入 backup_policies 表, 不再是占位字符串.
 func (s *BackupService) CreatePolicy(ctx context.Context, req CreateBackupPolicyRequest) (string, error) {
+	if _, err := s.requirePhysicalBackupInstance(ctx, req.InstanceID); err != nil {
+		return "", err
+	}
 	policy := &models.BackupPolicy{
 		InstanceID:    req.InstanceID,
 		BackupType:    req.BackupType,
@@ -161,6 +164,9 @@ func (s *BackupService) UpdatePolicy(ctx context.Context, policyID string, req U
 	}
 	policy, err := s.policyRepo.GetPolicyByID(ctx, policyID)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := s.requirePhysicalBackupInstance(ctx, req.InstanceID); err != nil {
 		return nil, err
 	}
 	policy.InstanceID = req.InstanceID
@@ -212,13 +218,8 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 			targetDir = strings.TrimSpace(policy.StoragePath)
 		}
 	}
-	inst, err := s.instRepo.GetByID(ctx, req.InstanceID)
+	inst, err := s.requirePhysicalBackupInstance(ctx, req.InstanceID)
 	if err != nil {
-		return nil, fmt.Errorf("instance not found: %w", err)
-	}
-	// Physical backup runs xtrabackup, which only supports MySQL/Percona.
-	// Refuse other engines before dispatching any agent task.
-	if err := RequireCapability(inst.Version.Flavor, CapPhysicalBackup); err != nil {
 		return nil, err
 	}
 
@@ -571,9 +572,9 @@ func (s *BackupService) ScanBackups(ctx context.Context, instanceID string) (*Ba
 	if instanceID == "" {
 		return nil, fmt.Errorf("instance_id is required")
 	}
-	inst, err := s.instRepo.GetByID(ctx, instanceID)
+	inst, err := s.requirePhysicalBackupInstance(ctx, instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("instance not found: %w", err)
+		return nil, err
 	}
 	agentHost, agentPort, err := s.resolveAgentEndpoint(ctx, inst)
 	if err != nil {
@@ -833,6 +834,20 @@ func (s *BackupService) resolveAgentEndpoint(ctx context.Context, inst *models.I
 		return "", 0, fmt.Errorf("cannot determine agent host")
 	}
 	return conn.Host, 9090, nil
+}
+
+func (s *BackupService) requirePhysicalBackupInstance(ctx context.Context, instanceID string) (*models.Instance, error) {
+	if strings.TrimSpace(instanceID) == "" {
+		return nil, fmt.Errorf("instance_id is required")
+	}
+	inst, err := s.instRepo.GetByID(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("instance not found: %w", err)
+	}
+	if err := RequireCapability(inst.Version.Flavor, CapPhysicalBackup); err != nil {
+		return nil, err
+	}
+	return inst, nil
 }
 
 func decodeDiscoveredBackups(data map[string]interface{}) []DiscoveredBackup {

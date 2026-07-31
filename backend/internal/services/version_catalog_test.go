@@ -22,3 +22,9 @@ func TestVersionCatalogActiveEntriesHaveUsablePackageMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidUpgradePathRejectsCrossFlavorInPlacePaths(t *testing.T) {
+	allowed, reason := IsValidUpgradePath("mysql", "8.0.36", "mariadb", "10.11.4")
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "cross-flavor")
+}
