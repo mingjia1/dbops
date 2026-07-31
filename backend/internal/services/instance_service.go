@@ -826,9 +826,9 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if err != nil {
 		return nil, err
 	}
-	// The agent health-check task invokes mysqladmin. Route PostgreSQL and
-	// proprietary engines through HealthCheckService instead of issuing a
-	// MySQL probe that could report an unrelated result.
+	// The agent health-check task invokes mysqladmin. PostgreSQL and proprietary
+	// engines use the unified HealthCheckService endpoint, which selects their
+	// own connector instead of issuing an unrelated MySQL probe.
 	if !isMySQLProtocolFlavor(instance.Version.Flavor) {
 		return failedInstanceAdminResult(fmt.Sprintf("数据库类型 %s 不支持 Agent MySQL 健康检查，请使用统一健康检测接口", normalizeFlavor(instance.Version.Flavor))), nil
 	}
