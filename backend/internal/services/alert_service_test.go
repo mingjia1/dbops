@@ -396,3 +396,12 @@ func TestAlertService_Original_evaluateCondition(t *testing.T) {
 	assert.True(t, testableService.evaluateCondition("!=", 10.0, 5.0))
 	assert.False(t, testableService.evaluateCondition("invalid", 10.0, 5.0))
 }
+
+func TestRunInspectionChecksMarksMissingMetricsUnavailable(t *testing.T) {
+	service := NewAlertService(nil, nil, NewMonitorService(nil))
+	summary, details, score := service.runInspectionChecks(context.Background(), &models.InspectionTemplate{Name: "daily"}, "instance-1")
+
+	assert.Contains(t, summary, "巡检数据不可用")
+	assert.Equal(t, 0, score)
+	assert.Contains(t, details, `"data_status":"unavailable"`)
+}

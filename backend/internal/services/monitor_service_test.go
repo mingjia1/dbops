@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -126,6 +127,25 @@ func TestCollectMetrics(t *testing.T) {
 	// 无 ClickHouse 时, 显式报错而不是默默吞掉 — 运维需要感知.
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "clickhouse not configured")
+}
+
+func TestCollectInstanceMetricsRejectsNonMySQLProtocolFlavor(t *testing.T) {
+	ctx := context.Background()
+	repo := new(MockInstanceRepo)
+	repo.On("GetByID", ctx, "kingbase-1").Return(&models.Instance{
+		ID:      "kingbase-1",
+		Version: models.InstanceVersion{Flavor: "kingbase"},
+	}, nil).Once()
+	service := &MonitorService{
+		clickhouse: &fakeMetricStore{},
+		instRepo:   repo,
+		agent:      &AgentClient{},
+	}
+
+	_, err := service.CollectInstanceMetrics(ctx, "kingbase-1")
+
+	assert.ErrorContains(t, err, "MySQL-protocol engines only")
+	repo.AssertExpectations(t)
 }
 
 func TestMetricQueryRequest_Fields(t *testing.T) {

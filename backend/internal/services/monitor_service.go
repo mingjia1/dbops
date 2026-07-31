@@ -151,6 +151,9 @@ func (s *MonitorService) CollectInstanceMetrics(ctx context.Context, instanceID 
 	if err != nil {
 		return nil, err
 	}
+	if !isMySQLProtocolFlavor(inst.Version.Flavor) {
+		return nil, fmt.Errorf("metrics collection supports MySQL-protocol engines only; instance flavor is %q", normalizeFlavor(inst.Version.Flavor))
+	}
 	conn, err := s.instRepo.GetConnection(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -187,10 +190,11 @@ func (s *MonitorService) CollectInstanceMetrics(ctx context.Context, instanceID 
 		user = "root"
 	}
 	metrics, err := s.agent.ExecuteMetricsCollect(ctx, agentHost, agentPort, instanceID, map[string]interface{}{
-		"target_host": conn.Host,
-		"target_port": conn.Port,
-		"target_user": user,
-		"target_pass": password,
+		"target_host":        conn.Host,
+		"target_port":        conn.Port,
+		"target_user":        user,
+		"target_pass":        password,
+		"target_ssl_enabled": conn.SSLEnabled,
 	})
 	if err != nil {
 		return nil, err

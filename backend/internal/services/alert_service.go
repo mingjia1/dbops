@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/smtp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,12 +18,12 @@ import (
 )
 
 type AlertService struct {
-	ruleRepo         *repositories.AlertRuleRepository
-	notificationRepo *repositories.AlertNotificationRepository
-	monitorService   *MonitorService
-	templateRepo     *repositories.AlertTemplateRepository
-	escRepo          *repositories.EscalationRepository
-	silenceRepo      *repositories.SilenceRepository
+	ruleRepo          *repositories.AlertRuleRepository
+	notificationRepo  *repositories.AlertNotificationRepository
+	monitorService    *MonitorService
+	templateRepo      *repositories.AlertTemplateRepository
+	escRepo           *repositories.EscalationRepository
+	silenceRepo       *repositories.SilenceRepository
 	inspectionTplRepo *repositories.InspectionTemplateRepository
 	inspectionRptRepo *repositories.InspectionReportRepository
 }
@@ -555,43 +556,62 @@ func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.Insp
 
 	// 1. Check instance health
 	healthMetrics := []string{"cpu", "mem", "disk", "connections", "qps"}
+	if s.monitorService == nil {
+		return inspectionDataUnavailable(tpl, "监控指标服务不可用")
+	}
 	metrics, err := s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
 		InstanceID: instanceID,
 		Metrics:    healthMetrics,
 	})
-	if err == nil {
-		metricMap := make(map[string]float64)
-		for _, m := range metrics {
-			metricMap[m.Name] = m.Value
+	if err != nil {
+		return inspectionDataUnavailable(tpl, fmt.Sprintf("监控指标查询失败: %v", err))
+	}
+	metricMap := make(map[string]float64)
+	for _, m := range metrics {
+		metricMap[m.Name] = m.Value
+	}
+	missingMetrics := make([]string, 0)
+	for _, name := range healthMetrics {
+		if _, ok := metricMap[name]; !ok {
+			missingMetrics = append(missingMetrics, name)
 		}
-		if v, ok := metricMap["cpu"]; ok && v > 90 {
-			issues = append(issues, "CPU usage high (> 90%)")
-			baseScore -= 10
-		}
-		if v, ok := metricMap["mem"]; ok && v > 90 {
-			issues = append(issues, "Memory usage high (> 90%)")
-			baseScore -= 10
-		}
-		if v, ok := metricMap["disk"]; ok && v > 85 {
-			issues = append(issues, "Disk usage high (> 85%)")
-			baseScore -= 15
-		}
-		if v, ok := metricMap["connections"]; ok && v > 500 {
-			issues = append(issues, fmt.Sprintf("High connection count (%.0f)", v))
-			baseScore -= 5
-		}
-		if v, ok := metricMap["qps"]; ok && v > 10000 {
-			issues = append(issues, fmt.Sprintf("High QPS (%.0f)", v))
-			baseScore -= 5
-		}
+	}
+	if len(missingMetrics) > 0 {
+		return inspectionDataUnavailable(tpl, fmt.Sprintf("监控指标不完整，缺少: %s", strings.Join(missingMetrics, ", ")))
+	}
+	if v := metricMap["cpu"]; v > 90 {
+		issues = append(issues, "CPU usage high (> 90%)")
+		baseScore -= 10
+	}
+	if v := metricMap["mem"]; v > 90 {
+		issues = append(issues, "Memory usage high (> 90%)")
+		baseScore -= 10
+	}
+	if v := metricMap["disk"]; v > 85 {
+		issues = append(issues, "Disk usage high (> 85%)")
+		baseScore -= 15
+	}
+	if v := metricMap["connections"]; v > 500 {
+		issues = append(issues, fmt.Sprintf("High connection count (%.0f)", v))
+		baseScore -= 5
+	}
+	if v := metricMap["qps"]; v > 10000 {
+		issues = append(issues, fmt.Sprintf("High QPS (%.0f)", v))
+		baseScore -= 5
 	}
 
 	// 2. Check active alert rules for this instance
-	alerts, _ := s.ruleRepo.ListAlertHistory(ctx, repositories.AlertHistoryFilter{
+	if s.ruleRepo == nil {
+		return inspectionDataUnavailable(tpl, "告警历史服务不可用")
+	}
+	alerts, err := s.ruleRepo.ListAlertHistory(ctx, repositories.AlertHistoryFilter{
 		InstanceID: instanceID,
 		Status:     "firing",
 		Limit:      10,
 	})
+	if err != nil {
+		return inspectionDataUnavailable(tpl, fmt.Sprintf("告警历史查询失败: %v", err))
+	}
 	if len(alerts) > 0 {
 		issues = append(issues, fmt.Sprintf("%d active alerts firing", len(alerts)))
 		baseScore -= len(alerts) * 5
@@ -617,6 +637,17 @@ func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.Insp
 	details = string(detailBytes)
 
 	return summary, details, baseScore
+}
+
+func inspectionDataUnavailable(tpl *models.InspectionTemplate, reason string) (summary, details string, score int) {
+	detailBytes, _ := json.Marshal(map[string]interface{}{
+		"score":       0,
+		"issues":      []string{reason},
+		"template":    tpl.Name,
+		"data_status": "unavailable",
+		"at":          time.Now().Format(time.RFC3339),
+	})
+	return "巡检数据不可用: " + reason, string(detailBytes), 0
 }
 
 func (s *AlertService) ListInspectionReports(ctx context.Context, templateID string, limit, offset int) ([]models.InspectionReport, error) {

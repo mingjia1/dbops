@@ -44,6 +44,7 @@ type MySQLMetricTarget struct {
 	Port       int
 	User       string
 	Password   string
+	SSLEnabled bool
 }
 
 func (c *MetricsCollector) throttled() bool {
@@ -125,15 +126,19 @@ func (c *MetricsCollector) CollectMySQLStatusMetrics(ctx context.Context, target
 	if strings.TrimSpace(target.User) == "" {
 		target.User = "root"
 	}
-	cmd := exec.CommandContext(ctx, "mysql",
+	args := []string{
 		"-h", target.Host,
 		"-P", strconv.Itoa(target.Port),
 		"-u", target.User,
 		"--batch",
 		"--raw",
 		"--skip-column-names",
-		"-e", "SHOW GLOBAL STATUS",
-	)
+	}
+	if target.SSLEnabled {
+		args = append(args, "--ssl-mode=REQUIRED")
+	}
+	args = append(args, "-e", "SHOW GLOBAL STATUS")
+	cmd := exec.CommandContext(ctx, "mysql", args...)
 	if target.Password != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+target.Password)
 	}

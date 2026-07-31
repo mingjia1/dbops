@@ -150,12 +150,14 @@ func metricTargetFromTaskRequest(req executor.DeployTaskRequest) (collector.MySQ
 	if instanceID == "" {
 		return collector.MySQLMetricTarget{}, fmt.Errorf("instance_id is required")
 	}
+	sslEnabled, _ := req.Config["target_ssl_enabled"].(bool)
 	return collector.MySQLMetricTarget{
 		InstanceID: instanceID,
 		Host:       host,
 		Port:       port,
 		User:       user,
 		Password:   pass,
+		SSLEnabled: sslEnabled,
 	}, nil
 }
 

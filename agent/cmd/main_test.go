@@ -96,6 +96,28 @@ func TestMiddlewareSetupRoutesReturn500ForFailedTaskResult(t *testing.T) {
 	}
 }
 
+func TestMetricTargetFromTaskRequestPreservesTLS(t *testing.T) {
+	target, err := metricTargetFromTaskRequest(executor.DeployTaskRequest{
+		InstanceID: "instance-1",
+		Config: map[string]interface{}{
+			"target_host":        "10.0.0.8",
+			"target_port":        3306,
+			"target_user":        "monitor",
+			"target_ssl_enabled": true,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("metricTargetFromTaskRequest returned error: %v", err)
+	}
+	if !target.SSLEnabled {
+		t.Fatal("expected TLS to be enabled")
+	}
+	if target.Host != "10.0.0.8" || target.Port != 3306 || target.User != "monitor" {
+		t.Fatalf("unexpected metric target: %+v", target)
+	}
+}
+
 func TestCompatAccountRoutesRequireBearerToken(t *testing.T) {
 	router := newCompatAccountRouteTestRouter()
 
