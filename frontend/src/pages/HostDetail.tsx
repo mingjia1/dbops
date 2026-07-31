@@ -174,7 +174,7 @@ const HostDetail: React.FC = () => {
     if (!id) return
     let payload: { ports?: number[]; port_range?: string; probe_mysql?: boolean; discover_process?: boolean } = { probe_mysql: true, discover_process: discoverProcess }
     if (scanMode === 'default') {
-      payload = { probe_mysql: true, discover_process: discoverProcess, port_range: '3300-3400,33061,33060,4000,5432,5236,54321,9088,2003,5258,5050' }
+      payload = { probe_mysql: true, discover_process: discoverProcess, port_range: '3300-3400,33060,33061,4000,5432,5236,54321,9088,2003,5050,5258,13306,23306' }
     } else if (scanMode === 'custom') {
       const v = scanForm.getFieldValue('ports') as number[] | undefined
       if (!v || v.length === 0) {
