@@ -39,6 +39,17 @@ go test ./internal/executor -run '^TestValidateLocalPackageBundle' -count=1
 go vet ./internal/executor
 ```
 
+## Xinchuang Core Contract Tests
+
+```bash
+# Run lifecycle contract tests
+cd backend
+go test ./internal/plugins/kernel -run '^TestXinchuangCoreBase' -count=1
+
+# Run static checks for the kernel package
+go vet ./internal/plugins/kernel
+```
+
 ## Adding a Flavor Executor
 
 1. Update the baseline in `backend/internal/services/flavor_release_catalog.go` using the vendor's current supported release information.

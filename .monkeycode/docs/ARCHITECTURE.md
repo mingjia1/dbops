@@ -18,6 +18,8 @@ DBOps Platform is a database operations system with a React web console, a Go ba
 
 `agent/internal/executor/local_package_bundle.go` validates pre-positioned package bundles. It reads `<root>/<flavor>/<version>/manifest.json`, verifies the requested flavor and version, each regular package file, its SHA-256, and a required license file. The default root is `/opt/dbops/packages`.
 
+`backend/internal/plugins/kernel/xinchuang_core.go` provides the common lifecycle base for dedicated flavor executors. It validates the target Agent, dispatches each lifecycle phase through the flavor's Agent route, and accepts only a terminal successful Agent task status.
+
 ```mermaid
 flowchart LR
     Console[Web Console] --> Backend[Backend Service]
@@ -25,6 +27,7 @@ flowchart LR
     Capability --> Agent[Host Agent]
     Agent --> Bundle[Local Package Bundle]
     Bundle --> Executor[Flavor Executor]
+    Executor --> Result[Agent Task Result]
 ```
 
 The local bundle validator only performs reads and hashes. Installation, extraction, downloads, and service commands are outside this validator.
