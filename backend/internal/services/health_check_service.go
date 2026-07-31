@@ -74,12 +74,11 @@ type HealthCheckResult struct {
 }
 
 type CheckDetails struct {
-	TCPReachable    bool    `json:"tcp_reachable"`
-	MySQLAlive      bool    `json:"mysql_alive"`
-	ReplWorking     bool    `json:"repl_working"`
-	SecondsBehind   int     `json:"seconds_behind"`
-	ConnectionCount int     `json:"connection_count"`
-	QPS             float64 `json:"qps"`
+	TCPReachable    bool `json:"tcp_reachable"`
+	MySQLAlive      bool `json:"mysql_alive"`
+	ReplWorking     bool `json:"repl_working"`
+	SecondsBehind   int  `json:"seconds_behind"`
+	ConnectionCount int  `json:"connection_count"`
 }
 
 type FailureState struct {
@@ -144,7 +143,6 @@ func (s *HealthCheckService) ExecuteHealthCheck(ctx context.Context, req HealthC
 			}
 			if sqlResult.IsHealthy {
 				result.Details.ConnectionCount = sqlResult.Details.ConnectionCount
-				result.Details.QPS = sqlResult.Details.QPS
 			}
 		case "replication":
 			if isReplicationReplicaRole(instance.Status.Role) {
@@ -392,19 +390,12 @@ func (s *HealthCheckService) checkMySQL(ctx context.Context, host string, port i
 	}
 
 	details := CheckDetails{}
-	row := db.QueryRowContext(checkCtx, "SHOW STATUS WHERE Variable_name IN ('Threads_connected', 'Questions')")
-	var varName, value string
-	for {
-		err := row.Scan(&varName, &value)
-		if err != nil {
-			break
-		}
-		switch varName {
-		case "Threads_connected":
-			fmt.Sscanf(value, "%d", &details.ConnectionCount)
-		case "Questions":
-			fmt.Sscanf(value, "%f", &details.QPS)
-		}
+	// Questions is a monotonically increasing server counter. A single sample
+	// cannot represent queries per second, so health checks report only the
+	// instantaneous connection count. The monitor collector owns rate metrics.
+	var value string
+	if err := db.QueryRowContext(checkCtx, "SHOW STATUS WHERE Variable_name = 'Threads_connected'").Scan(new(string), &value); err == nil {
+		fmt.Sscanf(value, "%d", &details.ConnectionCount)
 	}
 
 	return &HealthCheckResult{
