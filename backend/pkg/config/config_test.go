@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestSplitCSV(t *testing.T) {
@@ -176,6 +179,33 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if cfg.ServerTimeouts.ReadTimeoutSec != 11 || cfg.ServerTimeouts.WriteTimeoutSec != 22 || cfg.ServerTimeouts.IdleTimeoutSec != 33 {
 		t.Errorf("ServerTimeouts = %#v, want env override", cfg.ServerTimeouts)
+	}
+}
+
+func TestExampleConfigUsesRuntimeKeys(t *testing.T) {
+	content, err := os.ReadFile("../../config/config.example.yaml")
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.SetConfigType("yaml")
+	if err := viper.ReadConfig(bytes.NewReader(content)); err != nil {
+		t.Fatalf("parse example config: %v", err)
+	}
+
+	for _, key := range []string{
+		"server_port",
+		"database_url",
+		"jwt_secret",
+		"encryption_key",
+		"agent_token",
+		"cluster_defaults.replication_pass",
+	} {
+		if viper.GetString(key) == "" {
+			t.Errorf("example config key %q is empty or incompatible with runtime loading", key)
+		}
 	}
 }
 
