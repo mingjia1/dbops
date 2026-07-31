@@ -61,6 +61,17 @@ go test ./internal/executor -run '^TestFlavorTaskExecutor' -count=1
 go test ./cmd -run '^TestFlavorTaskRoute' -count=1
 ```
 
+## Flavor Capability Tests
+
+```bash
+# Verify the per-flavor single-node capability matrix
+cd backend
+go test ./internal/services -run 'Test.*Capability' -count=1
+
+# Run static checks for capability services
+go vet ./internal/services
+```
+
 ## Adding a Flavor Executor
 
 1. Update the baseline in `backend/internal/services/flavor_release_catalog.go` using the vendor's current supported release information.

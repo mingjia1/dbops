@@ -81,6 +81,39 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 	}
 }
 
+func TestSingleNodeExecutorCapabilitiesOnlyEnableCompletedSingleNodeOperations(t *testing.T) {
+	caps := singleNodeExecutorCapabilities(true,
+		CapInstanceDeploy,
+		CapParameterTemplate,
+		CapPhysicalBackup,
+		CapLogicalUpgrade,
+		CapReplication,
+		CapFailover,
+		CapScale,
+		CapNodeRebuild,
+	)
+
+	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade, CapSQLHealthCheck} {
+		assert.True(t, caps[capability], "single-node executor should enable %s", capability)
+	}
+	for _, capability := range []Capability{CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
+		assert.False(t, caps[capability], "single-node executor must keep %s disabled", capability)
+	}
+}
+
+func TestXinchuangFlavorsHaveExplicitCompletedCapabilityRecords(t *testing.T) {
+	for _, flavor := range []string{
+		"oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql", "tidb", "kingbase",
+		"opengauss", "highgo", "gbase8a", "shentong", "dm", "gbase8s",
+	} {
+		_, ok := completedSingleNodeCapabilities[flavor]
+		assert.True(t, ok, "%s needs a completed executor capability record", flavor)
+		for _, capability := range []Capability{CapReplication, CapFailover, CapScale, CapNodeRebuild} {
+			assert.False(t, HasCapability(flavor, capability), "%s must keep %s disabled", flavor, capability)
+		}
+	}
+}
+
 func TestHasCapabilityNormalizesFlavorCase(t *testing.T) {
 	assert.False(t, HasCapability("  GBase8S  ", CapSQLHealthCheck))
 	assert.True(t, HasCapability("  KingBase  ", CapSQLHealthCheck))

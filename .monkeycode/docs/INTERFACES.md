@@ -40,6 +40,8 @@ The validator returns an error for a missing or malformed manifest, a flavor or 
 
 `services.RequireCapability(flavor, capability)` allows operations explicitly enabled by the flavor matrix and returns a readable error for unsupported operations. This gate protects lifecycle paths until their dedicated executors exist.
 
+`completedSingleNodeCapabilities` is the per-flavor record used to activate completed single-node executors. The initial flavor task handlers only validate local media and detect versions, so their records are empty. `singleNodeExecutorCapabilities` only accepts lifecycle capabilities compatible with a completed single-node executor; it always keeps `replication`, `failover`, `scale`, `node_rebuild`, and `cluster_deploy` disabled.
+
 ## Xinchuang Core Lifecycle Contract
 
 `kernel.XinchuangCorePlugin` defines `Prepare`, `Execute`, `Rollback`, `Teardown`, `Join`, and `Leave` for each dedicated flavor executor. `Execute` accepts these operations: `deploy`, `configure`, `backup`, `restore`, `upgrade`, `migrate`, `ha`, `replication`, `failover`, and `monitor`.

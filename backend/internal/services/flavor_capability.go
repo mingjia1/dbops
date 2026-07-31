@@ -102,6 +102,37 @@ func tieredOnboardingCapabilities(sqlHealthCheck bool) map[Capability]bool {
 	}
 }
 
+// singleNodeExecutorCapabilities enables only lifecycle operations backed by a
+// completed, flavor-specific single-node executor. Distributed topology actions
+// remain unavailable until their real multi-node workflows pass integration
+// tests.
+func singleNodeExecutorCapabilities(sqlHealthCheck bool, completed ...Capability) map[Capability]bool {
+	caps := tieredOnboardingCapabilities(sqlHealthCheck)
+	allowed := map[Capability]bool{
+		CapPhysicalBackup:    true,
+		CapInPlaceUpgrade:    true,
+		CapInstanceDeploy:    true,
+		CapLogicalUpgrade:    true,
+		CapParameterTemplate: true,
+		CapInstanceAdmin:     true,
+	}
+	for _, capability := range completed {
+		if allowed[capability] {
+			caps[capability] = true
+		}
+	}
+	return caps
+}
+
+// completedSingleNodeCapabilities records capabilities with an implemented
+// flavor-specific lifecycle executor. Package validation and version discovery
+// do not enable lifecycle capabilities by themselves.
+var completedSingleNodeCapabilities = map[string][]Capability{
+	"oceanbase": {}, "gaussdb-mysql": {}, "polardb-mysql": {}, "tdsql-mysql": {},
+	"tidb": {}, "kingbase": {}, "opengauss": {}, "highgo": {}, "gbase8a": {},
+	"shentong": {}, "dm": {}, "gbase8s": {},
+}
+
 // flavorCapabilities is the single source of truth for what the platform will
 // do with each engine flavor. Adding a new flavor means adding one entry here.
 //
@@ -114,28 +145,27 @@ var flavorCapabilities = map[string]map[Capability]bool{
 	"mariadb": mysqlProtocolCapabilities(),
 	"percona": mysqlProtocolCapabilities(),
 
-	// These engines expose a MySQL wire protocol, so SQL health checks work.
-	// Their replication, backup, upgrade and lifecycle tooling is product
-	// specific and requires a dedicated executor before it can be enabled.
-	"oceanbase":     tieredOnboardingCapabilities(true),
-	"gaussdb-mysql": tieredOnboardingCapabilities(true),
-	"polardb-mysql": tieredOnboardingCapabilities(true),
-	"tdsql-mysql":   tieredOnboardingCapabilities(true),
-	"tidb":          tieredOnboardingCapabilities(true),
+	// Dedicated flavor executors enable their proven single-node capabilities
+	// through completedSingleNodeCapabilities. Each flavor currently has only
+	// package validation and version discovery, so lifecycle actions stay gated.
+	"oceanbase":     singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["oceanbase"]...),
+	"gaussdb-mysql": singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["gaussdb-mysql"]...),
+	"polardb-mysql": singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["polardb-mysql"]...),
+	"tdsql-mysql":   singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["tdsql-mysql"]...),
+	"tidb":          singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["tidb"]...),
 
-	// ---- PostgreSQL-compatible: onboarding only, SQL health check available ----
-	"kingbase":  tieredOnboardingCapabilities(true),
-	"opengauss": tieredOnboardingCapabilities(true),
-	"highgo":    tieredOnboardingCapabilities(true),
-	"gbase8a":   tieredOnboardingCapabilities(true),
-	"shentong":  tieredOnboardingCapabilities(true),
+	"kingbase":  singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["kingbase"]...),
+	"opengauss": singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["opengauss"]...),
+	"highgo":    singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["highgo"]...),
+	"gbase8a":   singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["gbase8a"]...),
+	"shentong":  singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["shentong"]...),
 
 	// ---- No usable Go driver: TCP and SSH process discovery only ----
 	// dm speaks a proprietary protocol; its driver lives behind the dm_driver
 	// build tag and is not compiled by default.
-	"dm": tieredOnboardingCapabilities(false),
+	"dm": singleNodeExecutorCapabilities(false, completedSingleNodeCapabilities["dm"]...),
 	// gbase8s speaks the Informix protocol; no pure-Go driver exists.
-	"gbase8s": tieredOnboardingCapabilities(false),
+	"gbase8s": singleNodeExecutorCapabilities(false, completedSingleNodeCapabilities["gbase8s"]...),
 
 	// Scanner fallback values have not established an engine-compatible
 	// management protocol. Keep them inventory-only until identified.
