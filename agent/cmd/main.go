@@ -21,6 +21,10 @@ type middlewareSetupTaskExecutor interface {
 	ExecuteProxySQLSetup(ctx context.Context, req executor.DeployTaskRequest) (*executor.TaskResult, error)
 }
 
+type flavorTaskExecutor interface {
+	Execute(ctx context.Context, req executor.FlavorTaskRequest) (*executor.TaskResult, error)
+}
+
 type metricsTaskCollector interface {
 	CollectMySQLStatusMetrics(ctx context.Context, target collector.MySQLMetricTarget) ([]collector.Metric, error)
 }
@@ -79,6 +83,26 @@ func registerMiddlewareSetupTaskRoutes(tasks gin.IRoutes, taskExecutor middlewar
 		statusCode := 200
 		if result.Status == "failed" {
 			statusCode = 500
+		}
+		c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
+	})
+}
+
+func registerFlavorTaskRoutes(tasks gin.IRoutes, taskExecutor flavorTaskExecutor) {
+	tasks.POST("/flavor", func(c *gin.Context) {
+		var req executor.FlavorTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "Invalid request"})
+			return
+		}
+		result, err := taskExecutor.Execute(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": "Flavor task execution failed"})
+			return
+		}
+		statusCode := http.StatusOK
+		if result.Status == "failed" {
+			statusCode = http.StatusInternalServerError
 		}
 		c.JSON(statusCode, gin.H{"code": statusCode, "message": result.Message, "data": result})
 	})
@@ -235,6 +259,7 @@ func main() {
 	logInstance.Info("Starting MySQL Ops Agent")
 
 	taskExecutor := executor.NewTaskExecutor()
+	flavorExecutor := executor.NewFlavorTaskExecutor()
 	if cfg.Relay.Enabled && cfg.Relay.RelayHost != "" {
 		taskExecutor.SetRelayConfig(cfg.Relay.RelayHost, cfg.Relay.RelayPort, cfg.Relay.RelayToken)
 	}
@@ -330,6 +355,7 @@ func main() {
 			})
 
 			registerMiddlewareSetupTaskRoutes(tasks, taskExecutor)
+			registerFlavorTaskRoutes(tasks, flavorExecutor)
 			registerMetricsTaskRoutes(tasks, metricsCollector)
 
 			tasks.POST("/restore", func(c *gin.Context) {

@@ -19,6 +19,19 @@ type fakeMiddlewareSetupExecutor struct {
 	proxysqlReply   *executor.TaskResult
 }
 
+type fakeFlavorTaskExecutor struct {
+	req   executor.FlavorTaskRequest
+	reply *executor.TaskResult
+}
+
+func (f *fakeFlavorTaskExecutor) Execute(_ context.Context, req executor.FlavorTaskRequest) (*executor.TaskResult, error) {
+	f.req = req
+	if f.reply != nil {
+		return f.reply, nil
+	}
+	return &executor.TaskResult{TaskID: req.TaskID, Status: "completed", Progress: 100, Message: "ok", Timestamp: time.Now()}, nil
+}
+
 func (f *fakeMiddlewareSetupExecutor) ExecuteKeepalivedSetup(_ context.Context, req executor.DeployTaskRequest) (*executor.TaskResult, error) {
 	f.keepalivedReq = req
 	if f.keepalivedReply != nil {
@@ -115,6 +128,42 @@ func TestMetricTargetFromTaskRequestPreservesTLS(t *testing.T) {
 	}
 	if target.Host != "10.0.0.8" || target.Port != 3306 || target.User != "monitor" {
 		t.Fatalf("unexpected metric target: %+v", target)
+	}
+}
+
+func TestFlavorTaskRouteBindsRequiredPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	fakeExec := &fakeFlavorTaskExecutor{}
+	registerFlavorTaskRoutes(router.Group("/agent/tasks"), fakeExec)
+	body := []byte(`{"task_id":"flavor-task","instance_id":"instance-1","flavor":"tidb","version":"v8.5.7","operation":"version-detect","package_path":"/opt/dbops/packages/tidb/v8.5.7","tls":{"enabled":true}}`)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agent/tasks/flavor", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if fakeExec.req.Flavor != "tidb" || fakeExec.req.TLS == nil || !fakeExec.req.TLS.Enabled {
+		t.Fatalf("unexpected flavor request: %#v", fakeExec.req)
+	}
+}
+
+func TestFlavorTaskRouteReturns500ForUnexecutableFlavor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	fakeExec := &fakeFlavorTaskExecutor{reply: &executor.TaskResult{TaskID: "flavor-task", Status: "failed", Message: "flavor is not registered", Timestamp: time.Now()}}
+	registerFlavorTaskRoutes(router.Group("/agent/tasks"), fakeExec)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agent/tasks/flavor", bytes.NewReader([]byte(`{"task_id":"flavor-task"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 

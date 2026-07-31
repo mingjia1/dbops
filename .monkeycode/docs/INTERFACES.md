@@ -45,3 +45,9 @@ The validator returns an error for a missing or malformed manifest, a flavor or 
 `kernel.XinchuangCorePlugin` defines `Prepare`, `Execute`, `Rollback`, `Teardown`, `Join`, and `Leave` for each dedicated flavor executor. `Execute` accepts these operations: `deploy`, `configure`, `backup`, `restore`, `upgrade`, `migrate`, `ha`, `replication`, `failover`, and `monitor`.
 
 `kernel.XinchuangCoreBase` sends `flavor`, `operation`, `task_id`, and target node details to the injected Agent task route. Agent responses succeed only with one of `completed`, `success`, `succeeded`, or `ok`; all other and missing statuses return errors for the caller to persist as task failure.
+
+## Agent Flavor Task Route
+
+`POST /agent/tasks/flavor` accepts `executor.FlavorTaskRequest`. The payload requires `task_id`, `instance_id`, `flavor`, `version`, `operation`, `package_path`, and a `tls` object. `package_path` must exactly equal `/opt/dbops/packages/<flavor>/<version>` after path cleaning.
+
+The Agent registers isolated version command builders for OceanBase, GaussDB MySQL, PolarDB MySQL, TDSQL MySQL, TiDB, Kingbase, openGauss, HighGo, GBase 8a, Shentong, DM, and GBase 8s. `validate-package` verifies the local manifest and hashes. `version-detect` runs the registered fixed binary with `--version` and requires the output to contain the requested version. Other lifecycle actions return a failed task until their dedicated flavor implementation is available.

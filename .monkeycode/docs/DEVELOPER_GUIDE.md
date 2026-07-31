@@ -50,6 +50,17 @@ go test ./internal/plugins/kernel -run '^TestXinchuangCoreBase' -count=1
 go vet ./internal/plugins/kernel
 ```
 
+## Flavor Task Executor Tests
+
+```bash
+# Run flavor registration, local bundle, and version detection tests
+cd agent
+go test ./internal/executor -run '^TestFlavorTaskExecutor' -count=1
+
+# Run the flavor task route tests
+go test ./cmd -run '^TestFlavorTaskRoute' -count=1
+```
+
 ## Adding a Flavor Executor
 
 1. Update the baseline in `backend/internal/services/flavor_release_catalog.go` using the vendor's current supported release information.
