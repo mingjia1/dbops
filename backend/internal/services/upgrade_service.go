@@ -633,13 +633,6 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
 		return nil, err
 	}
-	// Rolling upgrade swaps MySQL binaries node by node; normalizeRequestedTargetVersion
-	// below hard-codes the mysql flavor, so this path is MySQL-only by design.
-	if err := RequireCapability(resolveClusterFlavor(ctx, s.instanceRepo, req.ClusterID), CapInPlaceUpgrade); err != nil {
-		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
-			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
-		return nil, err
-	}
 	if req.MaxInParallel == 0 {
 		req.MaxInParallel = 1
 	}
@@ -656,6 +649,13 @@ func (s *UpgradeService) ExecuteRollingUpgrade(ctx context.Context, req ExecuteR
 	}
 	if len(clusterInstances) == 0 {
 		err := fmt.Errorf("cluster %s has no managed instances", req.ClusterID)
+		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
+			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
+		return nil, err
+	}
+	// Rolling upgrade swaps MySQL binaries node by node; normalizeRequestedTargetVersion
+	// below hard-codes the mysql flavor, so this path is MySQL-only by design.
+	if err := RequireCapability(resolveClusterFlavor(ctx, s.instanceRepo, req.ClusterID), CapInPlaceUpgrade); err != nil {
 		s.auditUpgrade(ctx, "execute_rolling_upgrade", "execute", "upgrade_task", req.PlanID, "failed", err.Error(),
 			fmt.Sprintf("cluster_id=%s plan_id=%s target_version=%s", req.ClusterID, req.PlanID, req.TargetVersion))
 		return nil, err

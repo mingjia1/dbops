@@ -62,8 +62,8 @@ var capabilityLabels = map[Capability]string{
 	CapInstanceAdmin:     "实例管理操作 (账号/参数/配置/服务控制)",
 }
 
-// mysqlProtocolCapabilities is the capability set granted to engines that speak
-// the MySQL wire protocol and accept MySQL-compatible administrative SQL.
+// mysqlProtocolCapabilities is the capability set for engines whose lifecycle
+// tooling is implemented by this platform's MySQL-specific executors.
 func mysqlProtocolCapabilities() map[Capability]bool {
 	return map[Capability]bool{
 		CapReplication:       true,
@@ -109,19 +109,19 @@ func tieredOnboardingCapabilities(sqlHealthCheck bool) map[Capability]bool {
 // persistence. Every explicit or newly discovered flavor uses a conservative
 // capability set until it has a dedicated entry.
 var flavorCapabilities = map[string]map[Capability]bool{
-	// ---- MySQL wire protocol, MySQL-compatible admin SQL ----
-	"mysql":         mysqlProtocolCapabilities(),
-	"mariadb":       mysqlProtocolCapabilities(),
-	"percona":       mysqlProtocolCapabilities(),
-	"oceanbase":     mysqlProtocolCapabilities(),
-	"gaussdb-mysql": mysqlProtocolCapabilities(),
-	"polardb-mysql": mysqlProtocolCapabilities(),
-	"tdsql-mysql":   mysqlProtocolCapabilities(),
+	// ---- MySQL lifecycle tooling supported by platform executors ----
+	"mysql":   mysqlProtocolCapabilities(),
+	"mariadb": mysqlProtocolCapabilities(),
+	"percona": mysqlProtocolCapabilities(),
 
-	// TiDB speaks the MySQL wire protocol, so it can be connected and queried
-	// for health. Its replication, backup and lifecycle workflows differ from
-	// MySQL and must remain unavailable until they have dedicated support.
-	"tidb": tieredOnboardingCapabilities(true),
+	// These engines expose a MySQL wire protocol, so SQL health checks work.
+	// Their replication, backup, upgrade and lifecycle tooling is product
+	// specific and requires a dedicated executor before it can be enabled.
+	"oceanbase":     tieredOnboardingCapabilities(true),
+	"gaussdb-mysql": tieredOnboardingCapabilities(true),
+	"polardb-mysql": tieredOnboardingCapabilities(true),
+	"tdsql-mysql":   tieredOnboardingCapabilities(true),
+	"tidb":          tieredOnboardingCapabilities(true),
 
 	// ---- PostgreSQL-compatible: onboarding only, SQL health check available ----
 	"kingbase":  tieredOnboardingCapabilities(true),
@@ -203,20 +203,23 @@ func allCapabilities() []Capability {
 // instances. ListByClusterID does not populate the version record, so each
 // instance is re-read through GetByID.
 //
-// An empty result means "unknown", which HasCapability treats as
-// MySQL-compatible, so pre-existing clusters are never blocked.
+// A successfully loaded legacy instance may have an empty flavor and retains
+// MySQL-compatible behavior. Repository errors and missing cluster members
+// return the explicit "unknown" flavor so capability gates fail safely.
 func resolveClusterFlavor(ctx context.Context, repo InstanceRepositoryInterface, clusterID string) string {
 	if repo == nil || strings.TrimSpace(clusterID) == "" {
-		return ""
+		return "unknown"
 	}
 	items, err := repo.ListByClusterID(ctx, clusterID)
 	if err != nil {
-		return ""
+		return "unknown"
 	}
+	foundInstance := false
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
+		foundInstance = true
 		if v := strings.ToLower(strings.TrimSpace(item.Version.Flavor)); v != "" {
 			return v
 		}
@@ -228,6 +231,9 @@ func resolveClusterFlavor(ctx context.Context, repo InstanceRepositoryInterface,
 			return v
 		}
 	}
+	if !foundInstance {
+		return "unknown"
+	}
 	return ""
 }
 
@@ -235,11 +241,11 @@ func resolveClusterFlavor(ctx context.Context, repo InstanceRepositoryInterface,
 // empty string when it cannot be determined.
 func resolveInstanceFlavor(ctx context.Context, repo InstanceRepositoryInterface, instanceID string) string {
 	if repo == nil || strings.TrimSpace(instanceID) == "" {
-		return ""
+		return "unknown"
 	}
 	inst, err := repo.GetByID(ctx, instanceID)
 	if err != nil || inst == nil {
-		return ""
+		return "unknown"
 	}
 	return strings.ToLower(strings.TrimSpace(inst.Version.Flavor))
 }

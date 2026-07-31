@@ -15,14 +15,10 @@ const MYSQL_FLAVORS = [
   'mysql',
   'mariadb',
   'percona',
-  'oceanbase',
-  'gaussdb-mysql',
-  'polardb-mysql',
-  'tdsql-mysql',
 ]
 
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
-const MYSQL_PROTOCOL_TIERED_FLAVORS = ['tidb']
+const MYSQL_PROTOCOL_TIERED_FLAVORS = ['tidb', 'oceanbase', 'gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
 const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
 
 describe('hasCapability', () => {

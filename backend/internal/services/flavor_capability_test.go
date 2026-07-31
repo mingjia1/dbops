@@ -24,8 +24,8 @@ func TestHasCapabilityPreservesEmptyFlavorAndRestrictsUnknownFlavor(t *testing.T
 	}
 }
 
-func TestHasCapabilityForMySQLCompatibleFlavors(t *testing.T) {
-	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
+func TestHasCapabilityForMySQLLifecycleFlavors(t *testing.T) {
+	for _, flavor := range []string{"mysql", "mariadb", "percona"} {
 		for _, capability := range allCapabilities() {
 			assert.True(t, HasCapability(flavor, capability), "%s should allow %s", flavor, capability)
 		}
@@ -57,6 +57,10 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 		{flavor: "gbase8a", wantSQLHealtheck: true},
 		{flavor: "shentong", wantSQLHealtheck: true},
 		{flavor: "tidb", wantSQLHealtheck: true},
+		{flavor: "oceanbase", wantSQLHealtheck: true},
+		{flavor: "gaussdb-mysql", wantSQLHealtheck: true},
+		{flavor: "polardb-mysql", wantSQLHealtheck: true},
+		{flavor: "tdsql-mysql", wantSQLHealtheck: true},
 		{flavor: "dm", wantSQLHealtheck: false},
 		{flavor: "gbase8s", wantSQLHealtheck: false},
 	}

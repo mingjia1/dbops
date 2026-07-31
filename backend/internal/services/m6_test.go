@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
-	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/internal/plugins"
 	"github.com/jackcode/mysql-ops-platform/internal/plugins/arch"
+	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +33,7 @@ func TestScaleService_ScaleOut(t *testing.T) {
 	pluginExec := plugins.NewExecutor(registry)
 
 	svc := NewScaleService(orch, repo, pluginExec)
+	seedInstanceWithFlavor(t, context.Background(), repo, "scale-out-primary", "scale-out-cluster", "mysql")
 
 	req := ScaleOutRequest{
 		ClusterID: "scale-out-cluster",
@@ -130,6 +131,7 @@ func TestScaleService_ScaleIn(t *testing.T) {
 	pluginExec := plugins.NewExecutor(registry)
 
 	svc := NewScaleService(orch, repo, pluginExec)
+	seedInstanceWithFlavor(t, context.Background(), repo, "instance-001", "scale-in-cluster", "mysql")
 
 	result, err := svc.ScaleIn(context.Background(), ScaleInRequest{
 		ClusterID:    "scale-in-cluster",
@@ -174,6 +176,7 @@ func TestScaleService_RebuildNode(t *testing.T) {
 	pluginExec := plugins.NewExecutor(registry)
 
 	svc := NewScaleService(orch, repo, pluginExec)
+	seedInstanceWithFlavor(t, context.Background(), repo, "inst-001", "rebuild-cluster", "mysql")
 
 	result, err := svc.RebuildNode(context.Background(), RebuildRequest{
 		ClusterID:  "rebuild-cluster",
@@ -221,6 +224,7 @@ func TestClusterLifecycleService_RebuildCluster(t *testing.T) {
 	pluginExec := plugins.NewExecutor(registry)
 
 	svc := NewClusterLifecycleService(orch, pluginExec, vault, repo)
+	seedInstanceWithFlavor(t, context.Background(), repo, "rebuild-cluster-primary", "cluster-rebuild", "mysql")
 
 	result, err := svc.RebuildCluster(context.Background(), RebuildClusterRequest{
 		OriginalReq: DeployOrchestratorRequest{

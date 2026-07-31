@@ -279,10 +279,27 @@ func TestResolveFlavorHandlesMissingInputs(t *testing.T) {
 	db := newTestDB(t)
 	instanceRepo := repositories.NewInstanceRepository(db)
 
-	assert.Equal(t, "", resolveClusterFlavor(ctx, nil, "cluster-x"))
-	assert.Equal(t, "", resolveInstanceFlavor(ctx, nil, "inst-x"))
-	assert.Equal(t, "", resolveClusterFlavor(ctx, instanceRepo, ""))
-	assert.Equal(t, "", resolveInstanceFlavor(ctx, instanceRepo, ""))
-	assert.Equal(t, "", resolveClusterFlavor(ctx, instanceRepo, "cluster-absent"))
-	assert.Equal(t, "", resolveInstanceFlavor(ctx, instanceRepo, "inst-absent"))
+	assert.Equal(t, "unknown", resolveClusterFlavor(ctx, nil, "cluster-x"))
+	assert.Equal(t, "unknown", resolveInstanceFlavor(ctx, nil, "inst-x"))
+	assert.Equal(t, "unknown", resolveClusterFlavor(ctx, instanceRepo, ""))
+	assert.Equal(t, "unknown", resolveInstanceFlavor(ctx, instanceRepo, ""))
+	assert.Equal(t, "unknown", resolveClusterFlavor(ctx, instanceRepo, "cluster-absent"))
+	assert.Equal(t, "unknown", resolveInstanceFlavor(ctx, instanceRepo, "inst-absent"))
+}
+
+func TestInstanceHealthCheckRefusesNonMySQLProtocolFlavor(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	hostRepo := repositories.NewHostRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	seedInstanceWithFlavor(t, ctx, instanceRepo, "inst-health-kingbase", "cluster-health-kingbase", "kingbase")
+
+	service := NewInstanceService(instanceRepo, hostRepo, taskRepo, nil, nil, "test-encryption-key")
+	result, err := service.HealthCheck(ctx, "inst-health-kingbase")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Message, "统一健康检测接口")
 }
