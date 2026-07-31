@@ -2900,42 +2900,15 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 	data["target_user"] = user
 	data["target_endpoint"] = fmt.Sprintf("%s:%d", host, port)
 
-	var mysqlAdminArgs []string
-	mysqlAdminArgs = append(mysqlAdminArgs, "mysqladmin", "ping",
-		"-h", host,
-		"-P", fmt.Sprintf("%d", port),
-		"-u", user)
 	mysqlVersion := configString(req.Config, "mysql_version")
-	if mysqlHasGetServerPublicKey(mysqlVersion) {
-		mysqlAdminArgs = append(mysqlAdminArgs, "--get-server-public-key")
-	}
+	sslEnabled, _ := req.Config["target_ssl_enabled"].(bool)
+	mysqlAdminArgs := mysqlAdminHealthCheckArgs(host, port, user, mysqlVersion, sslEnabled)
 	cmd := exec.CommandContext(ctx, mysqlAdminArgs[0], mysqlAdminArgs[1:]...)
 	if pass != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
 	}
 
 	if err := cmd.Run(); err != nil {
-		socketPath := findMySQLSocket(port)
-		if socketPath != "" {
-			socketArgs := []string{"mysqladmin", "ping", "-S", socketPath, "-u", user}
-			if mysqlHasGetServerPublicKey(mysqlVersion) {
-				socketArgs = append(socketArgs, "--get-server-public-key")
-			}
-			socketCmd := exec.CommandContext(ctx, socketArgs[0], socketArgs[1:]...)
-			if pass != "" {
-				socketCmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
-			}
-			if socketErr := socketCmd.Run(); socketErr == nil {
-				return &TaskResult{
-					TaskID:    fmt.Sprintf("health-%s", instanceID),
-					Status:    "healthy",
-					Progress:  100,
-					Message:   "Instance is healthy (via socket)",
-					Timestamp: time.Now(),
-					Data:      data,
-				}, nil
-			}
-		}
 		return &TaskResult{
 			TaskID:    fmt.Sprintf("health-%s", instanceID),
 			Status:    "unhealthy",
@@ -2954,6 +2927,17 @@ func (e *TaskExecutor) ExecuteHealthCheck(ctx context.Context, req DeployTaskReq
 		Timestamp: time.Now(),
 		Data:      data,
 	}, nil
+}
+
+func mysqlAdminHealthCheckArgs(host string, port int, user, mysqlVersion string, sslEnabled bool) []string {
+	args := []string{"mysqladmin", "ping", "-h", host, "-P", fmt.Sprintf("%d", port), "-u", user}
+	if sslEnabled {
+		args = append(args, "--ssl-mode=REQUIRED")
+	}
+	if mysqlHasGetServerPublicKey(mysqlVersion) {
+		args = append(args, "--get-server-public-key")
+	}
+	return args
 }
 
 func collectSystemInfo(ctx context.Context) map[string]any {

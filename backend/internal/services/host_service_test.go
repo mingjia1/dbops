@@ -86,13 +86,13 @@ func TestParseDMPortNum(t *testing.T) {
 }
 
 func TestIsMySQLProtocolFlavor(t *testing.T) {
-	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
+	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql", "gbase8a"} {
 		assert.True(t, isMySQLProtocolFlavor(flavor), "%s speaks the MySQL protocol", flavor)
 	}
 	// An empty flavor is the scanner's default and must be probed as MySQL.
 	assert.True(t, isMySQLProtocolFlavor(""))
 
-	for _, flavor := range []string{"kingbase", "opengauss", "highgo", "gbase8s", "gbase8a", "dm", "shentong"} {
+	for _, flavor := range []string{"kingbase", "opengauss", "highgo", "gbase8s", "dm", "shentong"} {
 		assert.False(t, isMySQLProtocolFlavor(flavor), "%s does not speak the MySQL protocol", flavor)
 	}
 }

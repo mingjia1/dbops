@@ -12,8 +12,8 @@ import (
 )
 
 // postgresConnector speaks the PostgreSQL wire protocol. Kingbase ES, openGauss,
-// HighGo, GBase 8a and ShenTong (OSCAR) are all PostgreSQL-compatible, so a
-// single connector serves all of them.
+// HighGo and ShenTong (OSCAR) are PostgreSQL-compatible, so a single connector
+// serves all of them.
 type postgresConnector struct {
 	flavor string
 	db     *sql.DB
@@ -29,8 +29,6 @@ func defaultPostgresDatabase(flavor string) string {
 		return "postgres"
 	case "highgo":
 		return "highgo"
-	case "gbase8a":
-		return "gbase"
 	case "shentong":
 		return "OSRDB"
 	default:

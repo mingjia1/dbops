@@ -1410,7 +1410,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		seen[port] = true
 
 		datadir := extractMysqldArg(cmdline, "--datadir=")
-		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" || flavor == "gbase8a" || flavor == "shentong" {
+		if flavor == "kingbase" || flavor == "opengauss" || flavor == "highgo" || flavor == "shentong" {
 			datadir = extractMysqldArg(cmdline, "-D")
 		}
 		socket := extractMysqldArg(cmdline, "--socket=")
@@ -1590,6 +1590,7 @@ var mysqlProtocolFlavors = map[string]bool{
 	"polardb-mysql": true,
 	"tdsql-mysql":   true,
 	"tidb":          true,
+	"gbase8a":       true,
 }
 
 // isMySQLProtocolFlavor reports whether a discovered flavor speaks the MySQL wire

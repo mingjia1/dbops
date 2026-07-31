@@ -55,7 +55,7 @@ func (t ConnectorTarget) timeout() time.Duration {
 // Flavors are grouped by wire protocol, not by vendor:
 //   - MySQL protocol: mysql, mariadb, percona, oceanbase, tidb, and the
 //     MySQL-compatible cloud variants (gaussdb-mysql, polardb-mysql, tdsql-mysql)
-//   - PostgreSQL protocol: kingbase, opengauss, highgo, gbase8a, shentong
+//   - PostgreSQL protocol: kingbase, opengauss, highgo, shentong
 //   - dm and gbase8s have no usable pure-Go driver and return ErrNoSQLConnector
 //
 // Unknown flavors have no established protocol and must be identified before a
@@ -72,9 +72,9 @@ func NewConnector(t ConnectorTarget) (DBConnector, error) {
 	t.Flavor = flavor
 
 	switch flavor {
-	case "mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql":
+	case "mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql", "gbase8a":
 		return newMySQLConnector(t)
-	case "kingbase", "opengauss", "highgo", "gbase8a", "shentong":
+	case "kingbase", "opengauss", "highgo", "shentong":
 		return newPostgresConnector(t)
 	case "dm":
 		// Dameng DM speaks a proprietary protocol: neither MySQL nor PostgreSQL

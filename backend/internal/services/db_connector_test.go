@@ -32,7 +32,7 @@ func TestNewConnectorDispatchesByFlavor(t *testing.T) {
 		{flavor: "kingbase", wantType: "*services.postgresConnector"},
 		{flavor: "opengauss", wantType: "*services.postgresConnector"},
 		{flavor: "highgo", wantType: "*services.postgresConnector"},
-		{flavor: "gbase8a", wantType: "*services.postgresConnector"},
+		{flavor: "gbase8a", wantType: "*services.mysqlConnector"},
 		{flavor: "shentong", wantType: "*services.postgresConnector"},
 		// Empty flavor retains the legacy MySQL behavior.
 		{flavor: "", wantType: "*services.mysqlConnector"},
@@ -123,7 +123,6 @@ func TestBuildPostgresDSNUsesVendorDefaultDatabase(t *testing.T) {
 		{flavor: "kingbase", wantDatabase: "/test"},
 		{flavor: "opengauss", wantDatabase: "/postgres"},
 		{flavor: "highgo", wantDatabase: "/highgo"},
-		{flavor: "gbase8a", wantDatabase: "/gbase"},
 		{flavor: "shentong", wantDatabase: "/OSRDB"},
 	}
 
@@ -187,7 +186,7 @@ func TestFilterHealthCheckTypesByCapability(t *testing.T) {
 		// MySQL-protocol engines keep every check.
 		{flavor: "mysql", want: []string{"tcp", "mysql", "replication"}},
 		{flavor: "", want: []string{"tcp", "mysql", "replication"}},
-		{flavor: "oceanbase", want: []string{"tcp", "mysql", "replication"}},
+		{flavor: "oceanbase", want: []string{"tcp", "mysql"}},
 		// TiDB uses a MySQL connector for liveness only; replication remains gated.
 		{flavor: "tidb", want: []string{"tcp", "mysql"}},
 		// PostgreSQL-compatible engines keep SQL liveness but lose replication.

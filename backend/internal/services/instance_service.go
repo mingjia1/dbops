@@ -381,10 +381,10 @@ func (s *InstanceService) DetectVersion(ctx context.Context, id string) (*models
 	// Check if version already exists - update instead of creating new record
 	existingVersion, _ := s.repo.GetVersion(ctx, id)
 
-	// Non-MySQL engines cannot answer "SELECT @@version, @@version_comment", which
-	// is what the agent's version-detect task runs. Dispatch them through their own
-	// connector instead of sending MySQL syntax to a PostgreSQL or Dameng server.
-	if !isMySQLProtocolFlavor(instance.Version.Flavor) {
+	// The agent version-detect task reads MySQL system variables. GBase 8a uses
+	// the MySQL wire protocol but exposes product-specific version metadata, so
+	// it follows the connector path together with non-MySQL engines.
+	if normalizeFlavor(instance.Version.Flavor) == "gbase8a" || !isMySQLProtocolFlavor(instance.Version.Flavor) {
 		return s.detectVersionViaConnector(ctx, id, instance.Version.Flavor, conn, existingVersion)
 	}
 
@@ -826,6 +826,12 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 	if err != nil {
 		return nil, err
 	}
+	// The agent health-check task invokes mysqladmin. Route PostgreSQL and
+	// proprietary engines through HealthCheckService instead of issuing a
+	// MySQL probe that could report an unrelated result.
+	if !isMySQLProtocolFlavor(instance.Version.Flavor) {
+		return failedInstanceAdminResult(fmt.Sprintf("数据库类型 %s 不支持 Agent MySQL 健康检查，请使用统一健康检测接口", normalizeFlavor(instance.Version.Flavor))), nil
+	}
 	conn, err := s.repo.GetConnection(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("instance connection not found: %w", err)
@@ -854,10 +860,11 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 		password = ""
 	}
 	result, err := s.agentClient.ExecuteMySQLHealthCheck(ctx, agentHost, agentPort, id, map[string]interface{}{
-		"target_host": targetHost,
-		"target_port": conn.Port,
-		"target_user": conn.Username,
-		"target_pass": password,
+		"target_host":        targetHost,
+		"target_port":        conn.Port,
+		"target_user":        conn.Username,
+		"target_pass":        password,
+		"target_ssl_enabled": conn.SSLEnabled,
 	})
 	if err != nil {
 		// If agent unreachable but instance was previously healthy, don't mark unhealthy
