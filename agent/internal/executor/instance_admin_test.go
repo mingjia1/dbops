@@ -151,15 +151,21 @@ func TestExecuteInstanceAdminReadConfigReportsDefaultPathCandidates(t *testing.T
 	}
 	executor := NewTaskExecutor()
 	datadir := t.TempDir()
+	config := map[string]interface{}{
+		"action":      "read_config",
+		"path":        "/etc/my.cnf",
+		"datadir":     datadir,
+		"target_port": 3307,
+	}
+	for _, candidate := range configPathCandidates(config) {
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			t.Skipf("candidate config exists on this host: %s", candidate)
+		}
+	}
 
 	result, err := executor.ExecuteInstanceAdmin(context.Background(), DeployTaskRequest{
 		TaskID: "admin-test",
-		Config: map[string]interface{}{
-			"action":      "read_config",
-			"path":        "/etc/my.cnf",
-			"datadir":     datadir,
-			"target_port": 3307,
-		},
+		Config: config,
 	})
 
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package executor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,13 +98,15 @@ func TestWriteSystemdOverride(t *testing.T) {
 }
 
 func TestReloadSystemd_NotLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("non-Linux guard is covered only on non-Linux platforms")
+	}
+
 	m := NewCgroupManager()
 
-	// Should fail if not on Linux
 	err := m.ReloadSystemd()
-	if err != nil {
-		assert.Contains(t, err.Error(), "only supported on Linux")
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only supported on Linux")
 }
 
 func TestCalculateMemoryLimit(t *testing.T) {
