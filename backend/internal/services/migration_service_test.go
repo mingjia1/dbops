@@ -225,7 +225,8 @@ func TestMigrationService_ExecuteFailureWritesAuditLog(t *testing.T) {
 		Strategy:         models.MigrationStrategyPhysical,
 	})
 	require.NoError(t, err)
-	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "source-missing-endpoint"}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "source-missing-endpoint", Name: "source-missing-endpoint"}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "target-missing-endpoint", Name: "target-missing-endpoint"}))
 
 	result, err := service.ExecutePhysicalMigration(ctx, taskID)
 
@@ -422,7 +423,8 @@ func TestMigrationService_SwitchFailureWritesAuditLog(t *testing.T) {
 		Strategy:         models.MigrationStrategyReplication,
 	})
 	require.NoError(t, err)
-	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "target-missing-endpoint"}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "source-switch", Name: "source-switch"}))
+	require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: "target-missing-endpoint", Name: "target-missing-endpoint"}))
 
 	result, err := service.ExecuteSwitch(ctx, taskID)
 

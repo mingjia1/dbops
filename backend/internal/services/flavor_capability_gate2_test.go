@@ -238,6 +238,73 @@ func TestInstanceDeployAllowsMySQLFlavorPastCapabilityGate(t *testing.T) {
 	}
 }
 
+func TestMigrationExecutionRefusedForNonMySQLFlavor(t *testing.T) {
+	for _, flavor := range tieredFlavors {
+		t.Run(flavor, func(t *testing.T) {
+			ctx := context.Background()
+			db := newTestDB(t)
+			instanceRepo := repositories.NewInstanceRepository(db)
+			migrationRepo := repositories.NewMigrationRepository(db)
+			seedInstanceWithFlavor(t, ctx, instanceRepo, "migration-source-"+flavor, "migration-cluster-"+flavor, flavor)
+			targetID := "migration-target-" + flavor
+			require.NoError(t, instanceRepo.Create(ctx, &models.Instance{ID: targetID, Name: targetID, ClusterID: "migration-cluster-" + flavor}))
+			require.NoError(t, instanceRepo.CreateVersion(ctx, &models.InstanceVersion{InstanceID: targetID, Flavor: flavor, Version: "1.0.0"}))
+			service := NewMigrationService(migrationRepo, instanceRepo, nil, nil)
+			taskID, err := service.CreateTask(ctx, CreateMigrationTaskRequest{
+				Name:             "blocked migration",
+				SourceInstanceID: "migration-source-" + flavor,
+				TargetInstanceID: "migration-target-" + flavor,
+				Strategy:         models.MigrationStrategyPhysical,
+			})
+			require.NoError(t, err)
+
+			result, err := service.ExecutePhysicalMigration(ctx, taskID)
+
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), flavor)
+			assert.Contains(t, err.Error(), string(CapPhysicalBackup))
+		})
+	}
+}
+
+func TestDeployOrchestratorRefusesNonMySQLFlavor(t *testing.T) {
+	for _, flavor := range tieredFlavors {
+		t.Run(flavor, func(t *testing.T) {
+			orchestrator := NewDeployOrchestrator(nil, nil, nil)
+
+			result, err := orchestrator.Run(context.Background(), DeployOrchestratorRequest{
+				Flavor: flavor,
+				Nodes:  []OrchestratorNode{{Address: "10.0.0.96", MySQLPort: 3306}},
+			})
+
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), flavor)
+			assert.Contains(t, err.Error(), string(CapClusterDeploy))
+		})
+	}
+}
+
+func TestDestroyClusterRefusesManagedNonMySQLFlavor(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	seedInstanceWithFlavor(t, ctx, instanceRepo, "destroy-gbase8s", "destroy-gbase8s-cluster", "gbase8s")
+	service := NewClusterLifecycleService(nil, nil, nil, instanceRepo)
+
+	result, err := service.DestroyCluster(ctx, DestroyRequest{
+		ClusterID: "destroy-gbase8s-cluster",
+		Flavor:    "mysql",
+		Nodes:     []OrchestratorNode{{Address: "10.0.0.97", MySQLPort: 3306}},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "gbase8s")
+	assert.Contains(t, err.Error(), string(CapClusterDeploy))
+}
+
 func TestLegacyEmptyFlavorKeepsEveryGatedOperation(t *testing.T) {
 	// Instances registered before flavor persistence carry an empty flavor. No
 	// gate may reject them, otherwise upgrading the platform breaks live clusters.

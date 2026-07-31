@@ -13,10 +13,10 @@ import (
 )
 
 type DeployOrchestrator struct {
-	pluginRegistry   *plugins.Registry
-	pluginExecutor   *plugins.Executor
-	credentialVault  *CredentialVault
-	instRepo         InstanceRepositoryInterface
+	pluginRegistry  *plugins.Registry
+	pluginExecutor  *plugins.Executor
+	credentialVault *CredentialVault
+	instRepo        InstanceRepositoryInterface
 }
 
 func NewDeployOrchestrator(
@@ -71,6 +71,10 @@ type PhaseResult struct {
 func (o *DeployOrchestrator) Run(ctx context.Context, req DeployOrchestratorRequest) (*OrchestratorResult, error) {
 	if len(req.Nodes) == 0 {
 		return nil, fmt.Errorf("at least one node is required")
+	}
+	// Every phase below calls MySQL kernel and architecture plugins.
+	if err := RequireCapability(req.Flavor, CapClusterDeploy); err != nil {
+		return nil, err
 	}
 	if req.ClusterID == "" {
 		req.ClusterID = uuid.New().String()
@@ -312,8 +316,8 @@ func (o *DeployOrchestrator) phaseAssemble(ctx context.Context, req DeployOrches
 
 	archPluginName := req.ArchType + "-addon"
 	env := plugins.PluginEnv{
-		ClusterID: req.ClusterID,
-		Nodes:     o.buildPluginNodes(req.Nodes),
+		ClusterID:   req.ClusterID,
+		Nodes:       o.buildPluginNodes(req.Nodes),
 		Credentials: *creds,
 	}
 

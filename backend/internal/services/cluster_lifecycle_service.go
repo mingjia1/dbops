@@ -47,6 +47,13 @@ type DestroyResult struct {
 
 func (s *ClusterLifecycleService) DestroyCluster(ctx context.Context, req DestroyRequest) (*DestroyResult, error) {
 	start := time.Now()
+	flavor := req.Flavor
+	if resolved := resolveClusterFlavor(ctx, s.instRepo, req.ClusterID); resolved != "unknown" {
+		flavor = resolved
+	}
+	if err := RequireCapability(flavor, CapClusterDeploy); err != nil {
+		return nil, err
+	}
 
 	result := &DestroyResult{ClusterID: req.ClusterID}
 

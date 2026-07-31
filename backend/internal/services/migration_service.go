@@ -111,7 +111,13 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	if err != nil {
 		return nil, fmt.Errorf("source instance not found: %w", err)
 	}
-	_ = sourceInst
+	targetInst, err := s.instRepo.GetByID(ctx, task.TargetInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("target instance not found: %w", err)
+	}
+	if err := requireMigrationCapability(sourceInst, targetInst, strategy); err != nil {
+		return nil, err
+	}
 
 	now := time.Now()
 	s.repo.UpdateStatus(ctx, taskID, models.MigrationStatusMigrating, 0)
@@ -129,8 +135,7 @@ func (s *MigrationService) executeMigration(ctx context.Context, taskID string, 
 	}
 
 	// Resolve the real managed host agent. Do not dispatch migration to localhost.
-	sourceInstFull, _ := s.instRepo.GetByID(ctx, task.SourceInstanceID)
-	agentHost, agentPort, err := resolveAgentHost(ctx, sourceInstFull, s.instRepo, s.hostRepo, 9090)
+	agentHost, agentPort, err := resolveAgentHost(ctx, sourceInst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, 0, err.Error())
 		out := &MigrationTaskResult{
@@ -302,6 +307,13 @@ func (s *MigrationService) VerifyMigration(ctx context.Context, taskID string) (
 	if err != nil || inst == nil {
 		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
 	}
+	sourceInst, err := s.instRepo.GetByID(ctx, task.SourceInstanceID)
+	if err != nil || sourceInst == nil {
+		return nil, fmt.Errorf("source instance %s not found", task.SourceInstanceID)
+	}
+	if err := requireMigrationCapability(sourceInst, inst, task.Strategy); err != nil {
+		return nil, err
+	}
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
@@ -385,6 +397,13 @@ func (s *MigrationService) ExecuteSwitch(ctx context.Context, taskID string) (*m
 	if err != nil || inst == nil {
 		return nil, fmt.Errorf("target instance %s not found", task.TargetInstanceID)
 	}
+	sourceInst, err := s.instRepo.GetByID(ctx, task.SourceInstanceID)
+	if err != nil || sourceInst == nil {
+		return nil, fmt.Errorf("source instance %s not found", task.SourceInstanceID)
+	}
+	if err := requireMigrationCapability(sourceInst, inst, task.Strategy); err != nil {
+		return nil, err
+	}
 	agentHost, agentPort, err := resolveAgentHost(ctx, inst, s.instRepo, s.hostRepo, 9090)
 	if err != nil {
 		_ = s.repo.UpdateStatusWithError(ctx, taskID, models.MigrationStatusFailed, task.Progress, err.Error())
@@ -467,6 +486,23 @@ func normalizeMigrationStatus(status string) models.MigrationStatus {
 
 func isCompletedMigrationAgentStatus(status string) bool {
 	return normalizeMigrationStatus(status) == models.MigrationStatusCompleted
+}
+
+// requireMigrationCapability keeps every migration phase on lifecycle tooling
+// implemented for both endpoints. Physical migration uses xtrabackup; GTID and
+// replication strategies configure MySQL replication on source and target.
+func requireMigrationCapability(source, target *models.Instance, strategy models.MigrationStrategy) error {
+	capability := CapReplication
+	if strategy == models.MigrationStrategyPhysical {
+		capability = CapPhysicalBackup
+	}
+	if err := RequireCapability(source.Version.Flavor, capability); err != nil {
+		return fmt.Errorf("source instance %s: %w", source.ID, err)
+	}
+	if err := RequireCapability(target.Version.Flavor, capability); err != nil {
+		return fmt.Errorf("target instance %s: %w", target.ID, err)
+	}
+	return nil
 }
 
 func (s *MigrationService) GetTask(ctx context.Context, taskID string) (*models.MigrationTask, error) {
