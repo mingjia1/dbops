@@ -260,7 +260,7 @@ func main() {
 	if err := clusterDeployService.MarkInterruptedDeployments(context.Background()); err != nil {
 		logInstance.Warn("Failed to mark interrupted deployments", zap.Error(err))
 	}
-	healthCheckController := controllers.NewHealthCheckController(healthCheckService, instanceService)
+	healthCheckController := controllers.NewHealthCheckController(healthCheckService)
 
 	failoverService := services.NewFailoverService(db, cfg.EncryptionKey)
 	failoverController := controllers.NewFailoverController(failoverService)

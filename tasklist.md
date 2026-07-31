@@ -5,7 +5,7 @@
 | 优先级 | 数据库 | 当前状态 | 预计改动量 | 主要改动范围 |
 |---|---|---|---|---|
 | 1 | OceanBase | 已最小实现 | 小 | 已完成 flavor 识别和基础标签展示；不含部署编排 |
-| 2 | TiDB | 未实现 | 小 | 当前不提供 flavor 识别、版本目录或部署能力 |
+| 2 | TiDB | 已分层纳管 | 小 | tidb-server 进程扫描、MySQL 协议连接健康检测、类型展示；部署/复制/切换/物理备份/升级显式不支持 |
 | 3 | GaussDB(for MySQL) | 已最小实现 | 小到中 | 已完成 MySQL 握手 flavor 识别和基础标签展示；不含云托管部署编排 |
 | 4 | PolarDB(for MySQL) | 已最小实现 | 小到中 | 已完成 MySQL 握手 flavor 识别和基础标签展示；不含云托管部署编排 |
 | 5 | TDSQL(MySQL 兼容) | 已最小实现 | 中 | 已完成 MySQL 握手 flavor 识别和基础标签展示；不含腾讯云托管部署编排 |
@@ -29,7 +29,7 @@
 
 ### 能力矩阵
 
-| 能力 | MySQL 兼容 | Kingbase / openGauss / HighGo / GBase 8a / 神舟 | 达梦 DM / GBase 8s |
+| 能力 | MySQL 兼容 | TiDB / Kingbase / openGauss / HighGo / GBase 8a / 神舟 | 达梦 DM / GBase 8s |
 |---|---|---|---|
 | SQL 健康检测 `health_sql` | 是 | 是 (pgx) | 否 (仅 TCP) |
 | 主从复制 `replication` | 是 | 否 | 否 |
@@ -76,7 +76,7 @@ flavor 为空或未登记的实例一律按 MySQL 兼容处理，保证既有纳
 
 `backend/internal/services/db_connector.go` 按 wire protocol 而非厂商分派：
 
-- MySQL 协议：mysql / mariadb / percona / oceanbase / gaussdb-mysql / polardb-mysql / tdsql-mysql
+- MySQL 协议：mysql / mariadb / percona / oceanbase / tidb / gaussdb-mysql / polardb-mysql / tdsql-mysql
 - PostgreSQL 协议 (pgx)：kingbase / opengauss / highgo / gbase8a / shentong
 - 无纯 Go 驱动：dm (私有协议)、gbase8s (Informix 协议) — 返回 `ErrNoSQLConnector`，健康检测降级为 TCP + SSH 进程发现
 

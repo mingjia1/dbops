@@ -413,7 +413,7 @@ const InstanceDetail: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchInstance}>
             刷新
           </Button>
-          <Button icon={<KeyOutlined />} onClick={() => setForceResetOpen(true)}>
+          <Button icon={<KeyOutlined />} onClick={() => setForceResetOpen(true)} disabled={!canInstanceAdmin} title={instanceAdminDisabledReason}>
             强制修改密码
           </Button>
           <Button icon={<EditOutlined />} onClick={openEdit}>编辑</Button>
@@ -517,7 +517,8 @@ const InstanceDetail: React.FC = () => {
                     description={instanceAdminDisabledReason}
                   />
                 )}
-                <Tabs
+                {canInstanceAdmin && (
+                  <Tabs
                   items={[
                     {
                       key: 'users',
@@ -643,7 +644,8 @@ const InstanceDetail: React.FC = () => {
                       ),
                     },
                   ]}
-                />
+                  />
+                )}
               </Space>
             ),
           },

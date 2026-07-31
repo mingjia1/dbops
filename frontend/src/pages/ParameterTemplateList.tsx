@@ -9,6 +9,7 @@ import {
   type Instance,
   type ParameterTemplate,
 } from '../services/api'
+import { instanceHasCapability } from '../services/flavorCapability'
 
 const restartRequired = new Set([
   'innodb_buffer_pool_size',
@@ -50,6 +51,7 @@ const ParameterTemplateList: React.FC = () => {
 
   const errorMessage = (err: any, fallback: string) =>
     err?.response?.data?.data?.message || err?.response?.data?.message || err?.message || fallback
+  const parameterInstances = instances.filter((instance) => instanceHasCapability(instance, 'parameter_template'))
 
   const fetchData = async () => {
     setLoading(true)
@@ -162,6 +164,10 @@ const ParameterTemplateList: React.FC = () => {
   const submitApply = async () => {
     if (!applying) return
     const values = await applyForm.validateFields()
+    if (!instanceHasCapability(instances.find((instance) => instance.id === values.instance_id) || {}, 'parameter_template')) {
+      message.warning('该数据库类型不支持 MySQL 参数模板下发')
+      return
+    }
     if (!values.confirm) {
       message.warning('请先确认变更影响')
       return
@@ -276,7 +282,7 @@ const ParameterTemplateList: React.FC = () => {
       <Modal title={`应用模板: ${applying?.name || ''}`} open={applyOpen} onCancel={() => setApplyOpen(false)} onOk={submitApply} confirmLoading={submitting} okText="确认应用" width={640}>
         <Form form={applyForm} layout="vertical">
           <Form.Item name="instance_id" label="目标实例" rules={[{ required: true }]}>
-            <Select showSearch optionFilterProp="label" options={instances.map((i) => ({ value: i.id, label: `${i.name} (${i.connection?.host}:${i.connection?.port})` }))} />
+            <Select showSearch optionFilterProp="label" options={parameterInstances.map((i) => ({ value: i.id, label: `${i.name} (${i.connection?.host}:${i.connection?.port})` }))} />
           </Form.Item>
           <Form.Item name="require_restart" valuePropName="checked">
             <Checkbox>包含需重启参数，已安排维护窗口</Checkbox>

@@ -24,6 +24,10 @@ export type Capability =
   | 'parameter_template'
   | 'instance_admin'
 
+export interface FlavorAwareInstance {
+  version?: { flavor?: string }
+}
+
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   replication: '主从复制搭建',
   failover: '故障切换',
@@ -90,6 +94,10 @@ export const hasCapability = (flavor: string | undefined, capability: Capability
 
   return capability === 'health_sql' ? tiered.healthSql : false
 }
+
+/** Tests an instance's persisted engine flavor against an operation. */
+export const instanceHasCapability = (instance: FlavorAwareInstance, capability: Capability): boolean =>
+  hasCapability(instance.version?.flavor, capability)
 
 /** Returns a tooltip explaining why an action is unavailable, or '' when it is. */
 export const capabilityDisabledReason = (

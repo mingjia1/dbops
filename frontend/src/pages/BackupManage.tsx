@@ -12,6 +12,7 @@ import {
 import BackupCreateModal from '../components/BackupCreateModal'
 import BackupPolicyModal from '../components/BackupPolicyModal'
 import BackupStatCards from '../components/BackupStatCards'
+import { instanceHasCapability } from '../services/flavorCapability'
 
 const BackupManage: React.FC = () => {
   const [tab, setTab] = useState('records')
@@ -31,6 +32,9 @@ const BackupManage: React.FC = () => {
 
   const backupErrorMessage = (err: any, fallback: string) =>
     err?.response?.data?.data?.message || err?.response?.data?.message || err?.message || fallback
+  const backupInstances = instances.filter((instance) => instanceHasCapability(instance, 'backup_physical'))
+  const supportsBackup = (instanceID?: string) =>
+    instanceHasCapability(instances.find((instance) => instance.id === instanceID) || {}, 'backup_physical')
 
   useEffect(() => {
     Promise.all([
@@ -82,8 +86,8 @@ const BackupManage: React.FC = () => {
   }
 
   const submitBackup = async () => {
-    if (!selectedInstance) {
-      message.warning('请先选择实例')
+    if (!selectedInstance || !supportsBackup(selectedInstance)) {
+      message.warning('请选择支持物理备份的 MySQL 兼容实例')
       return
     }
     try {
@@ -111,6 +115,10 @@ const BackupManage: React.FC = () => {
   }
 
   const executePolicy = async (policy: BackupPolicy) => {
+    if (!supportsBackup(policy.instance_id)) {
+      message.warning('该策略的目标实例仅支持分层纳管，无法执行物理备份')
+      return
+    }
     setSubmitting(true)
     setSelectedInstance(policy.instance_id)
     setTab('records')
@@ -133,8 +141,8 @@ const BackupManage: React.FC = () => {
     }
   }
   const scanBackups = async () => {
-    if (!selectedInstance) {
-      message.warning('请先选择实例')
+    if (!selectedInstance || !supportsBackup(selectedInstance)) {
+      message.warning('请选择支持物理备份的 MySQL 兼容实例')
       return
     }
     setScanLoading(true)
@@ -368,7 +376,7 @@ const BackupManage: React.FC = () => {
           <Button size="small" type="link" loading={submitting} onClick={() => openEditPolicy(record)}>
             {'\u7f16\u8f91'}
           </Button>
-          <Button size="small" type="link" loading={submitting} onClick={() => executePolicy(record)}>
+          <Button size="small" type="link" loading={submitting} disabled={!supportsBackup(record.instance_id)} onClick={() => executePolicy(record)}>
             执行
           </Button>
           <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={submitting} onClick={() => deletePolicy(record)}>
@@ -394,7 +402,7 @@ const BackupManage: React.FC = () => {
             style={{ width: 260 }}
             value={selectedInstance}
             onChange={setSelectedInstance}
-            options={instances.map((item) => ({ value: item.id, label: item.name }))}
+            options={backupInstances.map((item) => ({ value: item.id, label: item.name }))}
           />
           <Button icon={<ReloadOutlined />} onClick={fetchRecords} disabled={!selectedInstance}>
             刷新记录
@@ -455,7 +463,7 @@ const BackupManage: React.FC = () => {
         submitting={submitting}
         editingPolicy={editingPolicy}
         form={policyForm}
-        instanceOptions={instances.map((item) => ({ value: item.id, label: item.name }))}
+        instanceOptions={backupInstances.map((item) => ({ value: item.id, label: item.name }))}
         onOk={submitPolicy}
         onCancel={() => {
           setPolicyOpen(false)

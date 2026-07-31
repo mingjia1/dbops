@@ -17,6 +17,7 @@ import {
 import { PreflightModal } from '../components/PreflightModal'
 import { AutoFailoverModal } from '../components/AutoFailoverModal'
 import { ManualSwitchModal } from '../components/ManualSwitchModal'
+import { instanceHasCapability } from '../services/flavorCapability'
 
 const HAManage: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([])
@@ -60,7 +61,12 @@ const HAManage: React.FC = () => {
     setPreflight(null)
   }, [selectedTargetMasterID, manualForce])
 
-  const clusterInstances = instances.filter((i) => i.cluster_id === clusterId)
+  const managedClusterIDs = new Set(
+    Array.from(new Set(instances.map((instance) => instance.cluster_id).filter(Boolean)))
+      .filter((cluster) => instances.filter((instance) => instance.cluster_id === cluster).every((instance) => instanceHasCapability(instance, 'failover'))),
+  )
+  const managedInstances = instances.filter((instance) => instance.cluster_id && managedClusterIDs.has(instance.cluster_id))
+  const clusterInstances = managedInstances.filter((i) => i.cluster_id === clusterId)
   const masterInstance = clusterInstances.find((i) => isPrimaryRole(i.status?.role))
   const slaveInstances = clusterInstances.filter((i) => isReplicaRole(i.status?.role))
   const clusterArch = detectClusterArch(clusterInstances)
@@ -272,7 +278,7 @@ const HAManage: React.FC = () => {
                 setClusterId(value)
                 setPreflight(null)
               }}
-              options={Array.from(new Set(instances.map((i) => i.cluster_id).filter(Boolean)))
+              options={Array.from(new Set(managedInstances.map((i) => i.cluster_id).filter(Boolean)))
                 .map((c) => ({ value: c as string, label: c as string }))}
             />
             <Button icon={<SafetyCertificateOutlined />} onClick={openPreFlight} disabled={!clusterId}>

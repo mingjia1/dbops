@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   hasCapability,
   capabilityDisabledReason,
+  instanceHasCapability,
   isTieredOnboardingFlavor,
   isDriverlessFlavor,
   CAPABILITY_LABELS,
@@ -112,5 +113,13 @@ describe('flavor classification', () => {
     for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...MYSQL_FLAVORS, '', undefined]) {
       expect(isDriverlessFlavor(flavor)).toBe(false)
     }
+  })
+})
+
+describe('instanceHasCapability', () => {
+  it('uses the persisted instance flavor for UI operation gates', () => {
+    expect(instanceHasCapability({ version: { flavor: 'tidb' } }, 'health_sql')).toBe(true)
+    expect(instanceHasCapability({ version: { flavor: 'tidb' } }, 'backup_physical')).toBe(false)
+    expect(instanceHasCapability({ version: { flavor: 'kingbase' } }, 'parameter_template')).toBe(false)
   })
 })

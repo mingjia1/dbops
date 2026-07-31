@@ -6,6 +6,7 @@ import {
   CheckCircleOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RollbackOutlined,
 } from '@ant-design/icons'
 import { instanceApi, upgradeApi, versionApi, type Instance, type InstanceVersion, type VersionEntry } from '../services/api'
+import { instanceHasCapability } from '../services/flavorCapability'
 import {
   ActiveUpgrade, UpgradeHistory,
   activeUpgradeStatuses, terminalUpgradeStatuses,
@@ -105,12 +106,16 @@ const UpgradeManage: React.FC = () => {
     return () => window.clearInterval(timer)
   }, [activeUpgrade?.task_id, activeUpgrade?.status])
 
+  const upgradeInstances = useMemo(
+    () => instances.filter((instance) => instanceHasCapability(instance, 'upgrade_inplace')),
+    [instances],
+  )
   const instanceOptions = useMemo(
-    () => instances.map((i) => ({
+    () => upgradeInstances.map((i) => ({
       value: i.id,
       label: `${i.name} (${i.connection?.host || i.host || '-'}:${i.connection?.port || i.port || '-'})`,
     })),
-    [instances],
+    [upgradeInstances],
   )
 
   const versionOptions = useMemo(
@@ -128,12 +133,12 @@ const UpgradeManage: React.FC = () => {
   )
 
   const clusterOptions = useMemo(() => {
-    const clusterIds = Array.from(new Set(instances.map((i) => i.cluster_id).filter(Boolean)))
+    const clusterIds = Array.from(new Set(upgradeInstances.map((i) => i.cluster_id).filter(Boolean)))
     return clusterIds.map((clusterId) => ({
       value: clusterId,
-      label: `${clusterId} (${instances.filter((i) => i.cluster_id === clusterId).length} 个实例)`,
+      label: `${clusterId} (${upgradeInstances.filter((i) => i.cluster_id === clusterId).length} 个实例)`,
     }))
-  }, [instances])
+  }, [upgradeInstances])
 
   const detectInstanceVersion = async (instanceId: string) => {
     if (!instanceId || detectingVersions[instanceId]) return

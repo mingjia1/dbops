@@ -2114,6 +2114,9 @@ func (s *InstanceService) ForceResetInstancePassword(ctx context.Context, id str
 	if err != nil {
 		return fmt.Errorf("instance not found: %w", err)
 	}
+	if err := RequireCapability(instance.Version.Flavor, CapInstanceAdmin); err != nil {
+		return err
+	}
 	conn, err := s.repo.GetConnection(ctx, id)
 	if err != nil {
 		return fmt.Errorf("instance connection not found: %w", err)

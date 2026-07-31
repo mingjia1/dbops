@@ -4,6 +4,7 @@ import {
   PlusOutlined, MinusOutlined, ReloadOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import { clusterDeployApi, hostApi, type Host } from '../services/api'
+import { hasCapability } from '../services/flavorCapability'
 
 interface NodeInfo {
   instance_id: string
@@ -22,7 +23,7 @@ interface ClusterActionsProps {
 }
 
 export const ClusterActions: React.FC<ClusterActionsProps> = ({
-  clusterID, clusterName, nodes = [], onActionComplete,
+  clusterID, clusterName, flavor, nodes = [], onActionComplete,
 }) => {
   const [scaleOutOpen, setScaleOutOpen] = useState(false)
   const [scaleInOpen, setScaleInOpen] = useState(false)
@@ -32,6 +33,11 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
   const [scaleOutHostIDs, setScaleOutHostIDs] = useState<string[]>([])
   const [removeNodeId, setRemoveNodeId] = useState<string>('')
   const [rebuildNodeId, setRebuildNodeId] = useState<string>('')
+  const canScale = hasCapability(flavor, 'scale')
+  const canRebuild = hasCapability(flavor, 'node_rebuild')
+  const canDestroy = hasCapability(flavor, 'cluster_deploy')
+
+  const unavailableMessage = '该数据库类型仅支持分层纳管，无法执行集群生命周期操作'
 
   const runClusterAction = (action: string, payload?: any) => {
     if (action === 'scale-out') return clusterDeployApi.scaleOut(clusterID, payload)
@@ -42,6 +48,11 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
   }
 
   const handleAction = async (action: string, payload?: any) => {
+    const allowed = action === 'rebuild' ? canRebuild : action === 'destroy' ? canDestroy : canScale
+    if (!allowed) {
+      message.warning(unavailableMessage)
+      return
+    }
     setLoading(action)
     try {
       const res = await runClusterAction(action, payload)
@@ -83,6 +94,8 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
             setScaleOutOpen(true)
           }}
           loading={loading === 'scale-out'}
+          disabled={!canScale}
+          title={canScale ? undefined : unavailableMessage}
         >
           扩容
         </Button>
@@ -90,6 +103,8 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
           icon={<MinusOutlined />}
           onClick={() => setScaleInOpen(true)}
           loading={loading === 'scale-in'}
+          disabled={!canScale}
+          title={canScale ? undefined : unavailableMessage}
         >
           缩容
         </Button>
@@ -97,6 +112,8 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
           icon={<ReloadOutlined />}
           onClick={() => setRebuildOpen(true)}
           loading={loading === 'rebuild'}
+          disabled={!canRebuild}
+          title={canRebuild ? undefined : unavailableMessage}
         >
           重建
         </Button>
@@ -107,7 +124,7 @@ export const ClusterActions: React.FC<ClusterActionsProps> = ({
           cancelText="取消"
           okButtonProps={{ danger: true }}
         >
-          <Button danger icon={<DeleteOutlined />} loading={loading === 'destroy'}>
+          <Button danger icon={<DeleteOutlined />} loading={loading === 'destroy'} disabled={!canDestroy} title={canDestroy ? undefined : unavailableMessage}>
             销毁
           </Button>
         </Popconfirm>

@@ -3,6 +3,7 @@ import { Button, Card, Descriptions, Form, Result, Select, Space, Table, Tag, me
 import { HistoryOutlined, RetweetOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { instanceApi, roleSwitchApi, type Instance } from '../services/api'
+import { instanceHasCapability } from '../services/flavorCapability'
 
 interface SwitchResult {
   id?: string
@@ -89,7 +90,7 @@ const RoleSwitch: React.FC = () => {
     return Array.from(grouped.entries()).map(([id, items]) => {
       const arch = instanceArch(items.find((item) => instanceArch(item)) || items[0])
       return { id, arch, items }
-    }).filter((item) => item.arch)
+    }).filter((item) => item.arch && item.items.every((instance) => instanceHasCapability(instance, 'failover')))
   }, [instances])
 
   const selectedCluster = clusters.find((item) => item.id === clusterId)
@@ -135,6 +136,10 @@ const RoleSwitch: React.FC = () => {
     const inst = instances.find((item) => item.id === selectedInstance)
     if (!inst || inst.cluster_id !== clusterId || instanceArch(inst) !== selectedArch) {
       message.error('\u76ee\u6807\u5b9e\u4f8b\u5fc5\u987b\u5c5e\u4e8e\u5f53\u524d\u96c6\u7fa4\u4e14\u67b6\u6784\u4e00\u81f4')
+      return
+    }
+    if (!instanceHasCapability(inst, 'failover')) {
+      message.warning('该数据库类型仅支持分层纳管，无法执行角色切换')
       return
     }
     setSubmitting(true)

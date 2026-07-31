@@ -367,6 +367,7 @@ const HostDetail: React.FC = () => {
 		if (f === 'mysql') return <Tag color="success">MySQL</Tag>
 		if (f === 'mariadb') return <Tag color="purple">MariaDB</Tag>
 		if (f === 'oceanbase') return <Tag color="gold">OceanBase</Tag>
+		if (f === 'tidb') return <Tag color="blue">TiDB</Tag>
 		if (f === 'gaussdb-mysql') return <Tag color="geekblue">GaussDB for MySQL</Tag>
 		if (f === 'polardb-mysql') return <Tag color="magenta">PolarDB for MySQL</Tag>
 		if (f === 'tdsql-mysql') return <Tag color="volcano">TDSQL for MySQL</Tag>
@@ -663,8 +664,8 @@ const HostDetail: React.FC = () => {
                       type="info"
                       showIcon
                       style={{ marginBottom: 16 }}
-                      message="正在通过 SSH 扫描该主机上的 MySQL 实例..."
-                      description="扫描过程会检查监听端口、读取 my.cnf、获取版本信息。"
+					message="正在通过 SSH 扫描该主机上的数据库实例..."
+					description="扫描过程会检查监听端口、进程信息和可用的版本信息。"
                     />
                   )}
 
