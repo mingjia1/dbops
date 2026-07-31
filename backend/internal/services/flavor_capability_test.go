@@ -50,6 +50,7 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 		{flavor: "highgo", wantSQLHealtheck: true},
 		{flavor: "gbase8a", wantSQLHealtheck: true},
 		{flavor: "shentong", wantSQLHealtheck: true},
+		{flavor: "tidb", wantSQLHealtheck: true},
 		{flavor: "dm", wantSQLHealtheck: false},
 		{flavor: "gbase8s", wantSQLHealtheck: false},
 	}
@@ -73,6 +74,7 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 func TestHasCapabilityNormalizesFlavorCase(t *testing.T) {
 	assert.False(t, HasCapability("  GBase8S  ", CapSQLHealthCheck))
 	assert.True(t, HasCapability("  KingBase  ", CapSQLHealthCheck))
+	assert.False(t, HasCapability(" TiDB ", CapFailover))
 	assert.False(t, HasCapability("DM", CapFailover))
 }
 

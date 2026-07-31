@@ -25,6 +25,7 @@ func TestNewConnectorDispatchesByFlavor(t *testing.T) {
 		{flavor: "mariadb", wantType: "*services.mysqlConnector"},
 		{flavor: "percona", wantType: "*services.mysqlConnector"},
 		{flavor: "oceanbase", wantType: "*services.mysqlConnector"},
+		{flavor: "tidb", wantType: "*services.mysqlConnector"},
 		{flavor: "gaussdb-mysql", wantType: "*services.mysqlConnector"},
 		{flavor: "polardb-mysql", wantType: "*services.mysqlConnector"},
 		{flavor: "tdsql-mysql", wantType: "*services.mysqlConnector"},
@@ -176,6 +177,8 @@ func TestFilterHealthCheckTypesByCapability(t *testing.T) {
 		{flavor: "mysql", want: []string{"tcp", "mysql", "replication"}},
 		{flavor: "", want: []string{"tcp", "mysql", "replication"}},
 		{flavor: "oceanbase", want: []string{"tcp", "mysql", "replication"}},
+		// TiDB uses a MySQL connector for liveness only; replication remains gated.
+		{flavor: "tidb", want: []string{"tcp", "mysql"}},
 		// PostgreSQL-compatible engines keep SQL liveness but lose replication.
 		{flavor: "kingbase", want: []string{"tcp", "mysql"}},
 		{flavor: "gbase8a", want: []string{"tcp", "mysql"}},
@@ -200,6 +203,9 @@ func TestEffectiveHealthCheckTypesDropsUnsupportedChecks(t *testing.T) {
 
 	kingbase := &models.Instance{Version: models.InstanceVersion{Flavor: "kingbase"}}
 	assert.Equal(t, []string{"tcp", "mysql"}, effectiveHealthCheckTypes(kingbase, requested))
+
+	tidb := &models.Instance{Version: models.InstanceVersion{Flavor: "tidb"}}
+	assert.Equal(t, []string{"tcp", "mysql"}, effectiveHealthCheckTypes(tidb, requested))
 
 	// MySQL instances and legacy instances with no recorded flavor are untouched.
 	mysqlInst := &models.Instance{Version: models.InstanceVersion{Flavor: "mysql"}}

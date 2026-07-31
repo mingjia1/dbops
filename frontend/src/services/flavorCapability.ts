@@ -39,7 +39,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   instance_admin: '实例管理操作 (账号/参数/配置/服务控制)',
 }
 
-/** Engines speaking the MySQL wire protocol get every capability. */
+/** Engines speaking the MySQL wire protocol and supporting MySQL admin SQL get every capability. */
 const MYSQL_PROTOCOL_FLAVORS = [
   'mysql',
   'mariadb',
@@ -56,6 +56,9 @@ const MYSQL_PROTOCOL_FLAVORS = [
  * only be probed over TCP.
  */
 const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean }> = {
+  // TiDB speaks the MySQL protocol but has distinct replication, backup and
+  // lifecycle workflows, so the MySQL connector is limited to health checks.
+  tidb: { healthSql: true },
   kingbase: { healthSql: true },
   opengauss: { healthSql: true },
   highgo: { healthSql: true },

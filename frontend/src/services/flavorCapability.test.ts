@@ -21,6 +21,7 @@ const MYSQL_FLAVORS = [
 ]
 
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
+const MYSQL_PROTOCOL_TIERED_FLAVORS = ['tidb']
 const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
 
 describe('hasCapability', () => {
@@ -43,7 +44,7 @@ describe('hasCapability', () => {
   })
 
   it('refuses every MySQL-specific operation for PG-compatible engines but allows SQL health check', () => {
-    for (const flavor of PG_COMPATIBLE_FLAVORS) {
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS]) {
       expect(hasCapability(flavor, 'health_sql')).toBe(true)
       for (const capability of ALL_CAPABILITIES.filter((c) => c !== 'health_sql')) {
         expect(hasCapability(flavor, capability)).toBe(false)
@@ -53,7 +54,7 @@ describe('hasCapability', () => {
 
   it('refuses instance admin operations for every tiered onboarding engine', () => {
     // The agent instance-admin family runs MySQL DDL/DCL and manages my.cnf.
-    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...DRIVERLESS_FLAVORS]) {
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...DRIVERLESS_FLAVORS]) {
       expect(hasCapability(flavor, 'instance_admin')).toBe(false)
     }
     for (const flavor of MYSQL_FLAVORS) {
@@ -73,6 +74,9 @@ describe('hasCapability', () => {
     expect(hasCapability('  KingBase  ', 'health_sql')).toBe(true)
     expect(hasCapability('  KingBase  ', 'failover')).toBe(false)
     expect(hasCapability('GBase8S', 'health_sql')).toBe(false)
+
+    expect(hasCapability(' TiDB ', 'health_sql')).toBe(true)
+    expect(hasCapability(' TiDB ', 'failover')).toBe(false)
     expect(hasCapability('DM', 'scale')).toBe(false)
   })
 })
@@ -93,7 +97,7 @@ describe('capabilityDisabledReason', () => {
 
 describe('flavor classification', () => {
   it('identifies tiered onboarding flavors', () => {
-    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...DRIVERLESS_FLAVORS]) {
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...DRIVERLESS_FLAVORS]) {
       expect(isTieredOnboardingFlavor(flavor)).toBe(true)
     }
     for (const flavor of [...MYSQL_FLAVORS, '', undefined]) {
@@ -105,7 +109,7 @@ describe('flavor classification', () => {
     for (const flavor of DRIVERLESS_FLAVORS) {
       expect(isDriverlessFlavor(flavor)).toBe(true)
     }
-    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_FLAVORS, '', undefined]) {
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...MYSQL_FLAVORS, '', undefined]) {
       expect(isDriverlessFlavor(flavor)).toBe(false)
     }
   })

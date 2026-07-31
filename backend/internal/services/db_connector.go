@@ -52,8 +52,8 @@ func (t ConnectorTarget) timeout() time.Duration {
 // NewConnector returns a read-only connector for the target's engine flavor.
 //
 // Flavors are grouped by wire protocol, not by vendor:
-//   - MySQL protocol: mysql, mariadb, percona, oceanbase, and the MySQL-compatible
-//     cloud variants (gaussdb-mysql, polardb-mysql, tdsql-mysql)
+//   - MySQL protocol: mysql, mariadb, percona, oceanbase, tidb, and the
+//     MySQL-compatible cloud variants (gaussdb-mysql, polardb-mysql, tdsql-mysql)
 //   - PostgreSQL protocol: kingbase, opengauss, highgo, gbase8a, shentong
 //   - dm and gbase8s have no usable pure-Go driver and return ErrNoSQLConnector
 //
@@ -71,7 +71,7 @@ func NewConnector(t ConnectorTarget) (DBConnector, error) {
 	t.Flavor = flavor
 
 	switch flavor {
-	case "mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql":
+	case "mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql":
 		return newMySQLConnector(t)
 	case "kingbase", "opengauss", "highgo", "gbase8a", "shentong":
 		return newPostgresConnector(t)

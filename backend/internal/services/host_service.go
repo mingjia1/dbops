@@ -1311,7 +1311,7 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 	}
 	defer client.Close()
 
-	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)|[d]mserver([_ ]|$)|[o]scarserver([_ ]|$)|[o]srvr([_ ]|$)' | grep -v grep`)
+	raw, err := runSSHCommand(client, `ps -eo pid,user,rss,args | grep -E '[m]ysqld([_ ]|$)|[t]idb-server([_ ]|$)|[k]ingbase([_ ]|$)|[g]aussdb([_ ]|$)|[h]ighgo([_ ]|$)|[o]ninit([_ ]|$)|[g]clusterd([_ ]|$)|[g]based([_ ]|$)|[d]mserver([_ ]|$)|[o]scarserver([_ ]|$)|[o]srvr([_ ]|$)' | grep -v grep`)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1336,7 +1336,13 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 
 		flavor := "mysql"
 		port := extractMysqldPort(cmdline)
-		if strings.Contains(strings.ToLower(cmdline), "kingbase") {
+		if strings.Contains(strings.ToLower(cmdline), "tidb-server") {
+			flavor = "tidb"
+			port = extractTiDBPort(cmdline)
+			if port == 0 {
+				port = 4000
+			}
+		} else if strings.Contains(strings.ToLower(cmdline), "kingbase") {
 			flavor = "kingbase"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
@@ -1577,6 +1583,7 @@ var mysqlProtocolFlavors = map[string]bool{
 	"gaussdb-mysql": true,
 	"polardb-mysql": true,
 	"tdsql-mysql":   true,
+	"tidb":          true,
 }
 
 // isMySQLProtocolFlavor reports whether a discovered flavor speaks the MySQL wire
@@ -1598,6 +1605,8 @@ func mysqlFlavorFromVersionString(versionFull string) string {
 		return "gaussdb-mysql"
 	case strings.Contains(v, "oceanbase"):
 		return "oceanbase"
+	case strings.Contains(v, "tidb"):
+		return "tidb"
 	case strings.Contains(v, "mariadb"):
 		return "mariadb"
 	default:
@@ -1611,6 +1620,30 @@ func extractMysqldPort(cmdline string) int {
 			if p, err := strconv.Atoi(strings.TrimPrefix(part, "--port=")); err == nil && p > 0 && p <= 65535 {
 				return p
 			}
+		}
+	}
+	return 0
+}
+
+// extractTiDBPort reads TiDB's -P/--port options. TiDB defaults to 4000 when
+// neither is present; the caller applies that default because zero remains the
+// useful "not explicitly configured" signal for this parser.
+func extractTiDBPort(cmdline string) int {
+	fields := strings.Fields(cmdline)
+	for i, field := range fields {
+		value := ""
+		switch {
+		case strings.HasPrefix(field, "--port="):
+			value = strings.TrimPrefix(field, "--port=")
+		case strings.HasPrefix(field, "-P="):
+			value = strings.TrimPrefix(field, "-P=")
+		case field == "-P" || field == "--port":
+			if i+1 < len(fields) {
+				value = fields[i+1]
+			}
+		}
+		if port, err := strconv.Atoi(value); err == nil && port > 0 && port <= 65535 {
+			return port
 		}
 	}
 	return 0
@@ -1701,19 +1734,7 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		si.VersionFull = string(rest[:idx])
 		si.Version = normalizeVersionString(si.VersionFull)
 	}
-	if i := strings.Index(strings.ToLower(si.VersionFull), "tdsql"); i >= 0 {
-		si.Flavor = "tdsql-mysql"
-	} else if i := strings.Index(strings.ToLower(si.VersionFull), "polardb"); i >= 0 {
-		si.Flavor = "polardb-mysql"
-	} else if i := strings.Index(strings.ToLower(si.VersionFull), "gaussdb"); i >= 0 {
-		si.Flavor = "gaussdb-mysql"
-	} else if i := strings.Index(strings.ToLower(si.VersionFull), "oceanbase"); i >= 0 {
-		si.Flavor = "oceanbase"
-	} else if i := strings.Index(strings.ToLower(si.VersionFull), "mariadb"); i >= 0 {
-		si.Flavor = "mariadb"
-	} else {
-		si.Flavor = "mysql"
-	}
+	si.Flavor = mysqlFlavorFromVersionString(si.VersionFull)
 
 	return si
 }

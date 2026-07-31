@@ -28,6 +28,13 @@ func TestExtractKingbasePort(t *testing.T) {
 	assert.Zero(t, extractKingbasePort("gclusterd -D /opt/gbase/gcluster"))
 }
 
+func TestExtractTiDBPort(t *testing.T) {
+	assert.Equal(t, 4000, extractTiDBPort("tidb-server -P 4000 --store=tikv"))
+	assert.Equal(t, 4001, extractTiDBPort("tidb-server -P=4001"))
+	assert.Equal(t, 4002, extractTiDBPort("tidb-server --port=4002"))
+	assert.Zero(t, extractTiDBPort("tidb-server --store=tikv"))
+}
+
 func TestExtractDMIniPath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -79,7 +86,7 @@ func TestParseDMPortNum(t *testing.T) {
 }
 
 func TestIsMySQLProtocolFlavor(t *testing.T) {
-	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
+	for _, flavor := range []string{"mysql", "mariadb", "percona", "oceanbase", "tidb", "gaussdb-mysql", "polardb-mysql", "tdsql-mysql"} {
 		assert.True(t, isMySQLProtocolFlavor(flavor), "%s speaks the MySQL protocol", flavor)
 	}
 	// An empty flavor is the scanner's default and must be probed as MySQL.
@@ -99,6 +106,7 @@ func TestMySQLFlavorFromVersionString(t *testing.T) {
 		{versionFull: "5.7.44-log", want: "mysql"},
 		{versionFull: "10.11.4-MariaDB", want: "mariadb"},
 		{versionFull: "5.7.25-OceanBase-v4.5.0", want: "oceanbase"},
+		{versionFull: "5.7.25-TiDB-v8.1.0", want: "tidb"},
 		{versionFull: "8.0.18-TDSQL-20231201", want: "tdsql-mysql"},
 		{versionFull: "8.0.18-PolarDB-1.0", want: "polardb-mysql"},
 		{versionFull: "8.0.22-GaussDB-1.0", want: "gaussdb-mysql"},

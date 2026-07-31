@@ -118,6 +118,11 @@ var flavorCapabilities = map[string]map[Capability]bool{
 	"polardb-mysql": mysqlProtocolCapabilities(),
 	"tdsql-mysql":   mysqlProtocolCapabilities(),
 
+	// TiDB speaks the MySQL wire protocol, so it can be connected and queried
+	// for health. Its replication, backup and lifecycle workflows differ from
+	// MySQL and must remain unavailable until they have dedicated support.
+	"tidb": tieredOnboardingCapabilities(true),
+
 	// ---- PostgreSQL-compatible: onboarding only, SQL health check available ----
 	"kingbase":  tieredOnboardingCapabilities(true),
 	"opengauss": tieredOnboardingCapabilities(true),
