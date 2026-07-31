@@ -1055,7 +1055,10 @@ type ScanInstancesRequest struct {
 	DiscoverProcess bool   `json:"discover_process"`
 }
 
-var defaultScanPorts = []int{3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306}
+var defaultScanPorts = []int{
+	3306, 33060, 33061, 33306, 3307, 3308, 3309, 3310, 13306, 23306,
+	4000, 5432, 5236, 54321, 9088, 2003, 5258, 5050,
+}
 
 func (s *HostService) StartScanInstances(ctx context.Context, hostID string, req ScanInstancesRequest) (*HostScanResult, error) {
 	host, err := s.repo.GetByID(ctx, hostID)
@@ -1503,7 +1506,10 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 							if instances[i].Port == port && isMySQLProtocolFlavor(instances[i].Flavor) {
 								instances[i].VersionFull = vFull
 								instances[i].Version = normalizeVersionString(vFull)
-								instances[i].Flavor = mysqlFlavorFromVersionString(vFull)
+								detectedFlavor := mysqlFlavorFromVersionString(vFull)
+								if instances[i].Flavor == "mysql" || detectedFlavor != "mysql" {
+									instances[i].Flavor = detectedFlavor
+								}
 							}
 						}
 					}
@@ -1759,18 +1765,20 @@ func normalizeVersionString(s string) string {
 }
 
 type RegisterScannedInstanceRequest struct {
-	Port       int    `json:"port" binding:"required"`
-	Name       string `json:"name" binding:"required"`
-	Username   string `json:"username"`
-	Password   string `json:"password" binding:"required"`
-	ClusterID  string `json:"cluster_id"`
-	VersionID  string `json:"version_id"`
-	Flavor     string `json:"flavor"`
-	Version    string `json:"version"`
-	Basedir    string `json:"basedir"`
-	Datadir    string `json:"datadir"`
-	OSUser     string `json:"os_user"`
-	PackageURL string `json:"package_url"`
+	Port        int    `json:"port" binding:"required"`
+	Name        string `json:"name" binding:"required"`
+	Username    string `json:"username"`
+	Password    string `json:"password" binding:"required"`
+	ClusterID   string `json:"cluster_id"`
+	VersionID   string `json:"version_id"`
+	Flavor      string `json:"flavor"`
+	Version     string `json:"version"`
+	FullVersion string `json:"full_version"`
+	SSLEnabled  bool   `json:"ssl_enabled"`
+	Basedir     string `json:"basedir"`
+	Datadir     string `json:"datadir"`
+	OSUser      string `json:"os_user"`
+	PackageURL  string `json:"package_url"`
 }
 
 type BatchRegisterScannedInstanceRequest struct {
@@ -1801,55 +1809,56 @@ func (s *HostService) RegisterScannedInstance(ctx context.Context, hostID string
 	if err != nil {
 		return "", err
 	}
+	if req.Port <= 0 || req.Port > 65535 {
+		return "", fmt.Errorf("port must be between 1 and 65535")
+	}
+	if existingID, ok := s.listManagedPorts(host.ID)[req.Port]; ok {
+		return "", fmt.Errorf("instance already managed on port %d: %s", req.Port, existingID)
+	}
+	encPwd, err := utils.Encrypt(req.Password, s.encKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt password: %w", err)
+	}
 	hid := host.ID
 	now := time.Now()
+	flavor := strings.ToLower(strings.TrimSpace(req.Flavor))
+	if flavor == "" {
+		flavor = "mysql"
+	}
+	version := strings.TrimSpace(req.Version)
+	fullVersion := strings.TrimSpace(req.FullVersion)
+	if fullVersion == "" {
+		fullVersion = version
+	}
 	inst := &models.Instance{
+		ID:        uuid.New().String(),
 		Name:      req.Name,
 		ClusterID: req.ClusterID,
 		HostID:    &hid,
 		CreatedAt: now,
 		UpdatedAt: now,
+		Connection: models.InstanceConnection{
+			Host:              host.Address,
+			Port:              req.Port,
+			Username:          req.Username,
+			PasswordEncrypted: encPwd,
+			SSLEnabled:        req.SSLEnabled,
+			VersionID:         req.VersionID,
+			Basedir:           req.Basedir,
+			Datadir:           req.Datadir,
+			OSUser:            req.OSUser,
+			PackageURL:        req.PackageURL,
+		},
+		Version: models.InstanceVersion{
+			Flavor:      flavor,
+			Version:     version,
+			FullVersion: fullVersion,
+		},
 	}
+	inst.Connection.InstanceID = inst.ID
+	inst.Version.InstanceID = inst.ID
 	if err := s.instanceRepo.Create(ctx, inst); err != nil {
-		return "", fmt.Errorf("failed to create instance: %w", err)
-	}
-	conn := &models.InstanceConnection{
-		InstanceID: inst.ID,
-		Host:       host.Address,
-		Port:       req.Port,
-		Username:   req.Username,
-		VersionID:  req.VersionID,
-		Basedir:    req.Basedir,
-		Datadir:    req.Datadir,
-		OSUser:     req.OSUser,
-		PackageURL: req.PackageURL,
-	}
-	// P1-4: 之前 PasswordEncrypted: req.Password 直接存明文, 与 InstanceService.Create
-	// 不一致 — 任何后续 health_check / failover 拿 conn 当密码, MySQL 收到 AES-GCM 密文必败.
-	// 修: 落库前 utils.Encrypt.
-	if req.Password != "" {
-		encPwd, err := utils.Encrypt(req.Password, s.encKey)
-		if err != nil {
-			return "", fmt.Errorf("failed to encrypt password: %w", err)
-		}
-		conn.PasswordEncrypted = encPwd
-	}
-	if err := s.instanceRepo.CreateConnection(ctx, conn); err != nil {
-		return "", fmt.Errorf("failed to create connection: %w", err)
-	}
-	// Persist the scanned engine flavor. Without this the scanner's flavor
-	// detection (kingbase / opengauss / oceanbase / ...) is discarded at
-	// registration time and downstream capability checks have nothing to read.
-	flavor := strings.ToLower(strings.TrimSpace(req.Flavor))
-	if flavor == "" {
-		flavor = "mysql"
-	}
-	if err := s.instanceRepo.CreateVersion(ctx, &models.InstanceVersion{
-		InstanceID: inst.ID,
-		Flavor:     flavor,
-		Version:    strings.TrimSpace(req.Version),
-	}); err != nil {
-		log.Printf("WARN: failed to persist flavor %q for instance %s: %v", flavor, inst.ID, err)
+		return "", fmt.Errorf("failed to create scanned instance: %w", err)
 	}
 	return inst.ID, nil
 }

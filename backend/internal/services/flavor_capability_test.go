@@ -7,13 +7,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHasCapabilityTreatsUnknownAndEmptyFlavorAsMySQL(t *testing.T) {
+func TestHasCapabilityPreservesEmptyFlavorAndRestrictsUnknownFlavor(t *testing.T) {
 	// Instances registered before flavor persistence carry an empty flavor and
 	// must keep their full capability set.
-	for _, flavor := range []string{"", "   ", "some-future-engine"} {
+	for _, flavor := range []string{"", "   "} {
 		for _, capability := range allCapabilities() {
 			assert.True(t, HasCapability(flavor, capability),
 				"flavor %q should allow %s", flavor, capability)
+		}
+	}
+	for _, flavor := range []string{"unknown", "non-mysql", "tcp-only", "some-future-engine"} {
+		for _, capability := range allCapabilities() {
+			assert.False(t, HasCapability(flavor, capability),
+				"flavor %q should refuse %s", flavor, capability)
 		}
 	}
 }

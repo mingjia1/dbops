@@ -81,16 +81,15 @@ const normalizeFlavor = (flavor?: string): string => {
 /**
  * Reports whether an engine supports an operation.
  *
- * Unknown and empty flavors are treated as MySQL-compatible, matching
- * HasCapability in the Go table. Instances registered before flavor
- * persistence carry an empty flavor and must keep every action available.
+ * Empty flavors retain the legacy MySQL-compatible behavior. Explicit unknown
+ * flavors remain inventory-only until the backend recognizes the engine.
  */
 export const hasCapability = (flavor: string | undefined, capability: Capability): boolean => {
   const normalized = normalizeFlavor(flavor)
   if (MYSQL_PROTOCOL_FLAVORS.includes(normalized)) return true
 
   const tiered = TIERED_ONBOARDING_FLAVORS[normalized]
-  if (!tiered) return true // unknown flavor: treat as MySQL-compatible
+  if (!tiered) return false
 
   return capability === 'health_sql' ? tiered.healthSql : false
 }

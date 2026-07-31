@@ -744,6 +744,7 @@ var InitialSchema = []string{
 	// this is safe to re-run.
 	`ALTER TABLE instance_versions MODIFY COLUMN version VARCHAR(64) NOT NULL`,
 	`ALTER TABLE instance_versions MODIFY COLUMN full_version VARCHAR(512) NOT NULL`,
+	`ALTER TABLE instance_connections ADD UNIQUE INDEX idx_instance_connections_host_port (host, port)`,
 }
 
 // schemaSQLite 给 SQLite 用, 去掉了 ENGINE / CHARSET 专属子句.
@@ -775,6 +776,7 @@ var schemaSQLite = []string{
 		package_url TEXT DEFAULT '',
 		version_id TEXT DEFAULT ''
 	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_instance_connections_host_port ON instance_connections(host, port)`,
 
 	`CREATE TABLE IF NOT EXISTS instance_versions (
 		id TEXT PRIMARY KEY,
@@ -1523,13 +1525,12 @@ func isAlreadyExistsError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	// P1-4: 覆盖更多 MySQL 错误码以保证 ALTER / FK 重复执行安全.
 	// 1022 Duplicate entry for key, 1050 Table already exists, 1060 Duplicate column name,
-	// 1061 Duplicate key name, 1062 Duplicate entry, 1091 Can't DROP (idempotent),
+	// 1061 Duplicate key name, 1091 Can't DROP (idempotent),
 	// 1826 Duplicate foreign key constraint name.
 	if strings.Contains(msg, "error 1022") ||
 		strings.Contains(msg, "error 1050") ||
 		strings.Contains(msg, "error 1060") ||
 		strings.Contains(msg, "error 1061") ||
-		strings.Contains(msg, "error 1062") ||
 		strings.Contains(msg, "error 1091") ||
 		strings.Contains(msg, "error 1826") {
 		return true
@@ -1538,7 +1539,6 @@ func isAlreadyExistsError(err error) bool {
 	return strings.Contains(msg, "duplicate column") ||
 		strings.Contains(msg, "duplicate key") ||
 		strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "unique constraint failed") ||
 		strings.Contains(msg, "table") && strings.Contains(msg, "already exists")
 }
 

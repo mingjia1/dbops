@@ -118,6 +118,12 @@ func TestMySQLFlavorFromVersionString(t *testing.T) {
 	}
 }
 
+func TestDefaultScanPortsCoverTieredEngines(t *testing.T) {
+	for _, port := range []int{4000, 5432, 5236, 54321, 9088, 2003, 5258, 5050} {
+		assert.Contains(t, defaultScanPorts, port)
+	}
+}
+
 func TestBatchAgentActionAsyncReturnsSubmittedWithoutSSHWait(t *testing.T) {
 	ctx := context.Background()
 	repo := repositories.NewHostRepository(newTestDB(t))
@@ -467,12 +473,16 @@ func TestRegisterScannedInstancePersistsScanMetadata(t *testing.T) {
 	require.NoError(t, hostRepo.Create(ctx, host))
 
 	instanceID, err := service.RegisterScannedInstance(ctx, host.ID, RegisterScannedInstanceRequest{
-		Port:      3307,
-		Name:      "scanned-3307",
-		Username:  "root",
-		Password:  "secret-password",
-		VersionID: "mysql-8.0.36",
-		Datadir:   "/data/mysql_3307",
+		Port:        3307,
+		Name:        "scanned-3307",
+		Username:    "root",
+		Password:    "secret-password",
+		VersionID:   "mysql-8.0.36",
+		Datadir:     "/data/mysql_3307",
+		SSLEnabled:  true,
+		Flavor:      "oceanbase",
+		Version:     "4.3.2",
+		FullVersion: "OceanBase CE 4.3.2.0",
 	})
 
 	require.NoError(t, err)
@@ -482,6 +492,32 @@ func TestRegisterScannedInstancePersistsScanMetadata(t *testing.T) {
 	assert.Equal(t, "/data/mysql_3307", conn.Datadir)
 	assert.Equal(t, host.Address, conn.Host)
 	assert.Equal(t, 3307, conn.Port)
+	assert.True(t, conn.SSLEnabled)
+	version, err := instanceRepo.GetVersion(ctx, instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, "oceanbase", version.Flavor)
+	assert.Equal(t, "4.3.2", version.Version)
+	assert.Equal(t, "OceanBase CE 4.3.2.0", version.FullVersion)
+}
+
+func TestRegisterScannedInstanceRejectsManagedPort(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	hostRepo := repositories.NewHostRepository(db)
+	instanceRepo := repositories.NewInstanceRepository(db)
+	service := NewHostService(hostRepo, "test-encryption-key")
+	service.SetInstanceRepo(instanceRepo)
+
+	host := &models.Host{ID: "host-scan-duplicate", Name: "host-scan-duplicate", Address: "10.0.0.32", SSHPort: 22, SSHUser: "root"}
+	require.NoError(t, hostRepo.Create(ctx, host))
+	request := RegisterScannedInstanceRequest{Port: 3307, Name: "scanned-first", Username: "root", Password: "secret-password"}
+	_, err := service.RegisterScannedInstance(ctx, host.ID, request)
+	require.NoError(t, err)
+
+	request.Name = "scanned-second"
+	_, err = service.RegisterScannedInstance(ctx, host.ID, request)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already managed")
 }
 
 func TestRegisterScannedInstancePersistsFlavor(t *testing.T) {

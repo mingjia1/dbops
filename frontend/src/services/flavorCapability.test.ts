@@ -34,12 +34,17 @@ describe('hasCapability', () => {
     }
   })
 
-  it('treats empty and unknown flavors as MySQL-compatible', () => {
+  it('preserves legacy empty flavors and restricts explicit unknown flavors', () => {
     // Instances registered before flavor persistence carry an empty flavor and
     // must keep every action available.
-    for (const flavor of [undefined, '', '   ', 'some-future-engine']) {
+    for (const flavor of [undefined, '', '   ']) {
       for (const capability of ALL_CAPABILITIES) {
         expect(hasCapability(flavor, capability)).toBe(true)
+      }
+    }
+    for (const flavor of ['unknown', 'non-mysql', 'tcp-only', 'some-future-engine']) {
+      for (const capability of ALL_CAPABILITIES) {
+        expect(hasCapability(flavor, capability)).toBe(false)
       }
     }
   })

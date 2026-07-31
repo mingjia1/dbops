@@ -105,9 +105,9 @@ func tieredOnboardingCapabilities(sqlHealthCheck bool) map[Capability]bool {
 // flavorCapabilities is the single source of truth for what the platform will
 // do with each engine flavor. Adding a new flavor means adding one entry here.
 //
-// Flavors absent from this map are treated as MySQL-compatible. That default is
-// deliberate: existing managed instances predate flavor persistence and carry
-// an empty flavor, and they must keep working exactly as before.
+// The empty flavor remains MySQL-compatible for instances created before flavor
+// persistence. Every explicit or newly discovered flavor uses a conservative
+// capability set until it has a dedicated entry.
 var flavorCapabilities = map[string]map[Capability]bool{
 	// ---- MySQL wire protocol, MySQL-compatible admin SQL ----
 	"mysql":         mysqlProtocolCapabilities(),
@@ -136,6 +136,12 @@ var flavorCapabilities = map[string]map[Capability]bool{
 	"dm": tieredOnboardingCapabilities(false),
 	// gbase8s speaks the Informix protocol; no pure-Go driver exists.
 	"gbase8s": tieredOnboardingCapabilities(false),
+
+	// Scanner fallback values have not established an engine-compatible
+	// management protocol. Keep them inventory-only until identified.
+	"unknown":   tieredOnboardingCapabilities(false),
+	"non-mysql": tieredOnboardingCapabilities(false),
+	"tcp-only":  tieredOnboardingCapabilities(false),
 }
 
 // normalizeFlavor lowercases and trims a flavor, mapping the empty value to
@@ -150,12 +156,12 @@ func normalizeFlavor(flavor string) string {
 }
 
 // HasCapability reports whether the given flavor supports an operation.
-// Unknown flavors are treated as MySQL-compatible so that a newly detected
-// engine never silently loses access to operations that used to work.
+// Empty flavors preserve the legacy MySQL behavior. Unknown explicit flavors
+// use the same inventory-only set as scanner fallback values.
 func HasCapability(flavor string, capability Capability) bool {
 	caps, ok := flavorCapabilities[normalizeFlavor(flavor)]
 	if !ok {
-		caps = mysqlProtocolCapabilities()
+		caps = tieredOnboardingCapabilities(false)
 	}
 	return caps[capability]
 }

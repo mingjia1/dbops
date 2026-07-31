@@ -466,6 +466,8 @@ export const hostApi = {
     version_id?: string
     flavor?: string
     version?: string
+    full_version?: string
+    ssl_enabled?: boolean
     basedir?: string
     datadir?: string
     os_user?: string
@@ -482,6 +484,8 @@ export const hostApi = {
     version_id?: string
     flavor?: string
     version?: string
+    full_version?: string
+    ssl_enabled?: boolean
     basedir?: string
     datadir?: string
     os_user?: string
