@@ -36,6 +36,26 @@ func TestXinchuangCoreBaseRejectsUnsuccessfulAgentTasks(t *testing.T) {
 	}
 }
 
+func TestXinchuangCoreBaseRollbackAfterFailedAgentTask(t *testing.T) {
+	calls := make([]agentCall, 0, 2)
+	caller := func(_ context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error) {
+		calls = append(calls, agentCall{Host: host, AgentPort: agentPort, Path: path, Payload: payload})
+		if payload["operation"] == "rollback" {
+			return map[string]interface{}{"status": "completed"}, nil
+		}
+		return map[string]interface{}{"status": "failed", "message": "installation failed"}, nil
+	}
+	plugin := NewXinchuangCoreBase("tidb", "/agent/tasks/flavor", caller)
+	env := testEnv()
+
+	_, err := plugin.Execute(context.Background(), env, map[string]interface{}{"operation": "deploy"})
+	require.Error(t, err)
+	require.NoError(t, plugin.Rollback(context.Background(), env))
+	require.Len(t, calls, 2)
+	assert.Equal(t, "deploy", calls[0].Payload["operation"])
+	assert.Equal(t, "rollback", calls[1].Payload["operation"])
+}
+
 func TestXinchuangCoreBaseSupportsEveryLifecyclePath(t *testing.T) {
 	fake := &fakeAgentCaller{resp: map[string]interface{}{"status": "success"}}
 	plugin := NewXinchuangCoreBase("opengauss", "/agent/tasks/flavor", fake.call)

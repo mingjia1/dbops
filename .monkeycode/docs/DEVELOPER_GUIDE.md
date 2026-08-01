@@ -59,6 +59,9 @@ go test ./internal/executor -run '^TestFlavorTaskExecutor' -count=1
 
 # Run the flavor task route tests
 go test ./cmd -run '^TestFlavorTaskRoute' -count=1
+
+# Run local environment fixture scenarios
+go test ./internal/executor -run '^TestFlavorTaskExecutorFixture' -count=1
 ```
 
 ## Flavor Capability Tests
@@ -70,6 +73,14 @@ go test ./internal/services -run 'Test.*Capability' -count=1
 
 # Run static checks for capability services
 go vet ./internal/services
+```
+
+## Lifecycle Contract Fixtures
+
+```bash
+# Verify Agent success and failure result handling, including rollback dispatch
+cd backend
+go test ./internal/plugins/kernel -run '^TestXinchuangCoreBase' -count=1
 ```
 
 ## Adding a Flavor Executor
