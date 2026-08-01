@@ -145,6 +145,65 @@ func TestOceanBaseRejectsMultiNodeOperations(t *testing.T) {
 	}
 }
 
+func TestOceanBaseTeardownBacksUpStopsAndRemovesApprovedPaths(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	var commands, removed []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		if name == oceanBaseOBClient && strings.Contains(args[len(args)-1], "CDB_OB_BACKUP_JOBS") {
+			return "COMPLETED", nil
+		}
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.removeAll = func(path string) error {
+		removed = append(removed, recordedOceanBaseCommand{name: path})
+		return nil
+	}
+	req := oceanBaseTestRequest(root)
+	req.Operation = "teardown"
+	req.OceanBase.ConfirmUninstall = true
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///opt/dbops/backups/oceanbase/teardown"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if !hasOceanBaseSQL(commands, "BACKUP DATABASE PLUS ARCHIVELOG") || !hasOceanBaseCommand(commands, oceanBaseOBShell, "cluster stop") {
+		t.Fatalf("teardown commands missing: %#v", commands)
+	}
+	if len(removed) != 3 || removed[0].name != req.OceanBase.DataDir || removed[1].name != oceanBaseHome || removed[2].name != filepath.Dir(oceanBaseOBProxy) {
+		t.Fatalf("removed paths = %#v", removed)
+	}
+}
+
+func TestOceanBaseTeardownRequiresExplicitConfirmation(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "teardown"
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///opt/dbops/backups/oceanbase/teardown"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "confirm_uninstall") {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
+func TestOceanBaseTeardownRejectsDataDirectoryOutsideOceanBaseRoot(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "teardown"
+	req.OceanBase.ConfirmUninstall = true
+	req.OceanBase.DataDir = "/var/lib/oceanbase"
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///opt/dbops/backups/oceanbase/teardown"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "data_dir") {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
 func TestOceanBaseBackupConfiguresArchiveAndVerifiesJob(t *testing.T) {
 	root := t.TempDir()
 	writeOceanBaseBundle(t, root)

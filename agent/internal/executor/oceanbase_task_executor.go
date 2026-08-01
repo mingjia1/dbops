@@ -42,6 +42,11 @@ func (e *FlavorTaskExecutor) executeOceanBase(ctx context.Context, req FlavorTas
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("oceanbase command runner is not configured")), nil
 	}
 	switch req.Operation {
+	case "teardown":
+		if err := e.teardownOceanBase(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "oceanbase teardown completed", map[string]interface{}{"flavor": "oceanbase", "cluster": req.OceanBase.ClusterName}), nil
 	case "monitor":
 		metrics, err := e.collectOceanBaseMetrics(ctx, req)
 		if err != nil {
@@ -126,6 +131,21 @@ func (e *FlavorTaskExecutor) collectOceanBaseMetrics(ctx context.Context, req Fl
 	return map[string]interface{}{"flavor": "oceanbase", "cluster": c.ClusterName, "tenant": c.Tenant, "version": version, "servers": servers, "tenant_status": tenant}, nil
 }
 
+func (e *FlavorTaskExecutor) teardownOceanBase(ctx context.Context, req FlavorTaskRequest) error {
+	if err := e.backupOceanBaseTenant(ctx, req); err != nil {
+		return err
+	}
+	if _, err := e.handlers["oceanbase"].runner(ctx, oceanBaseOBShell, "cluster", "stop", "-y"); err != nil {
+		return fmt.Errorf("stop oceanbase cluster: %w", err)
+	}
+	for _, path := range []string{req.OceanBase.DataDir, oceanBaseHome, filepath.Dir(oceanBaseOBProxy)} {
+		if err := e.removeAll(path); err != nil {
+			return fmt.Errorf("remove oceanbase path %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func validateOceanBaseConfig(req FlavorTaskRequest) error {
 	c := req.OceanBase
 	if c == nil {
@@ -184,6 +204,23 @@ func validateOceanBaseConfig(req FlavorTaskRequest) error {
 		return validateOceanBaseBackupOperation(req)
 	case "restore", "migrate":
 		return validateOceanBaseRestoreOperation(req)
+	case "teardown":
+		if !c.ConfirmUninstall {
+			return fmt.Errorf("oceanbase teardown requires confirm_uninstall")
+		}
+		if err := validateOceanBaseBackupOperation(req); err != nil {
+			return err
+		}
+		return validateOceanBaseRemovalPath(c.DataDir)
+	}
+	return nil
+}
+
+func validateOceanBaseRemovalPath(path string) error {
+	const root = "/data/oceanbase"
+	cleaned := filepath.Clean(path)
+	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+		return fmt.Errorf("oceanbase teardown data_dir must remain under %s", root)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,7 @@ type OceanBaseConfig struct {
 	EnableOBProxy         bool                    `json:"enable_obproxy"`
 	OBProxyPort           int                     `json:"obproxy_port"`
 	OBProxySysPasswordSHA string                  `json:"obproxy_sys_password_sha1"`
+	ConfirmUninstall      bool                    `json:"confirm_uninstall,omitempty"`
 	Backup                *OceanBaseBackupConfig  `json:"backup,omitempty"`
 	Restore               *OceanBaseRestoreConfig `json:"restore,omitempty"`
 }
@@ -91,6 +93,7 @@ type FlavorTaskExecutor struct {
 	packageRoot string
 	handlers    map[string]*flavorTaskHandler
 	starter     flavorProcessStarter
+	removeAll   func(string) error
 }
 
 func NewFlavorTaskExecutor() *FlavorTaskExecutor {
@@ -136,7 +139,7 @@ func NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot string, runner f
 	} {
 		handlers[flavor] = &flavorTaskHandler{flavor: flavor, versionBinary: binary, runner: runner}
 	}
-	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter}
+	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, removeAll: os.RemoveAll}
 }
 
 func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest) (*TaskResult, error) {
@@ -161,7 +164,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
-	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover":
+	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "teardown":
 		if handler.flavor != "oceanbase" {
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}

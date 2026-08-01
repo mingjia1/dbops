@@ -63,7 +63,7 @@ go test ./cmd -run '^TestFlavorTaskRoute' -count=1
 # Run local environment fixture scenarios
 go test ./internal/executor -run '^TestFlavorTaskExecutorFixture' -count=1
 
-# Run OceanBase deployment, backup, restore, migration, and upgrade tests
+# Run OceanBase deployment, backup, restore, migration, upgrade, monitoring, and teardown tests
 go test ./internal/executor -run '^TestOceanBase' -count=1
 ```
 
