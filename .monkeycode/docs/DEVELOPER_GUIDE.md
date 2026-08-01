@@ -62,6 +62,9 @@ go test ./cmd -run '^TestFlavorTaskRoute' -count=1
 
 # Run local environment fixture scenarios
 go test ./internal/executor -run '^TestFlavorTaskExecutorFixture' -count=1
+
+# Run OceanBase installation, tenant, TLS, and parameter tests
+go test ./internal/executor -run '^TestOceanBase' -count=1
 ```
 
 ## Flavor Capability Tests

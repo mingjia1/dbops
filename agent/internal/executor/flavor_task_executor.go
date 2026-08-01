@@ -26,9 +26,34 @@ type FlavorTaskRequest struct {
 	Operation   string           `json:"operation"`
 	PackagePath string           `json:"package_path"`
 	TLS         *FlavorTLSConfig `json:"tls"`
+	OceanBase   *OceanBaseConfig `json:"oceanbase,omitempty"`
+}
+
+// OceanBaseConfig contains the fixed single-node inputs accepted by the
+// OceanBase executor. It deliberately has no free-form command fields.
+type OceanBaseConfig struct {
+	ClusterName           string            `json:"cluster_name"`
+	Address               string            `json:"address"`
+	Zone                  string            `json:"zone"`
+	ClusterID             int               `json:"cluster_id"`
+	SQLPort               int               `json:"sql_port"`
+	RPCPort               int               `json:"rpc_port"`
+	DataDir               string            `json:"data_dir"`
+	SystemMemory          string            `json:"system_memory"`
+	DatafileSize          string            `json:"datafile_size"`
+	RootPassword          string            `json:"root_password"`
+	Tenant                string            `json:"tenant"`
+	TenantCPU             int               `json:"tenant_cpu"`
+	TenantMemory          string            `json:"tenant_memory"`
+	TenantLogDiskSize     string            `json:"tenant_log_disk_size"`
+	Parameters            map[string]string `json:"parameters"`
+	EnableOBProxy         bool              `json:"enable_obproxy"`
+	OBProxyPort           int               `json:"obproxy_port"`
+	OBProxySysPasswordSHA string            `json:"obproxy_sys_password_sha1"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
+type flavorProcessStarter func(ctx context.Context, name string, args ...string) error
 
 type flavorTaskHandler struct {
 	flavor        string
@@ -42,10 +67,23 @@ type flavorTaskHandler struct {
 type FlavorTaskExecutor struct {
 	packageRoot string
 	handlers    map[string]*flavorTaskHandler
+	starter     flavorProcessStarter
 }
 
 func NewFlavorTaskExecutor() *FlavorTaskExecutor {
-	return NewFlavorTaskExecutorWithPackageRoot(defaultLocalPackageRoot, commandOutputWithError)
+	return NewFlavorTaskExecutorWithPackageRootAndStarter(defaultLocalPackageRoot, commandOutputWithError, startCommand)
+}
+
+func startCommand(ctx context.Context, name string, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Observer and OBProxy remain running after the task returns.
+	command := exec.Command(name, args...)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	return command.Process.Release()
 }
 
 func commandOutputWithError(ctx context.Context, name string, args ...string) (string, error) {
@@ -59,6 +97,10 @@ func commandOutputWithError(ctx context.Context, name string, args ...string) (s
 }
 
 func NewFlavorTaskExecutorWithPackageRoot(packageRoot string, runner flavorCommandRunner) *FlavorTaskExecutor {
+	return NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot, runner, startCommand)
+}
+
+func NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot string, runner flavorCommandRunner, starter flavorProcessStarter) *FlavorTaskExecutor {
 	if packageRoot == "" {
 		packageRoot = defaultLocalPackageRoot
 	}
@@ -71,7 +113,7 @@ func NewFlavorTaskExecutorWithPackageRoot(packageRoot string, runner flavorComma
 	} {
 		handlers[flavor] = &flavorTaskHandler{flavor: flavor, versionBinary: binary, runner: runner}
 	}
-	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers}
+	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter}
 }
 
 func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest) (*TaskResult, error) {
@@ -82,7 +124,8 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 	if handler == nil || handler.flavor != normalizeFlavorTask(req.Flavor) {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("flavor %q is not registered", req.Flavor)), nil
 	}
-	if _, err := ValidateLocalPackageBundle(e.packageRoot, handler.flavor, req.Version); err != nil {
+	manifest, err := ValidateLocalPackageBundle(e.packageRoot, handler.flavor, req.Version)
+	if err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
 
@@ -95,6 +138,11 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
+	case "deploy", "configure":
+		if handler.flavor != "oceanbase" {
+			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
+		}
+		return e.executeOceanBase(ctx, req, manifest)
 	default:
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 	}

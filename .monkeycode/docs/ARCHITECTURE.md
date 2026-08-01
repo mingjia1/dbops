@@ -20,7 +20,7 @@ DBOps Platform is a database operations system with a React web console, a Go ba
 
 `backend/internal/plugins/kernel/xinchuang_core.go` provides the common lifecycle base for dedicated flavor executors. It validates the target Agent, dispatches each lifecycle phase through the flavor's Agent route, and accepts only a terminal successful Agent task status.
 
-`agent/internal/executor/flavor_task_executor_fixture_test.go` provides an isolated integration fixture using a temporary local bundle and injected command runner. It validates success, missing-tool, checksum-failure, and permission-failure outcomes without requiring a database host. The kernel contract suite verifies the deploy-failure and rollback task sequence.
+`agent/internal/executor/flavor_task_executor_fixture_test.go` provides an isolated integration fixture using a temporary local bundle and injected command runner. It validates success, missing-tool, checksum-failure, and permission-failure outcomes without requiring a database host. `agent/internal/executor/oceanbase_task_executor.go` adds the OceanBase single-node lifecycle flow: approved local RPM installation, observer and optional OBProxy startup, resource-unit and tenant creation, parameter application, TLS configuration, and client-side deployment queries. The kernel contract suite verifies the deploy-failure and rollback task sequence.
 
 ```mermaid
 flowchart LR

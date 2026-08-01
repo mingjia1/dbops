@@ -67,10 +67,14 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.flavor, func(t *testing.T) {
-			// Every MySQL-specific operation must be refused regardless of whether
-			// the engine has a usable driver.
+			allowed := map[Capability]bool{}
+			if tt.flavor == "oceanbase" {
+				allowed[CapInstanceDeploy] = true
+				allowed[CapParameterTemplate] = true
+			}
+			// Only operations backed by the flavor executor are available.
 			for _, capability := range allCapabilities() {
-				if capability == CapSQLHealthCheck {
+				if capability == CapSQLHealthCheck || allowed[capability] {
 					continue
 				}
 				assert.False(t, HasCapability(tt.flavor, capability),
