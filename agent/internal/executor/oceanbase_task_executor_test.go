@@ -106,6 +106,45 @@ func TestOceanBaseRejectsUnsafeParameterAndNonRPMPackage(t *testing.T) {
 	}
 }
 
+func TestOceanBaseMonitoringCollectsVersionServerAndTenantMetrics(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "metric", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "monitor"
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	metrics, ok := result.Data.(map[string]interface{})
+	if !ok || metrics["version"] != "metric" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if !hasOceanBaseSQL(commands, "SELECT VERSION()") || !hasOceanBaseSQL(commands, "SHOW OB SERVERS") || !hasOceanBaseSQL(commands, "DBA_OB_TENANTS") {
+		t.Fatalf("monitoring commands missing: %#v", commands)
+	}
+}
+
+func TestOceanBaseRejectsMultiNodeOperations(t *testing.T) {
+	for _, operation := range []string{"ha", "replication", "failover"} {
+		t.Run(operation, func(t *testing.T) {
+			root := t.TempDir()
+			writeOceanBaseBundle(t, root)
+			executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+			req := oceanBaseTestRequest(root)
+			req.Operation = operation
+			result, err := executor.Execute(context.Background(), req)
+			if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "multi-node capability") {
+				t.Fatalf("result = %#v, err = %v", result, err)
+			}
+		})
+	}
+}
+
 func TestOceanBaseBackupConfiguresArchiveAndVerifiesJob(t *testing.T) {
 	root := t.TempDir()
 	writeOceanBaseBundle(t, root)

@@ -42,6 +42,14 @@ func (e *FlavorTaskExecutor) executeOceanBase(ctx context.Context, req FlavorTas
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("oceanbase command runner is not configured")), nil
 	}
 	switch req.Operation {
+	case "monitor":
+		metrics, err := e.collectOceanBaseMetrics(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "oceanbase monitoring snapshot collected", metrics), nil
+	case "ha", "replication", "failover":
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("oceanbase %s requires a multi-node capability; this executor only supports a single-node deployment", req.Operation)), nil
 	case "backup":
 		if err := e.backupOceanBaseTenant(ctx, req); err != nil {
 			return flavorTaskFailure(req.TaskID, err), nil
@@ -97,6 +105,25 @@ func (e *FlavorTaskExecutor) executeOceanBase(ctx context.Context, req FlavorTas
 	return flavorTaskCompleted(req.TaskID, "oceanbase "+req.Operation+" completed", map[string]interface{}{
 		"flavor": "oceanbase", "cluster": req.OceanBase.ClusterName, "tenant": req.OceanBase.Tenant,
 	}), nil
+}
+
+func (e *FlavorTaskExecutor) collectOceanBaseMetrics(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	c := req.OceanBase
+	sqlPort, _ := oceanBasePorts(c)
+	user := "root@sys#" + c.ClusterName
+	version, err := e.queryOceanBaseSQL(ctx, req, sqlPort, user, c.RootPassword, "SELECT VERSION()")
+	if err != nil {
+		return nil, fmt.Errorf("collect oceanbase version metric: %w", err)
+	}
+	servers, err := e.queryOceanBaseSQL(ctx, req, sqlPort, user, c.RootPassword, "SHOW OB SERVERS")
+	if err != nil {
+		return nil, fmt.Errorf("collect oceanbase server metric: %w", err)
+	}
+	tenant, err := e.queryOceanBaseSQL(ctx, req, sqlPort, user, c.RootPassword, "SELECT TENANT_NAME, STATUS FROM oceanbase.DBA_OB_TENANTS WHERE TENANT_NAME='"+c.Tenant+"'")
+	if err != nil {
+		return nil, fmt.Errorf("collect oceanbase tenant metric: %w", err)
+	}
+	return map[string]interface{}{"flavor": "oceanbase", "cluster": c.ClusterName, "tenant": c.Tenant, "version": version, "servers": servers, "tenant_status": tenant}, nil
 }
 
 func validateOceanBaseConfig(req FlavorTaskRequest) error {
