@@ -10,4 +10,4 @@ This documentation describes the repository's React console, Go backend, and Go 
 
 ## Current Lifecycle Work
 
-The 信创 executor work plan is recorded in `plan0731.md`. Local package bundles are validated by `agent/internal/executor/local_package_bundle.go` before flavor executors perform installation work. OceanBase provides the first dedicated single-node executor for deployment, configuration, backup and restore, upgrade and migration, monitoring, and teardown.
+The 信创 executor work plan is recorded in `plan0731.md`. Local package bundles are validated by `agent/internal/executor/local_package_bundle.go` before flavor executors perform installation work. OceanBase provides the first dedicated single-node executor for deployment, configuration, backup and restore, upgrade and migration, monitoring, and teardown. TiDB provides an offline TiUP executor for single-host PD, TiKV, and TiDB deployment, configuration reload, and TLS.

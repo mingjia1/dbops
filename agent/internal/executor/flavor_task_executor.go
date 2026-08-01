@@ -28,6 +28,7 @@ type FlavorTaskRequest struct {
 	PackagePath string           `json:"package_path"`
 	TLS         *FlavorTLSConfig `json:"tls"`
 	OceanBase   *OceanBaseConfig `json:"oceanbase,omitempty"`
+	TiDB        *TiDBConfig      `json:"tidb,omitempty"`
 }
 
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
@@ -77,6 +78,16 @@ type OceanBaseTableCheck struct {
 	ExpectedChecksum string `json:"expected_checksum"`
 }
 
+// TiDBConfig contains the fixed single-host inputs for an offline TiUP deployment.
+type TiDBConfig struct {
+	ClusterName  string            `json:"cluster_name"`
+	Address      string            `json:"address"`
+	Architecture string            `json:"architecture"`
+	DeployUser   string            `json:"deploy_user"`
+	RootPassword string            `json:"root_password"`
+	Parameters   map[string]string `json:"parameters"`
+}
+
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
 type flavorProcessStarter func(ctx context.Context, name string, args ...string) error
 
@@ -90,10 +101,11 @@ type flavorTaskHandler struct {
 // for supported 信创 flavors. Product lifecycle actions remain unavailable until
 // the corresponding flavor executor is implemented.
 type FlavorTaskExecutor struct {
-	packageRoot string
-	handlers    map[string]*flavorTaskHandler
-	starter     flavorProcessStarter
-	removeAll   func(string) error
+	packageRoot     string
+	handlers        map[string]*flavorTaskHandler
+	starter         flavorProcessStarter
+	removeAll       func(string) error
+	tidbControlRoot string
 }
 
 func NewFlavorTaskExecutor() *FlavorTaskExecutor {
@@ -139,7 +151,7 @@ func NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot string, runner f
 	} {
 		handlers[flavor] = &flavorTaskHandler{flavor: flavor, versionBinary: binary, runner: runner}
 	}
-	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, removeAll: os.RemoveAll}
+	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, removeAll: os.RemoveAll, tidbControlRoot: tidbControlRoot}
 }
 
 func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest) (*TaskResult, error) {
@@ -165,10 +177,17 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
 	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "teardown":
-		if handler.flavor != "oceanbase" {
+		switch handler.flavor {
+		case "oceanbase":
+			return e.executeOceanBase(ctx, req, manifest)
+		case "tidb":
+			if req.Operation != "deploy" && req.Operation != "configure" {
+				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
+			}
+			return e.executeTiDB(ctx, req, manifest)
+		default:
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}
-		return e.executeOceanBase(ctx, req, manifest)
 	default:
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 	}

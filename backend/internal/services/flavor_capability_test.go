@@ -74,6 +74,10 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 				allowed[CapPhysicalBackup] = true
 				allowed[CapInPlaceUpgrade] = true
 			}
+			if tt.flavor == "tidb" {
+				allowed[CapInstanceDeploy] = true
+				allowed[CapParameterTemplate] = true
+			}
 			// Only operations backed by the flavor executor are available.
 			for _, capability := range allCapabilities() {
 				if capability == CapSQLHealthCheck || allowed[capability] {
@@ -86,6 +90,10 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 			if tt.flavor == "oceanbase" {
 				assert.True(t, HasCapability(tt.flavor, CapPhysicalBackup))
 				assert.True(t, HasCapability(tt.flavor, CapInPlaceUpgrade))
+			}
+			if tt.flavor == "tidb" {
+				assert.True(t, HasCapability(tt.flavor, CapInstanceDeploy))
+				assert.True(t, HasCapability(tt.flavor, CapParameterTemplate))
 			}
 		})
 	}
