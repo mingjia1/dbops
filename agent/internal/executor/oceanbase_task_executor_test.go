@@ -106,6 +106,121 @@ func TestOceanBaseRejectsUnsafeParameterAndNonRPMPackage(t *testing.T) {
 	}
 }
 
+func TestOceanBaseBackupConfiguresArchiveAndVerifiesJob(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "COMPLETED", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "backup"
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///opt/dbops/backups/oceanbase/tenant_a"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if !hasOceanBaseSQL(commands, "DATA_BACKUP_DEST") || !hasOceanBaseSQL(commands, "BACKUP DATABASE PLUS ARCHIVELOG") || !hasOceanBaseSQL(commands, "CDB_OB_BACKUP_JOBS") {
+		t.Fatalf("backup commands missing: %#v", commands)
+	}
+}
+
+func TestOceanBaseRestoreWaitsAndValidatesTenantData(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		statement := args[len(args)-1]
+		switch {
+		case strings.Contains(statement, "CDB_OB_RESTORE_PROGRESS"):
+			return "RESTORE_SUCCESS", nil
+		case strings.Contains(statement, "information_schema.tables"):
+			return "1", nil
+		case strings.Contains(statement, "SELECT COUNT(*) FROM app.orders"):
+			return "7", nil
+		case strings.Contains(statement, "CHECKSUM TABLE app.orders"):
+			return "app.orders abc123", nil
+		default:
+			return "verified", nil
+		}
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "restore"
+	req.OceanBase.Restore = &OceanBaseRestoreConfig{
+		Tenant: "tenant_restore", BackupSource: "file:///opt/dbops/backups/oceanbase/tenant_a", ResourcePool: "tenant_restore_pool",
+		ValidationTables: []OceanBaseTableCheck{{Database: "app", Table: "orders", ExpectedRowCount: 7, ExpectedChecksum: "abc123"}},
+	}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if !hasOceanBaseSQL(commands, "ALTER SYSTEM RESTORE tenant_restore") || !hasOceanBaseSQL(commands, "CDB_OB_RESTORE_PROGRESS") || !hasOceanBaseSQL(commands, "CHECKSUM TABLE app.orders") {
+		t.Fatalf("restore commands missing: %#v", commands)
+	}
+}
+
+func TestOceanBaseUpgradeCreatesBackupBeforeObshellUpgrade(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		if name == oceanBaseOBClient && strings.Contains(args[len(args)-1], "CDB_OB_BACKUP_JOBS") {
+			return "COMPLETED", nil
+		}
+		if name == oceanBaseOBClient && strings.Contains(args[len(args)-1], "DBA_OB_SERVERS") {
+			return "ACTIVE", nil
+		}
+		return "verified", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "upgrade"
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///opt/dbops/backups/oceanbase/pre-upgrade"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if !hasOceanBaseSQL(commands, "BACKUP DATABASE PLUS ARCHIVELOG") || !hasOceanBaseSQL(commands, "DBA_OB_SERVERS") || !hasOceanBaseCommand(commands, oceanBaseOBShell, "cluster upgrade") {
+		t.Fatalf("upgrade commands missing: %#v", commands)
+	}
+}
+
+func TestOceanBaseRejectsUnapprovedBackupDestination(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "backup"
+	req.OceanBase.Backup = &OceanBaseBackupConfig{Destination: "file:///tmp/unapproved"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "backup destination") {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
+func TestOceanBaseRestoreReportsTerminalFailure(t *testing.T) {
+	root := t.TempDir()
+	writeOceanBaseBundle(t, root)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, args ...string) (string, error) {
+		if strings.Contains(args[len(args)-1], "CDB_OB_RESTORE_PROGRESS") {
+			return "RESTORE_FAIL", nil
+		}
+		return "started", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := oceanBaseTestRequest(root)
+	req.Operation = "restore"
+	req.OceanBase.Restore = &OceanBaseRestoreConfig{
+		Tenant: "tenant_restore", BackupSource: "file:///opt/dbops/backups/oceanbase/tenant_a", ResourcePool: "tenant_restore_pool",
+		ValidationTables: []OceanBaseTableCheck{{Database: "app", Table: "orders", ExpectedRowCount: 7, ExpectedChecksum: "abc123"}},
+	}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "RESTORE_FAIL") {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
 func oceanBaseTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{
 		TaskID: "oceanbase-deploy", InstanceID: "oceanbase-1", Flavor: "oceanbase", Version: "v4.4.2_CE_BP2", Operation: "deploy",

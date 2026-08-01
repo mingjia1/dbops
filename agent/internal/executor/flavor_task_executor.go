@@ -32,24 +32,47 @@ type FlavorTaskRequest struct {
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
 // OceanBase executor. It deliberately has no free-form command fields.
 type OceanBaseConfig struct {
-	ClusterName           string            `json:"cluster_name"`
-	Address               string            `json:"address"`
-	Zone                  string            `json:"zone"`
-	ClusterID             int               `json:"cluster_id"`
-	SQLPort               int               `json:"sql_port"`
-	RPCPort               int               `json:"rpc_port"`
-	DataDir               string            `json:"data_dir"`
-	SystemMemory          string            `json:"system_memory"`
-	DatafileSize          string            `json:"datafile_size"`
-	RootPassword          string            `json:"root_password"`
-	Tenant                string            `json:"tenant"`
-	TenantCPU             int               `json:"tenant_cpu"`
-	TenantMemory          string            `json:"tenant_memory"`
-	TenantLogDiskSize     string            `json:"tenant_log_disk_size"`
-	Parameters            map[string]string `json:"parameters"`
-	EnableOBProxy         bool              `json:"enable_obproxy"`
-	OBProxyPort           int               `json:"obproxy_port"`
-	OBProxySysPasswordSHA string            `json:"obproxy_sys_password_sha1"`
+	ClusterName           string                  `json:"cluster_name"`
+	Address               string                  `json:"address"`
+	Zone                  string                  `json:"zone"`
+	ClusterID             int                     `json:"cluster_id"`
+	SQLPort               int                     `json:"sql_port"`
+	RPCPort               int                     `json:"rpc_port"`
+	DataDir               string                  `json:"data_dir"`
+	SystemMemory          string                  `json:"system_memory"`
+	DatafileSize          string                  `json:"datafile_size"`
+	RootPassword          string                  `json:"root_password"`
+	Tenant                string                  `json:"tenant"`
+	TenantCPU             int                     `json:"tenant_cpu"`
+	TenantMemory          string                  `json:"tenant_memory"`
+	TenantLogDiskSize     string                  `json:"tenant_log_disk_size"`
+	Parameters            map[string]string       `json:"parameters"`
+	EnableOBProxy         bool                    `json:"enable_obproxy"`
+	OBProxyPort           int                     `json:"obproxy_port"`
+	OBProxySysPasswordSHA string                  `json:"obproxy_sys_password_sha1"`
+	Backup                *OceanBaseBackupConfig  `json:"backup,omitempty"`
+	Restore               *OceanBaseRestoreConfig `json:"restore,omitempty"`
+}
+
+type OceanBaseBackupConfig struct {
+	Destination    string `json:"destination"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
+type OceanBaseRestoreConfig struct {
+	Tenant           string                `json:"tenant"`
+	BackupSource     string                `json:"backup_source"`
+	ResourcePool     string                `json:"resource_pool"`
+	UntilSCN         int64                 `json:"until_scn,omitempty"`
+	TimeoutSeconds   int                   `json:"timeout_seconds,omitempty"`
+	ValidationTables []OceanBaseTableCheck `json:"validation_tables"`
+}
+
+type OceanBaseTableCheck struct {
+	Database         string `json:"database"`
+	Table            string `json:"table"`
+	ExpectedRowCount int64  `json:"expected_row_count"`
+	ExpectedChecksum string `json:"expected_checksum"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
@@ -138,7 +161,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
-	case "deploy", "configure":
+	case "deploy", "configure", "backup", "restore", "migrate", "upgrade":
 		if handler.flavor != "oceanbase" {
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}

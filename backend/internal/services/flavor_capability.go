@@ -128,7 +128,7 @@ func singleNodeExecutorCapabilities(sqlHealthCheck bool, completed ...Capability
 // flavor-specific lifecycle executor. Package validation and version discovery
 // do not enable lifecycle capabilities by themselves.
 var completedSingleNodeCapabilities = map[string][]Capability{
-	"oceanbase":     {CapInstanceDeploy, CapParameterTemplate},
+	"oceanbase":     {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade},
 	"gaussdb-mysql": {}, "polardb-mysql": {}, "tdsql-mysql": {},
 	"tidb": {}, "kingbase": {}, "opengauss": {}, "highgo": {}, "gbase8a": {},
 	"shentong": {}, "dm": {}, "gbase8s": {},

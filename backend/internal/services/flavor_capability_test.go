@@ -71,6 +71,8 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 			if tt.flavor == "oceanbase" {
 				allowed[CapInstanceDeploy] = true
 				allowed[CapParameterTemplate] = true
+				allowed[CapPhysicalBackup] = true
+				allowed[CapInPlaceUpgrade] = true
 			}
 			// Only operations backed by the flavor executor are available.
 			for _, capability := range allCapabilities() {
@@ -81,6 +83,10 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 					"%s must not allow %s", tt.flavor, capability)
 			}
 			assert.Equal(t, tt.wantSQLHealtheck, HasCapability(tt.flavor, CapSQLHealthCheck))
+			if tt.flavor == "oceanbase" {
+				assert.True(t, HasCapability(tt.flavor, CapPhysicalBackup))
+				assert.True(t, HasCapability(tt.flavor, CapInPlaceUpgrade))
+			}
 		})
 	}
 }
