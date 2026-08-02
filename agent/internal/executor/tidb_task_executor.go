@@ -11,6 +11,7 @@ import (
 )
 
 const tidbControlRoot = "/opt/dbops/tidb"
+const tidbBackupRoot = "/opt/dbops/backups/tidb"
 
 var tidbIdentifier = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,62}$`)
 var tidbHost = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
@@ -39,6 +40,18 @@ func (e *FlavorTaskExecutor) executeTiDB(ctx context.Context, req FlavorTaskRequ
 		}
 		return flavorTaskCompleted(req.TaskID, "tidb configuration completed", map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName}), nil
 	}
+	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" || req.Operation == "upgrade" {
+		data, err := e.executeTiDBLifecycle(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		data["flavor"] = "tidb"
+		data["cluster"] = req.TiDB.ClusterName
+		return flavorTaskCompleted(req.TaskID, "tidb "+req.Operation+" completed", data), nil
+	}
+	if req.Operation != "deploy" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, "tidb")), nil
+	}
 	if err := validateTiDBArchives(manifest, req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
@@ -47,6 +60,114 @@ func (e *FlavorTaskExecutor) executeTiDB(ctx context.Context, req FlavorTaskRequ
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
 	return flavorTaskCompleted(req.TaskID, "tidb single-host deployment completed", map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName, "version": req.Version, "engine_version": engineVersion}), nil
+}
+
+func (e *FlavorTaskExecutor) executeTiDBLifecycle(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	if err := validateTiDBLifecycle(req); err != nil {
+		return nil, err
+	}
+	tiup, err := tidbTiUPPath()
+	if err != nil {
+		return nil, err
+	}
+	switch req.Operation {
+	case "backup":
+		args := []string{"br", "backup", "full", "--pd", req.TiDB.Address + ":2379", "--storage", req.TiDB.Backup.Destination}
+		if _, err := e.handlers["tidb"].runner(ctx, tiup, args...); err != nil {
+			return nil, fmt.Errorf("create tidb BR backup: %w", err)
+		}
+		if req.TiDB.Backup.LogDestination != "" {
+			if _, err := e.handlers["tidb"].runner(ctx, tiup, "br", "log", "start", "--pd", req.TiDB.Address+":2379", "--storage", req.TiDB.Backup.LogDestination); err != nil {
+				return nil, fmt.Errorf("start tidb log backup: %w", err)
+			}
+			if _, err := e.handlers["tidb"].runner(ctx, tiup, "br", "log", "status", "--pd", req.TiDB.Address+":2379"); err != nil {
+				return nil, fmt.Errorf("verify tidb log backup: %w", err)
+			}
+		}
+	case "restore":
+		r := req.TiDB.Restore
+		args := []string{"br", "restore", "full", "--pd", req.TiDB.Address + ":2379", "--storage", r.BackupSource}
+		if r.RestoredTS != "" {
+			args = []string{"br", "restore", "point", "--pd", req.TiDB.Address + ":2379", "--storage", r.LogBackupSource, "--full-backup-storage", r.BackupSource, "--restored-ts", r.RestoredTS}
+		}
+		if _, err := e.handlers["tidb"].runner(ctx, tiup, args...); err != nil {
+			return nil, fmt.Errorf("restore tidb backup: %w", err)
+		}
+		return map[string]interface{}{}, e.validateTiDBData(ctx, req, r.ValidationTables)
+	case "migrate":
+		m := req.TiDB.Migration
+		dumplingOutput, err := e.handlers["tidb"].runner(ctx, tiup, "dumpling", "-h", req.TiDB.Address, "-P", "4000", "-uroot", "-p"+req.TiDB.RootPassword, "-o", m.DataSourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("export tidb data with dumpling: %w", err)
+		}
+		workDir := filepath.Join(e.tidbControlRoot, req.TiDB.ClusterName, req.Version)
+		if err := os.MkdirAll(workDir, 0o750); err != nil {
+			return nil, fmt.Errorf("create tidb migration control directory: %w", err)
+		}
+		config := filepath.Join(workDir, "lightning.toml")
+		if err := os.WriteFile(config, []byte(tidbLightningConfig(req)), 0o600); err != nil {
+			return nil, fmt.Errorf("write tidb lightning configuration: %w", err)
+		}
+		lightningOutput, err := e.handlers["tidb"].runner(ctx, tiup, "tidb-lightning", "-config", config)
+		if err != nil {
+			return nil, fmt.Errorf("import tidb data with lightning: %w", err)
+		}
+		return map[string]interface{}{"dumpling_output": dumplingOutput, "lightning_output": lightningOutput}, nil
+	case "upgrade":
+		if _, err := e.executeTiDBLifecycle(ctx, FlavorTaskRequest{TaskID: req.TaskID, Flavor: req.Flavor, Version: req.Version, Operation: "backup", TiDB: &TiDBConfig{ClusterName: req.TiDB.ClusterName, Address: req.TiDB.Address, Architecture: req.TiDB.Architecture, DeployUser: req.TiDB.DeployUser, RootPassword: req.TiDB.RootPassword, Backup: req.TiDB.Backup}}); err != nil {
+			return nil, fmt.Errorf("back up tidb before upgrade: %w", err)
+		}
+		if _, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "upgrade", req.TiDB.ClusterName, req.TiDB.UpgradeVersion, "--yes"); err != nil {
+			return nil, fmt.Errorf("upgrade tidb cluster: %w", err)
+		}
+		output, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "display", req.TiDB.ClusterName)
+		if err != nil {
+			return nil, fmt.Errorf("verify upgraded tidb cluster health: %w", err)
+		}
+		if !strings.Contains(output, "Up") {
+			return nil, fmt.Errorf("upgraded tidb cluster is not Up")
+		}
+	}
+	return map[string]interface{}{}, nil
+}
+
+func validateTiDBLifecycle(req FlavorTaskRequest) error {
+	c := req.TiDB
+	switch req.Operation {
+	case "backup":
+		if c.Backup == nil || !tidbStoragePath(c.Backup.Destination) || (c.Backup.LogDestination != "" && !tidbStoragePath(c.Backup.LogDestination)) {
+			return fmt.Errorf("tidb backup destinations must use local storage under %s", tidbBackupRoot)
+		}
+	case "restore":
+		if c.Restore == nil || !tidbStoragePath(c.Restore.BackupSource) || (c.Restore.RestoredTS != "" && (!tidbStoragePath(c.Restore.LogBackupSource) || strings.ContainsAny(c.Restore.RestoredTS, "\r\n"))) {
+			return fmt.Errorf("tidb restore sources or timestamp are invalid")
+		}
+	case "migrate":
+		if c.Migration == nil || !tidbLocalPath(c.Migration.DataSourceDir) || !tidbLocalPath(c.Migration.SortedKVDir) {
+			return fmt.Errorf("tidb migration directories must be under %s", tidbBackupRoot)
+		}
+	case "upgrade":
+		if c.UpgradeVersion == "" || !strings.HasPrefix(c.UpgradeVersion, "v") || c.Backup == nil || !tidbStoragePath(c.Backup.Destination) {
+			return fmt.Errorf("tidb upgrade requires a target version and approved backup destination")
+		}
+	}
+	return nil
+}
+
+func tidbStoragePath(value string) bool {
+	return strings.HasPrefix(value, "local://"+tidbBackupRoot+"/") && tidbLocalPath(strings.TrimPrefix(value, "local://"))
+}
+
+func tidbLocalPath(value string) bool {
+	return filepath.IsAbs(value) && strings.HasPrefix(filepath.Clean(value), tidbBackupRoot+string(filepath.Separator)) && !strings.Contains(value, "..")
+}
+
+func tidbTiUPPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve TiUP home: %w", err)
+	}
+	return filepath.Join(home, ".tiup", "bin", "tiup"), nil
 }
 
 func (e *FlavorTaskExecutor) configureTiDB(ctx context.Context, req FlavorTaskRequest) error {
@@ -165,6 +286,34 @@ func tidbClientArgs(req FlavorTaskRequest, password, statement string) []string 
 		args = append(args, "--ssl-mode=VERIFY_CA", "--ssl-ca="+req.TLS.CAFile, "--ssl-cert="+req.TLS.CertFile, "--ssl-key="+req.TLS.KeyFile)
 	}
 	return append(args, "--execute", statement)
+}
+
+func (e *FlavorTaskExecutor) validateTiDBData(ctx context.Context, req FlavorTaskRequest, checks []TiDBTableCheck) error {
+	for _, check := range checks {
+		if !tidbIdentifier.MatchString(check.Database) || !tidbIdentifier.MatchString(check.Table) || check.ExpectedRowCount < 0 || !regexp.MustCompile(`^[a-fA-F0-9]{64}$`).MatchString(check.ExpectedChecksum) {
+			return fmt.Errorf("tidb validation table is invalid")
+		}
+		count, err := e.handlers["tidb"].runner(ctx, "mysql", tidbClientArgs(req, req.TiDB.RootPassword, "SELECT COUNT(*) FROM `"+check.Database+"`.`"+check.Table+"`")...)
+		if err != nil {
+			return fmt.Errorf("validate tidb row count for %s.%s: %w", check.Database, check.Table, err)
+		}
+		if strings.TrimSpace(count) != fmt.Sprintf("%d", check.ExpectedRowCount) {
+			return fmt.Errorf("tidb row count does not match for %s.%s", check.Database, check.Table)
+		}
+		checksum, err := e.handlers["tidb"].runner(ctx, "mysql", tidbClientArgs(req, req.TiDB.RootPassword, "CHECKSUM TABLE `"+check.Database+"`.`"+check.Table)...)
+		if err != nil {
+			return fmt.Errorf("validate tidb checksum for %s.%s: %w", check.Database, check.Table, err)
+		}
+		if !strings.Contains(strings.ToLower(checksum), strings.ToLower(check.ExpectedChecksum)) {
+			return fmt.Errorf("tidb checksum does not match for %s.%s", check.Database, check.Table)
+		}
+	}
+	return nil
+}
+
+func tidbLightningConfig(req FlavorTaskRequest) string {
+	m := req.TiDB.Migration
+	return "[lightning]\nlevel = \"info\"\n[tikv-importer]\nbackend = \"local\"\nsorted-kv-dir = \"" + m.SortedKVDir + "\"\n[mydumper]\ndata-source-dir = \"" + m.DataSourceDir + "\"\n[tidb]\nhost = \"" + req.TiDB.Address + "\"\nport = 4000\nuser = \"root\"\npassword = \"" + req.TiDB.RootPassword + "\"\nstatus-port = 10080\npd-addr = \"" + req.TiDB.Address + ":2379\"\n"
 }
 
 func tidbArchiveNames(req FlavorTaskRequest) []string {

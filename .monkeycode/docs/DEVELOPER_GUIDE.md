@@ -66,7 +66,7 @@ go test ./internal/executor -run '^TestFlavorTaskExecutorFixture' -count=1
 # Run OceanBase deployment, backup, restore, migration, upgrade, monitoring, and teardown tests
 go test ./internal/executor -run '^TestOceanBase' -count=1
 
-# Run TiDB offline deployment, TLS, and configuration tests
+# Run TiDB deployment, BR/PITR, migration, TLS, and configuration tests
 go test ./internal/executor -run '^TestTiDB' -count=1
 ```
 

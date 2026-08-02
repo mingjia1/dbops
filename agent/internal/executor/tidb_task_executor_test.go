@@ -98,6 +98,76 @@ func TestTiDBRejectsBundleWithoutToolkitArchive(t *testing.T) {
 	}
 }
 
+func TestTiDBBackupStartsBRAndLogBackup(t *testing.T) {
+	root := t.TempDir()
+	writeTiDBBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := tidbTestRequest(root)
+	req.Operation = "backup"
+	req.TiDB.Backup = &TiDBBackupConfig{Destination: "local:///opt/dbops/backups/tidb/full", LogDestination: "local:///opt/dbops/backups/tidb/log"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "br backup full") || !hasTiDBCommand(commands, "br log start") || !hasTiDBCommand(commands, "br log status") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
+func TestTiDBRestoreUsesPITRAndValidatesData(t *testing.T) {
+	root := t.TempDir()
+	writeTiDBBundle(t, root, true)
+	checksum := strings.Repeat("a", 64)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		if strings.Contains(strings.Join(args, " "), "COUNT(*)") {
+			return "3", nil
+		}
+		if strings.Contains(strings.Join(args, " "), "CHECKSUM TABLE") {
+			return checksum, nil
+		}
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := tidbTestRequest(root)
+	req.Operation = "restore"
+	req.TiDB.Restore = &TiDBRestoreConfig{BackupSource: "local:///opt/dbops/backups/tidb/full", LogBackupSource: "local:///opt/dbops/backups/tidb/log", RestoredTS: "2026-08-02 10:00:00+0800", ValidationTables: []TiDBTableCheck{{Database: "app", Table: "orders", ExpectedRowCount: 3, ExpectedChecksum: checksum}}}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "br restore point") || !hasOceanBaseCommand(commands, "mysql", "CHECKSUM TABLE") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
+func TestTiDBMigrationAndUpgradeUseApprovedPaths(t *testing.T) {
+	root := t.TempDir()
+	writeTiDBBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		if strings.Contains(strings.Join(args, " "), "cluster display") {
+			return "Up", nil
+		}
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.tidbControlRoot = t.TempDir()
+	migration := tidbTestRequest(root)
+	migration.Operation = "migrate"
+	migration.TiDB.Migration = &TiDBMigrationConfig{DataSourceDir: "/opt/dbops/backups/tidb/export", SortedKVDir: "/opt/dbops/backups/tidb/sorted"}
+	if result, err := executor.Execute(context.Background(), migration); err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "dumpling") || !hasTiDBCommand(commands, "tidb-lightning") {
+		t.Fatalf("migration result = %#v, commands = %#v, err = %v", result, commands, err)
+	} else if data, ok := result.Data.(map[string]interface{}); !ok || data["dumpling_output"] != "ok" || data["lightning_output"] != "ok" {
+		t.Fatalf("migration data = %#v", result.Data)
+	}
+	upgrade := tidbTestRequest(root)
+	upgrade.Operation = "upgrade"
+	upgrade.TiDB.UpgradeVersion = "v8.5.8"
+	upgrade.TiDB.Backup = &TiDBBackupConfig{Destination: "local:///opt/dbops/backups/tidb/pre-upgrade"}
+	if result, err := executor.Execute(context.Background(), upgrade); err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "cluster upgrade") {
+		t.Fatalf("upgrade result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
 func tidbTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{
 		TaskID: "tidb-deploy", InstanceID: "tidb-1", Flavor: "tidb", Version: "v8.5.7", Operation: "deploy",

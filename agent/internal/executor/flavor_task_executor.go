@@ -80,12 +80,40 @@ type OceanBaseTableCheck struct {
 
 // TiDBConfig contains the fixed single-host inputs for an offline TiUP deployment.
 type TiDBConfig struct {
-	ClusterName  string            `json:"cluster_name"`
-	Address      string            `json:"address"`
-	Architecture string            `json:"architecture"`
-	DeployUser   string            `json:"deploy_user"`
-	RootPassword string            `json:"root_password"`
-	Parameters   map[string]string `json:"parameters"`
+	ClusterName    string               `json:"cluster_name"`
+	Address        string               `json:"address"`
+	Architecture   string               `json:"architecture"`
+	DeployUser     string               `json:"deploy_user"`
+	RootPassword   string               `json:"root_password"`
+	Parameters     map[string]string    `json:"parameters"`
+	Backup         *TiDBBackupConfig    `json:"backup,omitempty"`
+	Restore        *TiDBRestoreConfig   `json:"restore,omitempty"`
+	Migration      *TiDBMigrationConfig `json:"migration,omitempty"`
+	UpgradeVersion string               `json:"upgrade_version,omitempty"`
+}
+
+type TiDBBackupConfig struct {
+	Destination    string `json:"destination"`
+	LogDestination string `json:"log_destination,omitempty"`
+}
+
+type TiDBRestoreConfig struct {
+	BackupSource     string           `json:"backup_source"`
+	LogBackupSource  string           `json:"log_backup_source,omitempty"`
+	RestoredTS       string           `json:"restored_ts,omitempty"`
+	ValidationTables []TiDBTableCheck `json:"validation_tables"`
+}
+
+type TiDBMigrationConfig struct {
+	DataSourceDir string `json:"data_source_dir"`
+	SortedKVDir   string `json:"sorted_kv_dir"`
+}
+
+type TiDBTableCheck struct {
+	Database         string `json:"database"`
+	Table            string `json:"table"`
+	ExpectedRowCount int64  `json:"expected_row_count"`
+	ExpectedChecksum string `json:"expected_checksum"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
@@ -181,9 +209,6 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 		case "oceanbase":
 			return e.executeOceanBase(ctx, req, manifest)
 		case "tidb":
-			if req.Operation != "deploy" && req.Operation != "configure" {
-				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
-			}
 			return e.executeTiDB(ctx, req, manifest)
 		default:
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
