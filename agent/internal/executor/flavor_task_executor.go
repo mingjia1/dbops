@@ -80,16 +80,17 @@ type OceanBaseTableCheck struct {
 
 // TiDBConfig contains the fixed single-host inputs for an offline TiUP deployment.
 type TiDBConfig struct {
-	ClusterName    string               `json:"cluster_name"`
-	Address        string               `json:"address"`
-	Architecture   string               `json:"architecture"`
-	DeployUser     string               `json:"deploy_user"`
-	RootPassword   string               `json:"root_password"`
-	Parameters     map[string]string    `json:"parameters"`
-	Backup         *TiDBBackupConfig    `json:"backup,omitempty"`
-	Restore        *TiDBRestoreConfig   `json:"restore,omitempty"`
-	Migration      *TiDBMigrationConfig `json:"migration,omitempty"`
-	UpgradeVersion string               `json:"upgrade_version,omitempty"`
+	ClusterName      string               `json:"cluster_name"`
+	Address          string               `json:"address"`
+	Architecture     string               `json:"architecture"`
+	DeployUser       string               `json:"deploy_user"`
+	RootPassword     string               `json:"root_password"`
+	Parameters       map[string]string    `json:"parameters"`
+	Backup           *TiDBBackupConfig    `json:"backup,omitempty"`
+	Restore          *TiDBRestoreConfig   `json:"restore,omitempty"`
+	Migration        *TiDBMigrationConfig `json:"migration,omitempty"`
+	UpgradeVersion   string               `json:"upgrade_version,omitempty"`
+	ConfirmUninstall bool                 `json:"confirm_uninstall,omitempty"`
 }
 
 type TiDBBackupConfig struct {
@@ -204,7 +205,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
-	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "teardown":
+	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "scale", "teardown":
 		switch handler.flavor {
 		case "oceanbase":
 			return e.executeOceanBase(ctx, req, manifest)

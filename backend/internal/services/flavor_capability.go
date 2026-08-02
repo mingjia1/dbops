@@ -130,7 +130,7 @@ func singleNodeExecutorCapabilities(sqlHealthCheck bool, completed ...Capability
 var completedSingleNodeCapabilities = map[string][]Capability{
 	"oceanbase":     {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade},
 	"gaussdb-mysql": {}, "polardb-mysql": {}, "tdsql-mysql": {},
-	"tidb": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade}, "kingbase": {}, "opengauss": {}, "highgo": {}, "gbase8a": {},
+	"tidb": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade, CapInstanceAdmin}, "kingbase": {}, "opengauss": {}, "highgo": {}, "gbase8a": {},
 	"shentong": {}, "dm": {}, "gbase8s": {},
 }
 

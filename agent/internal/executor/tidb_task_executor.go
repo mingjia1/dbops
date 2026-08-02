@@ -40,6 +40,16 @@ func (e *FlavorTaskExecutor) executeTiDB(ctx context.Context, req FlavorTaskRequ
 		}
 		return flavorTaskCompleted(req.TaskID, "tidb configuration completed", map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName}), nil
 	}
+	if req.Operation == "monitor" {
+		data, err := e.monitorTiDB(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "tidb monitoring snapshot collected", data), nil
+	}
+	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("tidb single-host executor does not support %s", req.Operation)), nil
+	}
 	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" || req.Operation == "upgrade" {
 		data, err := e.executeTiDBLifecycle(ctx, req)
 		if err != nil {
@@ -48,6 +58,12 @@ func (e *FlavorTaskExecutor) executeTiDB(ctx context.Context, req FlavorTaskRequ
 		data["flavor"] = "tidb"
 		data["cluster"] = req.TiDB.ClusterName
 		return flavorTaskCompleted(req.TaskID, "tidb "+req.Operation+" completed", data), nil
+	}
+	if req.Operation == "teardown" {
+		if err := e.teardownTiDB(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "tidb cluster destroyed", map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName}), nil
 	}
 	if req.Operation != "deploy" {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, "tidb")), nil
@@ -60,6 +76,39 @@ func (e *FlavorTaskExecutor) executeTiDB(ctx context.Context, req FlavorTaskRequ
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
 	return flavorTaskCompleted(req.TaskID, "tidb single-host deployment completed", map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName, "version": req.Version, "engine_version": engineVersion}), nil
+}
+
+func (e *FlavorTaskExecutor) monitorTiDB(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	tiup, err := tidbTiUPPath()
+	if err != nil {
+		return nil, err
+	}
+	status, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "display", req.TiDB.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("collect tidb component status: %w", err)
+	}
+	version, err := e.handlers["tidb"].runner(ctx, "mysql", tidbClientArgs(req, req.TiDB.RootPassword, "SELECT @@version")...)
+	if err != nil {
+		return nil, fmt.Errorf("collect tidb version: %w", err)
+	}
+	return map[string]interface{}{"flavor": "tidb", "cluster": req.TiDB.ClusterName, "component_status": status, "engine_version": strings.TrimSpace(version)}, nil
+}
+
+func (e *FlavorTaskExecutor) teardownTiDB(ctx context.Context, req FlavorTaskRequest) error {
+	if !req.TiDB.ConfirmUninstall || req.TiDB.Backup == nil || !tidbStoragePath(req.TiDB.Backup.Destination) {
+		return fmt.Errorf("tidb teardown requires confirm_uninstall and approved backup destination")
+	}
+	if _, err := e.executeTiDBLifecycle(ctx, FlavorTaskRequest{TaskID: req.TaskID, Flavor: req.Flavor, Version: req.Version, Operation: "backup", TiDB: &TiDBConfig{ClusterName: req.TiDB.ClusterName, Address: req.TiDB.Address, Architecture: req.TiDB.Architecture, DeployUser: req.TiDB.DeployUser, RootPassword: req.TiDB.RootPassword, Backup: req.TiDB.Backup}}); err != nil {
+		return fmt.Errorf("back up tidb before teardown: %w", err)
+	}
+	tiup, err := tidbTiUPPath()
+	if err != nil {
+		return err
+	}
+	if _, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "destroy", req.TiDB.ClusterName, "--yes"); err != nil {
+		return fmt.Errorf("destroy tidb cluster: %w", err)
+	}
+	return nil
 }
 
 func (e *FlavorTaskExecutor) executeTiDBLifecycle(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {

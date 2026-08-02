@@ -168,6 +168,44 @@ func TestTiDBMigrationAndUpgradeUseApprovedPaths(t *testing.T) {
 	}
 }
 
+func TestTiDBMonitorTeardownAndSingleHostBoundaries(t *testing.T) {
+	root := t.TempDir()
+	writeTiDBBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		if strings.Contains(strings.Join(args, " "), "cluster display") {
+			return "pd Up\ntikv Up\ntidb Up", nil
+		}
+		if strings.Contains(strings.Join(args, " "), "SELECT @@version") {
+			return "8.5.7", nil
+		}
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	monitor := tidbTestRequest(root)
+	monitor.Operation = "monitor"
+	if result, err := executor.Execute(context.Background(), monitor); err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "cluster display") {
+		t.Fatalf("monitor result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	for _, operation := range []string{"ha", "replication", "failover", "scale"} {
+		req := tidbTestRequest(root)
+		req.Operation = operation
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "single-host") {
+			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
+		}
+	}
+	teardown := tidbTestRequest(root)
+	teardown.Operation = "teardown"
+	teardown.TiDB.Backup = &TiDBBackupConfig{Destination: "local:///opt/dbops/backups/tidb/final"}
+	if result, err := executor.Execute(context.Background(), teardown); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "confirm_uninstall") {
+		t.Fatalf("unconfirmed teardown result = %#v, err = %v", result, err)
+	}
+	teardown.TiDB.ConfirmUninstall = true
+	if result, err := executor.Execute(context.Background(), teardown); err != nil || result.Status != "completed" || !hasTiDBCommand(commands, "cluster destroy") {
+		t.Fatalf("teardown result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
 func tidbTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{
 		TaskID: "tidb-deploy", InstanceID: "tidb-1", Flavor: "tidb", Version: "v8.5.7", Operation: "deploy",
