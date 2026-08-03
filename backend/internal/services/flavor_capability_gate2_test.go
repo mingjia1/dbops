@@ -201,6 +201,19 @@ func TestInstanceDeployRefusedForNonMySQLFlavor(t *testing.T) {
 	}
 }
 
+func TestGBase8sEnablesOnlyVerifiedSingleNodeDeployAndConfigurationCapabilities(t *testing.T) {
+	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate} {
+		if !HasCapability("gbase8s", capability) {
+			t.Fatalf("gbase8s capability %s is disabled", capability)
+		}
+	}
+	for _, capability := range []Capability{CapPhysicalBackup, CapInPlaceUpgrade, CapLogicalUpgrade, CapInstanceAdmin, CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
+		if HasCapability("gbase8s", capability) {
+			t.Fatalf("gbase8s capability %s is enabled without verified coverage", capability)
+		}
+	}
+}
+
 func TestReplicationStatusRefusedForNonMySQLFlavor(t *testing.T) {
 	for _, flavor := range tieredFlavors {
 		t.Run(flavor, func(t *testing.T) {

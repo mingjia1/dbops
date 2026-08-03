@@ -31,6 +31,7 @@ type FlavorTaskRequest struct {
 	TiDB        *TiDBConfig      `json:"tidb,omitempty"`
 	Dameng      *DamengConfig    `json:"dameng,omitempty"`
 	OpenGauss   *OpenGaussConfig `json:"opengauss,omitempty"`
+	GBase8s     *GBase8sConfig   `json:"gbase8s,omitempty"`
 }
 
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
@@ -179,6 +180,16 @@ type OpenGaussMigrationConfig struct {
 	DumpFile string `json:"dump_file"`
 }
 
+// GBase8sConfig contains only the inputs required by the documented GBase 8s
+// single-node installation and configuration workflow.
+type GBase8sConfig struct {
+	InstallDir           string            `json:"install_dir"`
+	ApplicationUser      string            `json:"application_user"`
+	ApplicationPassword  string            `json:"application_password"`
+	PersistentParameters map[string]string `json:"persistent_parameters"`
+	MemoryParameters     map[string]string `json:"memory_parameters"`
+}
+
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
 type flavorProcessStarter func(ctx context.Context, name string, args ...string) error
 type flavorCommandInputRunner func(ctx context.Context, input, name string, args ...string) (string, error)
@@ -297,6 +308,8 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return e.executeDameng(ctx, req, manifest)
 		case "opengauss":
 			return e.executeOpenGauss(ctx, req, manifest)
+		case "gbase8s":
+			return e.executeGBase8s(ctx, req, manifest)
 		default:
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}
