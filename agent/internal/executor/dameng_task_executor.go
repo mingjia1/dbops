@@ -18,6 +18,22 @@ func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRe
 	if err := validateDamengConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
+	if req.Operation == "monitor" {
+		data, err := e.monitorDameng(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "dameng monitoring snapshot collected", data), nil
+	}
+	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("dameng single-instance executor does not support %s", req.Operation)), nil
+	}
+	if req.Operation == "teardown" {
+		if err := e.teardownDameng(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "dameng instance uninstalled", map[string]interface{}{"flavor": "dm"}), nil
+	}
 	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
 		if err := e.executeDamengLifecycle(ctx, req); err != nil {
 			return flavorTaskFailure(req.TaskID, err), nil
@@ -58,6 +74,34 @@ func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRe
 		data["restart_required"] = true
 	}
 	return flavorTaskCompleted(req.TaskID, "dameng single-instance deployment completed", data), nil
+}
+
+func (e *FlavorTaskExecutor) monitorDameng(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	bin := filepath.Join(req.Dameng.InstallDir, "bin", "disql")
+	instance, err := e.handlers["dm"].runner(ctx, bin, damengConnection(req), "-e", "SELECT STATUS FROM V$INSTANCE")
+	if err != nil {
+		return nil, fmt.Errorf("collect dameng instance status: %w", err)
+	}
+	archive, err := e.handlers["dm"].runner(ctx, bin, damengConnection(req), "-e", "SELECT STATUS FROM V$ARCH_STATUS")
+	if err != nil {
+		return nil, fmt.Errorf("collect dameng archive status: %w", err)
+	}
+	return map[string]interface{}{"flavor": "dm", "instance_status": instance, "archive_status": archive}, nil
+}
+
+func (e *FlavorTaskExecutor) teardownDameng(ctx context.Context, req FlavorTaskRequest) error {
+	if !req.Dameng.ConfirmUninstall || req.Dameng.Backup == nil || !damengBackupPath(req.Dameng.Backup.Destination) {
+		return fmt.Errorf("dameng teardown requires confirm_uninstall and approved backup destination")
+	}
+	backupReq := req
+	backupReq.Operation = "backup"
+	if err := e.executeDamengLifecycle(ctx, backupReq); err != nil {
+		return fmt.Errorf("back up dameng before teardown: %w", err)
+	}
+	if _, err := e.handlers["dm"].runner(ctx, filepath.Join(req.Dameng.InstallDir, "uninstall.sh"), "-i"); err != nil {
+		return fmt.Errorf("uninstall dameng instance: %w", err)
+	}
+	return nil
 }
 
 func (e *FlavorTaskExecutor) executeDamengLifecycle(ctx context.Context, req FlavorTaskRequest) error {

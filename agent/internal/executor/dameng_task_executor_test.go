@@ -105,6 +105,38 @@ func TestDamengBackupRestoreAndMigrationUseControlledPaths(t *testing.T) {
 	}
 }
 
+func TestDamengMonitorTeardownAndSingleInstanceBoundaries(t *testing.T) {
+	root := t.TempDir()
+	writeDamengBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "OPEN", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	monitor := damengTestRequest(root)
+	monitor.Operation = "monitor"
+	if result, err := executor.Execute(context.Background(), monitor); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "disql", "V$ARCH_STATUS") {
+		t.Fatalf("monitor result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	for _, operation := range []string{"ha", "replication", "failover", "scale"} {
+		req := damengTestRequest(root)
+		req.Operation = operation
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "single-instance") {
+			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
+		}
+	}
+	teardown := damengTestRequest(root)
+	teardown.Operation = "teardown"
+	teardown.Dameng.Backup = &DamengBackupConfig{Destination: "/opt/dbops/backups/dm/final"}
+	if result, err := executor.Execute(context.Background(), teardown); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "confirm_uninstall") {
+		t.Fatalf("unconfirmed teardown result = %#v, err = %v", result, err)
+	}
+	teardown.Dameng.ConfirmUninstall = true
+	if result, err := executor.Execute(context.Background(), teardown); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "uninstall.sh", "-i") {
+		t.Fatalf("teardown result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
 func hasDamengCommand(commands []recordedOceanBaseCommand, name, argument string) bool {
 	for _, command := range commands {
 		if strings.Contains(command.name, name) && strings.Contains(strings.Join(command.args, " "), argument) {

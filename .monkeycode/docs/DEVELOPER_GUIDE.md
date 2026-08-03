@@ -69,7 +69,7 @@ go test ./internal/executor -run '^TestOceanBase' -count=1
 # Run TiDB deployment, BR/PITR, migration, TLS, monitoring, teardown, and configuration tests
 go test ./internal/executor -run '^TestTiDB' -count=1
 
-# Run Dameng DM9 deployment, TLS, backup, restore, and migration tests
+# Run Dameng DM9 deployment, TLS, backup, restore, migration, monitoring, and teardown tests
 go test ./internal/executor -run '^TestDameng' -count=1
 ```
 

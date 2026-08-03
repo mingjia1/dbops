@@ -66,4 +66,6 @@ For Dameng DM9, `deploy` accepts the structured `dameng` object with address, po
 
 Dameng `backup` supports online DIsql full backup and offline DMRMAN full backup. `restore` validates the offline backup set before DMRMAN restore, and can restore and recover archive logs before updating the database magic. `migrate` runs dexp then dimp against a controlled dump file. Backup sets, archive sets, and dump files must reside under `/opt/dbops/backups/dm/`. DM upgrade remains unavailable pending an official, verified DM9 upgrade procedure and matching offline delivery media.
 
+Dameng `monitor` queries instance and archive states through `V$INSTANCE` and `V$ARCH_STATUS`. `ha`, `replication`, `failover`, and `scale` return a single-instance capability error. `teardown` requires `confirm_uninstall: true` and an approved final backup destination; it runs the final backup before the official `uninstall.sh -i` command.
+
 The executor fixture suite injects its command runner and creates local package bundles in temporary directories. It automatically verifies successful version detection, missing binary handling, package checksum failures, and permission errors. Backend lifecycle fixtures verify that a failed Agent task is surfaced to the caller and that `Rollback` dispatches a separate `rollback` Agent task.

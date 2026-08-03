@@ -131,6 +131,7 @@ type DamengConfig struct {
 	Backup              *DamengBackupConfig    `json:"backup,omitempty"`
 	Restore             *DamengRestoreConfig   `json:"restore,omitempty"`
 	Migration           *DamengMigrationConfig `json:"migration,omitempty"`
+	ConfirmUninstall    bool                   `json:"confirm_uninstall,omitempty"`
 }
 
 type DamengBackupConfig struct {
@@ -242,7 +243,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 		case "tidb":
 			return e.executeTiDB(ctx, req, manifest)
 		case "dm":
-			if req.Operation != "deploy" && req.Operation != "configure" && req.Operation != "backup" && req.Operation != "restore" && req.Operation != "migrate" {
+			if req.Operation != "deploy" && req.Operation != "configure" && req.Operation != "backup" && req.Operation != "restore" && req.Operation != "migrate" && req.Operation != "monitor" && req.Operation != "teardown" && req.Operation != "ha" && req.Operation != "replication" && req.Operation != "failover" && req.Operation != "scale" {
 				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 			}
 			return e.executeDameng(ctx, req, manifest)
