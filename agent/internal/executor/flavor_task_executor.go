@@ -30,6 +30,7 @@ type FlavorTaskRequest struct {
 	OceanBase   *OceanBaseConfig `json:"oceanbase,omitempty"`
 	TiDB        *TiDBConfig      `json:"tidb,omitempty"`
 	Dameng      *DamengConfig    `json:"dameng,omitempty"`
+	OpenGauss   *OpenGaussConfig `json:"opengauss,omitempty"`
 }
 
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
@@ -148,8 +149,22 @@ type DamengMigrationConfig struct {
 	DumpFile string `json:"dump_file"`
 }
 
+// OpenGaussConfig contains the constrained inputs for an offline openGauss
+// Lite single-node deployment.
+type OpenGaussConfig struct {
+	Address             string            `json:"address"`
+	Port                int               `json:"port"`
+	InstallDir          string            `json:"install_dir"`
+	DataDir             string            `json:"data_dir"`
+	AdminPassword       string            `json:"admin_password"`
+	ApplicationUser     string            `json:"application_user"`
+	ApplicationPassword string            `json:"application_password"`
+	Parameters          map[string]string `json:"parameters"`
+}
+
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
 type flavorProcessStarter func(ctx context.Context, name string, args ...string) error
+type flavorCommandInputRunner func(ctx context.Context, input, name string, args ...string) (string, error)
 
 type flavorTaskHandler struct {
 	flavor        string
@@ -164,12 +179,15 @@ type FlavorTaskExecutor struct {
 	packageRoot     string
 	handlers        map[string]*flavorTaskHandler
 	starter         flavorProcessStarter
+	inputRunner     flavorCommandInputRunner
 	removeAll       func(string) error
 	tidbControlRoot string
 }
 
 func NewFlavorTaskExecutor() *FlavorTaskExecutor {
-	return NewFlavorTaskExecutorWithPackageRootAndStarter(defaultLocalPackageRoot, commandOutputWithError, startCommand)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(defaultLocalPackageRoot, commandOutputWithError, startCommand)
+	executor.inputRunner = commandOutputWithInput
+	return executor
 }
 
 func startCommand(ctx context.Context, name string, args ...string) error {
@@ -194,6 +212,18 @@ func commandOutputWithError(ctx context.Context, name string, args ...string) (s
 	return strings.TrimSpace(string(output)), nil
 }
 
+func commandOutputWithInput(ctx context.Context, input, name string, args ...string) (string, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, name, args...)
+	command.Stdin = strings.NewReader(input)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 func NewFlavorTaskExecutorWithPackageRoot(packageRoot string, runner flavorCommandRunner) *FlavorTaskExecutor {
 	return NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot, runner, startCommand)
 }
@@ -211,7 +241,7 @@ func NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot string, runner f
 	} {
 		handlers[flavor] = &flavorTaskHandler{flavor: flavor, versionBinary: binary, runner: runner}
 	}
-	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, removeAll: os.RemoveAll, tidbControlRoot: tidbControlRoot}
+	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, inputRunner: commandOutputWithInput, removeAll: os.RemoveAll, tidbControlRoot: tidbControlRoot}
 }
 
 func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest) (*TaskResult, error) {
@@ -247,6 +277,8 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 			}
 			return e.executeDameng(ctx, req, manifest)
+		case "opengauss":
+			return e.executeOpenGauss(ctx, req, manifest)
 		default:
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}
