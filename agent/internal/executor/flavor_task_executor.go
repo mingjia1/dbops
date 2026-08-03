@@ -29,6 +29,7 @@ type FlavorTaskRequest struct {
 	TLS         *FlavorTLSConfig `json:"tls"`
 	OceanBase   *OceanBaseConfig `json:"oceanbase,omitempty"`
 	TiDB        *TiDBConfig      `json:"tidb,omitempty"`
+	Dameng      *DamengConfig    `json:"dameng,omitempty"`
 }
 
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
@@ -115,6 +116,18 @@ type TiDBTableCheck struct {
 	Table            string `json:"table"`
 	ExpectedRowCount int64  `json:"expected_row_count"`
 	ExpectedChecksum string `json:"expected_checksum"`
+}
+
+// DamengConfig contains the fixed single-instance inputs for an offline DM9 deployment.
+type DamengConfig struct {
+	Address             string            `json:"address"`
+	Port                int               `json:"port"`
+	InstallDir          string            `json:"install_dir"`
+	DataDir             string            `json:"data_dir"`
+	SysdbaPassword      string            `json:"sysdba_password"`
+	ApplicationUser     string            `json:"application_user"`
+	ApplicationPassword string            `json:"application_password"`
+	Parameters          map[string]string `json:"parameters"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
@@ -211,6 +224,11 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return e.executeOceanBase(ctx, req, manifest)
 		case "tidb":
 			return e.executeTiDB(ctx, req, manifest)
+		case "dm":
+			if req.Operation != "deploy" && req.Operation != "configure" {
+				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
+			}
+			return e.executeDameng(ctx, req, manifest)
 		default:
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 		}
