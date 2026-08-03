@@ -88,6 +88,13 @@ go test ./internal/services -run 'Test.*Capability' -count=1
 go vet ./internal/services
 ```
 
+## Xinchuang Lifecycle Matrix
+
+```bash
+# Run the fixture and capability checks listed in ACCEPTANCE_MATRIX.md
+make test-xinchuang-lifecycle
+```
+
 ## Lifecycle Contract Fixtures
 
 ```bash

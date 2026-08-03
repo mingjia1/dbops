@@ -7,6 +7,7 @@ This documentation describes the repository's React console, Go backend, and Go 
 - `ARCHITECTURE.md`: components, responsibilities, and execution flow.
 - `INTERFACES.md`: internal contracts relevant to database lifecycle work.
 - `DEVELOPER_GUIDE.md`: build, test, and contribution commands.
+- `ACCEPTANCE_MATRIX.md`: traceable fixture and real-environment validation matrix for completed 信创 single-node flavors.
 
 ## Current Lifecycle Work
 

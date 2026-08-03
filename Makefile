@@ -1,4 +1,4 @@
-.PHONY: all build run test clean docker-up docker-down docker-logs install-backend install-agent install-web fmt lint db-migrate
+.PHONY: all build run test test-xinchuang-lifecycle clean docker-up docker-down docker-logs install-backend install-agent install-web fmt lint db-migrate
 
 all: install-backend install-agent install-web
 
@@ -40,6 +40,11 @@ test-backend:
 
 test-agent:
 	make -C agent test
+
+test-xinchuang-lifecycle:
+	cd agent && go test ./internal/executor -run '^(TestOceanBase|TestTiDB|TestDameng)' -count=1
+	cd backend && go test ./internal/services -run 'Test.*Capability' -count=1
+	cd frontend && npm test -- --run src/services/flavorCapability.test.ts
 
 docker-up:
 	@echo "docker-compose.dev.yml not in repo; use bin/*/start-all.sh or add compose file"
