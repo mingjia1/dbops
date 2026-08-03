@@ -12,9 +12,17 @@ import (
 var damengPassword = regexp.MustCompile(`^[A-Za-z0-9!@#%+=._-]{12,48}$`)
 var damengParameters = map[string]bool{"COMPATIBLE_MODE": true, "ENABLE_AUTO_INACTIVE": true, "SVR_LOG": true}
 
+const damengBackupRoot = "/opt/dbops/backups/dm"
+
 func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRequest, manifest LocalPackageManifest) (*TaskResult, error) {
 	if err := validateDamengConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
+	}
+	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
+		if err := e.executeDamengLifecycle(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "dameng "+req.Operation+" completed", map[string]interface{}{"flavor": "dm"}), nil
 	}
 	if req.Operation == "configure" {
 		if err := e.configureDameng(ctx, req); err != nil {
@@ -50,6 +58,77 @@ func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRe
 		data["restart_required"] = true
 	}
 	return flavorTaskCompleted(req.TaskID, "dameng single-instance deployment completed", data), nil
+}
+
+func (e *FlavorTaskExecutor) executeDamengLifecycle(ctx context.Context, req FlavorTaskRequest) error {
+	if err := validateDamengLifecycle(req); err != nil {
+		return err
+	}
+	bin := filepath.Join(req.Dameng.InstallDir, "bin")
+	ini := filepath.Join(req.Dameng.DataDir, "dm.ini")
+	switch req.Operation {
+	case "backup":
+		if req.Dameng.Backup.Offline {
+			if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dmrman"), "CTLSTMT=\"BACKUP DATABASE '"+ini+"' FULL TO BACKUPSET '"+req.Dameng.Backup.Destination+"'\""); err != nil {
+				return fmt.Errorf("create dameng offline backup: %w", err)
+			}
+			return nil
+		}
+		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "disql"), damengConnection(req), "-e", "BACKUP DATABASE FULL BACKUPSET '"+req.Dameng.Backup.Destination+"'"); err != nil {
+			return fmt.Errorf("create dameng online backup: %w", err)
+		}
+	case "restore":
+		r := req.Dameng.Restore
+		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dmrman"), "CTLSTMT=\"CHECK BACKUPSET '"+r.BackupSource+"'\""); err != nil {
+			return fmt.Errorf("validate dameng backup set: %w", err)
+		}
+		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dmrman"), "CTLSTMT=\"RESTORE DATABASE '"+ini+"' FROM BACKUPSET '"+r.BackupSource+"'\""); err != nil {
+			return fmt.Errorf("restore dameng database: %w", err)
+		}
+		if r.ArchiveSource != "" {
+			if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dmrman"), "CTLSTMT=\"RESTORE ARCHIVE LOG FROM BACKUPSET '"+r.ArchiveSource+"' TO ARCHIVEDIR '"+filepath.Join(req.Dameng.DataDir, "arch")+"'\""); err != nil {
+				return fmt.Errorf("restore dameng archive logs: %w", err)
+			}
+			if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dmrman"), "CTLSTMT=\"RECOVER DATABASE '"+ini+"' WITH ARCHIVEDIR '"+filepath.Join(req.Dameng.DataDir, "arch")+"' UPDATE DB_MAGIC\""); err != nil {
+				return fmt.Errorf("recover dameng database with archive logs: %w", err)
+			}
+		}
+	case "migrate":
+		m := req.Dameng.Migration
+		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dexp"), damengConnection(req), "FILE="+m.DumpFile); err != nil {
+			return fmt.Errorf("export dameng logical backup: %w", err)
+		}
+		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(bin, "dimp"), damengConnection(req), "FILE="+m.DumpFile); err != nil {
+			return fmt.Errorf("import dameng logical backup: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateDamengLifecycle(req FlavorTaskRequest) error {
+	switch req.Operation {
+	case "backup":
+		if req.Dameng.Backup == nil || !damengBackupPath(req.Dameng.Backup.Destination) {
+			return fmt.Errorf("dameng backup destination must be under %s", damengBackupRoot)
+		}
+	case "restore":
+		if req.Dameng.Restore == nil || !damengBackupPath(req.Dameng.Restore.BackupSource) || (req.Dameng.Restore.ArchiveSource != "" && !damengBackupPath(req.Dameng.Restore.ArchiveSource)) {
+			return fmt.Errorf("dameng restore sources must be under %s", damengBackupRoot)
+		}
+	case "migrate":
+		if req.Dameng.Migration == nil || !damengBackupPath(req.Dameng.Migration.DumpFile) {
+			return fmt.Errorf("dameng migration dump must be under %s", damengBackupRoot)
+		}
+	}
+	return nil
+}
+
+func damengBackupPath(path string) bool {
+	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), damengBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+}
+
+func damengConnection(req FlavorTaskRequest) string {
+	return "SYSDBA/" + req.Dameng.SysdbaPassword + "@" + req.Dameng.Address + fmt.Sprintf(":%d", req.Dameng.Port)
 }
 
 func validateDamengConfig(req FlavorTaskRequest) error {
@@ -104,7 +183,7 @@ func (e *FlavorTaskExecutor) writeDamengInstallConfig(req FlavorTaskRequest) (st
 }
 
 func (e *FlavorTaskExecutor) configureDameng(ctx context.Context, req FlavorTaskRequest) error {
-	connection := "SYSDBA/" + req.Dameng.SysdbaPassword + "@" + req.Dameng.Address + fmt.Sprintf(":%d", req.Dameng.Port)
+	connection := damengConnection(req)
 	for key, value := range req.Dameng.Parameters {
 		if _, err := e.handlers["dm"].runner(ctx, filepath.Join(req.Dameng.InstallDir, "bin", "disql"), connection, "-e", "ALTER SYSTEM SET "+key+"="+value+" SPFILE"); err != nil {
 			return fmt.Errorf("set dameng parameter %s: %w", key, err)

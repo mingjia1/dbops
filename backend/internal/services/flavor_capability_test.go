@@ -85,6 +85,7 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 				allowed[CapInstanceDeploy] = true
 				allowed[CapParameterTemplate] = true
 				allowed[CapInstanceAdmin] = true
+				allowed[CapPhysicalBackup] = true
 			}
 			// Only operations backed by the flavor executor are available.
 			for _, capability := range allCapabilities() {
@@ -110,6 +111,7 @@ func TestHasCapabilityForTieredOnboardingFlavors(t *testing.T) {
 				assert.True(t, HasCapability(tt.flavor, CapInstanceDeploy))
 				assert.True(t, HasCapability(tt.flavor, CapParameterTemplate))
 				assert.True(t, HasCapability(tt.flavor, CapInstanceAdmin))
+				assert.True(t, HasCapability(tt.flavor, CapPhysicalBackup))
 			}
 		})
 	}
@@ -168,8 +170,8 @@ func TestRequireCapabilityErrorNamesFlavorAndCapability(t *testing.T) {
 	assert.Contains(t, err.Error(), string(CapFailover))
 	assert.Contains(t, err.Error(), "故障切换")
 
-	err = RequireCapability("dm", CapPhysicalBackup)
+	err = RequireCapability("dm", CapInPlaceUpgrade)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dm")
-	assert.Contains(t, err.Error(), string(CapPhysicalBackup))
+	assert.Contains(t, err.Error(), string(CapInPlaceUpgrade))
 }

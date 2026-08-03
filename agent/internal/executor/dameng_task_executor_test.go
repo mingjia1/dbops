@@ -77,6 +77,34 @@ func TestDamengRejectsMissingInstaller(t *testing.T) {
 	}
 }
 
+func TestDamengBackupRestoreAndMigrationUseControlledPaths(t *testing.T) {
+	root := t.TempDir()
+	writeDamengBundle(t, root)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	backup := damengTestRequest(root)
+	backup.Operation = "backup"
+	backup.Dameng.Backup = &DamengBackupConfig{Destination: "/opt/dbops/backups/dm/full"}
+	if result, err := executor.Execute(context.Background(), backup); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "disql", "BACKUP DATABASE FULL") {
+		t.Fatalf("backup result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	restore := damengTestRequest(root)
+	restore.Operation = "restore"
+	restore.Dameng.Restore = &DamengRestoreConfig{BackupSource: "/opt/dbops/backups/dm/full", ArchiveSource: "/opt/dbops/backups/dm/archive"}
+	if result, err := executor.Execute(context.Background(), restore); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "dmrman", "CHECK BACKUPSET") || !hasDamengCommand(commands, "dmrman", "UPDATE DB_MAGIC") {
+		t.Fatalf("restore result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	migration := damengTestRequest(root)
+	migration.Operation = "migrate"
+	migration.Dameng.Migration = &DamengMigrationConfig{DumpFile: "/opt/dbops/backups/dm/export.dmp"}
+	if result, err := executor.Execute(context.Background(), migration); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "dexp", "FILE=") || !hasDamengCommand(commands, "dimp", "FILE=") {
+		t.Fatalf("migration result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
 func hasDamengCommand(commands []recordedOceanBaseCommand, name, argument string) bool {
 	for _, command := range commands {
 		if strings.Contains(command.name, name) && strings.Contains(strings.Join(command.args, " "), argument) {

@@ -120,14 +120,31 @@ type TiDBTableCheck struct {
 
 // DamengConfig contains the fixed single-instance inputs for an offline DM9 deployment.
 type DamengConfig struct {
-	Address             string            `json:"address"`
-	Port                int               `json:"port"`
-	InstallDir          string            `json:"install_dir"`
-	DataDir             string            `json:"data_dir"`
-	SysdbaPassword      string            `json:"sysdba_password"`
-	ApplicationUser     string            `json:"application_user"`
-	ApplicationPassword string            `json:"application_password"`
-	Parameters          map[string]string `json:"parameters"`
+	Address             string                 `json:"address"`
+	Port                int                    `json:"port"`
+	InstallDir          string                 `json:"install_dir"`
+	DataDir             string                 `json:"data_dir"`
+	SysdbaPassword      string                 `json:"sysdba_password"`
+	ApplicationUser     string                 `json:"application_user"`
+	ApplicationPassword string                 `json:"application_password"`
+	Parameters          map[string]string      `json:"parameters"`
+	Backup              *DamengBackupConfig    `json:"backup,omitempty"`
+	Restore             *DamengRestoreConfig   `json:"restore,omitempty"`
+	Migration           *DamengMigrationConfig `json:"migration,omitempty"`
+}
+
+type DamengBackupConfig struct {
+	Destination string `json:"destination"`
+	Offline     bool   `json:"offline,omitempty"`
+}
+
+type DamengRestoreConfig struct {
+	BackupSource  string `json:"backup_source"`
+	ArchiveSource string `json:"archive_source,omitempty"`
+}
+
+type DamengMigrationConfig struct {
+	DumpFile string `json:"dump_file"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
@@ -225,7 +242,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 		case "tidb":
 			return e.executeTiDB(ctx, req, manifest)
 		case "dm":
-			if req.Operation != "deploy" && req.Operation != "configure" {
+			if req.Operation != "deploy" && req.Operation != "configure" && req.Operation != "backup" && req.Operation != "restore" && req.Operation != "migrate" {
 				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 			}
 			return e.executeDameng(ctx, req, manifest)
