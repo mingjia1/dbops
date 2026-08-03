@@ -73,10 +73,7 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   gbase8a: { healthSql: true, completed: [] },
   shentong: { healthSql: true, completed: [] },
   // No pure-Go driver: proprietary (dm) and Informix (gbase8s) protocols.
-  dm: {
-    healthSql: false,
-    completed: ['instance_deploy', 'parameter_template', 'instance_admin', 'backup_physical'],
-  },
+  dm: { healthSql: false, completed: [] },
   gbase8s: { healthSql: false, completed: [] },
 }
 

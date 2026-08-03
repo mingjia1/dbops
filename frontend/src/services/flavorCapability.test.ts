@@ -19,8 +19,8 @@ const MYSQL_FLAVORS = [
 
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
 const MYSQL_PROTOCOL_TIERED_FLAVORS = ['gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
-const DRIVERLESS_FLAVORS = ['gbase8s']
-const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb', 'dm']
+const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
+const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb']
 
 describe('hasCapability', () => {
   it('grants every capability to MySQL-protocol engines', () => {
@@ -69,7 +69,6 @@ describe('hasCapability', () => {
     const completed: Record<string, Capability[]> = {
       oceanbase: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace'],
       tidb: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace', 'instance_admin'],
-      dm: ['instance_deploy', 'parameter_template', 'instance_admin', 'backup_physical'],
     }
 
     for (const flavor of COMPLETED_SINGLE_NODE_FLAVORS) {

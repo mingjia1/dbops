@@ -10,7 +10,7 @@
 | TiDB | `v8.5.7` | amd64 单机 PD/TiKV/TiDB | 部署、配置与 TLS | `TestTiDBDeploysOfflineHybridTopology`、`TestTiDBConfigureReloadsComponentConfiguration`、`TestTiDBDeployIncludesTLSConfiguration` | 待提供官方 server/toolkit 归档、证书和目标主机 |
 | TiDB | `v8.5.7` | amd64 单机 PD/TiKV/TiDB | 备份、恢复、迁移与升级 | `TestTiDBBackupStartsBRAndLogBackup`、`TestTiDBRestoreUsesPITRAndValidatesData`、`TestTiDBMigrationAndUpgradeUseApprovedPaths` | 待提供 BR 存储和迁移数据集 |
 | TiDB | `v8.5.7` | amd64 单机 PD/TiKV/TiDB | 监控、卸载与多节点边界 | `TestTiDBMonitorTeardownAndSingleHostBoundaries` | 待提供单机集群和受控最终备份目录 |
-| DM | `DM9` | 单机 | 部署、配置与 TLS | `TestDamengDeploysOfflineInstanceAndVerifiesSQL`、`TestDamengTLSUsesServerEncryptionSetting` | 待提供 DM9 安装包、证书和目标主机 |
+| DM | `DM9` | 单机 | 部署、配置与 TLS | `TestDamengDeploysOfflineInstanceAndVerifiesSQL`、`TestDamengTLSUsesServerEncryptionSetting` | 待提供 DM9 安装包、证书、目标主机与 flavor Agent 任务入口 |
 | DM | `DM9` | 单机 | 备份、恢复与迁移 | `TestDamengBackupRestoreAndMigrationUseControlledPaths` | 待提供备份集、归档集和迁移数据 |
 | DM | `DM9` | 单机 | 监控、卸载与多节点边界 | `TestDamengMonitorTeardownAndSingleInstanceBoundaries` | 待提供可访问实例和受控最终备份目录 |
 
