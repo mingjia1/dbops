@@ -131,7 +131,7 @@ var completedSingleNodeCapabilities = map[string][]Capability{
 	"oceanbase":     {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade},
 	"gaussdb-mysql": {}, "polardb-mysql": {}, "tdsql-mysql": {},
 	"tidb": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade, CapInstanceAdmin}, "kingbase": {}, "opengauss": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade}, "highgo": {}, "gbase8a": {},
-	"shentong": {}, "dm": {}, "gbase8s": {CapInstanceDeploy, CapParameterTemplate},
+	"shentong": {}, "dm": {}, "gbase8s": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade},
 }
 
 // flavorCapabilities is the single source of truth for what the platform will

@@ -15,7 +15,7 @@ import (
 var driverlessFlavors = []string{"gbase8s", "dm"}
 
 // tieredFlavors covers engines limited to inventory and health checks.
-var tieredFlavors = []string{"gbase8s", "gbase8a", "dm", "shentong", "kingbase", "highgo"}
+var tieredFlavors = []string{"gbase8a", "dm", "shentong", "kingbase", "highgo"}
 
 func TestRestoreBackupRefusedForNonMySQLFlavor(t *testing.T) {
 	for _, flavor := range tieredFlavors {
@@ -202,12 +202,12 @@ func TestInstanceDeployRefusedForNonMySQLFlavor(t *testing.T) {
 }
 
 func TestGBase8sEnablesOnlyVerifiedSingleNodeDeployAndConfigurationCapabilities(t *testing.T) {
-	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate} {
+	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade} {
 		if !HasCapability("gbase8s", capability) {
 			t.Fatalf("gbase8s capability %s is disabled", capability)
 		}
 	}
-	for _, capability := range []Capability{CapPhysicalBackup, CapInPlaceUpgrade, CapLogicalUpgrade, CapInstanceAdmin, CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
+	for _, capability := range []Capability{CapInPlaceUpgrade, CapInstanceAdmin, CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
 		if HasCapability("gbase8s", capability) {
 			t.Fatalf("gbase8s capability %s is enabled without verified coverage", capability)
 		}

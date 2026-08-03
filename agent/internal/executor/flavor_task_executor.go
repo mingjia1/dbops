@@ -180,14 +180,40 @@ type OpenGaussMigrationConfig struct {
 	DumpFile string `json:"dump_file"`
 }
 
-// GBase8sConfig contains only the inputs required by the documented GBase 8s
-// single-node installation and configuration workflow.
+// GBase8sConfig contains the constrained inputs for documented GBase 8s
+// single-node lifecycle workflows.
 type GBase8sConfig struct {
-	InstallDir           string            `json:"install_dir"`
-	ApplicationUser      string            `json:"application_user"`
-	ApplicationPassword  string            `json:"application_password"`
-	PersistentParameters map[string]string `json:"persistent_parameters"`
-	MemoryParameters     map[string]string `json:"memory_parameters"`
+	InstallDir           string                  `json:"install_dir"`
+	ApplicationUser      string                  `json:"application_user"`
+	ApplicationPassword  string                  `json:"application_password"`
+	PersistentParameters map[string]string       `json:"persistent_parameters"`
+	MemoryParameters     map[string]string       `json:"memory_parameters"`
+	Backup               *GBase8sBackupConfig    `json:"backup,omitempty"`
+	Restore              *GBase8sRestoreConfig   `json:"restore,omitempty"`
+	Migration            *GBase8sMigrationConfig `json:"migration,omitempty"`
+}
+
+// GBase8sBackupConfig keeps ontape's database and logical-log media separate.
+type GBase8sBackupConfig struct {
+	TapeDirectory       string `json:"tape_directory"`
+	LogicalLogDirectory string `json:"logical_log_directory"`
+}
+
+// GBase8sRestoreConfig selects the isolated ontape media and whether to replay
+// the backed-up logical logs after the archive restore.
+type GBase8sRestoreConfig struct {
+	TapeDirectory       string `json:"tape_directory"`
+	LogicalLogDirectory string `json:"logical_log_directory"`
+	ReplayLogicalLogs   bool   `json:"replay_logical_logs"`
+}
+
+// GBase8sMigrationConfig constrains dbexport and dbimport to prepared local
+// directories and SQL identifiers.
+type GBase8sMigrationConfig struct {
+	SourceDatabase  string `json:"source_database"`
+	TargetDatabase  string `json:"target_database"`
+	ExportDirectory string `json:"export_directory"`
+	ImportDirectory string `json:"import_directory"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
