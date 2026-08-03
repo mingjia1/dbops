@@ -71,6 +71,9 @@ go test ./internal/executor -run '^TestTiDB' -count=1
 
 # Run Dameng DM9 deployment, TLS, backup, restore, migration, monitoring, and teardown tests
 go test ./internal/executor -run '^TestDameng' -count=1
+
+# Run openGauss deployment, backup, restore, migration, monitoring, teardown, and boundary tests
+go test ./internal/executor -run '^TestOpenGauss' -count=1
 ```
 
 ## Flavor Capability Tests

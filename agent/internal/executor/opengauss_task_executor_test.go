@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,16 +105,56 @@ func TestOpenGaussRejectsBundleAndUnsafeConfiguration(t *testing.T) {
 	}
 }
 
-func TestOpenGaussRejectsDeferredLifecycleAndHAOperations(t *testing.T) {
+func TestOpenGaussMonitorCollectsControlledSingleNodeSnapshot(t *testing.T) {
 	root := t.TempDir()
 	writeOpenGaussBundle(t, root, true)
-	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
-	for _, operation := range []string{"monitor", "teardown"} {
-		req := openGaussTestRequest(root)
-		req.Operation = operation
-		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "not executable") {
-			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
-		}
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := openGaussTestRequest(root)
+	req.Operation = "monitor"
+	result, err := executor.Execute(context.Background(), req)
+	data, ok := result.Data.(map[string]interface{})
+	if err != nil || result.Status != "completed" || !ok || data["gs_ctl_status"] == nil || !hasDamengCommand(commands, "gs_ctl", "query -D /opt/dbops/opengauss/data") || !hasDamengCommand(commands, "gsql", "SELECT version()") || !hasDamengCommand(commands, "gsql", "active_connections") || !hasDamengCommand(commands, "gsql", "pg_stat_archiver") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
+func TestOpenGaussTeardownBacksUpBeforeFixedUninstall(t *testing.T) {
+	root := t.TempDir()
+	writeOpenGaussBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := openGaussTestRequest(root)
+	req.Operation = "teardown"
+	req.OpenGauss.ConfirmUninstall = true
+	req.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/final"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" || len(commands) != 2 || !hasDamengCommand(commands[:1], "gs_basebackup", "-D /opt/dbops/backups/opengauss/final") || !hasDamengCommand(commands[1:], "gs_uninstall", "--delete-data -L") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
+func TestOpenGaussTeardownDoesNotUninstallWhenFinalBackupFails(t *testing.T) {
+	root := t.TempDir()
+	writeOpenGaussBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "", fmt.Errorf("backup storage unavailable")
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := openGaussTestRequest(root)
+	req.Operation = "teardown"
+	req.OpenGauss.ConfirmUninstall = true
+	req.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/final"}
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "failed" || len(commands) != 1 || !hasDamengCommand(commands, "gs_basebackup", "-D /opt/dbops/backups/opengauss/final") || hasDamengCommand(commands, "gs_uninstall", "--delete-data -L") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
 	}
 }
 
@@ -183,6 +224,15 @@ func TestOpenGaussRejectsUnsafeLifecycleRequests(t *testing.T) {
 			req.Operation = "restore"
 			req.OpenGauss.Restore = &OpenGaussRestoreConfig{BackupSource: "/opt/dbops/backups/opengauss/export.sql", RecoveryTarget: "2026-08-03 00:00:00"}
 		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "teardown"
+			req.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/final"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "teardown"
+			req.OpenGauss.ConfirmUninstall = true
+			req.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/../outside"}
+		},
 	} {
 		req := openGaussTestRequest(root)
 		configure(&req)
@@ -190,12 +240,17 @@ func TestOpenGaussRejectsUnsafeLifecycleRequests(t *testing.T) {
 			t.Fatalf("unsafe lifecycle result = %#v, err = %v", result, err)
 		}
 	}
-	for _, operation := range []string{"upgrade", "ha", "replication", "failover", "scale"} {
+	for _, operation := range []string{"ha", "replication", "failover", "scale"} {
 		req := openGaussTestRequest(root)
 		req.Operation = operation
-		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" {
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "single-node executor") {
 			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
 		}
+	}
+	req := openGaussTestRequest(root)
+	req.Operation = "upgrade"
+	if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "upgrade is unavailable") {
+		t.Fatalf("upgrade result = %#v, err = %v", result, err)
 	}
 }
 

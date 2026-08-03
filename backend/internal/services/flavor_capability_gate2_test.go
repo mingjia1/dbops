@@ -14,8 +14,8 @@ import (
 // strictest case for every gate.
 var driverlessFlavors = []string{"gbase8s", "dm"}
 
-// tieredFlavors covers every engine under tiered onboarding, driverless or not.
-var tieredFlavors = []string{"gbase8s", "gbase8a", "dm", "shentong", "kingbase", "opengauss", "highgo"}
+// tieredFlavors covers engines limited to inventory and health checks.
+var tieredFlavors = []string{"gbase8s", "gbase8a", "dm", "shentong", "kingbase", "highgo"}
 
 func TestRestoreBackupRefusedForNonMySQLFlavor(t *testing.T) {
 	for _, flavor := range tieredFlavors {

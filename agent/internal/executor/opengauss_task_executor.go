@@ -25,6 +25,19 @@ func (e *FlavorTaskExecutor) executeOpenGauss(ctx context.Context, req FlavorTas
 	if err := validateOpenGaussConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
+	if req.Operation == "monitor" {
+		data, err := e.monitorOpenGauss(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "opengauss monitoring snapshot collected", data), nil
+	}
+	if req.Operation == "teardown" {
+		if err := e.teardownOpenGauss(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "opengauss instance uninstalled", map[string]interface{}{"flavor": "opengauss"}), nil
+	}
 	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
 		if err := e.executeOpenGaussLifecycle(ctx, req); err != nil {
 			return flavorTaskFailure(req.TaskID, err), nil
@@ -60,6 +73,43 @@ func (e *FlavorTaskExecutor) executeOpenGauss(ctx context.Context, req FlavorTas
 		}
 	}
 	return flavorTaskCompleted(req.TaskID, "opengauss single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "opengauss", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) monitorOpenGauss(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	c := req.OpenGauss
+	bin := filepath.Join(c.InstallDir, "bin")
+	status, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gs_ctl"), "query", "-D", c.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("collect opengauss gs_ctl status: %w", err)
+	}
+	version, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gsql"), openGaussGSQLArgs(req, "SELECT version()")...)
+	if err != nil {
+		return nil, fmt.Errorf("collect opengauss version: %w", err)
+	}
+	connections, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gsql"), openGaussGSQLArgs(req, "SELECT count(*) AS active_connections FROM pg_stat_activity WHERE state <> 'idle'")...)
+	if err != nil {
+		return nil, fmt.Errorf("collect opengauss active connections: %w", err)
+	}
+	archive, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gsql"), openGaussGSQLArgs(req, "SELECT archived_count, failed_count, last_archived_wal, last_archived_time FROM pg_stat_archiver")...)
+	if err != nil {
+		return nil, fmt.Errorf("collect opengauss archive status: %w", err)
+	}
+	return map[string]interface{}{"flavor": "opengauss", "gs_ctl_status": status, "version": strings.TrimSpace(version), "active_connections": connections, "archive_status": archive}, nil
+}
+
+func (e *FlavorTaskExecutor) teardownOpenGauss(ctx context.Context, req FlavorTaskRequest) error {
+	if !req.OpenGauss.ConfirmUninstall || req.OpenGauss.Backup == nil || !openGaussBackupPath(req.OpenGauss.Backup.Destination) {
+		return fmt.Errorf("opengauss teardown requires confirm_uninstall and approved backup destination")
+	}
+	backupReq := req
+	backupReq.Operation = "backup"
+	if err := e.executeOpenGaussLifecycle(ctx, backupReq); err != nil {
+		return fmt.Errorf("back up opengauss before teardown: %w", err)
+	}
+	if _, err := e.handlers["opengauss"].runner(ctx, filepath.Join(req.OpenGauss.InstallDir, "bin", "gs_uninstall"), "--delete-data", "-L"); err != nil {
+		return fmt.Errorf("uninstall opengauss instance: %w", err)
+	}
+	return nil
 }
 
 func (e *FlavorTaskExecutor) executeOpenGaussLifecycle(ctx context.Context, req FlavorTaskRequest) error {

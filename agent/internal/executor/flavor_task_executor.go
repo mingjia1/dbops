@@ -163,6 +163,7 @@ type OpenGaussConfig struct {
 	Backup              *OpenGaussBackupConfig    `json:"backup,omitempty"`
 	Restore             *OpenGaussRestoreConfig   `json:"restore,omitempty"`
 	Migration           *OpenGaussMigrationConfig `json:"migration,omitempty"`
+	ConfirmUninstall    bool                      `json:"confirm_uninstall,omitempty"`
 }
 
 type OpenGaussBackupConfig struct {
