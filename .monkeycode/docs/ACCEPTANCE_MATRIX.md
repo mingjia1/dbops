@@ -15,3 +15,13 @@
 | DM | `DM9` | 单机 | 监控、卸载与多节点边界 | `TestDamengMonitorTeardownAndSingleInstanceBoundaries` | 待提供可访问实例和受控最终备份目录 |
 
 运行 `make test-xinchuang-lifecycle` 可执行三种已完成 flavor 的 Agent 生命周期夹具、后端 capability 门禁和前端 capability 镜像测试。真实环境验收必须记录实际安装包 SHA-256、运行日期、目标架构、任务标识和每个阶段的 Agent 结果。
+
+## 自动化验证记录
+
+- 日期：2026-08-03
+- 后端：`cd backend && go test ./...` 通过。
+- Agent：`cd agent && go test ./...` 通过。
+- 前端：`cd frontend && npm test` 通过，17 个测试文件与 292 个测试通过。
+- 前端构建：`cd frontend && npm run build` 通过。
+- 静态检查：`cd backend && go vet ./internal/services` 通过。
+- 真实环境：OceanBase、TiDB 和 DM 的介质、目标主机、备份存储与阶段性 Agent 结果尚未提供。
