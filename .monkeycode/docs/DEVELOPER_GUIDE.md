@@ -76,6 +76,10 @@ go test ./internal/executor -run '^TestDameng' -count=1
 ## Flavor Capability Tests
 
 ```bash
+# Verify the frontend capability mirror
+cd frontend
+npm test -- --run src/services/flavorCapability.test.ts
+
 # Verify the per-flavor single-node capability matrix
 cd backend
 go test ./internal/services -run 'Test.*Capability' -count=1

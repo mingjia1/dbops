@@ -18,8 +18,9 @@ const MYSQL_FLAVORS = [
 ]
 
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
-const MYSQL_PROTOCOL_TIERED_FLAVORS = ['tidb', 'oceanbase', 'gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
-const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
+const MYSQL_PROTOCOL_TIERED_FLAVORS = ['gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
+const DRIVERLESS_FLAVORS = ['gbase8s']
+const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb', 'dm']
 
 describe('hasCapability', () => {
   it('grants every capability to MySQL-protocol engines', () => {
@@ -64,6 +65,23 @@ describe('hasCapability', () => {
     }
   })
 
+  it('mirrors completed single-node executor capabilities', () => {
+    const completed: Record<string, Capability[]> = {
+      oceanbase: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace'],
+      tidb: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace', 'instance_admin'],
+      dm: ['instance_deploy', 'parameter_template', 'instance_admin', 'backup_physical'],
+    }
+
+    for (const flavor of COMPLETED_SINGLE_NODE_FLAVORS) {
+      for (const capability of completed[flavor]) {
+        expect(hasCapability(flavor, capability)).toBe(true)
+      }
+      for (const capability of ['replication', 'failover', 'scale', 'node_rebuild', 'cluster_deploy'] as Capability[]) {
+        expect(hasCapability(flavor, capability)).toBe(false)
+      }
+    }
+  })
+
   it('refuses every capability including SQL health check for driverless engines', () => {
     for (const flavor of DRIVERLESS_FLAVORS) {
       for (const capability of ALL_CAPABILITIES) {
@@ -78,7 +96,7 @@ describe('hasCapability', () => {
     expect(hasCapability('GBase8S', 'health_sql')).toBe(false)
 
     expect(hasCapability(' TiDB ', 'health_sql')).toBe(true)
-    expect(hasCapability(' TiDB ', 'failover')).toBe(false)
+    expect(hasCapability(' TiDB ', 'backup_physical')).toBe(true)
     expect(hasCapability('DM', 'scale')).toBe(false)
   })
 })
@@ -99,7 +117,7 @@ describe('capabilityDisabledReason', () => {
 
 describe('flavor classification', () => {
   it('identifies tiered onboarding flavors', () => {
-    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...DRIVERLESS_FLAVORS]) {
+    for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...COMPLETED_SINGLE_NODE_FLAVORS, ...DRIVERLESS_FLAVORS]) {
       expect(isTieredOnboardingFlavor(flavor)).toBe(true)
     }
     for (const flavor of [...MYSQL_FLAVORS, '', undefined]) {
@@ -120,7 +138,7 @@ describe('flavor classification', () => {
 describe('instanceHasCapability', () => {
   it('uses the persisted instance flavor for UI operation gates', () => {
     expect(instanceHasCapability({ version: { flavor: 'tidb' } }, 'health_sql')).toBe(true)
-    expect(instanceHasCapability({ version: { flavor: 'tidb' } }, 'backup_physical')).toBe(false)
+    expect(instanceHasCapability({ version: { flavor: 'tidb' } }, 'backup_physical')).toBe(true)
     expect(instanceHasCapability({ version: { flavor: 'kingbase' } }, 'parameter_template')).toBe(false)
   })
 })

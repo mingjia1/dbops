@@ -51,27 +51,33 @@ const MYSQL_PROTOCOL_FLAVORS = [
 ]
 
 /**
- * Engines onboarded for inventory, health and topology only. The boolean is
- * whether a SQL health check is possible: engines with no usable Go driver can
- * only be probed over TCP.
+ * Engines onboarded for inventory, health and topology. Completed single-node
+ * executors may expose additional lifecycle capabilities. The boolean records
+ * whether a SQL health check is possible.
  */
-const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean }> = {
-  // These engines speak the MySQL protocol but have distinct replication,
-  // backup and lifecycle workflows, so the connector is limited to health
-  // checks until dedicated executors exist.
-  tidb: { healthSql: true },
-  oceanbase: { healthSql: true },
-  'gaussdb-mysql': { healthSql: true },
-  'polardb-mysql': { healthSql: true },
-  'tdsql-mysql': { healthSql: true },
-  kingbase: { healthSql: true },
-  opengauss: { healthSql: true },
-  highgo: { healthSql: true },
-  gbase8a: { healthSql: true },
-  shentong: { healthSql: true },
+const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed: Capability[] }> = {
+  oceanbase: {
+    healthSql: true,
+    completed: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace'],
+  },
+  tidb: {
+    healthSql: true,
+    completed: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace', 'instance_admin'],
+  },
+  'gaussdb-mysql': { healthSql: true, completed: [] },
+  'polardb-mysql': { healthSql: true, completed: [] },
+  'tdsql-mysql': { healthSql: true, completed: [] },
+  kingbase: { healthSql: true, completed: [] },
+  opengauss: { healthSql: true, completed: [] },
+  highgo: { healthSql: true, completed: [] },
+  gbase8a: { healthSql: true, completed: [] },
+  shentong: { healthSql: true, completed: [] },
   // No pure-Go driver: proprietary (dm) and Informix (gbase8s) protocols.
-  dm: { healthSql: false },
-  gbase8s: { healthSql: false },
+  dm: {
+    healthSql: false,
+    completed: ['instance_deploy', 'parameter_template', 'instance_admin', 'backup_physical'],
+  },
+  gbase8s: { healthSql: false, completed: [] },
 }
 
 const normalizeFlavor = (flavor?: string): string => {
@@ -92,7 +98,8 @@ export const hasCapability = (flavor: string | undefined, capability: Capability
   const tiered = TIERED_ONBOARDING_FLAVORS[normalized]
   if (!tiered) return false
 
-  return capability === 'health_sql' ? tiered.healthSql : false
+  if (capability === 'health_sql') return tiered.healthSql
+  return tiered.completed.includes(capability)
 }
 
 /** Tests an instance's persisted engine flavor against an operation. */

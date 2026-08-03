@@ -16,6 +16,8 @@ DBOps Platform is a database operations system with a React web console, a Go ba
 
 `backend/internal/services/flavor_capability.go` is the capability gate for database flavors. `completedSingleNodeCapabilities` records only lifecycle operations backed by a completed flavor-specific executor. The single-node capability constructor permits deployment, configuration, backup and restore, upgrade and migration, monitoring, and teardown-related instance administration. Replication, failover, scale, node rebuild, and cluster deployment remain disabled until multi-node integration tests prove those workflows.
 
+`frontend/src/services/flavorCapability.ts` mirrors this gate for action visibility. OceanBase, TiDB, and DM expose only their completed single-node operations in the console; all remaining lifecycle operations retain their capability boundary in both the console and backend API.
+
 `agent/internal/executor/local_package_bundle.go` validates pre-positioned package bundles. It reads `<root>/<flavor>/<version>/manifest.json`, verifies the requested flavor and version, each regular package file, its SHA-256, and a required license file. The default root is `/opt/dbops/packages`.
 
 `backend/internal/plugins/kernel/xinchuang_core.go` provides the common lifecycle base for dedicated flavor executors. It validates the target Agent, dispatches each lifecycle phase through the flavor's Agent route, and accepts only a terminal successful Agent task status.
