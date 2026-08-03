@@ -12,6 +12,7 @@ import (
 )
 
 const openGaussRoot = "/opt/dbops/opengauss"
+const openGaussBackupRoot = "/opt/dbops/backups/opengauss"
 
 var openGaussPassword = regexp.MustCompile(`^[A-Za-z0-9!@#%+=._-]{12,128}$`)
 var openGaussParameters = map[string]*regexp.Regexp{
@@ -23,6 +24,18 @@ var openGaussParameters = map[string]*regexp.Regexp{
 func (e *FlavorTaskExecutor) executeOpenGauss(ctx context.Context, req FlavorTaskRequest, manifest LocalPackageManifest) (*TaskResult, error) {
 	if err := validateOpenGaussConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
+	}
+	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
+		if err := e.executeOpenGaussLifecycle(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "opengauss "+req.Operation+" completed", map[string]interface{}{"flavor": "opengauss"}), nil
+	}
+	if req.Operation == "upgrade" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("opengauss Lite upgrade is unavailable without a verified cluster XML delivery chain")), nil
+	}
+	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("opengauss single-node executor does not support %s", req.Operation)), nil
 	}
 	if req.Operation != "deploy" && req.Operation != "configure" {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, "opengauss")), nil
@@ -47,6 +60,72 @@ func (e *FlavorTaskExecutor) executeOpenGauss(ctx context.Context, req FlavorTas
 		}
 	}
 	return flavorTaskCompleted(req.TaskID, "opengauss single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "opengauss", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) executeOpenGaussLifecycle(ctx context.Context, req FlavorTaskRequest) error {
+	if err := validateOpenGaussLifecycle(req); err != nil {
+		return err
+	}
+	c := req.OpenGauss
+	bin := filepath.Join(c.InstallDir, "bin")
+	switch req.Operation {
+	case "backup":
+		if _, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gs_basebackup"), "-D", c.Backup.Destination, "-h", c.Address, "-p", strconv.Itoa(c.Port)); err != nil {
+			return fmt.Errorf("create opengauss physical backup: %w", err)
+		}
+	case "restore":
+		source := c.Restore.BackupSource
+		if strings.HasSuffix(source, ".dmp") {
+			if _, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gs_restore"), source, "-p", strconv.Itoa(c.Port), "-d", "postgres"); err != nil {
+				return fmt.Errorf("restore opengauss dump: %w", err)
+			}
+			return nil
+		}
+		if e.inputRunner == nil {
+			return fmt.Errorf("opengauss SQL restore input runner is not configured")
+		}
+		contents, err := e.readFile(source)
+		if err != nil {
+			return fmt.Errorf("read opengauss SQL dump: %w", err)
+		}
+		if _, err := e.inputRunner(ctx, string(contents), filepath.Join(bin, "gsql"), openGaussGSQLArgs(req, "")...); err != nil {
+			return fmt.Errorf("restore opengauss SQL dump: %w", err)
+		}
+	case "migrate":
+		if _, err := e.handlers["opengauss"].runner(ctx, filepath.Join(bin, "gs_dumpall"), "-W", c.AdminPassword, "-U", "omm", "-f", c.Migration.DumpFile, "-p", strconv.Itoa(c.Port)); err != nil {
+			return fmt.Errorf("export opengauss logical migration: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateOpenGaussLifecycle(req FlavorTaskRequest) error {
+	c := req.OpenGauss
+	switch req.Operation {
+	case "backup":
+		if c.Backup == nil || !openGaussBackupPath(c.Backup.Destination) {
+			return fmt.Errorf("opengauss backup destination must be under %s", openGaussBackupRoot)
+		}
+	case "restore":
+		if c.Restore == nil || !openGaussBackupPath(c.Restore.BackupSource) {
+			return fmt.Errorf("opengauss restore source must be under %s", openGaussBackupRoot)
+		}
+		if c.Restore.RecoveryTarget != "" {
+			return fmt.Errorf("opengauss PITR is unavailable without a verified recovery.conf workflow")
+		}
+		if !strings.HasSuffix(c.Restore.BackupSource, ".dmp") && !strings.HasSuffix(c.Restore.BackupSource, ".sql") {
+			return fmt.Errorf("opengauss restore source must use .dmp or .sql format")
+		}
+	case "migrate":
+		if c.Migration == nil || !openGaussBackupPath(c.Migration.DumpFile) {
+			return fmt.Errorf("opengauss migration dump must be under %s", openGaussBackupRoot)
+		}
+	}
+	return nil
+}
+
+func openGaussBackupPath(path string) bool {
+	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), openGaussBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
 }
 
 func validateOpenGaussConfig(req FlavorTaskRequest) error {
@@ -150,5 +229,9 @@ func (e *FlavorTaskExecutor) verifyOpenGaussVersion(ctx context.Context, req Fla
 
 func openGaussGSQLArgs(req FlavorTaskRequest, statement string) []string {
 	c := req.OpenGauss
-	return []string{"-d", "postgres", "-h", c.Address, "-p", strconv.Itoa(c.Port), "-U", "omm", "-W", c.AdminPassword, "-c", statement}
+	args := []string{"-d", "postgres", "-h", c.Address, "-p", strconv.Itoa(c.Port), "-U", "omm", "-W", c.AdminPassword}
+	if statement != "" {
+		return append(args, "-c", statement)
+	}
+	return args
 }

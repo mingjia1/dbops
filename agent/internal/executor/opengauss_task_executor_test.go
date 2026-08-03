@@ -108,10 +108,92 @@ func TestOpenGaussRejectsDeferredLifecycleAndHAOperations(t *testing.T) {
 	root := t.TempDir()
 	writeOpenGaussBundle(t, root, true)
 	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
-	for _, operation := range []string{"backup", "restore", "migrate", "upgrade", "monitor", "teardown", "ha", "replication", "failover"} {
+	for _, operation := range []string{"monitor", "teardown"} {
 		req := openGaussTestRequest(root)
 		req.Operation = operation
 		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "not executable") {
+			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
+		}
+	}
+}
+
+func TestOpenGaussBackupRestoreAndMigrationUseControlledPaths(t *testing.T) {
+	root := t.TempDir()
+	writeOpenGaussBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	var input recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.readFile = func(path string) ([]byte, error) {
+		if path != "/opt/dbops/backups/opengauss/export.sql" {
+			t.Fatalf("read path = %q", path)
+		}
+		return []byte("CREATE TABLE restored_table (id int);"), nil
+	}
+	executor.inputRunner = func(_ context.Context, value, name string, args ...string) (string, error) {
+		input = recordedOceanBaseCommand{name, append([]string{value}, args...)}
+		return "ok", nil
+	}
+
+	backup := openGaussTestRequest(root)
+	backup.Operation = "backup"
+	backup.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/full"}
+	if result, err := executor.Execute(context.Background(), backup); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "gs_basebackup", "-D /opt/dbops/backups/opengauss/full -h 10.0.0.10 -p 5432") {
+		t.Fatalf("backup result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+
+	restoreDMP := openGaussTestRequest(root)
+	restoreDMP.Operation = "restore"
+	restoreDMP.OpenGauss.Restore = &OpenGaussRestoreConfig{BackupSource: "/opt/dbops/backups/opengauss/export.dmp"}
+	if result, err := executor.Execute(context.Background(), restoreDMP); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "gs_restore", "export.dmp -p 5432 -d postgres") {
+		t.Fatalf("dmp restore result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+
+	restoreSQL := openGaussTestRequest(root)
+	restoreSQL.Operation = "restore"
+	restoreSQL.OpenGauss.Restore = &OpenGaussRestoreConfig{BackupSource: "/opt/dbops/backups/opengauss/export.sql"}
+	if result, err := executor.Execute(context.Background(), restoreSQL); err != nil || result.Status != "completed" || !strings.Contains(input.name, "gsql") || !strings.Contains(input.args[0], "CREATE TABLE") {
+		t.Fatalf("sql restore result = %#v, input = %#v, err = %v", result, input, err)
+	}
+
+	migration := openGaussTestRequest(root)
+	migration.Operation = "migrate"
+	migration.OpenGauss.Migration = &OpenGaussMigrationConfig{DumpFile: "/opt/dbops/backups/opengauss/export.sql"}
+	if result, err := executor.Execute(context.Background(), migration); err != nil || result.Status != "completed" || !hasDamengCommand(commands, "gs_dumpall", "-U omm -f /opt/dbops/backups/opengauss/export.sql -p 5432") {
+		t.Fatalf("migration result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+}
+
+func TestOpenGaussRejectsUnsafeLifecycleRequests(t *testing.T) {
+	root := t.TempDir()
+	writeOpenGaussBundle(t, root, true)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	for _, configure := range []func(*FlavorTaskRequest){
+		func(req *FlavorTaskRequest) {
+			req.Operation = "backup"
+			req.OpenGauss.Backup = &OpenGaussBackupConfig{Destination: "/opt/dbops/backups/opengauss/../outside"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "restore"
+			req.OpenGauss.Restore = &OpenGaussRestoreConfig{BackupSource: "/opt/dbops/backups/opengauss/export.txt"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "restore"
+			req.OpenGauss.Restore = &OpenGaussRestoreConfig{BackupSource: "/opt/dbops/backups/opengauss/export.sql", RecoveryTarget: "2026-08-03 00:00:00"}
+		},
+	} {
+		req := openGaussTestRequest(root)
+		configure(&req)
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" {
+			t.Fatalf("unsafe lifecycle result = %#v, err = %v", result, err)
+		}
+	}
+	for _, operation := range []string{"upgrade", "ha", "replication", "failover", "scale"} {
+		req := openGaussTestRequest(root)
+		req.Operation = operation
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" {
 			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
 		}
 	}

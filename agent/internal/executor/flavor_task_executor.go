@@ -152,14 +152,30 @@ type DamengMigrationConfig struct {
 // OpenGaussConfig contains the constrained inputs for an offline openGauss
 // Lite single-node deployment.
 type OpenGaussConfig struct {
-	Address             string            `json:"address"`
-	Port                int               `json:"port"`
-	InstallDir          string            `json:"install_dir"`
-	DataDir             string            `json:"data_dir"`
-	AdminPassword       string            `json:"admin_password"`
-	ApplicationUser     string            `json:"application_user"`
-	ApplicationPassword string            `json:"application_password"`
-	Parameters          map[string]string `json:"parameters"`
+	Address             string                    `json:"address"`
+	Port                int                       `json:"port"`
+	InstallDir          string                    `json:"install_dir"`
+	DataDir             string                    `json:"data_dir"`
+	AdminPassword       string                    `json:"admin_password"`
+	ApplicationUser     string                    `json:"application_user"`
+	ApplicationPassword string                    `json:"application_password"`
+	Parameters          map[string]string         `json:"parameters"`
+	Backup              *OpenGaussBackupConfig    `json:"backup,omitempty"`
+	Restore             *OpenGaussRestoreConfig   `json:"restore,omitempty"`
+	Migration           *OpenGaussMigrationConfig `json:"migration,omitempty"`
+}
+
+type OpenGaussBackupConfig struct {
+	Destination string `json:"destination"`
+}
+
+type OpenGaussRestoreConfig struct {
+	BackupSource   string `json:"backup_source"`
+	RecoveryTarget string `json:"recovery_target,omitempty"`
+}
+
+type OpenGaussMigrationConfig struct {
+	DumpFile string `json:"dump_file"`
 }
 
 type flavorCommandRunner func(ctx context.Context, name string, args ...string) (string, error)
@@ -180,6 +196,7 @@ type FlavorTaskExecutor struct {
 	handlers        map[string]*flavorTaskHandler
 	starter         flavorProcessStarter
 	inputRunner     flavorCommandInputRunner
+	readFile        func(string) ([]byte, error)
 	removeAll       func(string) error
 	tidbControlRoot string
 }
@@ -241,7 +258,7 @@ func NewFlavorTaskExecutorWithPackageRootAndStarter(packageRoot string, runner f
 	} {
 		handlers[flavor] = &flavorTaskHandler{flavor: flavor, versionBinary: binary, runner: runner}
 	}
-	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, inputRunner: commandOutputWithInput, removeAll: os.RemoveAll, tidbControlRoot: tidbControlRoot}
+	return &FlavorTaskExecutor{packageRoot: packageRoot, handlers: handlers, starter: starter, inputRunner: commandOutputWithInput, readFile: os.ReadFile, removeAll: os.RemoveAll, tidbControlRoot: tidbControlRoot}
 }
 
 func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest) (*TaskResult, error) {
