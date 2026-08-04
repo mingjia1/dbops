@@ -78,11 +78,61 @@ func TestGBase8sRejectsTLSUnsafeInputAndUnverifiedInstaller(t *testing.T) {
 	}
 }
 
-func TestGBase8sRejectsOtherLifecycleOperations(t *testing.T) {
+func TestGBase8sMonitorsWithFixedOnstatProcessAndDiskCommands(t *testing.T) {
+	root := t.TempDir()
+	writeGBase8sBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := gbase8sTestRequest(root)
+	req.Operation = "monitor"
+
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" || !hasDamengCommand(commands, "onstat", "-c") || !hasDamengCommand(commands, "onstat", "-g cfg") || !hasDamengCommand(commands, "onstat", "-V") || !hasDamengCommand(commands, "ps", "-C oninit -o pid=,stat=,args=") || !hasDamengCommand(commands, "df", "-P /opt/dbops/gbase8s/install") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("monitor data = %#v", result.Data)
+	}
+	for _, key := range []string{"onstat_config", "onstat_config_groups", "onstat_version", "oninit_processes", "disk_status"} {
+		if data[key] != "ok" {
+			t.Fatalf("monitor data[%q] = %#v", key, data[key])
+		}
+	}
+}
+
+func TestGBase8sTeardownRequiresConfirmationBackupAndVerifiedUninstallPath(t *testing.T) {
+	root := t.TempDir()
+	writeGBase8sBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := gbase8sTestRequest(root)
+	req.Operation = "teardown"
+	if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "confirm_uninstall") {
+		t.Fatalf("unconfirmed teardown result = %#v, err = %v", result, err)
+	}
+
+	req.GBase8s.ConfirmUninstall = true
+	req.GBase8s.Backup = &GBase8sBackupConfig{TapeDirectory: "/opt/dbops/backups/gbase8s/final-archive", LogicalLogDirectory: "/opt/dbops/backups/gbase8s/final-logs"}
+	if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "official, verified uninstall command") {
+		t.Fatalf("unverified teardown result = %#v, err = %v", result, err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("teardown ran commands without a verified uninstall path: %#v", commands)
+	}
+}
+
+func TestGBase8sRejectsUnsupportedLifecycleOperations(t *testing.T) {
 	root := t.TempDir()
 	writeGBase8sBundle(t, root, true)
 	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
-	for _, operation := range []string{"upgrade", "monitor", "teardown", "ha", "replication", "failover", "scale"} {
+	for _, operation := range []string{"upgrade", "ha", "replication", "failover", "scale"} {
 		req := gbase8sTestRequest(root)
 		req.Operation = operation
 		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" {

@@ -20,7 +20,7 @@ const MYSQL_FLAVORS = [
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
 const MYSQL_PROTOCOL_TIERED_FLAVORS = ['gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
 const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
-const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb']
+const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb', 'gbase8s']
 
 describe('hasCapability', () => {
   it('grants every capability to MySQL-protocol engines', () => {
@@ -69,6 +69,7 @@ describe('hasCapability', () => {
     const completed: Record<string, Capability[]> = {
       oceanbase: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace'],
       tidb: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace', 'instance_admin'],
+      gbase8s: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_logical'],
     }
 
     for (const flavor of COMPLETED_SINGLE_NODE_FLAVORS) {
@@ -81,8 +82,8 @@ describe('hasCapability', () => {
     }
   })
 
-  it('refuses every capability including SQL health check for driverless engines', () => {
-    for (const flavor of DRIVERLESS_FLAVORS) {
+  it('refuses every capability including SQL health check for driverless engines without completed executors', () => {
+    for (const flavor of DRIVERLESS_FLAVORS.filter((flavor) => flavor !== 'gbase8s')) {
       for (const capability of ALL_CAPABILITIES) {
         expect(hasCapability(flavor, capability)).toBe(false)
       }

@@ -42,7 +42,7 @@ test-agent:
 	make -C agent test
 
 test-xinchuang-lifecycle:
-	cd agent && go test ./internal/executor -run '^(TestOceanBase|TestTiDB|TestDameng)' -count=1
+	cd agent && go test ./internal/executor -run '^(TestOceanBase|TestTiDB|TestDameng|TestOpenGauss|TestGBase8s)' -count=1
 	cd backend && go test ./internal/services -run 'Test.*Capability' -count=1
 	cd frontend && npm test -- --run src/services/flavorCapability.test.ts
 

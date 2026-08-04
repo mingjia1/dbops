@@ -25,6 +25,16 @@ func (e *FlavorTaskExecutor) executeGBase8s(ctx context.Context, req FlavorTaskR
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
 	switch req.Operation {
+	case "monitor":
+		data, err := e.monitorGBase8s(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "gbase8s monitoring snapshot collected", data), nil
+	case "teardown":
+		if err := e.teardownGBase8s(req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
 	case "backup":
 		if err := e.backupGBase8s(ctx, req); err != nil {
 			return flavorTaskFailure(req.TaskID, err), nil
@@ -40,6 +50,8 @@ func (e *FlavorTaskExecutor) executeGBase8s(ctx context.Context, req FlavorTaskR
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "gbase8s migration completed", map[string]interface{}{"flavor": "gbase8s"}), nil
+	case "ha", "replication", "failover", "scale":
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8s single-node executor does not support %s", req.Operation)), nil
 	case "upgrade":
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8s upgrade is unavailable because ON-Bar and cross-version upgrade require external configuration")), nil
 	case "deploy", "configure":
@@ -69,6 +81,45 @@ func (e *FlavorTaskExecutor) executeGBase8s(ctx context.Context, req FlavorTaskR
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
 	return flavorTaskCompleted(req.TaskID, "gbase8s single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "gbase8s", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) monitorGBase8s(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	bin := gbase8sBinary(req, "onstat")
+	configuration, err := e.handlers["gbase8s"].runner(ctx, bin, "-c")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8s onstat -c: %w", err)
+	}
+	configurationGroups, err := e.handlers["gbase8s"].runner(ctx, bin, "-g", "cfg")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8s onstat -g cfg: %w", err)
+	}
+	version, err := e.handlers["gbase8s"].runner(ctx, bin, "-V")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8s onstat -V: %w", err)
+	}
+	processes, err := e.handlers["gbase8s"].runner(ctx, "ps", "-C", "oninit", "-o", "pid=,stat=,args=")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8s oninit process status: %w", err)
+	}
+	disk, err := e.handlers["gbase8s"].runner(ctx, "df", "-P", req.GBase8s.InstallDir)
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8s disk status: %w", err)
+	}
+	return map[string]interface{}{
+		"flavor":               "gbase8s",
+		"onstat_config":        configuration,
+		"onstat_config_groups": configurationGroups,
+		"onstat_version":       version,
+		"oninit_processes":     processes,
+		"disk_status":          disk,
+	}, nil
+}
+
+func (e *FlavorTaskExecutor) teardownGBase8s(req FlavorTaskRequest) error {
+	if !req.GBase8s.ConfirmUninstall || req.GBase8s.Backup == nil || !gbase8sIndependentBackupDirectories(req.GBase8s.Backup.TapeDirectory, req.GBase8s.Backup.LogicalLogDirectory) {
+		return fmt.Errorf("gbase8s teardown requires confirm_uninstall and approved final ontape backup directories")
+	}
+	return fmt.Errorf("gbase8s teardown is unavailable because no official, verified uninstall command is configured")
 }
 
 func validateGBase8sConfig(req FlavorTaskRequest) error {

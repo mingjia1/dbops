@@ -188,6 +188,7 @@ type GBase8sConfig struct {
 	ApplicationPassword  string                  `json:"application_password"`
 	PersistentParameters map[string]string       `json:"persistent_parameters"`
 	MemoryParameters     map[string]string       `json:"memory_parameters"`
+	ConfirmUninstall     bool                    `json:"confirm_uninstall,omitempty"`
 	Backup               *GBase8sBackupConfig    `json:"backup,omitempty"`
 	Restore              *GBase8sRestoreConfig   `json:"restore,omitempty"`
 	Migration            *GBase8sMigrationConfig `json:"migration,omitempty"`

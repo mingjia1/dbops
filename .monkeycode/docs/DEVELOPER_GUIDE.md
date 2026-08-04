@@ -74,6 +74,9 @@ go test ./internal/executor -run '^TestDameng' -count=1
 
 # Run openGauss deployment, backup, restore, migration, monitoring, teardown, and boundary tests
 go test ./internal/executor -run '^TestOpenGauss' -count=1
+
+# Run GBase 8s deployment, backup, restore, migration, monitoring, teardown, and boundary tests
+go test ./internal/executor -run '^TestGBase8s' -count=1
 ```
 
 ## Flavor Capability Tests
