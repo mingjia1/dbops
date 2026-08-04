@@ -26,6 +26,17 @@ func (e *FlavorTaskExecutor) executeGBase8a(ctx context.Context, req FlavorTaskR
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a TLS is unavailable until an official restart command is verified")), nil
 	}
 	switch req.Operation {
+	case "monitor":
+		data, err := e.monitorGBase8a(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "gbase8a monitoring snapshot collected", data), nil
+	case "teardown":
+		if err := teardownGBase8a(req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a teardown is unavailable because no official GBase 8a V9 uninstall procedure and command parameters are publicly verified")), nil
 	case "deploy":
 		if !gbase8aBundleAvailable(manifest) {
 			return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a bundle requires manifest-verified SetSysEnv.py, gcinstall.py, demo.options, gcChangeInfo.xml, and required license")), nil
@@ -43,10 +54,40 @@ func (e *FlavorTaskExecutor) executeGBase8a(ctx context.Context, req FlavorTaskR
 		}
 	case "upgrade", "rollback":
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a %s is unavailable: complex cluster topology and version prerequisites require a vendor-verified procedure", req.Operation)), nil
+	case "ha", "replication", "failover", "scale", "rebuild":
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a single-node executor does not support %s", req.Operation)), nil
 	default:
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("gbase8a operation %q is unavailable through the dedicated flavor Agent", req.Operation)), nil
 	}
 	return flavorTaskCompleted(req.TaskID, "gbase8a 10.1 single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "gbase8a", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) monitorGBase8a(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	status, err := e.handlers["gbase8a"].runner(ctx, gbase8aBinary(req, "gcadmin"), "status")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8a gcadmin status: %w", err)
+	}
+	processes, err := e.handlers["gbase8a"].runner(ctx, "ps", "-C", "gnode", "-C", "gcluster", "-C", "gcware", "-o", "pid=,stat=,args=")
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8a core process status: %w", err)
+	}
+	capacity, err := e.handlers["gbase8a"].runner(ctx, "df", "-P", req.GBase8a.InstallPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("collect gbase8a installation capacity: %w", err)
+	}
+	return map[string]interface{}{
+		"flavor":                "gbase8a",
+		"gcadmin_status":        status,
+		"core_processes":        processes,
+		"installation_capacity": capacity,
+	}, nil
+}
+
+func teardownGBase8a(req FlavorTaskRequest) error {
+	if !req.GBase8a.ConfirmUninstall || req.GBase8a.Backup == nil || !gbase8aBackupPath(req.GBase8a.Backup.Destination) {
+		return fmt.Errorf("gbase8a teardown requires confirm_uninstall and an approved final backup destination")
+	}
+	return nil
 }
 
 func (e *FlavorTaskExecutor) executeGBase8aLifecycle(ctx context.Context, req FlavorTaskRequest) error {

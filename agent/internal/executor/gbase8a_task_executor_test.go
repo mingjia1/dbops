@@ -181,6 +181,80 @@ func TestGBase8aLifecycleFailureReturnsNormalModeAndRejectsUnsafeInputs(t *testi
 	}
 }
 
+func TestGBase8aMonitorsWithFixedStatusProcessAndCapacityCommands(t *testing.T) {
+	root := t.TempDir()
+	writeGBase8aBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := gbase8aTestRequest(root)
+	req.Operation = "monitor"
+
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" ||
+		!hasDamengCommand(commands, "gcadmin", "status") ||
+		!hasDamengCommand(commands, "ps", "-C gnode -C gcluster -C gcware -o pid=,stat=,args=") ||
+		!hasDamengCommand(commands, "df", "-P /opt/dbops/gbase8a") {
+		t.Fatalf("result = %#v, commands = %#v, err = %v", result, commands, err)
+	}
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("monitor data = %#v", result.Data)
+	}
+	for _, key := range []string{"gcadmin_status", "core_processes", "installation_capacity"} {
+		if data[key] != "ok" {
+			t.Fatalf("monitor data[%q] = %#v", key, data[key])
+		}
+	}
+}
+
+func TestGBase8aTeardownRequiresConfirmationFinalBackupAndVerifiedUninstall(t *testing.T) {
+	root := t.TempDir()
+	writeGBase8aBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	req := gbase8aTestRequest(root)
+	req.Operation = "teardown"
+	if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "confirm_uninstall") {
+		t.Fatalf("unconfirmed teardown result = %#v, err = %v", result, err)
+	}
+
+	req.GBase8a.ConfirmUninstall = true
+	req.GBase8a.Backup = &GBase8aBackupConfig{Destination: "/opt/dbops/backups/gbase8a/final"}
+	if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" || !strings.Contains(result.Message, "official GBase 8a V9 uninstall procedure") {
+		t.Fatalf("unverified teardown result = %#v, err = %v", result, err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("teardown ran commands without a verified uninstall procedure: %#v", commands)
+	}
+}
+
+func TestGBase8aRejectsDistributedLifecycleOperations(t *testing.T) {
+	root := t.TempDir()
+	writeGBase8aBundle(t, root, true)
+	var calls int
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) {
+		calls++
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	for _, operation := range []string{"ha", "replication", "failover", "scale", "rebuild"} {
+		req := gbase8aTestRequest(root)
+		req.Operation = operation
+		result, err := executor.Execute(context.Background(), req)
+		if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "single-node executor does not support") {
+			t.Fatalf("%s result = %#v, err = %v", operation, result, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("distributed operations issued %d commands", calls)
+	}
+}
+
 func gbase8aTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{TaskID: "gbase8a-deploy", InstanceID: "gbase8a-1", Flavor: "gbase8a", Version: "10.1", Operation: "deploy", PackagePath: filepath.Join(root, "gbase8a", "10.1"), TLS: &FlavorTLSConfig{}, GBase8a: &GBase8aConfig{DBAUser: "gbase", InstallPrefix: "/opt/dbops/gbase8a", PasswordInputMode: true, Parameters: map[string]string{"gcluster_rebalancing_concurrent_count": "4"}}}
 }

@@ -241,6 +241,7 @@ type GBase8aConfig struct {
 	Backup            *GBase8aBackupConfig    `json:"backup,omitempty"`
 	Restore           *GBase8aRestoreConfig   `json:"restore,omitempty"`
 	Migration         *GBase8aMigrationConfig `json:"migration,omitempty"`
+	ConfirmUninstall  bool                    `json:"confirm_uninstall,omitempty"`
 }
 
 // GBase8aBackupConfig limits full backup media to the Agent-owned root.
