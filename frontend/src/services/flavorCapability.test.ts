@@ -62,8 +62,8 @@ describe('hasCapability', () => {
     }
   })
 
-  it('keeps GBase 8a deploy and configure controls on the dedicated Agent route', () => {
-    for (const capability of ['instance_deploy', 'parameter_template', 'instance_admin'] as Capability[]) {
+  it('keeps GBase 8a lifecycle controls on the dedicated Agent route', () => {
+    for (const capability of ['instance_deploy', 'parameter_template', 'instance_admin', 'backup_physical', 'upgrade_logical', 'upgrade_inplace'] as Capability[]) {
       expect(hasCapability('gbase8a', capability)).toBe(false)
       expect(capabilityDisabledReason('gbase8a', capability)).toContain(CAPABILITY_LABELS[capability])
     }

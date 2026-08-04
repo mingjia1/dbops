@@ -234,10 +234,38 @@ type GBase8sConfig struct {
 // GBase8aConfig contains the vendor-verified inputs for a GBase 8a 10.1
 // single-node lifecycle workflow managed by the dedicated flavor Agent.
 type GBase8aConfig struct {
-	DBAUser           string            `json:"dba_user"`
-	InstallPrefix     string            `json:"install_prefix"`
-	PasswordInputMode bool              `json:"password_input_mode,omitempty"`
-	Parameters        map[string]string `json:"parameters"`
+	DBAUser           string                  `json:"dba_user"`
+	InstallPrefix     string                  `json:"install_prefix"`
+	PasswordInputMode bool                    `json:"password_input_mode,omitempty"`
+	Parameters        map[string]string       `json:"parameters"`
+	Backup            *GBase8aBackupConfig    `json:"backup,omitempty"`
+	Restore           *GBase8aRestoreConfig   `json:"restore,omitempty"`
+	Migration         *GBase8aMigrationConfig `json:"migration,omitempty"`
+}
+
+// GBase8aBackupConfig limits full backup media to the Agent-owned root.
+type GBase8aBackupConfig struct {
+	Destination string `json:"destination"`
+}
+
+// GBase8aRestoreConfig permits either the whole backup or explicitly named
+// databases and tables. It deliberately has no free-form recovery expression.
+type GBase8aRestoreConfig struct {
+	BackupSource string                 `json:"backup_source"`
+	Full         bool                   `json:"full"`
+	Objects      []GBase8aRestoreObject `json:"objects,omitempty"`
+}
+
+type GBase8aRestoreObject struct {
+	Database string `json:"database"`
+	Table    string `json:"table,omitempty"`
+}
+
+// GBase8aMigrationConfig maps one controlled local file to one validated table.
+type GBase8aMigrationConfig struct {
+	SourceURI string `json:"source_uri"`
+	Database  string `json:"database"`
+	Table     string `json:"table"`
 }
 
 // GBase8sBackupConfig keeps ontape's database and logical-log media separate.
@@ -368,7 +396,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
-	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "scale", "rebuild", "teardown":
+	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "rollback", "monitor", "ha", "replication", "failover", "scale", "rebuild", "teardown":
 		switch handler.flavor {
 		case "oceanbase":
 			return e.executeOceanBase(ctx, req, manifest)

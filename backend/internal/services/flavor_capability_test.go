@@ -147,8 +147,8 @@ func TestKingbaseKeepsDistributedLifecycleCapabilitiesDisabled(t *testing.T) {
 	}
 }
 
-func TestGBase8aKeepsGenericDeployAndConfigurationCapabilitiesDisabled(t *testing.T) {
-	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapInstanceAdmin} {
+func TestGBase8aKeepsGenericLifecycleCapabilitiesDisabled(t *testing.T) {
+	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapInstanceAdmin, CapPhysicalBackup, CapLogicalUpgrade, CapInPlaceUpgrade} {
 		assert.False(t, HasCapability("gbase8a", capability), "gbase8a generic path must keep %s disabled", capability)
 		err := RequireCapability("gbase8a", capability)
 		require.Error(t, err)

@@ -40,3 +40,25 @@ Add a constrained GBase 8a 10.1 single-node lifecycle path that runs only throug
 1. WHEN a generic platform capability is requested for GBase 8a, the capability gate and console mirror SHALL keep the operation unavailable.
 2. IF a TLS request is received, the Agent SHALL require regular absolute certificate files below `/opt/dbops/gbase8a/certs/` and return a controlled refusal until a vendor restart command is verified.
 3. WHEN a TLS configuration file is written after restart verification, the Agent SHALL write the `[gbased]` TLS fields to `<install_prefix>/gbase_8a_gcluster.cnf` with mode `0600`.
+
+### Requirement 4
+
+**User Story:** AS an operations engineer, I want a controlled full backup workflow, so that GBase 8a backup media and cluster state are bounded.
+
+#### Acceptance Criteria
+
+1. WHEN a backup task provides a destination below `/opt/dbops/backups/gbase8a/`, the Agent SHALL switch the cluster to `readonly`, run `python <install_prefix>/server/bin/gcrcman.py -d <destination> -P gbasedba -e 'backup level 0'`, and switch the cluster to `normal`.
+2. IF the backup command returns an error after the readonly switch, the Agent SHALL issue `gcadmin switchmode normal` before returning a failed task.
+3. IF a backup destination leaves the controlled root, the Agent SHALL return a failed task before executing a command.
+
+### Requirement 5
+
+**User Story:** AS an operations engineer, I want constrained recovery and file migration, so that lifecycle input stays auditable and argument-safe.
+
+#### Acceptance Criteria
+
+1. WHEN a restore task selects `full: true` or validated database and table objects, the Agent SHALL switch to `recovery`, run a generated `gcrcman` recover expression, and switch to `normal`.
+2. IF a restore task supplies neither a full scope nor validated objects, the Agent SHALL return a failed task before executing a command.
+3. WHEN a migration task supplies a `file:///opt/dbops/backups/gbase8a/` URI and validated database and table identifiers, the Agent SHALL issue one generated `LOAD DATA INFILE` statement through `gccli`.
+4. IF a migration URI uses another scheme, leaves the controlled root, or contains an invalid identifier, the Agent SHALL return a failed task before executing a command.
+5. WHEN an upgrade or rollback task is received, the Agent SHALL return a failed task that identifies complex cluster topology and version prerequisites as the vendor-verification boundary.
