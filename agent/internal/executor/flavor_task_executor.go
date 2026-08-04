@@ -30,6 +30,7 @@ type FlavorTaskRequest struct {
 	OceanBase   *OceanBaseConfig `json:"oceanbase,omitempty"`
 	TiDB        *TiDBConfig      `json:"tidb,omitempty"`
 	Dameng      *DamengConfig    `json:"dameng,omitempty"`
+	Kingbase    *KingbaseConfig  `json:"kingbase,omitempty"`
 	OpenGauss   *OpenGaussConfig `json:"opengauss,omitempty"`
 	GBase8s     *GBase8sConfig   `json:"gbase8s,omitempty"`
 }
@@ -148,6 +149,21 @@ type DamengRestoreConfig struct {
 
 type DamengMigrationConfig struct {
 	DumpFile string `json:"dump_file"`
+}
+
+// KingbaseConfig contains the constrained inputs for a KES V9R1C10
+// single-node deployment. Installation and data directories stay below the
+// Kingbase-owned root and credentials are passed through the input runner.
+type KingbaseConfig struct {
+	Address             string            `json:"address"`
+	Port                int               `json:"port"`
+	InstallDir          string            `json:"install_dir"`
+	DataDir             string            `json:"data_dir"`
+	SuperuserPassword   string            `json:"superuser_password"`
+	ApplicationUser     string            `json:"application_user"`
+	ApplicationPassword string            `json:"application_password"`
+	Parameters          map[string]string `json:"parameters"`
+	TLSCIDR             string            `json:"tls_cidr,omitempty"`
 }
 
 // OpenGaussConfig contains the constrained inputs for an offline openGauss
@@ -333,6 +349,8 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 				return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for flavor %q", req.Operation, handler.flavor)), nil
 			}
 			return e.executeDameng(ctx, req, manifest)
+		case "kingbase":
+			return e.executeKingbase(ctx, req, manifest)
 		case "opengauss":
 			return e.executeOpenGauss(ctx, req, manifest)
 		case "gbase8s":

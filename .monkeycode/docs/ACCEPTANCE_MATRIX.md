@@ -13,6 +13,7 @@
 | DM | `DM9` | 单机 | 部署、配置与 TLS | `TestDamengDeploysOfflineInstanceAndVerifiesSQL`、`TestDamengTLSUsesServerEncryptionSetting` | 待提供 DM9 安装包、证书、目标主机与 flavor Agent 任务入口 |
 | DM | `DM9` | 单机 | 备份、恢复与迁移 | `TestDamengBackupRestoreAndMigrationUseControlledPaths` | 待提供备份集、归档集和迁移数据 |
 | DM | `DM9` | 单机 | 监控、卸载与多节点边界 | `TestDamengMonitorTeardownAndSingleInstanceBoundaries` | 待提供可访问实例和受控最终备份目录 |
+| Kingbase | `KES V9R1C10` | 单机 | 部署、配置、角色与 TLS | `TestKingbaseDeploysWithSilentSetupAndInputOnlyCredentials`、`TestKingbaseConfigureAppliesTLSAndExactCIDR`、`TestKingbaseRejectsUnsafeBundlesTLSCIDRsAndOperations` | 待提供授权安装包、许可证、普通证书文件和目标主机 |
 | openGauss | `6.0.5` | 单机 | 部署、配置、备份、恢复与迁移 | `TestOpenGaussDeploysSingleNodeAndCreatesApplicationUser`、`TestOpenGaussTLSUsesOfficialGUCSettings`、`TestOpenGaussBackupRestoreAndMigrationUseControlledPaths` | 待提供已校验安装包、证书、目标主机和备份目录 |
 | openGauss | `6.0.5` | 单机 | 监控、卸载与多节点边界 | `TestOpenGaussMonitorCollectsControlledSingleNodeSnapshot`、`TestOpenGaussTeardownBacksUpBeforeFixedUninstall`、`TestOpenGaussTeardownDoesNotUninstallWhenFinalBackupFails`、`TestOpenGaussRejectsUnsafeLifecycleRequests` | 待提供可访问单机实例和受控最终备份目录 |
 | GBase 8s | `vendor-supported` | 单机 | 部署、配置、备份、恢复与迁移 | `TestGBase8sDeploysAndVerifiesDocumentedSingleNodeWorkflow`、`TestGBase8sConfigureUsesPersistentAndMemoryModes`、`TestGBase8sBackupRestoreAndMigrationUseControlledDirectories`、`TestGBase8sRejectsBackupMigrationBoundaryAndExternalUpgrade` | 待提供厂商介质、目标主机和备份目录 |

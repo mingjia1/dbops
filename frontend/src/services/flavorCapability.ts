@@ -67,6 +67,8 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   'gaussdb-mysql': { healthSql: true, completed: [] },
   'polardb-mysql': { healthSql: true, completed: [] },
   'tdsql-mysql': { healthSql: true, completed: [] },
+  // Kingbase lifecycle handlers use the dedicated flavor Agent route. Generic
+  // MySQL console actions remain unavailable until their backend routing exists.
   kingbase: { healthSql: true, completed: [] },
   // Their lifecycle handlers are available only through the dedicated flavor
   // Agent route. Generic MySQL console actions stay hidden until backend wiring exists.

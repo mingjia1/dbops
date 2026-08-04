@@ -35,3 +35,5 @@ flowchart LR
 ```
 
 The local bundle validator only performs reads and hashes. Installation, extraction, downloads, and service commands are outside this validator.
+
+`agent/internal/executor/kingbase_task_executor.go` restricts KES V9R1C10 to `/opt/dbops/kingbase/`, requires a licensed bundle containing `setup.sh` and `silent.conf`, initializes SCRAM credentials through the input runner, and permits only deploy and configure. TLS checks regular absolute certificate files and a canonical non-global CIDR before it writes a `hostssl` rule. Backup, upgrade, teardown, monitoring, and distributed lifecycle requests stop before issuing a host command.
