@@ -147,7 +147,7 @@ var flavorCapabilities = map[string]map[Capability]bool{
 	"percona": mysqlProtocolCapabilities(),
 
 	// Dedicated flavor executors enable their proven single-node capabilities
-	// through completedSingleNodeCapabilities. openGauss and GBase 8s lifecycle
+	// through completedSingleNodeCapabilities. GBase 8a, openGauss, and GBase 8s lifecycle
 	// handlers use the dedicated flavor Agent route, so the generic MySQL
 	// service APIs remain gated until those routes are wired into the backend.
 	"oceanbase":     singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["oceanbase"]...),

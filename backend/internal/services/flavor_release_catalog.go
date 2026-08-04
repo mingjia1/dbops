@@ -43,7 +43,7 @@ var flavorReleaseCatalog = map[string]FlavorRelease{
 		SourceURL: "https://opengauss.org/en/download/?version=all", Delivery: PackageDeliveryOfficial,
 	},
 	"highgo":   vendorRelease("highgo", "HGDB V9.0", "https://www.highgo.com/"),
-	"gbase8a":  vendorRelease("gbase8a", "vendor-supported", "https://www.gbase.cn/product/gbase-8a"),
+	"gbase8a":  vendorRelease("gbase8a", "10.1", "https://www.gbase.cn/product/gbase-8a"),
 	"shentong": vendorRelease("shentong", "vendor-supported", "http://shentongdata.com/index.php/download/list-27"),
 	"dm":       vendorRelease("dm", "DM9", "https://www.dameng.com/download/index.html"),
 	"gbase8s":  vendorRelease("gbase8s", "vendor-supported", "https://www.gbase.cn/product/gbase-8s"),

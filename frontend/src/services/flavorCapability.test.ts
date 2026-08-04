@@ -62,6 +62,13 @@ describe('hasCapability', () => {
     }
   })
 
+  it('keeps GBase 8a deploy and configure controls on the dedicated Agent route', () => {
+    for (const capability of ['instance_deploy', 'parameter_template', 'instance_admin'] as Capability[]) {
+      expect(hasCapability('gbase8a', capability)).toBe(false)
+      expect(capabilityDisabledReason('gbase8a', capability)).toContain(CAPABILITY_LABELS[capability])
+    }
+  })
+
   it('refuses instance admin operations for every tiered onboarding engine', () => {
     // The agent instance-admin family runs MySQL DDL/DCL and manages my.cnf.
     for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...DRIVERLESS_FLAVORS]) {

@@ -70,10 +70,10 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   // Kingbase lifecycle handlers use the dedicated flavor Agent route. Generic
   // MySQL console actions remain unavailable until their backend routing exists.
   kingbase: { healthSql: true, completed: [] },
-  // Their lifecycle handlers are available only through the dedicated flavor
-  // Agent route. Generic MySQL console actions stay hidden until backend wiring exists.
   opengauss: { healthSql: true, completed: [] },
   highgo: { healthSql: true, completed: [] },
+  // GBase 8a deploy and configure use only the dedicated flavor Agent route.
+  // Generic MySQL console actions stay hidden until backend wiring exists.
   gbase8a: { healthSql: true, completed: [] },
   shentong: { healthSql: true, completed: [] },
   // No pure-Go driver: proprietary (dm) and Informix (gbase8s) protocols.

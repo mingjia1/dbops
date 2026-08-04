@@ -32,6 +32,7 @@ type FlavorTaskRequest struct {
 	Dameng      *DamengConfig    `json:"dameng,omitempty"`
 	Kingbase    *KingbaseConfig  `json:"kingbase,omitempty"`
 	OpenGauss   *OpenGaussConfig `json:"opengauss,omitempty"`
+	GBase8a     *GBase8aConfig   `json:"gbase8a,omitempty"`
 	GBase8s     *GBase8sConfig   `json:"gbase8s,omitempty"`
 }
 
@@ -230,6 +231,15 @@ type GBase8sConfig struct {
 	Migration            *GBase8sMigrationConfig `json:"migration,omitempty"`
 }
 
+// GBase8aConfig contains the vendor-verified inputs for a GBase 8a 10.1
+// single-node lifecycle workflow managed by the dedicated flavor Agent.
+type GBase8aConfig struct {
+	DBAUser           string            `json:"dba_user"`
+	InstallPrefix     string            `json:"install_prefix"`
+	PasswordInputMode bool              `json:"password_input_mode,omitempty"`
+	Parameters        map[string]string `json:"parameters"`
+}
+
 // GBase8sBackupConfig keeps ontape's database and logical-log media separate.
 type GBase8sBackupConfig struct {
 	TapeDirectory       string `json:"tape_directory"`
@@ -373,6 +383,8 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return e.executeKingbase(ctx, req, manifest)
 		case "opengauss":
 			return e.executeOpenGauss(ctx, req, manifest)
+		case "gbase8a":
+			return e.executeGBase8a(ctx, req, manifest)
 		case "gbase8s":
 			return e.executeGBase8s(ctx, req, manifest)
 		default:
