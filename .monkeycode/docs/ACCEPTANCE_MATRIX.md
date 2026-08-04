@@ -13,11 +13,12 @@
 | DM | `DM9` | 单机 | 部署、配置与 TLS | `TestDamengDeploysOfflineInstanceAndVerifiesSQL`、`TestDamengTLSUsesServerEncryptionSetting` | 待提供 DM9 安装包、证书、目标主机与 flavor Agent 任务入口 |
 | DM | `DM9` | 单机 | 备份、恢复与迁移 | `TestDamengBackupRestoreAndMigrationUseControlledPaths` | 待提供备份集、归档集和迁移数据 |
 | DM | `DM9` | 单机 | 监控、卸载与多节点边界 | `TestDamengMonitorTeardownAndSingleInstanceBoundaries` | 待提供可访问实例和受控最终备份目录 |
-| openGauss | `6.0.5` | 单机 | 部署、配置、备份、恢复与迁移 | `TestOpenGaussDeploysSingleNodeAndCreatesApplicationUser`、`TestOpenGaussBackupRestoreAndMigrationUseControlledPaths` | 待提供已校验安装包、证书、目标主机和备份目录 |
+| openGauss | `6.0.5` | 单机 | 部署、配置、备份、恢复与迁移 | `TestOpenGaussDeploysSingleNodeAndCreatesApplicationUser`、`TestOpenGaussTLSUsesOfficialGUCSettings`、`TestOpenGaussBackupRestoreAndMigrationUseControlledPaths` | 待提供已校验安装包、证书、目标主机和备份目录 |
 | openGauss | `6.0.5` | 单机 | 监控、卸载与多节点边界 | `TestOpenGaussMonitorCollectsControlledSingleNodeSnapshot`、`TestOpenGaussTeardownBacksUpBeforeFixedUninstall`、`TestOpenGaussTeardownDoesNotUninstallWhenFinalBackupFails`、`TestOpenGaussRejectsUnsafeLifecycleRequests` | 待提供可访问单机实例和受控最终备份目录 |
+| GBase 8s | `vendor-supported` | 单机 | 部署、配置、备份、恢复与迁移 | `TestGBase8sDeploysAndVerifiesDocumentedSingleNodeWorkflow`、`TestGBase8sConfigureUsesPersistentAndMemoryModes`、`TestGBase8sBackupRestoreAndMigrationUseControlledDirectories`、`TestGBase8sRejectsBackupMigrationBoundaryAndExternalUpgrade` | 待提供厂商介质、目标主机和备份目录 |
 | GBase 8s | `vendor-supported` | 单机 | 监控、teardown 拒绝与多节点边界 | `TestGBase8sMonitorsWithFixedOnstatProcessAndDiskCommands`、`TestGBase8sTeardownRequiresConfirmationBackupAndVerifiedUninstallPath`、`TestGBase8sRejectsUnsupportedLifecycleOperations` | 公开官方入口缺少可核验的卸载命令，等待厂商书面流程 |
 
-运行 `make test-xinchuang-lifecycle` 可执行已完成 flavor 的 Agent 生命周期夹具、后端 capability 门禁和前端 capability 镜像测试。真实环境验收必须记录实际安装包 SHA-256、运行日期、目标架构、任务标识和每个阶段的 Agent 结果。
+运行 `make test-xinchuang-lifecycle` 可执行已完成 flavor 的 Agent 生命周期夹具、内核 Agent 路由契约、后端 capability 门禁和前端 capability 镜像测试。openGauss 与 GBase 8s 的已实现操作仍通过专属 flavor Agent 路由执行，通用 MySQL API 与前端操作保持禁用直到完成后端路由接入。真实环境验收必须记录实际安装包 SHA-256、运行日期、目标架构、任务标识和每个阶段的 Agent 结果。
 
 ## 自动化验证记录
 

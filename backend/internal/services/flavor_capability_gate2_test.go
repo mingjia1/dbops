@@ -15,7 +15,7 @@ import (
 var driverlessFlavors = []string{"gbase8s", "dm"}
 
 // tieredFlavors covers engines limited to inventory and health checks.
-var tieredFlavors = []string{"gbase8a", "dm", "shentong", "kingbase", "highgo"}
+var tieredFlavors = []string{"gbase8a", "dm", "shentong", "kingbase", "highgo", "opengauss", "gbase8s"}
 
 func TestRestoreBackupRefusedForNonMySQLFlavor(t *testing.T) {
 	for _, flavor := range tieredFlavors {
@@ -201,15 +201,12 @@ func TestInstanceDeployRefusedForNonMySQLFlavor(t *testing.T) {
 	}
 }
 
-func TestGBase8sEnablesOnlyVerifiedSingleNodeDeployAndConfigurationCapabilities(t *testing.T) {
-	for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade} {
-		if !HasCapability("gbase8s", capability) {
-			t.Fatalf("gbase8s capability %s is disabled", capability)
-		}
-	}
-	for _, capability := range []Capability{CapInPlaceUpgrade, CapInstanceAdmin, CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
-		if HasCapability("gbase8s", capability) {
-			t.Fatalf("gbase8s capability %s is enabled without verified coverage", capability)
+func TestDedicatedFlavorExecutorsStayGatedFromGenericMySQLServices(t *testing.T) {
+	for _, flavor := range []string{"opengauss", "gbase8s"} {
+		for _, capability := range []Capability{CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade, CapInPlaceUpgrade, CapInstanceAdmin, CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
+			if HasCapability(flavor, capability) {
+				t.Fatalf("%s capability %s is enabled without a generic service route", flavor, capability)
+			}
 		}
 	}
 }

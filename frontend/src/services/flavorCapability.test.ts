@@ -20,7 +20,7 @@ const MYSQL_FLAVORS = [
 const PG_COMPATIBLE_FLAVORS = ['kingbase', 'opengauss', 'highgo', 'gbase8a', 'shentong']
 const MYSQL_PROTOCOL_TIERED_FLAVORS = ['gaussdb-mysql', 'polardb-mysql', 'tdsql-mysql']
 const DRIVERLESS_FLAVORS = ['dm', 'gbase8s']
-const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb', 'gbase8s']
+const COMPLETED_SINGLE_NODE_FLAVORS = ['oceanbase', 'tidb']
 
 describe('hasCapability', () => {
   it('grants every capability to MySQL-protocol engines', () => {
@@ -46,7 +46,7 @@ describe('hasCapability', () => {
     }
   })
 
-  it('refuses every MySQL-specific operation for PG-compatible engines but allows SQL health check', () => {
+  it('keeps dedicated flavor Agent operations out of generic console actions', () => {
     for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS]) {
       expect(hasCapability(flavor, 'health_sql')).toBe(true)
       for (const capability of ALL_CAPABILITIES.filter((c) => c !== 'health_sql')) {
@@ -69,7 +69,6 @@ describe('hasCapability', () => {
     const completed: Record<string, Capability[]> = {
       oceanbase: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace'],
       tidb: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_inplace', 'instance_admin'],
-      gbase8s: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_logical'],
     }
 
     for (const flavor of COMPLETED_SINGLE_NODE_FLAVORS) {
@@ -93,7 +92,7 @@ describe('hasCapability', () => {
   it('normalizes flavor case and surrounding whitespace', () => {
     expect(hasCapability('  KingBase  ', 'health_sql')).toBe(true)
     expect(hasCapability('  KingBase  ', 'failover')).toBe(false)
-    expect(hasCapability('GBase8S', 'health_sql')).toBe(false)
+    expect(hasCapability('GBase8S', 'backup_physical')).toBe(false)
 
     expect(hasCapability(' TiDB ', 'health_sql')).toBe(true)
     expect(hasCapability(' TiDB ', 'backup_physical')).toBe(true)

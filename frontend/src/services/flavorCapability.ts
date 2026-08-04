@@ -68,6 +68,8 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   'polardb-mysql': { healthSql: true, completed: [] },
   'tdsql-mysql': { healthSql: true, completed: [] },
   kingbase: { healthSql: true, completed: [] },
+  // Their lifecycle handlers are available only through the dedicated flavor
+  // Agent route. Generic MySQL console actions stay hidden until backend wiring exists.
   opengauss: { healthSql: true, completed: [] },
   highgo: { healthSql: true, completed: [] },
   gbase8a: { healthSql: true, completed: [] },
@@ -76,7 +78,7 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   dm: { healthSql: false, completed: [] },
   gbase8s: {
     healthSql: false,
-    completed: ['instance_deploy', 'parameter_template', 'backup_physical', 'upgrade_logical'],
+    completed: [],
   },
 }
 

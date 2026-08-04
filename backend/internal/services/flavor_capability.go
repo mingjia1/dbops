@@ -130,8 +130,8 @@ func singleNodeExecutorCapabilities(sqlHealthCheck bool, completed ...Capability
 var completedSingleNodeCapabilities = map[string][]Capability{
 	"oceanbase":     {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade},
 	"gaussdb-mysql": {}, "polardb-mysql": {}, "tdsql-mysql": {},
-	"tidb": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade, CapInstanceAdmin}, "kingbase": {}, "opengauss": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade}, "highgo": {}, "gbase8a": {},
-	"shentong": {}, "dm": {}, "gbase8s": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapLogicalUpgrade},
+	"tidb": {CapInstanceDeploy, CapParameterTemplate, CapPhysicalBackup, CapInPlaceUpgrade, CapInstanceAdmin}, "kingbase": {}, "opengauss": {}, "highgo": {}, "gbase8a": {},
+	"shentong": {}, "dm": {}, "gbase8s": {},
 }
 
 // flavorCapabilities is the single source of truth for what the platform will
@@ -147,8 +147,9 @@ var flavorCapabilities = map[string]map[Capability]bool{
 	"percona": mysqlProtocolCapabilities(),
 
 	// Dedicated flavor executors enable their proven single-node capabilities
-	// through completedSingleNodeCapabilities. Each flavor currently has only
-	// package validation and version discovery, so lifecycle actions stay gated.
+	// through completedSingleNodeCapabilities. openGauss and GBase 8s lifecycle
+	// handlers use the dedicated flavor Agent route, so the generic MySQL
+	// service APIs remain gated until those routes are wired into the backend.
 	"oceanbase":     singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["oceanbase"]...),
 	"gaussdb-mysql": singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["gaussdb-mysql"]...),
 	"polardb-mysql": singleNodeExecutorCapabilities(true, completedSingleNodeCapabilities["polardb-mysql"]...),

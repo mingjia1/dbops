@@ -43,7 +43,8 @@ test-agent:
 
 test-xinchuang-lifecycle:
 	cd agent && go test ./internal/executor -run '^(TestOceanBase|TestTiDB|TestDameng|TestOpenGauss|TestGBase8s)' -count=1
-	cd backend && go test ./internal/services -run 'Test.*Capability' -count=1
+	cd backend && go test ./internal/plugins/kernel -run '^TestXinchuangCoreBase' -count=1
+	cd backend && go test ./internal/services -run 'Test.*(Capability|Refused|Rejects)' -count=1
 	cd frontend && npm test -- --run src/services/flavorCapability.test.ts
 
 docker-up:
