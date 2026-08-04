@@ -155,15 +155,34 @@ type DamengMigrationConfig struct {
 // single-node deployment. Installation and data directories stay below the
 // Kingbase-owned root and credentials are passed through the input runner.
 type KingbaseConfig struct {
-	Address             string            `json:"address"`
-	Port                int               `json:"port"`
-	InstallDir          string            `json:"install_dir"`
-	DataDir             string            `json:"data_dir"`
-	SuperuserPassword   string            `json:"superuser_password"`
-	ApplicationUser     string            `json:"application_user"`
-	ApplicationPassword string            `json:"application_password"`
-	Parameters          map[string]string `json:"parameters"`
-	TLSCIDR             string            `json:"tls_cidr,omitempty"`
+	Address             string                   `json:"address"`
+	Port                int                      `json:"port"`
+	InstallDir          string                   `json:"install_dir"`
+	DataDir             string                   `json:"data_dir"`
+	SuperuserPassword   string                   `json:"superuser_password"`
+	ApplicationUser     string                   `json:"application_user"`
+	ApplicationPassword string                   `json:"application_password"`
+	Parameters          map[string]string        `json:"parameters"`
+	TLSCIDR             string                   `json:"tls_cidr,omitempty"`
+	Backup              *KingbaseBackupConfig    `json:"backup,omitempty"`
+	Restore             *KingbaseRestoreConfig   `json:"restore,omitempty"`
+	Migration           *KingbaseMigrationConfig `json:"migration,omitempty"`
+}
+
+type KingbaseBackupConfig struct {
+	Destination string `json:"destination"`
+}
+
+type KingbaseRestoreConfig struct {
+	BackupSource   string `json:"backup_source"`
+	TargetDatabase string `json:"target_database"`
+	RecoveryTarget string `json:"recovery_target,omitempty"`
+}
+
+type KingbaseMigrationConfig struct {
+	SourceDatabase string `json:"source_database"`
+	TargetDatabase string `json:"target_database"`
+	DumpFile       string `json:"dump_file"`
 }
 
 // OpenGaussConfig contains the constrained inputs for an offline openGauss

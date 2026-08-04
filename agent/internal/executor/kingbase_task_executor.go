@@ -13,6 +13,7 @@ import (
 )
 
 const kingbaseRoot = "/opt/dbops/kingbase"
+const kingbaseBackupRoot = "/opt/dbops/backups/kingbase"
 
 var kingbasePassword = regexp.MustCompile(`^[A-Za-z0-9!@#%+=._-]{12,128}$`)
 var kingbaseParameters = map[string]*regexp.Regexp{
@@ -25,8 +26,20 @@ func (e *FlavorTaskExecutor) executeKingbase(ctx context.Context, req FlavorTask
 	if err := validateKingbaseConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
+	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
+		if err := e.executeKingbaseLifecycle(ctx, req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "kingbase "+req.Operation+" completed", map[string]interface{}{"flavor": "kingbase"}), nil
+	}
+	if req.Operation == "upgrade" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase upgrade is unavailable until the official sys_upgrade procedure, archive configuration, independent backup, and requested version can be verified")), nil
+	}
+	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" {
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase single-node executor does not support %s", req.Operation)), nil
+	}
 	if req.Operation != "deploy" && req.Operation != "configure" {
-		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase KES V9R1C10 only supports deploy and configure; operation %q is refused", req.Operation)), nil
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("operation %q is not executable for kingbase", req.Operation)), nil
 	}
 	if req.Operation == "deploy" {
 		if !kingbaseBundleAvailable(manifest) {
@@ -48,6 +61,67 @@ func (e *FlavorTaskExecutor) executeKingbase(ctx context.Context, req FlavorTask
 		}
 	}
 	return flavorTaskCompleted(req.TaskID, "kingbase single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "kingbase", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) executeKingbaseLifecycle(ctx context.Context, req FlavorTaskRequest) error {
+	if err := validateKingbaseLifecycle(req); err != nil {
+		return err
+	}
+	if e.inputRunner == nil {
+		return fmt.Errorf("kingbase lifecycle input runner is not configured")
+	}
+	c := req.Kingbase
+	bin := filepath.Join(c.InstallDir, "bin")
+	switch req.Operation {
+	case "backup":
+		if _, err := e.inputRunner(ctx, c.SuperuserPassword+"\n", filepath.Join(bin, "sys_basebackup"), "-D", c.Backup.Destination, "-Fp", "-Pv", "-Xf"); err != nil {
+			return fmt.Errorf("create kingbase physical backup: %w", err)
+		}
+	case "restore":
+		if _, err := e.inputRunner(ctx, c.SuperuserPassword+"\n", filepath.Join(bin, "sys_restore"), "-d", c.Restore.TargetDatabase, c.Restore.BackupSource); err != nil {
+			return fmt.Errorf("restore kingbase logical dump: %w", err)
+		}
+	case "migrate":
+		m := c.Migration
+		// sys_dump -f preserves the official custom-format export while avoiding a shell redirect.
+		if _, err := e.inputRunner(ctx, c.SuperuserPassword+"\n", filepath.Join(bin, "sys_dump"), "-Fc", "-f", m.DumpFile, m.SourceDatabase); err != nil {
+			return fmt.Errorf("export kingbase logical migration: %w", err)
+		}
+		if _, err := e.inputRunner(ctx, c.SuperuserPassword+"\n", filepath.Join(bin, "sys_restore"), "-d", m.TargetDatabase, m.DumpFile); err != nil {
+			return fmt.Errorf("import kingbase logical migration: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateKingbaseLifecycle(req FlavorTaskRequest) error {
+	c := req.Kingbase
+	switch req.Operation {
+	case "backup":
+		if c.Backup == nil || !kingbaseBackupPath(c.Backup.Destination) {
+			return fmt.Errorf("kingbase backup destination must be under %s", kingbaseBackupRoot)
+		}
+	case "restore":
+		if c.Restore == nil || !kingbaseDumpPath(c.Restore.BackupSource) || !tidbIdentifier.MatchString(c.Restore.TargetDatabase) {
+			return fmt.Errorf("kingbase restore requires an approved .dump source and target database")
+		}
+		if c.Restore.RecoveryTarget != "" {
+			return fmt.Errorf("kingbase PITR requires verified sys_rman repository and archive configuration")
+		}
+	case "migrate":
+		if c.Migration == nil || !tidbIdentifier.MatchString(c.Migration.SourceDatabase) || !tidbIdentifier.MatchString(c.Migration.TargetDatabase) || !kingbaseDumpPath(c.Migration.DumpFile) {
+			return fmt.Errorf("kingbase migration requires approved source, target, and .dump path")
+		}
+	}
+	return nil
+}
+
+func kingbaseBackupPath(path string) bool {
+	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), kingbaseBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+}
+
+func kingbaseDumpPath(path string) bool {
+	return kingbaseBackupPath(path) && strings.HasSuffix(path, ".dump")
 }
 
 func validateKingbaseConfig(req FlavorTaskRequest) error {

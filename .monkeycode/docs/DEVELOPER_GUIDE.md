@@ -78,7 +78,7 @@ go test ./internal/executor -run '^TestOpenGauss' -count=1
 # Run GBase 8s deployment, backup, restore, migration, monitoring, teardown, and boundary tests
 go test ./internal/executor -run '^TestGBase8s' -count=1
 
-# Run Kingbase KES V9R1C10 deployment, configuration, TLS, and boundary tests
+# Run Kingbase KES V9R1C10 deployment, configuration, backup, restore, migration, and boundary tests
 go test ./internal/executor -run '^TestKingbase' -count=1
 ```
 

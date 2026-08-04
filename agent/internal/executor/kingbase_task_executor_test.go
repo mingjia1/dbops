@@ -87,6 +87,77 @@ func TestKingbaseRejectsUnsafeBundlesTLSCIDRsAndOperations(t *testing.T) {
 	}
 }
 
+func TestKingbaseBackupRestoreAndMigrationUseControlledArguments(t *testing.T) {
+	root := t.TempDir()
+	writeKingbaseBundle(t, root, true)
+	var inputs []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "ok", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.inputRunner = func(_ context.Context, input, name string, args ...string) (string, error) {
+		inputs = append(inputs, recordedOceanBaseCommand{name, append([]string{input}, args...)})
+		return "ok", nil
+	}
+
+	backup := kingbaseTestRequest(root)
+	backup.Operation = "backup"
+	backup.Kingbase.Backup = &KingbaseBackupConfig{Destination: "/opt/dbops/backups/kingbase/physical"}
+	if result, err := executor.Execute(context.Background(), backup); err != nil || result.Status != "completed" || !hasKingbaseInputCommand(inputs, "sys_basebackup", "-D /opt/dbops/backups/kingbase/physical -Fp -Pv -Xf") {
+		t.Fatalf("backup result = %#v, inputs = %#v, err = %v", result, inputs, err)
+	}
+
+	restore := kingbaseTestRequest(root)
+	restore.Operation = "restore"
+	restore.Kingbase.Restore = &KingbaseRestoreConfig{BackupSource: "/opt/dbops/backups/kingbase/source.dump", TargetDatabase: "newdb"}
+	if result, err := executor.Execute(context.Background(), restore); err != nil || result.Status != "completed" || !hasKingbaseInputCommand(inputs, "sys_restore", "-d newdb /opt/dbops/backups/kingbase/source.dump") {
+		t.Fatalf("restore result = %#v, inputs = %#v, err = %v", result, inputs, err)
+	}
+
+	migration := kingbaseTestRequest(root)
+	migration.Operation = "migrate"
+	migration.Kingbase.Migration = &KingbaseMigrationConfig{SourceDatabase: "sourcedb", TargetDatabase: "targetdb", DumpFile: "/opt/dbops/backups/kingbase/migrate.dump"}
+	if result, err := executor.Execute(context.Background(), migration); err != nil || result.Status != "completed" || !hasKingbaseInputCommand(inputs, "sys_dump", "-Fc -f /opt/dbops/backups/kingbase/migrate.dump sourcedb") || !hasKingbaseInputCommand(inputs, "sys_restore", "-d targetdb /opt/dbops/backups/kingbase/migrate.dump") {
+		t.Fatalf("migration result = %#v, inputs = %#v, err = %v", result, inputs, err)
+	}
+	for _, input := range inputs {
+		if strings.Contains(strings.Join(input.args[1:], " "), "SuperPass1234") {
+			t.Fatalf("password leaked in command arguments: %#v", input)
+		}
+	}
+}
+
+func TestKingbaseRefusesUnsafeLifecyclePITRAndUpgrade(t *testing.T) {
+	root := t.TempDir()
+	writeKingbaseBundle(t, root, true)
+	var calls int
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { calls++; return "ok", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.inputRunner = func(_ context.Context, _ string, _ string, _ ...string) (string, error) { calls++; return "ok", nil }
+	for _, configure := range []func(*FlavorTaskRequest){
+		func(req *FlavorTaskRequest) {
+			req.Operation = "backup"
+			req.Kingbase.Backup = &KingbaseBackupConfig{Destination: "/opt/dbops/backups/kingbase/../outside"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "restore"
+			req.Kingbase.Restore = &KingbaseRestoreConfig{BackupSource: "/opt/dbops/backups/kingbase/source.dump", TargetDatabase: "newdb", RecoveryTarget: "2026-08-04 00:00:00"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "restore"
+			req.Kingbase.Restore = &KingbaseRestoreConfig{BackupSource: "/tmp/source.dump", TargetDatabase: "newdb"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "upgrade"
+		},
+	} {
+		req := kingbaseTestRequest(root)
+		configure(&req)
+		if result, err := executor.Execute(context.Background(), req); err != nil || result.Status != "failed" {
+			t.Fatalf("unsafe lifecycle result = %#v, err = %v", result, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("unsafe lifecycle issued %d commands", calls)
+	}
+}
+
 func kingbaseTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{TaskID: "kingbase-deploy", InstanceID: "kingbase-1", Flavor: "kingbase", Version: "KES V9R1C10", Operation: "deploy", PackagePath: filepath.Join(root, "kingbase", "KES V9R1C10"), TLS: &FlavorTLSConfig{}, Kingbase: &KingbaseConfig{Address: "10.0.0.10", Port: 54321, InstallDir: "/opt/dbops/kingbase/install", DataDir: "/opt/dbops/kingbase/data", SuperuserPassword: "SuperPass1234", ApplicationUser: "app_user", ApplicationPassword: "AppPass123456", Parameters: map[string]string{"max_connections": "200"}}}
 }
@@ -122,6 +193,15 @@ func writeKingbaseBundle(t *testing.T, root string, complete bool) {
 func hasKingbaseInput(inputs []recordedOceanBaseCommand, want string) bool {
 	for _, input := range inputs {
 		if len(input.args) > 0 && strings.Contains(input.args[0], want) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasKingbaseInputCommand(inputs []recordedOceanBaseCommand, binary, wantArgs string) bool {
+	for _, input := range inputs {
+		if strings.Contains(input.name, binary) && strings.Join(input.args[1:], " ") == wantArgs {
 			return true
 		}
 	}
