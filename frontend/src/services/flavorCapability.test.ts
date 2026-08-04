@@ -55,6 +55,13 @@ describe('hasCapability', () => {
     }
   })
 
+  it('keeps Kingbase replication, failover, and node rebuild controls unavailable', () => {
+    for (const capability of ['replication', 'failover', 'node_rebuild'] as Capability[]) {
+      expect(hasCapability('kingbase', capability)).toBe(false)
+      expect(capabilityDisabledReason('kingbase', capability)).toContain(CAPABILITY_LABELS[capability])
+    }
+  })
+
   it('refuses instance admin operations for every tiered onboarding engine', () => {
     // The agent instance-admin family runs MySQL DDL/DCL and manages my.cnf.
     for (const flavor of [...PG_COMPATIBLE_FLAVORS, ...MYSQL_PROTOCOL_TIERED_FLAVORS, ...DRIVERLESS_FLAVORS]) {

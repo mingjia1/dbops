@@ -14,6 +14,8 @@ DBOps Platform is a database operations system with a React web console, a Go ba
 
 ## Lifecycle Safety Boundaries
 
+Kingbase monitoring returns a fixed snapshot from `sys_ctl status -D`, `sys_stat_activity`, `sys_stat_archiver`, `ps -C kingbase`, and `df -P <data_dir>`. Teardown accepts only `confirm_uninstall` with a final backup destination under `/opt/dbops/backups/kingbase/`; because the public KES V9R1C10 documentation has no verified uninstall executable and parameter set, it returns a controlled failure without backup, shutdown, or cleanup calls. Replication, failover, scale, and rebuild return explicit single-node capability errors.
+
 `backend/internal/services/flavor_capability.go` is the capability gate for database flavors. `completedSingleNodeCapabilities` records only lifecycle operations backed by a completed flavor-specific executor. The single-node capability constructor permits deployment, configuration, backup and restore, upgrade and migration, monitoring, and teardown-related instance administration. Replication, failover, scale, node rebuild, and cluster deployment remain disabled until multi-node integration tests prove those workflows.
 
 `frontend/src/services/flavorCapability.ts` mirrors this gate for action visibility. OceanBase and TiDB expose only their completed single-node operations in the console. DM uses a proprietary protocol, so its executor remains available only through the dedicated flavor Agent route while generic MySQL service actions retain their capability boundary.

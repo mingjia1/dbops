@@ -26,6 +26,19 @@ func (e *FlavorTaskExecutor) executeKingbase(ctx context.Context, req FlavorTask
 	if err := validateKingbaseConfig(req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
+	if req.Operation == "monitor" {
+		data, err := e.monitorKingbase(ctx, req)
+		if err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskCompleted(req.TaskID, "kingbase monitoring snapshot collected", data), nil
+	}
+	if req.Operation == "teardown" {
+		if err := teardownKingbase(req); err != nil {
+			return flavorTaskFailure(req.TaskID, err), nil
+		}
+		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase teardown is unavailable because no official, verified uninstall command is configured")), nil
+	}
 	if req.Operation == "backup" || req.Operation == "restore" || req.Operation == "migrate" {
 		if err := e.executeKingbaseLifecycle(ctx, req); err != nil {
 			return flavorTaskFailure(req.TaskID, err), nil
@@ -35,7 +48,7 @@ func (e *FlavorTaskExecutor) executeKingbase(ctx context.Context, req FlavorTask
 	if req.Operation == "upgrade" {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase upgrade is unavailable until the official sys_upgrade procedure, archive configuration, independent backup, and requested version can be verified")), nil
 	}
-	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" {
+	if req.Operation == "ha" || req.Operation == "replication" || req.Operation == "failover" || req.Operation == "scale" || req.Operation == "rebuild" {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("kingbase single-node executor does not support %s", req.Operation)), nil
 	}
 	if req.Operation != "deploy" && req.Operation != "configure" {
@@ -61,6 +74,50 @@ func (e *FlavorTaskExecutor) executeKingbase(ctx context.Context, req FlavorTask
 		}
 	}
 	return flavorTaskCompleted(req.TaskID, "kingbase single-node "+req.Operation+" completed", map[string]interface{}{"flavor": "kingbase", "version": req.Version}), nil
+}
+
+func (e *FlavorTaskExecutor) monitorKingbase(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
+	c := req.Kingbase
+	status, err := e.handlers["kingbase"].runner(ctx, kingbaseBinary(req, "sys_ctl"), "status", "-D", c.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase sys_ctl status: %w", err)
+	}
+	version, err := e.kingbaseSQLResult(ctx, req, "SELECT version();")
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase version: %w", err)
+	}
+	connections, err := e.kingbaseSQLResult(ctx, req, "SELECT count(*) AS active_connections FROM sys_stat_activity WHERE state <> 'idle';")
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase active connections: %w", err)
+	}
+	wal, err := e.kingbaseSQLResult(ctx, req, "SELECT archived_count, failed_count, last_archived_wal, last_archived_time FROM sys_stat_archiver;")
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase WAL archive status: %w", err)
+	}
+	processes, err := e.handlers["kingbase"].runner(ctx, "ps", "-C", "kingbase", "-o", "pid=,stat=,args=")
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase process status: %w", err)
+	}
+	capacity, err := e.handlers["kingbase"].runner(ctx, "df", "-P", c.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("collect kingbase data directory capacity: %w", err)
+	}
+	return map[string]interface{}{
+		"flavor":              "kingbase",
+		"sys_ctl_status":      status,
+		"version":             strings.TrimSpace(version),
+		"active_connections":  connections,
+		"wal_archive_status":  wal,
+		"processes":           processes,
+		"data_directory_disk": capacity,
+	}, nil
+}
+
+func teardownKingbase(req FlavorTaskRequest) error {
+	if !req.Kingbase.ConfirmUninstall || req.Kingbase.Backup == nil || !kingbaseBackupPath(req.Kingbase.Backup.Destination) {
+		return fmt.Errorf("kingbase teardown requires confirm_uninstall and approved final backup destination")
+	}
+	return nil
 }
 
 func (e *FlavorTaskExecutor) executeKingbaseLifecycle(ctx context.Context, req FlavorTaskRequest) error {
@@ -248,12 +305,16 @@ func (e *FlavorTaskExecutor) verifyKingbase(ctx context.Context, req FlavorTaskR
 }
 
 func (e *FlavorTaskExecutor) kingbaseSQL(ctx context.Context, req FlavorTaskRequest, statement string) error {
+	_, err := e.kingbaseSQLResult(ctx, req, statement)
+	return err
+}
+
+func (e *FlavorTaskExecutor) kingbaseSQLResult(ctx context.Context, req FlavorTaskRequest, statement string) (string, error) {
 	if e.inputRunner == nil {
-		return fmt.Errorf("kingbase SQL input runner is not configured")
+		return "", fmt.Errorf("kingbase SQL input runner is not configured")
 	}
 	c := req.Kingbase
-	_, err := e.inputRunner(ctx, statement+"\n", kingbaseBinary(req, "ksql"), "-d", "kingbase", "-h", c.Address, "-p", strconv.Itoa(c.Port), "-U", "superuser")
-	return err
+	return e.inputRunner(ctx, statement+"\n", kingbaseBinary(req, "ksql"), "-d", "kingbase", "-h", c.Address, "-p", strconv.Itoa(c.Port), "-U", "superuser")
 }
 
 func kingbaseBinary(req FlavorTaskRequest, name string) string {

@@ -167,6 +167,7 @@ type KingbaseConfig struct {
 	Backup              *KingbaseBackupConfig    `json:"backup,omitempty"`
 	Restore             *KingbaseRestoreConfig   `json:"restore,omitempty"`
 	Migration           *KingbaseMigrationConfig `json:"migration,omitempty"`
+	ConfirmUninstall    bool                     `json:"confirm_uninstall,omitempty"`
 }
 
 type KingbaseBackupConfig struct {
@@ -357,7 +358,7 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 			return flavorTaskFailure(req.TaskID, err), nil
 		}
 		return flavorTaskCompleted(req.TaskID, "flavor version detected", map[string]interface{}{"flavor": handler.flavor, "version": version}), nil
-	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "scale", "teardown":
+	case "deploy", "configure", "backup", "restore", "migrate", "upgrade", "monitor", "ha", "replication", "failover", "scale", "rebuild", "teardown":
 		switch handler.flavor {
 		case "oceanbase":
 			return e.executeOceanBase(ctx, req, manifest)

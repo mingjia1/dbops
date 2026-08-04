@@ -158,6 +158,88 @@ func TestKingbaseRefusesUnsafeLifecyclePITRAndUpgrade(t *testing.T) {
 	}
 }
 
+func TestKingbaseMonitorCollectsFixedSingleNodeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	writeKingbaseBundle(t, root, true)
+	var commands []recordedOceanBaseCommand
+	var inputs []recordedOceanBaseCommand
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, recordedOceanBaseCommand{name, args})
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.inputRunner = func(_ context.Context, input, name string, args ...string) (string, error) {
+		inputs = append(inputs, recordedOceanBaseCommand{name, append([]string{input}, args...)})
+		return "ok", nil
+	}
+	req := kingbaseTestRequest(root)
+	req.Operation = "monitor"
+
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil || result.Status != "completed" || !hasDamengCommand(commands, "sys_ctl", "status -D /opt/dbops/kingbase/data") || !hasDamengCommand(commands, "ps", "-C kingbase -o pid=,stat=,args=") || !hasDamengCommand(commands, "df", "-P /opt/dbops/kingbase/data") || !hasKingbaseInput(inputs, "FROM sys_stat_activity") || !hasKingbaseInput(inputs, "FROM sys_stat_archiver") {
+		t.Fatalf("result = %#v, commands = %#v, inputs = %#v, err = %v", result, commands, inputs, err)
+	}
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("monitoring data type = %T, data = %#v", result.Data, result.Data)
+	}
+	for _, key := range []string{"sys_ctl_status", "version", "active_connections", "wal_archive_status", "processes", "data_directory_disk"} {
+		if _, ok := data[key]; !ok {
+			t.Fatalf("monitoring data missing %q: %#v", key, result.Data)
+		}
+	}
+}
+
+func TestKingbaseTeardownRequiresConfirmationBackupAndVerifiedUninstall(t *testing.T) {
+	root := t.TempDir()
+	writeKingbaseBundle(t, root, true)
+	var calls int
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) {
+		calls++
+		return "ok", nil
+	}, func(_ context.Context, _ string, _ ...string) error { return nil })
+	executor.inputRunner = func(_ context.Context, _ string, _ string, _ ...string) (string, error) {
+		calls++
+		return "ok", nil
+	}
+	for _, configure := range []func(*FlavorTaskRequest){
+		func(req *FlavorTaskRequest) { req.Operation = "teardown" },
+		func(req *FlavorTaskRequest) {
+			req.Operation = "teardown"
+			req.Kingbase.ConfirmUninstall = true
+			req.Kingbase.Backup = &KingbaseBackupConfig{Destination: "/tmp/final"}
+		},
+		func(req *FlavorTaskRequest) {
+			req.Operation = "teardown"
+			req.Kingbase.ConfirmUninstall = true
+			req.Kingbase.Backup = &KingbaseBackupConfig{Destination: "/opt/dbops/backups/kingbase/final"}
+		},
+	} {
+		req := kingbaseTestRequest(root)
+		configure(&req)
+		result, err := executor.Execute(context.Background(), req)
+		if err != nil || result.Status != "failed" {
+			t.Fatalf("teardown result = %#v, err = %v", result, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("teardown without an official uninstall route issued %d commands", calls)
+	}
+}
+
+func TestKingbaseRejectsReplicationFailoverAndRebuild(t *testing.T) {
+	root := t.TempDir()
+	writeKingbaseBundle(t, root, true)
+	executor := NewFlavorTaskExecutorWithPackageRootAndStarter(root, func(_ context.Context, _ string, _ ...string) (string, error) { return "ok", nil }, func(_ context.Context, _ string, _ ...string) error { return nil })
+	for _, operation := range []string{"ha", "replication", "failover", "scale", "rebuild"} {
+		req := kingbaseTestRequest(root)
+		req.Operation = operation
+		result, err := executor.Execute(context.Background(), req)
+		if err != nil || result.Status != "failed" || !strings.Contains(result.Message, "single-node executor does not support") {
+			t.Fatalf("operation %q result = %#v, err = %v", operation, result, err)
+		}
+	}
+}
+
 func kingbaseTestRequest(root string) FlavorTaskRequest {
 	return FlavorTaskRequest{TaskID: "kingbase-deploy", InstanceID: "kingbase-1", Flavor: "kingbase", Version: "KES V9R1C10", Operation: "deploy", PackagePath: filepath.Join(root, "kingbase", "KES V9R1C10"), TLS: &FlavorTLSConfig{}, Kingbase: &KingbaseConfig{Address: "10.0.0.10", Port: 54321, InstallDir: "/opt/dbops/kingbase/install", DataDir: "/opt/dbops/kingbase/data", SuperuserPassword: "SuperPass1234", ApplicationUser: "app_user", ApplicationPassword: "AppPass123456", Parameters: map[string]string{"max_connections": "200"}}}
 }

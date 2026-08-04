@@ -138,6 +138,15 @@ func TestXinchuangFlavorsHaveExplicitCompletedCapabilityRecords(t *testing.T) {
 	}
 }
 
+func TestKingbaseKeepsDistributedLifecycleCapabilitiesDisabled(t *testing.T) {
+	for _, capability := range []Capability{CapReplication, CapFailover, CapScale, CapNodeRebuild, CapClusterDeploy} {
+		assert.False(t, HasCapability("kingbase", capability), "kingbase must keep %s disabled", capability)
+		err := RequireCapability("kingbase", capability)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), capabilityLabels[capability])
+	}
+}
+
 func TestHasCapabilityNormalizesFlavorCase(t *testing.T) {
 	assert.False(t, HasCapability("  GBase8S  ", CapSQLHealthCheck))
 	assert.True(t, HasCapability("  KingBase  ", CapSQLHealthCheck))

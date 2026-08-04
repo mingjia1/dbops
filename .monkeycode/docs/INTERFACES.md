@@ -50,6 +50,8 @@ The validator returns an error for a missing or malformed manifest, a flavor or 
 
 ## Agent Flavor Task Route
 
+Kingbase `monitor` returns fixed `sys_ctl status -D <data>`, SQL `version()`, active connections from `sys_stat_activity`, WAL archive status from `sys_stat_archiver`, `ps -C kingbase`, and `df -P <data>`. Kingbase `teardown` accepts `confirm_uninstall: true` and a final backup destination under `/opt/dbops/backups/kingbase/`, then refuses without host commands because no public official KES V9R1C10 uninstall executable and parameter set has been verified. `ha`, `replication`, `failover`, `scale`, and `rebuild` return explicit single-node capability errors.
+
 `POST /agent/tasks/flavor` accepts `executor.FlavorTaskRequest`. The payload requires `task_id`, `instance_id`, `flavor`, `version`, `operation`, `package_path`, and a `tls` object. `package_path` must exactly equal `/opt/dbops/packages/<flavor>/<version>` after path cleaning.
 
 The Agent registers isolated version command builders for OceanBase, GaussDB MySQL, PolarDB MySQL, TDSQL MySQL, TiDB, Kingbase, openGauss, HighGo, GBase 8a, Shentong, DM, and GBase 8s. `validate-package` verifies the local manifest and hashes. `version-detect` runs the registered fixed binary with `--version` and requires the output to contain the requested version.
