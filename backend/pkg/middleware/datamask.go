@@ -13,19 +13,37 @@ import (
 
 type bodyWriter struct {
 	gin.ResponseWriter
-	body      *bytes.Buffer
-	overflow  bool
-	maxBuffer int
+	body        *bytes.Buffer
+	overflow    bool
+	passthrough bool // 检测到非 JSON 响应 (如 SSE text/event-stream) 后全程直通
+	maxBuffer   int
 }
 
+// Write P1-1: 修复双写 bug —— 旧实现先把原始 body 写进底层 ResponseWriter,
+// 掩码后又把 masked 追加写一遍, 客户端收到 "原始+掩码" 两段拼接的损坏响应.
+// 现在: JSON 响应只入缓冲, 待掩码后一次性写出; 非 JSON / 超限响应直接透传.
 func (w *bodyWriter) Write(b []byte) (int, error) {
-	if !w.overflow && w.body.Len()+len(b) > w.maxBuffer {
+	if !w.passthrough && !w.overflow {
+		if ct := w.Header().Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+			w.passthrough = true
+			w.body.Reset()
+		}
+	}
+	if w.passthrough || w.overflow {
+		return w.ResponseWriter.Write(b)
+	}
+	if w.body.Len()+len(b) > w.maxBuffer {
 		w.overflow = true
 		w.body.Reset()
-	} else if !w.overflow {
-		w.body.Write(b)
+		return w.ResponseWriter.Write(b)
 	}
-	return w.ResponseWriter.Write(b)
+	w.body.Write(b)
+	return len(b), nil
+}
+
+// Flush 透传 flush (SSE 需要); 直通模式下语义不变.
+func (w *bodyWriter) Flush() {
+	w.ResponseWriter.Flush()
 }
 
 func DataMask(maskingService *services.MaskingService) gin.HandlerFunc {
@@ -60,11 +78,16 @@ func DataMask(maskingService *services.MaskingService) gin.HandlerFunc {
 		ctx.Writer = w
 		ctx.Next()
 
-		if ctx.Writer.Status() != http.StatusOK || w.overflow {
+		// 直通 (非 JSON) 或超限截断的响应已经写到底层, 不再二次处理.
+		if w.passthrough || w.overflow || ctx.Writer.Status() != http.StatusOK {
 			return
 		}
-		contentType := ctx.Writer.Header().Get("Content-Type")
+		contentType := w.Header().Get("Content-Type")
 		if !strings.HasPrefix(contentType, "application/json") {
+			// 未知 Content-Type 且没写过字节 → 保守起见原样写出.
+			if w.body.Len() > 0 {
+				_, _ = w.ResponseWriter.Write(w.body.Bytes())
+			}
 			return
 		}
 
@@ -75,17 +98,19 @@ func DataMask(maskingService *services.MaskingService) gin.HandlerFunc {
 
 		var data interface{}
 		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			// 不是合法 JSON → 原样透传, 绝不能丢弃响应.
+			_, _ = w.ResponseWriter.Write(bodyBytes)
 			return
 		}
 
 		masked := maskJSON(data, applicable)
 		maskedBytes, err := json.Marshal(masked)
 		if err != nil {
+			_, _ = w.ResponseWriter.Write(bodyBytes)
 			return
 		}
 
-		w.body.Reset()
-		w.ResponseWriter.Write(maskedBytes)
+		_, _ = w.ResponseWriter.Write(maskedBytes)
 	}
 }
 
@@ -136,10 +161,8 @@ func matchesPattern(value, pattern string) bool {
 func applyMask(value string, algorithm models.MaskingAlgorithm, replacement string) string {
 	switch algorithm {
 	case models.MaskingMD5:
-		if len(value) <= 4 {
-			return strings.Repeat("*", len(value))
-		}
-		return value[:2] + strings.Repeat("*", len(value)-4) + value[len(value)-2:]
+		// P2: 与 services.MaskMD5Mask 统一实现, 避免两套逻辑漂移.
+		return services.MaskMD5Mask(value)
 	case models.MaskingMask:
 		if replacement != "" {
 			return replacement

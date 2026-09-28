@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type InstanceService struct {
@@ -2019,43 +2017,14 @@ type UpdateInstanceStatusRequest struct {
 	SlaveIDs            string `json:"slave_ids"`
 }
 
+// hostKeyCallback 返回 SSH 主机密钥验证回调.
+// P0-4: 逻辑统一收敛到 ssh_helpers.go 的共享 TOFU 实现
+// (首次连接记录, 密钥变更拒绝, errors.As 区分未知主机 vs 密钥不匹配).
 func (s *InstanceService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
-	dataDir := "./data"
-	if s.hostRepo != nil {
-		// 尝试从已知的主机信息推断data目录
+	if insecureHostKeyAllowed() {
+		return ssh.InsecureIgnoreHostKey()
 	}
-	knownHostsPath := filepath.Join(dataDir, "known_hosts")
-	callback, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		log.Printf("WARN: cannot load known_hosts at %s, falling back to key recording: %v", knownHostsPath, err)
-		return s.hostKeyRecorder(knownHostsPath, hostAddr)
-	}
-	return callback
-}
-
-func (s *InstanceService) hostKeyRecorder(knownHostsPath, hostAddr string) ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		if data, err := os.ReadFile(knownHostsPath); err == nil && len(data) > 0 {
-			if cb, cbErr := knownhosts.New(knownHostsPath); cbErr == nil {
-				if verifyErr := cb(hostname, remote, key); verifyErr == nil {
-					return nil
-				}
-				return fmt.Errorf("host key verification failed for %s: host key has changed! Possible MITM attack", hostAddr)
-			}
-		}
-		log.Printf("WARN: First SSH connection to %s — recording host key to %s", hostAddr, knownHostsPath)
-		_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
-		f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("cannot write known_hosts: %w", err)
-		}
-		defer f.Close()
-		line := knownhosts.Line([]string{knownhosts.Normalize(hostAddr)}, key)
-		if _, err := fmt.Fprintln(f, line); err != nil {
-			return fmt.Errorf("write known_hosts: %w", err)
-		}
-		return nil
-	}
+	return tofuHostKeyCallback(knownHostsPath(), hostAddr)
 }
 
 func (s *InstanceService) UpdateInstanceStatus(ctx context.Context, id string, req UpdateInstanceStatusRequest) (*models.Instance, error) {
@@ -2297,41 +2266,17 @@ func sshClient(host *models.Host, credential string) (*ssh.Client, error) {
 	if signer, err := ssh.ParsePrivateKey([]byte(credential)); err == nil {
 		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
 	}
-	dataDir := "./data"
-	knownHostsPath := filepath.Join(dataDir, "known_hosts")
-	knownHostsCB, err := knownhosts.New(knownHostsPath)
-	var hostKeyCallback ssh.HostKeyCallback
-	if err != nil {
-		hostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			if data, readErr := os.ReadFile(knownHostsPath); readErr == nil && len(data) > 0 {
-				if cb, cbErr := knownhosts.New(knownHostsPath); cbErr == nil {
-					if verifyErr := cb(hostname, remote, key); verifyErr == nil {
-						return nil
-					}
-					return fmt.Errorf("host key verification failed for %s: host key has changed! Possible MITM attack", host.Address)
-				}
-			}
-			log.Printf("WARN: First SSH connection to %s — recording host key to %s", host.Address, knownHostsPath)
-			_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
-			f, openErr := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-			if openErr != nil {
-				return fmt.Errorf("cannot write known_hosts: %w", openErr)
-			}
-			defer f.Close()
-			line := knownhosts.Line([]string{knownhosts.Normalize(host.Address)}, key)
-			if _, writeErr := fmt.Fprintln(f, line); writeErr != nil {
-				return fmt.Errorf("write known_hosts: %w", writeErr)
-			}
-			return nil
-		}
-	} else {
-		hostKeyCallback = knownHostsCB
-	}
 	config := &ssh.ClientConfig{
-		User:            host.SSHUser,
-		Auth:            auth,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         10 * time.Second,
+		User: host.SSHUser,
+		Auth: auth,
+		// P0-4: 统一使用共享 TOFU 回调 (原内联实现逻辑相同, 收敛去重).
+		HostKeyCallback: func() ssh.HostKeyCallback {
+			if insecureHostKeyAllowed() {
+				return ssh.InsecureIgnoreHostKey()
+			}
+			return tofuHostKeyCallback(knownHostsPath(), host.Address)
+		}(),
+		Timeout: 10 * time.Second,
 	}
 	return ssh.Dial("tcp", net.JoinHostPort(host.Address, strconv.Itoa(host.SSHPort)), config)
 }

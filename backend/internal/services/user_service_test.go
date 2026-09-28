@@ -19,7 +19,7 @@ func TestUserServiceCreate(t *testing.T) {
 
 	user, err := svc.Create(ctx, CreateUserRequest{
 		Username: "alice",
-		Password: "secret123",
+		Password: "Secret#123",
 		Email:    "alice@test.com",
 		Role:     "dba",
 	})
@@ -37,7 +37,7 @@ func TestUserServiceCreateDefaultStatus(t *testing.T) {
 
 	user, err := svc.Create(ctx, CreateUserRequest{
 		Username: "bob",
-		Password: "secret123",
+		Password: "Secret#123",
 		Email:    "bob@test.com",
 	})
 	require.NoError(t, err)
@@ -48,10 +48,10 @@ func TestUserServiceCreateDuplicateUsername(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	_, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123"})
+	_, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123"})
 	require.NoError(t, err)
 
-	_, err = svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret456"})
+	_, err = svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#456"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "username already exists")
 }
@@ -60,15 +60,16 @@ func TestUserServiceCreateShortPassword(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
+	// P1-4: 弱口令应被拒绝 (原名不副实: 旧实现接受弱口令).
 	_, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "short"})
-	require.NoError(t, err)
+	require.Error(t, err)
 }
 
 func TestUserServiceGetByID(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123"})
+	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123"})
 	require.NoError(t, err)
 
 	user, err := svc.GetByID(ctx, created.ID)
@@ -90,8 +91,8 @@ func TestUserServiceList(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	_, _ = svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123", Email: "alice@test.com"})
-	_, _ = svc.Create(ctx, CreateUserRequest{Username: "bob", Password: "secret456", Email: "bob@test.com"})
+	_, _ = svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123", Email: "alice@test.com"})
+	_, _ = svc.Create(ctx, CreateUserRequest{Username: "bob", Password: "Secret#456", Email: "bob@test.com"})
 
 	users, err := svc.List(ctx, 10, 0)
 	require.NoError(t, err)
@@ -105,7 +106,7 @@ func TestUserServiceUpdate(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123"})
+	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123"})
 	require.NoError(t, err)
 
 	updated, err := svc.Update(ctx, created.ID, UpdateUserRequest{
@@ -123,13 +124,13 @@ func TestUserServiceUpdatePassword(t *testing.T) {
 	svc := NewUserService(userRepo)
 	ctx := context.Background()
 
-	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "oldpass123"})
+	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Oldpass#123"})
 	require.NoError(t, err)
 
 	updated, err := svc.Update(ctx, created.ID, UpdateUserRequest{
 		Username: "alice",
 		Status:   "active",
-		Password: "newpass123",
+		Password: "Newpass#123",
 	})
 	require.NoError(t, err)
 	assert.Empty(t, updated.Password)
@@ -137,7 +138,7 @@ func TestUserServiceUpdatePassword(t *testing.T) {
 	// Verify new password works via AuthService
 	auditSvc := NewAuditService(repositories.NewAuditLogRepository(db), repositories.NewApprovalRequestRepository(db))
 	authSvc := NewAuthService(userRepo, "test-jwt-secret", auditSvc)
-	_, err = authSvc.Login(context.Background(), LoginRequest{Username: "alice", Password: "newpass123"})
+	_, err = authSvc.Login(context.Background(), LoginRequest{Username: "alice", Password: "Newpass#123"})
 	require.NoError(t, err)
 }
 
@@ -145,9 +146,9 @@ func TestUserServiceUpdateDuplicateUsername(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	alice, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123", Email: "alice@test.com"})
+	alice, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123", Email: "alice@test.com"})
 	require.NoError(t, err)
-	bob, err := svc.Create(ctx, CreateUserRequest{Username: "bob", Password: "secret456", Email: "bob@test.com"})
+	bob, err := svc.Create(ctx, CreateUserRequest{Username: "bob", Password: "Secret#456", Email: "bob@test.com"})
 	require.NoError(t, err)
 
 	_, err = svc.Update(ctx, alice.ID, UpdateUserRequest{Username: "bob", Email: "alice@test.com"})
@@ -175,7 +176,7 @@ func TestUserServiceDelete(t *testing.T) {
 	svc := newTestUserService(t)
 	ctx := context.Background()
 
-	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123"})
+	created, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123"})
 	require.NoError(t, err)
 
 	err = svc.Delete(ctx, created.ID)
@@ -200,13 +201,13 @@ func TestUserServicePasswordHashed(t *testing.T) {
 	svc := NewUserService(userRepo)
 	ctx := context.Background()
 
-	user, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "secret123"})
+	user, err := svc.Create(ctx, CreateUserRequest{Username: "alice", Password: "Secret#123"})
 	require.NoError(t, err)
 
 	// Read raw from DB to verify bcrypt hash
 	raw, err := userRepo.GetByID(ctx, user.ID)
 	require.NoError(t, err)
-	assert.NotEqual(t, "secret123", raw.Password)
+	assert.NotEqual(t, "Secret#123", raw.Password)
 	assert.Contains(t, raw.Password, "$2a$")
 }
 
@@ -217,7 +218,7 @@ func TestUserServiceListPaginated(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, _ = svc.Create(ctx, CreateUserRequest{
 			Username: "user" + string(rune('a'+i)),
-			Password: "secret123",
+			Password: "Secret#123",
 			Email:    "user" + string(rune('a'+i)) + "@test.com",
 		})
 	}

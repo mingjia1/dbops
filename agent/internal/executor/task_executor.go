@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -5737,7 +5738,7 @@ func repairMySQLComponentConfig(config map[string]interface{}) (string, error) {
 	}
 	if !check.Fixable {
 		data, _ := json.Marshal(check)
-		return string(data), fmt.Errorf(check.Message)
+		return string(data), errors.New(check.Message)
 	}
 	canReextract := strings.TrimSpace(configString(config, "relay_url")) != "" || strings.TrimSpace(configString(config, "package_url")) != ""
 	// Case 1: Plugin .so file is missing - re-extract MySQL package

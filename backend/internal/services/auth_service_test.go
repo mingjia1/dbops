@@ -38,15 +38,15 @@ func newAuthAuditTestService(t *testing.T) (*AuthService, *repositories.UserRepo
 func TestAuthChangePasswordWritesAuditLogAndUpdatesPassword(t *testing.T) {
 	service, userRepo, auditRepo := newAuthAuditTestService(t)
 	ctx := context.WithValue(context.Background(), "user_id", "user-001")
-	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "old-password", "dba")
+	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "Old-Password#1", "dba")
 
 	err := service.ChangePassword(ctx, "user-001", ChangePasswordRequest{
-		CurrentPassword: "old-password",
-		NewPassword:     "new-password",
+		CurrentPassword: "Old-Password#1",
+		NewPassword:     "New-Password#2",
 	})
 
 	require.NoError(t, err)
-	_, err = service.Login(context.Background(), LoginRequest{Username: "alice", Password: "new-password"})
+	_, err = service.Login(context.Background(), LoginRequest{Username: "alice", Password: "New-Password#2"})
 	require.NoError(t, err)
 
 	logs, err := auditRepo.ListByResource(context.Background(), "user", "user-001", 10, 0)
@@ -57,23 +57,23 @@ func TestAuthChangePasswordWritesAuditLogAndUpdatesPassword(t *testing.T) {
 	assert.Equal(t, "change_password", changeLog.Operation)
 	assert.Equal(t, "change_password", changeLog.Action)
 	assert.Equal(t, "success", changeLog.Result)
-	assert.NotContains(t, changeLog.Details, "new-password")
-	assert.NotContains(t, changeLog.Details, "old-password")
+	assert.NotContains(t, changeLog.Details, "New-Password#2")
+	assert.NotContains(t, changeLog.Details, "Old-Password#1")
 }
 
 func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
 	service, userRepo, auditRepo := newAuthAuditTestService(t)
 	ctx := context.WithValue(context.Background(), "user_id", "admin-001")
-	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "old-password-1", "dba")
-	createAuthTestUser(t, ctx, userRepo, "user-002", "bob", "old-password-2", "operator")
+	createAuthTestUser(t, ctx, userRepo, "user-001", "alice", "Old-Password#1", "dba")
+	createAuthTestUser(t, ctx, userRepo, "user-002", "bob", "Old-Password#2", "operator")
 
-	updated, err := service.ResetAllPasswords(ctx, ResetAllPasswordsRequest{NewPassword: "123456"})
+	updated, err := service.ResetAllPasswords(ctx, ResetAllPasswordsRequest{NewPassword: "Reset#12345"})
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), updated)
-	_, err = service.Login(context.Background(), LoginRequest{Username: "alice", Password: "123456"})
+	_, err = service.Login(context.Background(), LoginRequest{Username: "alice", Password: "Reset#12345"})
 	require.NoError(t, err)
-	_, err = service.Login(context.Background(), LoginRequest{Username: "bob", Password: "123456"})
+	_, err = service.Login(context.Background(), LoginRequest{Username: "bob", Password: "Reset#12345"})
 	require.NoError(t, err)
 
 	logs, err := auditRepo.ListByResource(context.Background(), "user", "all", 10, 0)
@@ -84,15 +84,15 @@ func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
 	assert.Equal(t, "reset_password", logs[0].Action)
 	assert.Equal(t, "success", logs[0].Result)
 	assert.Contains(t, logs[0].Details, "updated_count=2")
-	assert.NotContains(t, logs[0].Details, "123456")
+	assert.NotContains(t, logs[0].Details, "Reset#12345")
 }
 
 func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
 	service, userRepo, _ := newAuthAuditTestService(t)
 	ctx := context.Background()
-	createAuthTestUser(t, ctx, userRepo, "user-003", "carol", "old-password", "operator")
+	createAuthTestUser(t, ctx, userRepo, "user-003", "carol", "Old-Password#1", "operator")
 
-	resp, err := service.Login(ctx, LoginRequest{Username: "carol", Password: "old-password"})
+	resp, err := service.Login(ctx, LoginRequest{Username: "carol", Password: "Old-Password#1"})
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.Token)
 
@@ -107,9 +107,9 @@ func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
 func TestAuthLoginReturnsPermissions(t *testing.T) {
 	service, userRepo, _ := newAuthAuditTestService(t)
 	ctx := context.Background()
-	createAuthTestUser(t, ctx, userRepo, "user-004", "dana", "old-password", "admin")
+	createAuthTestUser(t, ctx, userRepo, "user-004", "dana", "Old-Password#1", "admin")
 
-	resp, err := service.Login(ctx, LoginRequest{Username: "dana", Password: "old-password"})
+	resp, err := service.Login(ctx, LoginRequest{Username: "dana", Password: "Old-Password#1"})
 
 	require.NoError(t, err)
 	require.Contains(t, resp.User.Permissions, "*")

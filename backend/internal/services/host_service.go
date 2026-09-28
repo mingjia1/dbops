@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
@@ -712,50 +710,13 @@ func (s *HostService) sshClient(host *models.Host, credential string) (*ssh.Clie
 }
 
 // hostKeyCallback 返回 SSH 主机密钥验证回调.
-// 使用 known_hosts 文件进行持久化验证: 首次连接时记录主机密钥, 后续连接验证一致性.
+// P0-4: 旧实现无条件接受并追加 known_hosts (等同盲记, 无法防 MITM),
+// 现统一委托 ssh_helpers.go 的共享 TOFU 实现: 首次连接记录, 密钥变更拒绝.
 func (s *HostService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
-	knownHostsPath := filepath.Join(s.dataDir, "known_hosts")
-	// Accept any host key and append to known_hosts. This is appropriate for an
-	// internal ops tool where hosts may be reprovisioned and keys change.
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
-		f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return nil // silently accept even if we can't record
-		}
-		defer f.Close()
-		_, _ = fmt.Fprintln(f, knownhosts.Line([]string{knownhosts.Normalize(hostAddr)}, key))
-		return nil
+	if insecureHostKeyAllowed() {
+		return ssh.InsecureIgnoreHostKey()
 	}
-}
-
-// hostKeyRecorder 在首次连接时自动记录主机密钥到 known_hosts 文件.
-// 后续连接如果密钥不匹配, 拒绝连接 (抗 MITM).
-func (s *HostService) hostKeyRecorder(knownHostsPath, hostAddr string) ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		// 检查是否已存在 known_hosts 文件, 如果后续存在则尝试用已知主机验证
-		if data, err := os.ReadFile(knownHostsPath); err == nil && len(data) > 0 {
-			if cb, cbErr := knownhosts.New(knownHostsPath); cbErr == nil {
-				if verifyErr := cb(hostname, remote, key); verifyErr == nil {
-					return nil
-				}
-				return fmt.Errorf("host key verification failed for %s: host key has changed! Possible MITM attack", hostAddr)
-			}
-		}
-		// 首次连接: 记录主机密钥到 known_hosts
-		log.Printf("WARN: First SSH connection to %s — recording host key to %s", hostAddr, knownHostsPath)
-		_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0o755)
-		f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("cannot write known_hosts: %w", err)
-		}
-		defer f.Close()
-		line := knownhosts.Line([]string{knownhosts.Normalize(hostAddr)}, key)
-		if _, err := fmt.Fprintln(f, line); err != nil {
-			return fmt.Errorf("write known_hosts: %w", err)
-		}
-		return nil
-	}
+	return tofuHostKeyCallback(knownHostsPath(), hostAddr)
 }
 
 func (s *HostService) uploadAgentBinary(client *ssh.Client) error {

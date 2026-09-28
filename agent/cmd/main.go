@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
@@ -42,7 +43,8 @@ func agentAuthMiddleware(agentToken string) gin.HandlerFunc {
 			return
 		}
 		tok := h[len(prefix):]
-		if tok != agentToken {
+		// P2: 常量时间比较, 防止通过响应时序逐字节猜测 agent_token.
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(agentToken)) != 1 {
 			c.AbortWithStatusJSON(401, gin.H{"code": 401, "message": "invalid agent token"})
 			return
 		}

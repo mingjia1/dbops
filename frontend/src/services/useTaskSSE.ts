@@ -91,35 +91,62 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
 
   useEffect(() => {
     if (!enabled || !taskID) return
+    let cancelled = false
 
-    // EventSource 不能自定义 Header；用 query token 兼容鉴权（cookie 也会自动带上）。
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
-    const qs = token ? `?token=${encodeURIComponent(token)}` : ''
-    const url = `${baseURL}/tasks/stream/${taskID}${qs}`
-    const source = new EventSource(url, { withCredentials: true })
-    sourceRef.current = source
-
-    source.onopen = () => setConnected(true)
-
-    source.onmessage = (msg) => {
+    // P0-6: 不再把长效 JWT 拼进 URL (?token= 会泄漏到历史/日志/Referer)。
+    // 优先用 POST /auth/sse-ticket 换 60s 一次性 ticket；拿不到 (离线/测试环境) 则
+    // 降级为裸 URL —— 后端同源场景下 HttpOnly cookie 会自动带上。
+    const connect = async () => {
+      let url = `${baseURL}/tasks/stream/${taskID}`
       try {
-        const event = normalizeTaskEvent(JSON.parse(msg.data))
-        addEvent(event)
+        const res = await fetch('/api/v1/auth/sse-ticket', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            ...(typeof localStorage !== 'undefined' && localStorage.getItem('token')
+              ? { Authorization: `Bearer ${localStorage.getItem('token')}` }
+              : {}),
+          },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const ticket = data?.data?.ticket || data?.ticket
+          if (ticket) url = `${url}?ticket=${encodeURIComponent(ticket)}`
+        }
       } catch {
-        // raw log line
-        setLogs(prev => [...prev, msg.data])
+        // ticket 端点不可达 → 降级裸 URL (cookie 鉴权)
+      }
+      if (cancelled) return
+      const source = new EventSource(url, { withCredentials: true })
+      sourceRef.current = source
+
+      source.onopen = () => setConnected(true)
+
+      source.onmessage = (msg) => {
+        try {
+          const event = normalizeTaskEvent(JSON.parse(msg.data))
+          addEvent(event)
+        } catch {
+          // raw log line
+          setLogs(prev => [...prev, msg.data])
+        }
+      }
+
+      source.onerror = (err) => {
+        setConnected(false)
+        if (onError) onError(new Error('SSE connection lost'))
+        source.close()
       }
     }
 
-    source.onerror = (err) => {
-      setConnected(false)
-      if (onError) onError(new Error('SSE connection lost'))
-      source.close()
-    }
+    void connect()
 
     return () => {
-      source.close()
-      sourceRef.current = null
+      cancelled = true
+      if (sourceRef.current) {
+        sourceRef.current.close()
+        sourceRef.current = null
+      }
     }
   }, [taskID, baseURL, enabled, addEvent, onError])
 

@@ -57,11 +57,17 @@ func (s *MaskingService) GetEnabledRules(ctx context.Context) ([]models.MaskingR
 	return s.repo.ListEnabled(ctx)
 }
 
-func maskMD5(value string) string {
+// MaskMD5Mask P2: 统一的 md5 算法掩码实现 (此前 masking_service 与
+// pkg/middleware/datamask 各有一套且行为不一致; 现中间件也调用本函数).
+func MaskMD5Mask(value string) string {
 	if value == "" {
 		return ""
 	}
 	return "***"
+}
+
+func maskMD5(value string) string {
+	return MaskMD5Mask(value)
 }
 
 func maskWithPattern(value, pattern, replacement string) string {

@@ -48,6 +48,9 @@ func (c *WSController) HandleTaskStream(ctx *gin.Context) {
 	c.hub.HandleSSE(ctx)
 }
 
-func (c *WSController) RegisterRoutes(r *gin.RouterGroup) {
-	r.GET("/tasks/stream/:taskID", c.HandleTaskStream)
+func (c *WSController) RegisterRoutes(r *gin.RouterGroup, authMiddleware ...gin.HandlerFunc) {
+	handler := gin.HandlerFunc(c.HandleTaskStream)
+	// P0-6: SSE 走专用鉴权变体 (支持一次性 ticket), 不吃组上的默认 ValidateToken.
+	mw := authMiddleware[0]
+	r.GET("/tasks/stream/:taskID", mw, handler)
 }

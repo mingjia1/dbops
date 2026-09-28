@@ -105,8 +105,8 @@ Thumbs.db
 *.db
 
 # ---------- 项目特定 ----------
-# CI/CD 和编辑器配置
-.github/
+# P0-1 巡检修复: CI workflow 必须入库, 不再忽略 .github/.
+# 编辑器配置仍忽略:
 .opencode/
 # 平台后端配置（含密钥的本地配置）
 backend/config/config.yaml

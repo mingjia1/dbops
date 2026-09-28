@@ -47,7 +47,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 func (c *AuthController) Register(ctx *gin.Context) {
 	var req struct {
 		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required,min=6"`
+		Password string `json:"password" binding:"required,min=8"`
 		Email    string `json:"email" binding:"required,email"`
 		Role     string `json:"role" binding:"required"`
 	}
@@ -113,26 +113,43 @@ func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, gin.H{"updated": updated})
 }
 
+// ValidateTokenAllowSSETicket P0-6: SSE 流专用 —— 正常鉴权失败前, 先看 ?ticket=.
+// EventSource 无法带 Header; 一次性 ticket (60s, 核销即焚) 替代了之前的 ?token= 长效 JWT.
+func (c *AuthController) ValidateTokenAllowSSETicket(ctx *gin.Context) {
+	if t := ctx.Query("ticket"); t != "" {
+		claims, err := c.authService.RedeemSSETicket(t)
+		if err != nil {
+			utils.UnauthorizedResponse(ctx, err.Error())
+			ctx.Abort()
+			return
+		}
+		setClaimsContext(ctx, claims)
+		ctx.Next()
+		return
+	}
+	c.ValidateToken(ctx)
+}
+
+func setClaimsContext(ctx *gin.Context, claims *services.Claims) {
+	ctx.Set("user_id", claims.UserID)
+	ctx.Set("username", claims.Username)
+	ctx.Set("role", claims.Role)
+	ctx.Set("permissions", claims.Permissions)
+	ctx.Set("must_change_password", claims.MustChangePassword)
+}
+
 func (c *AuthController) ValidateToken(ctx *gin.Context) {
 	// B1 (cookie): 优先读 Authorization header, fallback 到 HttpOnly cookie "auth_token".
-	// EventSource 不能带 Header：仅 /tasks/stream/ 允许 ?token=（不开放给其它 API）。
+	// P0-6: 不再支持 ?token= 查询串 —— 长效 JWT 出现在 URL 里会泄漏到历史/日志/Referer;
+	// EventSource 需要鉴权时改用 POST /auth/sse-ticket 换一次性短命 ticket.
 	headerToken := ctx.GetHeader("Authorization")
 	cookieToken := ""
 	if c, err := ctx.Cookie("auth_token"); err == nil && c != "" {
 		cookieToken = "Bearer " + c
 	}
-	queryToken := ""
-	if strings.Contains(ctx.Request.URL.Path, "/tasks/stream/") {
-		if q := ctx.Query("token"); q != "" {
-			queryToken = "Bearer " + q
-		}
-	}
 	token := headerToken
 	if token == "" {
 		token = cookieToken
-	}
-	if token == "" {
-		token = queryToken
 	}
 	if token == "" {
 		utils.UnauthorizedResponse(ctx, "Missing authorization token")
@@ -158,11 +175,7 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Set("user_id", claims.UserID)
-	ctx.Set("username", claims.Username)
-	ctx.Set("role", claims.Role)
-	ctx.Set("permissions", claims.Permissions)
-	ctx.Set("must_change_password", claims.MustChangePassword)
+	setClaimsContext(ctx, claims)
 	if claims.MustChangePassword && !isPasswordChangeAllowedPath(ctx.Request.URL.Path) {
 		utils.ErrorResponse(ctx, http.StatusForbidden, "Password change required before continuing", nil)
 		ctx.Abort()
@@ -173,6 +186,32 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 
 func isPasswordChangeAllowedPath(path string) bool {
 	return strings.HasSuffix(path, "/auth/change-password") || strings.HasSuffix(path, "/auth/me")
+}
+
+// IssueSSETicket P0-6: 用正常鉴权态换一个 60 秒一次性 SSE ticket,
+// 供 EventSource (无法带 Header) 连接 /tasks/stream/:id?ticket=xxx 使用.
+func (c *AuthController) IssueSSETicket(ctx *gin.Context) {
+	claimsVal, ok := ctx.Get("user_id")
+	if !ok || claimsVal == nil {
+		utils.UnauthorizedResponse(ctx, "Missing authorization")
+		return
+	}
+	userID := ctx.GetString("user_id")
+	username := ctx.GetString("username")
+	role := ctx.GetString("role")
+	perms, _ := ctx.Get("permissions")
+	permissions, _ := perms.([]string)
+	claims := &services.Claims{
+		UserID:      userID,
+		Username:    username,
+		Role:        role,
+		Permissions: permissions,
+	}
+	ticket, expiresAt := c.authService.IssueSSETicket(claims)
+	utils.SuccessResponse(ctx, gin.H{
+		"ticket":     ticket,
+		"expires_at": expiresAt.Unix(),
+	})
 }
 
 func shouldUseSecureCookie(ctx *gin.Context) bool {

@@ -53,11 +53,25 @@ const OriginalEventSource = globalThis.EventSource
 beforeEach(() => {
   MockEventSource.reset()
   ;(globalThis as any).EventSource = MockEventSource as any
+  // P0-6: 连接流程先 fetch 一次性 ticket。测试环境让 fetch 直接拒绝,
+  // hook 走降级分支 (裸 URL + cookie), 行为确定且无真实网络请求。
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('no ticket endpoint in tests')))
 })
 
 afterEach(() => {
   globalThis.EventSource = OriginalEventSource
+  vi.unstubAllGlobals()
 })
+
+// P0-6: EventSource 现在在 ticket fetch 之后异步创建, 用 waitFor 等它出现。
+async function getLastSource(): Promise<MockEventSource> {
+  let instance: MockEventSource | undefined
+  await waitFor(() => {
+    instance = MockEventSource.lastInstance()
+    expect(instance).toBeDefined()
+  })
+  return instance!
+}
 
 describe('useTaskSSE', () => {
   const defaultOptions: UseTaskSSEOptions = {
@@ -65,12 +79,11 @@ describe('useTaskSSE', () => {
     enabled: true,
   }
 
-  it('connects to SSE endpoint with correct URL', () => {
+  it('connects to SSE endpoint with correct URL', async () => {
     renderHook(() => useTaskSSE(defaultOptions))
 
-    const instance = MockEventSource.lastInstance()
-    expect(instance).toBeDefined()
-    expect(instance!.url).toBe('/api/v1/tasks/stream/test-deploy-001')
+    const instance = await getLastSource()
+    expect(instance.url).toBe('/api/v1/tasks/stream/test-deploy-001')
   })
 
   it('does not connect when disabled', () => {
@@ -85,12 +98,11 @@ describe('useTaskSSE', () => {
     expect(MockEventSource.instances.length).toBe(0)
   })
 
-  it('calls onProgress when receiving progress event', () => {
+  it('calls onProgress when receiving progress event', async () => {
     const onProgress = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onProgress }))
 
-    const instance = MockEventSource.lastInstance()
-    expect(instance).toBeDefined()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -109,12 +121,11 @@ describe('useTaskSSE', () => {
     expect(onProgress).toHaveBeenCalledWith(event)
   })
 
-  it('unwraps backend SSE messages before dispatching events', () => {
+  it('unwraps backend SSE messages before dispatching events', async () => {
     const onProgress = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onProgress }))
 
-    const instance = MockEventSource.lastInstance()
-    expect(instance).toBeDefined()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -133,11 +144,11 @@ describe('useTaskSSE', () => {
     expect(onProgress).toHaveBeenCalledWith(event)
   })
 
-  it('calls onLog when receiving log event', () => {
+  it('calls onLog when receiving log event', async () => {
     const onLog = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onLog }))
 
-    const instance = MockEventSource.lastInstance()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -156,11 +167,11 @@ describe('useTaskSSE', () => {
     expect(onLog).toHaveBeenCalledWith(event)
   })
 
-  it('calls onStep when receiving step event', () => {
+  it('calls onStep when receiving step event', async () => {
     const onStep = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onStep }))
 
-    const instance = MockEventSource.lastInstance()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -184,11 +195,11 @@ describe('useTaskSSE', () => {
     expect(onStep).toHaveBeenCalledWith(event)
   })
 
-  it('calls onStep multiple times for different steps', () => {
+  it('calls onStep multiple times for different steps', async () => {
     const onStep = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onStep }))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
 
     const step1: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -218,11 +229,11 @@ describe('useTaskSSE', () => {
     expect(onStep).toHaveBeenNthCalledWith(2, step2)
   })
 
-  it('calls onStatus when receiving status event', () => {
+  it('calls onStatus when receiving status event', async () => {
     const onStatus = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onStatus }))
 
-    const instance = MockEventSource.lastInstance()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -241,11 +252,11 @@ describe('useTaskSSE', () => {
     expect(onStatus).toHaveBeenCalledWith(event)
   })
 
-  it('calls onComplete when receiving completed status', () => {
+  it('calls onComplete when receiving completed status', async () => {
     const onComplete = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onComplete }))
 
-    const instance = MockEventSource.lastInstance()
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',
@@ -266,12 +277,11 @@ describe('useTaskSSE', () => {
   it('updates returned state values on progress events', async () => {
     const { result } = renderHook(() => useTaskSSE(defaultOptions))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
 
     expect(result.current.progress).toBe(0)
     expect(result.current.stage).toBe('')
     expect(result.current.status).toBe('pending')
-    expect(result.current.connected).toBe(false)
 
     // Wait for connection
     await waitFor(() => {
@@ -293,10 +303,10 @@ describe('useTaskSSE', () => {
     expect(result.current.stage).toBe('启动节点')
   })
 
-  it('handles raw (non-JSON) messages as log lines', () => {
+  it('handles raw (non-JSON) messages as log lines', async () => {
     const { result } = renderHook(() => useTaskSSE(defaultOptions))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
 
     act(() => {
       instance!.receive('This is a raw log line')
@@ -305,10 +315,10 @@ describe('useTaskSSE', () => {
     expect(result.current.logs).toContain('This is a raw log line')
   })
 
-  it('disconnects and cleans up EventSource on unmount', () => {
+  it('disconnects and cleans up EventSource on unmount', async () => {
     const { unmount } = renderHook(() => useTaskSSE(defaultOptions))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
     expect(instance.closed).toBe(false)
 
     unmount()
@@ -316,10 +326,10 @@ describe('useTaskSSE', () => {
     expect(instance.closed).toBe(true)
   })
 
-  it('disconnect function closes EventSource', () => {
+  it('disconnect function closes EventSource', async () => {
     const { result } = renderHook(() => useTaskSSE(defaultOptions))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
     expect(instance.closed).toBe(false)
 
     act(() => {
@@ -329,11 +339,11 @@ describe('useTaskSSE', () => {
     expect(instance.closed).toBe(true)
   })
 
-  it('calls onError when SSE connection fails', () => {
+  it('calls onError when SSE connection fails', async () => {
     const onError = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onError }))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
 
     act(() => {
       instance!.fail()
@@ -342,11 +352,11 @@ describe('useTaskSSE', () => {
     expect(onError).toHaveBeenCalledTimes(1)
   })
 
-  it('calls onStep even when metadata is empty', () => {
+  it('calls onStep even when metadata is empty', async () => {
     const onStep = vi.fn()
     renderHook(() => useTaskSSE({ ...defaultOptions, onStep }))
 
-    const instance = MockEventSource.lastInstance()!
+    const instance = await getLastSource()
 
     const event: TaskEvent = {
       task_id: 'test-deploy-001',

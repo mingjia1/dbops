@@ -7,9 +7,11 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
@@ -38,11 +40,26 @@ func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string, aud
 			tokenExpiry = d
 		}
 	}
+	// P0-5: 认证旁路不再允许隐式触发, 改为显式 env 开关:
+	//   DBOPS_STANDALONE 未设置 -> 维持 userRepo==nil 推导 (兼容单测/嵌入式场景)
+	//   =1/true/yes            -> 显式开启认证旁路 (任意凭据得 admin)
+	//   =0/false/no            -> 显式关闭
+	standalone := userRepo == nil
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DBOPS_STANDALONE"))) {
+	case "1", "true", "yes":
+		standalone = true
+	case "0", "false", "no":
+		standalone = false
+	}
+	if standalone {
+		log.Printf("[SECURITY] DANGER: standalone authentication bypass is ACTIVE (DBOPS_STANDALONE or no user repo). " +
+			"Any credential yields admin. NEVER enable in production.")
+	}
 	return &AuthService{
 		userRepo:    userRepo,
 		auditSvc:    audit,
 		db:          db,
-		standalone:  userRepo == nil,
+		standalone:  standalone,
 		jwtSecret:   jwtSecret,
 		tokenExpiry: tokenExpiry,
 	}
@@ -72,11 +89,11 @@ type LoginResponse struct {
 
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
-	NewPassword     string `json:"new_password" binding:"required,min=6"`
+	NewPassword     string `json:"new_password" binding:"required,min=8"`
 }
 
 type ResetAllPasswordsRequest struct {
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
 }
 
 type UserInfo struct {
@@ -100,9 +117,9 @@ type Claims struct {
 }
 
 func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginResponse, error) {
-	// Standalone 模式：允许任意用户名密码登录
+	// Standalone 模式：允许任意用户名密码登录 (仅 DBOPS_STANDALONE 显式开启时可达)
 	if s.IsStandalone() {
-		log.Printf("[SECURITY] WARNING: Standalone mode active — all authentication bypassed")
+		log.Printf("[SECURITY] WARNING: Standalone mode active — authentication bypassed for %q from %s", req.Username, req.IPAddress)
 		expiresAt := time.Now().Add(s.tokenExpiry)
 		claims := &Claims{
 			UserID:      "standalone-user",
@@ -218,30 +235,113 @@ func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		if !s.IsStandalone() && s.userRepo != nil {
-			user, err := s.userRepo.GetByID(context.Background(), claims.UserID)
-			if err != nil {
-				return nil, err
-			}
-			if user == nil || user.Status != "active" {
-				return nil, errors.New("user account is not active")
-			}
-			permissions, _ := s.permissionsForUser(context.Background(), user)
-			mustChangePassword := userMustChangePassword(user)
-			if mustChangePassword {
-				permissions = []string{"auth:change_password"}
-				claims.Role = "password_change_required"
-			} else {
-				claims.Role = user.Role
-			}
-			claims.Permissions = permissions
-			claims.Username = user.Username
-			claims.MustChangePassword = mustChangePassword
+		if err := s.refreshClaimsFromDB(claims); err != nil {
+			return nil, err
 		}
 		return claims, nil
 	}
 
 	return nil, errors.New("invalid token")
+}
+
+// refreshClaimsFromDB P0-6: ValidateToken 与 RedeemSSETicket 共用的 DB 刷新逻辑.
+func (s *AuthService) refreshClaimsFromDB(claims *Claims) error {
+	if s.IsStandalone() || s.userRepo == nil {
+		return nil
+	}
+	user, err := s.userRepo.GetByID(context.Background(), claims.UserID)
+	if err != nil {
+		return err
+	}
+	if user == nil || user.Status != "active" {
+		return errors.New("user account is not active")
+	}
+	permissions, _ := s.permissionsForUser(context.Background(), user)
+	mustChangePassword := userMustChangePassword(user)
+	if mustChangePassword {
+		permissions = []string{"auth:change_password"}
+		claims.Role = "password_change_required"
+	} else {
+		claims.Role = user.Role
+	}
+	claims.Permissions = permissions
+	claims.Username = user.Username
+	claims.MustChangePassword = mustChangePassword
+	return nil
+}
+
+// --- P0-6: SSE 一次性 ticket -------------------------------------------------
+// EventSource 无法带自定义 Header, 此前前端把长效 JWT 拼在 ?token= 里,
+// 会进入浏览器历史/代理日志/Referer. 改为: 前端先用正常鉴权换一个
+// 60 秒一次性 ticket, SSE URL 只暴露这个短命凭据.
+
+const sseTicketTTL = 60 * time.Second
+
+type sseTicket struct {
+	claims    *Claims
+	expiresAt time.Time
+}
+
+var (
+	sseTicketMu      sync.Mutex
+	sseTickets       = map[string]sseTicket{}
+	sseTicketGCRunning bool
+)
+
+// IssueSSETicket 为已认证用户签发一次性 SSE ticket.
+func (s *AuthService) IssueSSETicket(claims *Claims) (string, time.Time) {
+	ticket := uuid.NewString() + uuid.NewString()
+	dup := *claims
+	expiresAt := time.Now().Add(sseTicketTTL)
+	sseTicketMu.Lock()
+	sseTickets[ticket] = sseTicket{claims: &dup, expiresAt: expiresAt}
+	sseTicketMu.Unlock()
+	s.maybeGCSEETickets()
+	return ticket, expiresAt
+}
+
+// RedeemSSETicket 核销 ticket: 有效返回 claims, 否则报错. 只能用一次.
+func (s *AuthService) RedeemSSETicket(ticket string) (*Claims, error) {
+	sseTicketMu.Lock()
+	t, ok := sseTickets[ticket]
+	if ok {
+		delete(sseTickets, ticket)
+	}
+	sseTicketMu.Unlock()
+	if !ok {
+		return nil, errors.New("invalid or already-used SSE ticket")
+	}
+	if time.Now().After(t.expiresAt) {
+		return nil, errors.New("SSE ticket expired")
+	}
+	claims := *t.claims
+	if err := s.refreshClaimsFromDB(&claims); err != nil {
+		return nil, err
+	}
+	return &claims, nil
+}
+
+// maybeGCSEETickets 惰性清理过期 ticket, 避免内存无限增长.
+func (s *AuthService) maybeGCSEETickets() {
+	sseTicketMu.Lock()
+	defer sseTicketMu.Unlock()
+	if sseTicketGCRunning {
+		return
+	}
+	sseTicketGCRunning = true
+	go func() {
+		for {
+			time.Sleep(sseTicketTTL)
+			now := time.Now()
+			sseTicketMu.Lock()
+			for k, t := range sseTickets {
+				if now.After(t.expiresAt) {
+					delete(sseTickets, k)
+				}
+			}
+			sseTicketMu.Unlock()
+		}
+	}()
 }
 
 func (s *AuthService) HasPermission(role, permission string) bool {
@@ -296,6 +396,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
 		return errors.New("current password is incorrect")
 	}
+	// P1-4: 口令策略服务端兜底 —— binding 只保证长度, 复杂度在这里强制.
+	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+		return err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
@@ -310,6 +414,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswordsRequest) (int64, error) {
 	if s.IsStandalone() || s.userRepo == nil {
 		return 0, errors.New("password reset is not available in standalone mode")
+	}
+	// P1-4: 复杂度校验 (重置全员口令同样不豁免).
+	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+		return 0, err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {

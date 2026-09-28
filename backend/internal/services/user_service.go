@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -31,7 +32,7 @@ func (s *UserService) SetAuditService(auditSvc *AuditService) {
 
 type CreateUserRequest struct {
 	Username    string   `json:"username" binding:"required"`
-	Password    string   `json:"password" binding:"required,min=6"`
+	Password    string   `json:"password" binding:"required,min=8"`
 	Email       string   `json:"email" binding:"required,email"`
 	Role        string   `json:"role" binding:"required"`
 	Roles       []string `json:"roles"`
@@ -42,7 +43,7 @@ type CreateUserRequest struct {
 
 type UpdateUserRequest struct {
 	Username    string   `json:"username" binding:"required"`
-	Password    string   `json:"password" binding:"omitempty,min=6"`
+	Password    string   `json:"password" binding:"omitempty,min=8"`
 	Email       string   `json:"email" binding:"required,email"`
 	Role        string   `json:"role" binding:"required"`
 	Roles       []string `json:"roles"`
@@ -52,7 +53,7 @@ type UpdateUserRequest struct {
 }
 
 type ResetUserPasswordRequest struct {
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
 }
 
 type UpdateUserRolesRequest struct {
@@ -98,6 +99,10 @@ func (s *UserService) Create(ctx context.Context, req CreateUserRequest) (*model
 		return nil, err
 	} else if existing != nil {
 		return nil, errors.New("username already exists")
+	}
+	// P1-4: 口令复杂度校验 (管理员建号同样不豁免).
+	if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+		return nil, err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -169,6 +174,10 @@ func (s *UserService) Update(ctx context.Context, id string, req UpdateUserReque
 	user.Phone = req.Phone
 	user.UpdatedAt = time.Now()
 	if req.Password != "" {
+		// P1-4: 更新时传入新口令同样校验复杂度.
+		if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+			return nil, err
+		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, fmt.Errorf("hash password: %w", err)
@@ -231,6 +240,10 @@ func (s *UserService) ResetPassword(ctx context.Context, id string, req ResetUse
 	}
 	if user == nil {
 		return errors.New("user not found")
+	}
+	// P1-4: 复杂度校验.
+	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {

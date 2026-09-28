@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +25,8 @@ import (
 	pluginArch "github.com/jackcode/mysql-ops-platform/internal/plugins/arch"
 	pluginMiddleware "github.com/jackcode/mysql-ops-platform/internal/plugins/middleware"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
+
+	_ "modernc.org/sqlite" // P0-7: db-backup 子命令直接 open SQLite 做 checkpoint
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
@@ -54,6 +59,25 @@ func requireAgentToken(agentToken string) gin.HandlerFunc {
 }
 
 func main() {
+	// P0-8: 运维子命令入口. `make db-migrate` / Makefile upgrade 目标都期待
+	// `go run ./cmd/main.go migrate` 可独立执行 schema 迁移, 之前没有实现,
+	// 导致迁移只在启动时隐式发生且失败仅 Warn.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "migrate":
+			if err := runMigrationsCLI(); err != nil {
+				log.Fatalf("migrate failed: %v", err)
+			}
+			fmt.Println("migrate: OK")
+			return
+		case "db-backup":
+			if err := runDBBackupCLI(); err != nil {
+				log.Fatalf("db-backup failed: %v", err)
+			}
+			return
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -110,7 +134,12 @@ func main() {
 
 	if db != nil {
 		defer db.Close()
+		// P0-8: 迁移失败不再无条件容忍. MySQL 模式下 schema 不完整的服务等同于带病运行
+		// (查询报错/写丢数据), 直接 Fatal; auto/sqlite 模式保持 Warn 以兼容开发环境.
 		if err := runMigrations(db); err != nil {
+			if strings.EqualFold(cfg.StorageMode, "mysql") {
+				logInstance.Fatal("Migrations failed in mysql storage mode: " + err.Error())
+			}
 			logInstance.Warn("Migrations skipped: " + err.Error())
 		} else {
 			logInstance.Info("Schema migrations applied")
@@ -458,7 +487,14 @@ func main() {
 				authProtected.POST("/change-password", authController.ChangePassword)
 				authProtected.POST("/reset-all-passwords", middleware.RequirePermission("admin"), authController.ResetAllPasswords)
 				authProtected.GET("/me", authController.Me)
+				// P0-6: EventSource 无法带 Header, 前端先换 60s 一次性 ticket 再连 SSE.
+				authProtected.POST("/sse-ticket", authController.IssueSSETicket)
 			}
+
+			// P1-1: 数据脱敏中间件终于接入请求链 (此前只实现了从未挂载).
+			// 顺序: 鉴权 (拿到 role) → 脱敏 (非 admin 且命中规则时掩码 JSON 响应).
+			// 注意不要挂在 SSE 流路由上 —— bodyWriter 会缓冲流式响应.
+			protected.Use(middleware.DataMask(maskingService))
 
 			users := protected.Group("/users")
 			users.Use(middleware.RequirePermission("user:manage"))
@@ -645,7 +681,8 @@ func main() {
 				settings.DELETE("/:key", middleware.RequirePermission("admin"), settingsController.Delete)
 			}
 
-			relay := protected.Group("/relay")
+			// P0-3: relay 组是"平台代下载/上传/SSH 拉取"高危面, 整组 admin 才能调用.
+			relay := protected.Group("/relay", middleware.RequirePermission("admin"))
 			{
 				// Proxy HEAD request to test source connectivity (avoids browser CORS)
 				relay.POST("/test-source", func(c *gin.Context) {
@@ -656,6 +693,13 @@ func main() {
 						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
 						return
 					}
+					// P0-3: SSRF 防护 - 仅 http/https, 拒绝私网/环回地址.
+					cleanURL, urlErr := utils.ValidateExternalURL(body.URL)
+					if urlErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": urlErr.Error()})
+						return
+					}
+					body.URL = cleanURL
 					client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 						if len(via) >= 3 {
 							return fmt.Errorf("too many redirects")
@@ -687,16 +731,21 @@ func main() {
 						return
 					}
 					defer file.Close()
-					subPath := c.PostForm("path")
-					destDir := filepath.Join(cfg.DataDir, "packages")
-					if subPath != "" {
-						destDir = filepath.Join(destDir, subPath)
+					// P0-3: 路径穿越防护 - subPath 与 filename 都要约束在 packages 根目录内.
+					destDir, pathErr := utils.SafeJoinUnder(filepath.Join(cfg.DataDir, "packages"), c.PostForm("path"))
+					if pathErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": pathErr.Error()})
+						return
 					}
 					if err := os.MkdirAll(destDir, 0o755); err != nil {
 						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
 						return
 					}
-					destPath := filepath.Join(destDir, header.Filename)
+					destPath, fileErr := utils.SafeJoinUnder(destDir, filepath.Base(header.Filename))
+					if fileErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": fileErr.Error()})
+						return
+					}
 					out, err := os.Create(destPath)
 					if err != nil {
 						c.JSON(500, gin.H{"code": 500, "message": "create file failed: " + err.Error()})
@@ -721,15 +770,27 @@ func main() {
 						c.JSON(400, gin.H{"code": 400, "message": "url and filename are required"})
 						return
 					}
-					destDir := filepath.Join(cfg.DataDir, "packages")
-					if body.TargetPath != "" {
-						destDir = filepath.Join(destDir, body.TargetPath)
+					// P0-3: SSRF + 路径穿越双重防护.
+					cleanURL, urlErr := utils.ValidateExternalURL(body.URL)
+					if urlErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": urlErr.Error()})
+						return
+					}
+					body.URL = cleanURL
+					destDir, pathErr := utils.SafeJoinUnder(filepath.Join(cfg.DataDir, "packages"), body.TargetPath)
+					if pathErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": pathErr.Error()})
+						return
 					}
 					if err := os.MkdirAll(destDir, 0o755); err != nil {
 						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
 						return
 					}
-					destPath := filepath.Join(destDir, body.Filename)
+					destPath, fileErr := utils.SafeJoinUnder(destDir, filepath.Base(body.Filename))
+					if fileErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": fileErr.Error()})
+						return
+					}
 					// Check if already exists
 					if _, err := os.Stat(destPath); err == nil {
 						info, _ := os.Stat(destPath)
@@ -774,10 +835,12 @@ func main() {
 						Path       string   `json:"path"`
 						Extensions []string `json:"extensions"`
 					}
-					c.ShouldBindJSON(&body)
-					scanDir := filepath.Join(cfg.DataDir, "packages")
-					if body.Path != "" {
-						scanDir = filepath.Join(scanDir, body.Path)
+					_ = c.ShouldBindJSON(&body)
+					// P0-3: 路径穿越防护.
+					scanDir, pathErr := utils.SafeJoinUnder(filepath.Join(cfg.DataDir, "packages"), body.Path)
+					if pathErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": pathErr.Error()})
+						return
 					}
 					exts := body.Extensions
 					if len(exts) == 0 {
@@ -812,6 +875,13 @@ func main() {
 						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
 						return
 					}
+					// P0-3: SSRF 防护.
+					cleanURL, urlErr := utils.ValidateExternalURL(body.URL)
+					if urlErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": urlErr.Error()})
+						return
+					}
+					body.URL = cleanURL
 					scanURL := strings.TrimRight(body.URL, "/")
 					if body.Path != "" {
 						scanURL += "/" + strings.TrimLeft(body.Path, "/")
@@ -882,13 +952,12 @@ func main() {
 						c.JSON(400, gin.H{"code": 400, "message": "path is required"})
 						return
 					}
-					// Prevent path traversal
-					clean := filepath.Clean(body.Path)
-					if strings.Contains(clean, "..") {
-						c.JSON(400, gin.H{"code": 400, "message": "invalid path"})
+					// P0-3: 路径穿越防护统一走 SafeJoinUnder (原 ".." 黑名单有编码绕过风险).
+					fullPath, pathErr := utils.SafeJoinUnder(filepath.Join(cfg.DataDir, "packages"), body.Path)
+					if pathErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": pathErr.Error()})
 						return
 					}
-					fullPath := filepath.Join(cfg.DataDir, "packages", clean)
 					if err := os.Remove(fullPath); err != nil {
 						c.JSON(500, gin.H{"code": 500, "message": "delete failed: " + err.Error()})
 						return
@@ -979,9 +1048,14 @@ func main() {
 						return
 					}
 					defer sshClient.Close()
+					// P0-3: SCP 下载目的地也约束在 packages 根目录内.
 					localPath := body.LocalPath
 					if localPath == "" {
 						localPath = filepath.Join(cfg.DataDir, "packages", filepath.Base(body.FilePath))
+					}
+					if _, pathErr := utils.SafeJoinUnder(filepath.Join(cfg.DataDir, "packages"), localPath); pathErr != nil {
+						c.JSON(400, gin.H{"code": 400, "message": pathErr.Error()})
+						return
 					}
 					if err := services.SCPDownload(sshClient, body.FilePath, localPath); err != nil {
 						c.JSON(500, gin.H{"code": 500, "message": "SCP download failed: " + err.Error()})
@@ -1088,10 +1162,12 @@ func main() {
 			approvals := protected.Group("/approvals")
 			{
 				approvals.GET("", approvalController.ListApprovalRequests)
+				// P1-2: 权限倒挂修复 —— 创建要 admin, 审批/驳回这种高危动作反而裸奔;
+				// 现在审批动作同样要求 admin (审批人不应低于创建人权限).
 				approvals.POST("", middleware.RequirePermission("admin"), approvalController.CreateApprovalRequest)
 				approvals.GET("/:id", approvalController.GetApprovalRequestByID)
-				approvals.POST("/:id/approve", approvalController.ApproveRequest)
-				approvals.POST("/:id/reject", approvalController.RejectRequest)
+				approvals.POST("/:id/approve", middleware.RequirePermission("admin"), approvalController.ApproveRequest)
+				approvals.POST("/:id/reject", middleware.RequirePermission("admin"), approvalController.RejectRequest)
 			}
 
 			// B8: 通用 task 进度查询, 升级/备份/迁移共用.
@@ -1104,7 +1180,9 @@ func main() {
 			}
 
 			// SSE task progress stream.
-			wsController.RegisterRoutes(protected)
+			// P0-6: 用支持一次性 ticket 的鉴权变体替换组默认中间件,
+			// EventSource 连接时可带 ?ticket=xxx (60s 一次性), 不再支持 ?token=.
+			wsController.RegisterRoutes(protected, authController.ValidateTokenAllowSSETicket)
 
 			// Plugin management API.
 			pluginRoutes := protected.Group("/plugins")
@@ -1314,4 +1392,238 @@ func seedAuthSettings(ctx context.Context, db *repositories.Database, logInstanc
 			logInstance.Warn("Failed to seed auth setting " + key + ": " + err.Error())
 		}
 	}
+}
+
+// runMigrationsCLI P0-8: `main.go migrate` 子命令 —— 独立执行 schema 迁移,
+// 供 `make db-migrate` 与升级脚本调用. 任何失败返回非零退出码.
+func runMigrationsCLI() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	sqlitePath := cfg.SQLitePath
+	if sqlitePath == "" {
+		sqlitePath = "../db/dbops.db"
+	}
+	db, err := repositories.NewDatabaseWithMode(cfg.DatabaseURL, sqlitePath, cfg.StorageMode)
+	if err != nil {
+		return fmt.Errorf("open database (mode=%s): %w", cfg.StorageMode, err)
+	}
+	defer db.Close()
+	return runMigrations(db)
+}
+
+// runDBBackupCLI P0-7: `main.go db-backup` 子命令 —— 元数据库备份.
+//   - SQLite: 安全快照 (WAL checkpoint + 整库拷贝到临时名后原子 rename),
+	//     支持输出目录与保留份数轮转.
+//   - MySQL: 调用 mysqldump (要求 PATH 中可用), 输出到指定目录.
+//
+// 用法: main.go db-backup [--output-dir DIR] [--keep N]
+func runDBBackupCLI() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	outDir := "./backups"
+	keep := 7
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--output-dir":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--output-dir requires a value")
+			}
+			i++
+			outDir = args[i]
+		case "--keep":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--keep requires a value")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 {
+				return fmt.Errorf("--keep must be a positive integer")
+			}
+			keep = n
+		}
+	}
+
+	var backupErr error
+	if isMySQLDSN(cfg.DatabaseURL) && !strings.EqualFold(cfg.StorageMode, "sqlite") {
+		backupErr = backupMySQL(cfg.DatabaseURL, outDir, keep)
+	} else {
+		sqlitePath := cfg.SQLitePath
+		if sqlitePath == "" {
+			sqlitePath = "../db/dbops.db"
+		}
+		backupErr = backupSQLite(sqlitePath, outDir, keep)
+	}
+	if backupErr != nil {
+		return backupErr
+	}
+	fmt.Printf("db-backup: OK (dir=%s, keep=%d)\n", outDir, keep)
+	return nil
+}
+
+// isMySQLDSN 粗判 DSN 是否指向 MySQL (与 repositories.normalizeMode 的 auto 语义一致).
+func isMySQLDSN(dsn string) bool {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return false
+	}
+	if strings.Contains(dsn, "@tcp(") || strings.Contains(dsn, "@unix(") {
+		return true
+	}
+	return strings.Contains(dsn, "://") && strings.Contains(dsn, "mysql")
+}
+
+// backupSQLite 对 SQLite 元数据库做一致性快照并轮转保留.
+func backupSQLite(dbPath, outDir string, keep int) error {
+	if _, err := os.Stat(dbPath); err != nil {
+		return fmt.Errorf("sqlite db not found at %s: %w", dbPath, err)
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	stamp := time.Now().Format("20060102-150405")
+	tmpPath := filepath.Join(outDir, "dbops.db.backup-tmp")
+	finalPath := filepath.Join(outDir, fmt.Sprintf("dbops-%s.db", stamp))
+
+	// 打开源库执行 WAL checkpoint, 把 -wal 日志合并进主文件, 保证拷贝一致性.
+	// modernc.org/sqlite 注册的驱动名是 "sqlite" (与 repositories.openSQLite 一致).
+	src, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return fmt.Errorf("open sqlite: %w", err)
+	}
+	defer src.Close()
+	if _, err := src.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("wal checkpoint: %w", err)
+	}
+
+	in, err := os.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("copy db: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	// 原子 rename, 避免备份进程被杀时留下半截文件.
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	fmt.Printf("sqlite backup: %s\n", finalPath)
+	return rotateBackups(outDir, "dbops-*.db", keep)
+}
+
+// backupMySQL 用 mysqldump 导出元数据库 (要求 mysqldump 在 PATH 中).
+// 凭据通过环境变量 MYSQL_PWD 传递, 避免出现在进程列表 (ps) 中.
+func backupMySQL(dsn, outDir string, keep int) error {
+	if _, err := exec.LookPath("mysqldump"); err != nil {
+		return fmt.Errorf("mysqldump not found in PATH: %w", err)
+	}
+	user, pass, host, port, dbName, err := parseMySQLDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("parse DSN: %w", err)
+	}
+	if dbName == "" {
+		return fmt.Errorf("DSN has no database name")
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	stamp := time.Now().Format("20060102-150405")
+	tmpPath := filepath.Join(outDir, "dbops.sql.backup-tmp")
+	finalPath := filepath.Join(outDir, fmt.Sprintf("dbops-%s.sql", stamp))
+
+	cmd := exec.Command("mysqldump",
+		"--single-transaction", // InnoDB 一致性快照, 不锁表
+		"--routines", "--triggers", "--events",
+		"--host", host, "--port", port, "--user", user,
+		dbName,
+	)
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+pass)
+	dump, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = dump
+	cmd.Stderr = os.Stderr
+	dumpErr := cmd.Run()
+	dump.Close()
+	if dumpErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("mysqldump: %w", dumpErr)
+	}
+	// 空转储视为失败 (可能是权限问题只打了告警).
+	if info, statErr := os.Stat(tmpPath); statErr != nil || info.Size() == 0 {
+		os.Remove(tmpPath)
+		return fmt.Errorf("mysqldump produced empty output")
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	fmt.Printf("mysql backup: %s\n", finalPath)
+	return rotateBackups(outDir, "dbops-*.sql", keep)
+}
+
+// parseMySQLDSN 解析 go-sql-driver DSN 的关键字段 (用户/密码/主机/端口/库名).
+func parseMySQLDSN(dsn string) (user, pass, host, port, dbName string, err error) {
+	slashIdx := strings.LastIndex(dsn, "/")
+	if slashIdx < 0 {
+		return "", "", "", "", "", fmt.Errorf("invalid DSN: missing '/'")
+	}
+	dbName = dsn[slashIdx+1:]
+	if q := strings.IndexByte(dbName, '?'); q >= 0 {
+		dbName = dbName[:q]
+	}
+	cred := dsn[:slashIdx]
+	if at := strings.LastIndex(cred, "@"); at >= 0 {
+		userpass := cred[:at]
+		hostport := cred[at+1:]
+		if idx := strings.IndexByte(userpass, ':'); idx >= 0 {
+			user, pass = userpass[:idx], userpass[idx+1:]
+		} else {
+			user = userpass
+		}
+		hostport = strings.TrimPrefix(hostport, "tcp(")
+		hostport = strings.TrimSuffix(hostport, ")")
+		if idx := strings.LastIndexByte(hostport, ':'); idx >= 0 {
+			host, port = hostport[:idx], hostport[idx+1:]
+		} else {
+			host = hostport
+			port = "3306"
+		}
+	}
+	return user, pass, host, port, dbName, nil
+}
+
+// rotateBackups 删除超出 keep 份数的旧备份 (按文件名排序, 保留最新 N 个).
+func rotateBackups(dir, pattern string, keep int) error {
+	matches, err := filepath.Glob(filepath.Join(dir, pattern))
+	if err != nil {
+		return err
+	}
+	sort.Strings(matches)
+	if len(matches) <= keep {
+		return nil
+	}
+	for _, old := range matches[:len(matches)-keep] {
+		if err := os.Remove(old); err != nil {
+			return fmt.Errorf("rotate: remove %s: %w", old, err)
+		}
+	}
+	return nil
 }

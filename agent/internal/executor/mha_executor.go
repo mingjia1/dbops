@@ -257,7 +257,8 @@ func runPasswordSSH(ctx context.Context, host, user, password, command string) e
 			ssh.Password(password),
 			ssh.KeyboardInteractive(passwordKeyboardInteractive(password)),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		// P0-4: 改用 TOFU 主机密钥校验 (首次记录, 变更拒绝), 不再盲信任意密钥.
+		HostKeyCallback: agentHostKeyCallback(host),
 		Timeout:         10 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), cfg)
