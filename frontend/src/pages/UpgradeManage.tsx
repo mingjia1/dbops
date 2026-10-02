@@ -132,6 +132,19 @@ const UpgradeManage: React.FC = () => {
     [versions],
   )
 
+  const agentVersionCompatWarning = (versionEntry?: VersionEntry): string | undefined => {
+    if (!versionEntry?.min_agent_version && !versionEntry?.max_agent_version) return undefined
+    // The current agent version is not globally known in this page; we surface the
+    // catalog requirement so operators can cross-check against AgentManage.
+    if (versionEntry.min_agent_version && versionEntry.max_agent_version) {
+      return `要求 Agent 版本: ${versionEntry.min_agent_version} ~ ${versionEntry.max_agent_version}`
+    }
+    if (versionEntry.min_agent_version) {
+      return `要求 Agent >= ${versionEntry.min_agent_version}`
+    }
+    return `要求 Agent <= ${versionEntry.max_agent_version}`
+  }
+
   const clusterOptions = useMemo(() => {
     const clusterIds = Array.from(new Set(upgradeInstances.map((i) => i.cluster_id).filter(Boolean)))
     return clusterIds.map((clusterId) => ({
@@ -492,10 +505,11 @@ const UpgradeManage: React.FC = () => {
         instanceOptions={instanceOptions}
         clusterOptions={clusterOptions}
         versionOptions={versionOptions}
+        versions={versions}
         versionsLoading={versionsLoading}
         versionInfo={versionInfo(inPlaceInstanceId)}
         form={inPlaceForm}
-        onCancel={() => setInPlaceOpen(false)}
+        onCancel={() => { setInPlaceOpen(false); inPlaceForm.resetFields() }}
         onFinish={executeUpgrade}
       />
       <UpgradeReportModal

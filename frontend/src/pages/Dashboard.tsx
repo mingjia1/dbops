@@ -5,9 +5,13 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../services/api'
 import { useTheme } from '../hooks/useTheme'
 import { getDashboardMenuItems, findSelectedKey, findOpenKeys, mapMenuItemsWithNavigate } from '../services/dashboardMenu'
+import OnboardingChecklist from '../components/OnboardingChecklist'
+import DashboardTour from '../components/DashboardTour'
 import './Dashboard.css'
 
 const { Header, Content, Sider } = Layout
+
+const TOUR_STORAGE_KEY = 'dbops_dashboard_tour_dismissed'
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
@@ -79,6 +83,7 @@ const Dashboard: React.FC = () => {
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: `${user?.username || '用户'}` },
+      { key: 'tour', label: '使用引导' },
       { key: 'change-password', label: '修改密码' },
       ...(user?.role === 'admin' ? [{ key: 'reset-all-passwords', label: '重置所有用户密码' }] : []),
       { type: 'divider' as const },
@@ -88,6 +93,10 @@ const Dashboard: React.FC = () => {
       if (key === 'change-password') setPasswordOpen(true)
       if (key === 'reset-all-passwords') setResetOpen(true)
       if (key === 'logout') handleLogout()
+      if (key === 'tour') {
+        localStorage.removeItem(TOUR_STORAGE_KEY)
+        window.location.reload()
+      }
     },
   }
 
@@ -129,6 +138,8 @@ const Dashboard: React.FC = () => {
               />
         </Sider>
         <Content className="dashboard-content">
+          <OnboardingChecklist />
+          <DashboardTour />
           <Outlet />
         </Content>
       </Layout>

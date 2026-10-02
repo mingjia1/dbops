@@ -87,6 +87,31 @@ func TestAuthResetAllPasswordsWritesAuditLogAndUpdatesUsers(t *testing.T) {
 	assert.NotContains(t, logs[0].Details, "Reset#12345")
 }
 
+func TestAuthTokenRevokedAfterPasswordChange(t *testing.T) {
+	service, userRepo, _ := newAuthAuditTestService(t)
+	ctx := context.Background()
+	createAuthTestUser(t, ctx, userRepo, "user-010", "erin", "Old-Password#1", "dba")
+
+	resp, err := service.Login(ctx, LoginRequest{Username: "erin", Password: "Old-Password#1"})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Token)
+
+	// 改密前 token 有效.
+	claims, err := service.ValidateToken(resp.Token)
+	require.NoError(t, err)
+	require.NotNil(t, claims)
+
+	// 改密后旧 token 必须失效 (P1-3).
+	require.NoError(t, service.ChangePassword(ctx, "user-010", ChangePasswordRequest{
+		CurrentPassword: "Old-Password#1",
+		NewPassword:     "New-Password#9",
+	}))
+	revoked, err := service.ValidateToken(resp.Token)
+	require.Error(t, err)
+	assert.Nil(t, revoked)
+	assert.Contains(t, err.Error(), "revoked")
+}
+
 func TestAuthValidateTokenRejectsDisabledUser(t *testing.T) {
 	service, userRepo, _ := newAuthAuditTestService(t)
 	ctx := context.Background()

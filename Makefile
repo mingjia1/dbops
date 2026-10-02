@@ -1,4 +1,4 @@
-.PHONY: all build run test test-xinchuang-lifecycle clean docker-up docker-down docker-logs install-backend install-agent install-web fmt lint db-migrate
+.PHONY: all build run test test-xinchuang-lifecycle clean docker-up docker-down docker-logs install-backend install-agent install-web fmt lint db-migrate upgrade rollback pre-upgrade-check upgrade-apply smoke-test test-backup-restore
 
 all: install-backend install-agent install-web
 
@@ -48,16 +48,16 @@ test-xinchuang-lifecycle:
 	cd frontend && npm test -- --run src/services/flavorCapability.test.ts
 
 docker-up:
-	@echo "docker-compose.dev.yml not in repo; use bin/*/start-all.sh or add compose file"
-	@exit 1
+	@if [ ! -f deploy/docker/docker-compose.yml ]; then echo "deploy/docker/docker-compose.yml not found"; exit 1; fi
+	docker compose -f deploy/docker/docker-compose.yml up -d --build
 
 docker-down:
-	@echo "docker-compose.dev.yml not in repo"
-	@exit 1
+	@if [ ! -f deploy/docker/docker-compose.yml ]; then echo "deploy/docker/docker-compose.yml not found"; exit 1; fi
+	docker compose -f deploy/docker/docker-compose.yml down
 
 docker-logs:
-	@echo "docker-compose.dev.yml not in repo"
-	@exit 1
+	@if [ ! -f deploy/docker/docker-compose.yml ]; then echo "deploy/docker/docker-compose.yml not found"; exit 1; fi
+	docker compose -f deploy/docker/docker-compose.yml logs -f
 
 clean:
 	make -C backend clean
@@ -85,18 +85,50 @@ dist: build-backend build-agent build-web
 	tar -czf dbops-offline-$(shell date +%Y%m%d).tar.gz dist/
 	@echo "Offline package: dbops-offline-$(shell date +%Y%m%d).tar.gz"
 
-upgrade: build-backend build-agent
-	@echo "=== DBOps Platform Upgrade ==="
+upgrade: pre-upgrade-check build-backend build-agent upgrade-apply smoke-test
+
+pre-upgrade-check:
+	@echo "=== Pre-Upgrade Checks ==="
+	@echo "Checking backend health..."
+	@curl -sf http://localhost:8080/health/ready > /dev/null || (echo "ERROR: Backend not ready at http://localhost:8080"; exit 1)
+	@echo "Backing up platform metadata..."
+	@mkdir -p /backup
+	@if [ -f data/dbops.db ]; then tar -czf /backup/dbops-platform-$$(date +%Y%m%d-%H%M%S).tar.gz data/dbops.db data/*.json 2>/dev/null || true; fi
+	@if [ -f deploy/systemd/dbops-platform.service ]; then systemctl is-active --quiet dbops-platform && cp /opt/dbops-platform/bin/dbops-backend /opt/dbops-platform/bin/dbops-backend.bak || true; fi
+	@echo "Pre-upgrade checks passed."
+
+upgrade-apply:
+	@echo "=== Applying Upgrade ==="
 	@echo "Stopping services..."
-	scripts/stop.sh || true
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl stop dbops-platform dbops-agent; else echo "Services not managed by systemd, skipping stop"; fi
 	@echo "Installing new binaries..."
-	cp backend/bin/platform /usr/local/bin/dbops-backend 2>/dev/null || true
-	cp agent/bin/agent /usr/local/bin/dbops-agent 2>/dev/null || true
+	@if [ -f backend/bin/platform ]; then cp backend/bin/platform /usr/local/bin/dbops-backend; else echo "backend/bin/platform not found"; exit 1; fi
+	@if [ -f agent/bin/agent ]; then cp agent/bin/agent /usr/local/bin/dbops-agent; else echo "agent/bin/agent not found"; exit 1; fi
 	@echo "Running DB migrations..."
-	cd backend && go run ./cmd/main.go migrate 2>/dev/null || true
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform && sleep 5 && systemctl restart dbops-platform; else cd backend && go run ./cmd/main.go migrate; fi
+	@echo "Verifying upgrade..."
+	@curl -sf http://localhost:8080/health/ready > /dev/null || (echo "ERROR: Backend health check failed after upgrade"; echo "Rollback: cp /opt/dbops-platform/bin/dbops-backend.bak /opt/dbops-platform/bin/dbops-backend && systemctl restart dbops-platform"; exit 1)
 	@echo "Starting services..."
-	scripts/start.sh || true
-	@echo "=== Upgrade complete ==="
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-agent; then systemctl start dbops-agent; fi
+	@echo "=== Upgrade Complete ==="
+	@echo "Rollback: make rollback"
+
+smoke-test:
+	@if [ ! -f scripts/smoke-test.sh ]; then echo "scripts/smoke-test.sh not found"; exit 1; fi
+	@chmod +x scripts/smoke-test.sh
+	@scripts/smoke-test.sh
+
+rollback:
+	@echo "=== Rolling Back ==="
+	@echo "Stopping services..."
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl stop dbops-platform dbops-agent; fi
+	@echo "Restoring previous binaries..."
+	@if [ -f /opt/dbops-platform/bin/dbops-backend.bak ]; then cp /opt/dbops-platform/bin/dbops-backend.bak /opt/dbops-platform/bin/dbops-backend; echo "Backend binary restored"; else echo "No backup found"; exit 1; fi
+	@if [ -f /backup/dbops-platform-*.tar.gz ]; then LATEST=$$(ls -t /backup/dbops-platform-*.tar.gz 2>/dev/null | head -1); if [ -n "$$LATEST" ]; then echo "Restoring metadata from $$LATEST..."; tar -xzf $$LATEST -C /opt/dbops-platform/; fi; fi
+	@echo "Starting services..."
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform dbops-agent; fi
+	@echo "Verifying..."
+	@curl -sf http://localhost:8080/health/ready > /dev/null && echo "Rollback successful" || (echo "ERROR: Rollback verification failed"; exit 1)
 
 help:
 	@echo "MySQL Ops Platform Makefile"
@@ -115,3 +147,19 @@ help:
 	@echo "  make clean              Clean build artifacts"
 	@echo "  make fmt                Format code"
 	@echo "  make lint               Run linters"
+	@echo "  make smoke-test         Run post-upgrade smoke tests"
+	@echo "  make test-backup-restore Run backup/restore smoke test"
+
+test-backup-restore:
+	@if [ ! -f scripts/backup-platform.sh ]; then echo "scripts/backup-platform.sh not found"; exit 1; fi
+	@chmod +x scripts/backup-platform.sh
+	@echo "=== Backup/Restore Smoke Test ==="
+	@echo "Step 1: Running backup..."
+	@scripts/backup-platform.sh
+	@echo "Step 2: Verifying backup files..."
+	@ls -lh /backup/dbops-platform-* 2>/dev/null || fail "No backup files found"
+	@echo "Step 3: Simulating restore..."
+	@RESTORE_TMP=$$(mktemp -d) && \
+	 LATEST=$$(ls -t /backup/dbops-platform-*.tar.gz 2>/dev/null | head -1) && \
+	 if [ -n "$$LATEST" ]; then tar -xzf "$$LATEST" -C "$$RESTORE_TMP" && echo "Restored to $$RESTORE_TMP"; fi
+	@echo "=== Backup/Restore Smoke Test Passed ==="

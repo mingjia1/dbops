@@ -28,6 +28,8 @@ type VersionEntry struct {
 	UpgradeFrom      []string          `json:"upgrade_from"` // e.g. ["5.7.44","5.7.43",...]
 	UpgradeNotes     string            `json:"upgrade_notes,omitempty"`
 	ConfigHints      map[string]string `json:"config_hints,omitempty"`
+	MinAgentVersion  string            `json:"min_agent_version,omitempty"`
+	MaxAgentVersion  string            `json:"max_agent_version,omitempty"`
 }
 
 type VersionCatalog struct{}
@@ -221,6 +223,7 @@ var catalogEntries = []VersionEntry{
 		MinGlibc:   "2.17", OSFamily: []string{"linux"}, Status: "active",
 		UpgradeFrom:  []string{"8.0.0", "8.0.35", "5.7.9"},
 		UpgradeNotes: "8.0.36 是 CentOS 7.9 (glibc 2.17) 能装的最新 8.0.x; 8.0.37+ 需要 glibc 2.28.",
+		MinAgentVersion: "1.0.0",
 	},
 	{
 		ID: "mysql-8.0.35", Flavor: "mysql", Version: "8.0.35", MajorMinor: "8.0",

@@ -67,22 +67,19 @@ const TIERED_ONBOARDING_FLAVORS: Record<string, { healthSql: boolean, completed:
   'gaussdb-mysql': { healthSql: true, completed: [] },
   'polardb-mysql': { healthSql: true, completed: [] },
   'tdsql-mysql': { healthSql: true, completed: [] },
-  // Kingbase lifecycle handlers use the dedicated flavor Agent route. Generic
-  // MySQL console actions remain unavailable until their backend routing exists.
   kingbase: { healthSql: true, completed: [] },
   opengauss: { healthSql: true, completed: [] },
   highgo: { healthSql: true, completed: [] },
-  // GBase 8a deploy and configure use only the dedicated flavor Agent route.
-  // Generic MySQL console actions stay hidden until backend wiring exists.
   gbase8a: { healthSql: true, completed: [] },
   shentong: { healthSql: true, completed: [] },
-  // No pure-Go driver: proprietary (dm) and Informix (gbase8s) protocols.
   dm: { healthSql: false, completed: [] },
   gbase8s: {
     healthSql: false,
     completed: [],
   },
 }
+
+export { TIERED_ONBOARDING_FLAVORS }
 
 const normalizeFlavor = (flavor?: string): string => {
   const normalized = (flavor || '').trim().toLowerCase()

@@ -26,7 +26,6 @@ import (
 	pluginMiddleware "github.com/jackcode/mysql-ops-platform/internal/plugins/middleware"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 
-	_ "modernc.org/sqlite" // P0-7: db-backup 子命令直接 open SQLite 做 checkpoint
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
@@ -35,6 +34,7 @@ import (
 	"github.com/jackcode/mysql-ops-platform/pkg/storage"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite" // P0-7: db-backup 子命令直接 open SQLite 做 checkpoint
 )
 
 func requireAgentToken(agentToken string) gin.HandlerFunc {
@@ -59,6 +59,9 @@ func requireAgentToken(agentToken string) gin.HandlerFunc {
 }
 
 func main() {
+	// P1-9: 进程启动时间, /metrics 的 uptime 指标数据源.
+	startTime := time.Now()
+
 	// P0-8: 运维子命令入口. `make db-migrate` / Makefile upgrade 目标都期待
 	// `go run ./cmd/main.go migrate` 可独立执行 schema 迁移, 之前没有实现,
 	// 导致迁移只在启动时隐式发生且失败仅 Warn.
@@ -90,13 +93,16 @@ func main() {
 
 	logInstance := logger.New(cfg.LogLevel)
 	logInstance.Info("Starting MySQL Ops Platform API Server")
-	if strings.EqualFold(os.Getenv("DBOPS_SKIP_AGENT_BINARY_BUILD"), "true") {
-		logInstance.Warn("Skipping agent binary build because DBOPS_SKIP_AGENT_BINARY_BUILD=true")
-	} else {
-		report, err := services.EnsureAgentBinaries()
-		if err != nil {
+	logInstance.Info("Checking agent binaries...")
+	skipBuild := strings.EqualFold(os.Getenv("DBOPS_SKIP_AGENT_BINARY_BUILD"), "true")
+	report, err := services.EnsureAgentBinaries()
+	if err != nil {
+		if skipBuild {
+			logInstance.Warn("Skipping agent binary build because DBOPS_SKIP_AGENT_BINARY_BUILD=true: " + err.Error())
+		} else {
 			logInstance.Fatal("Failed to ensure agent binaries: " + err.Error())
 		}
+	} else {
 		logInstance.Info(fmt.Sprintf("Agent binaries ready: linux=%s windows=%s", report.LinuxPath, report.WindowsPath))
 	}
 
@@ -427,6 +433,20 @@ func main() {
 	r.GET("/health/live", func(c *gin.Context) {
 		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "alive"}})
 	})
+
+	// P1-9: 平台自身可观测性出口 —— Prometheus 文本格式, 只含聚合运行时数值
+	// (内存/goroutine/DB连接池), 无凭据无用户数据. 公网部署时建议反向代理限源.
+	dbStats := MetricsStatsProvider(db)
+	r.GET("/metrics", middleware.MetricsHandler(middleware.MetricsStats{
+		StartTime:      startTime,
+		Version:        "1.0.0",
+		DBMaxOpen:      dbStats.maxOpen,
+		DBOpen:         dbStats.open,
+		DBInUse:        dbStats.inUse,
+		DBIdle:         dbStats.idle,
+		DBWaitCount:    dbStats.waitCount,
+		DBWaitDuration: dbStats.waitDuration,
+	}))
 	r.GET("/health/ready", func(c *gin.Context) {
 		healthTimeout := 2 * time.Second
 		if v := os.Getenv("DBOPS_HEALTH_CHECK_TIMEOUT"); v != "" {
@@ -1282,16 +1302,39 @@ func main() {
 	<-quit
 	logInstance.Info("Shutting down server...")
 
+	// P1-8: 优雅停机 —— 先排空在途 HTTP 请求 (含 SSE 流), 再由 defer db.Close()
+	// 对 SQLite 做 WAL checkpoint 并关池. 两阶段超时避免 SSE 长连接卡死停机.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		logInstance.Warn("Server shutdown timeout, forcing close: " + err.Error())
 	}
 	logInstance.Info("Server exited")
 }
 
 func runMigrations(db *repositories.Database) error {
 	return repositories.RunMigrations(context.Background(), db)
+}
+
+// dbMetricsStats P1-9: 把 sql.DBStat 导出为 /metrics 可用的取值函数 (nil 安全).
+type dbMetricsStats struct {
+	maxOpen, open, inUse, idle func() int
+	waitCount                  func() int64
+	waitDuration               func() time.Duration
+}
+
+func MetricsStatsProvider(db *repositories.Database) dbMetricsStats {
+	var s dbMetricsStats
+	if db == nil || db.Pool == nil {
+		return s
+	}
+	s.maxOpen = func() int { return db.Pool.Stats().MaxOpenConnections }
+	s.open = func() int { return db.Pool.Stats().OpenConnections }
+	s.inUse = func() int { return db.Pool.Stats().InUse }
+	s.idle = func() int { return db.Pool.Stats().Idle }
+	s.waitCount = func() int64 { return db.Pool.Stats().WaitCount }
+	s.waitDuration = func() time.Duration { return db.Pool.Stats().WaitDuration }
+	return s
 }
 
 // validateSecrets P0-1 防护: 任何缺省 / 短 / 明显示例值都直接拒启动.
@@ -1359,7 +1402,7 @@ func defaultInt(v, fallback int) int {
 
 func writeBootstrapAdminCredential(dataDir, username, password string) (string, error) {
 	if dataDir == "" {
-		dataDir = "./data"
+		dataDir = "../db"
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return "", err
@@ -1415,7 +1458,7 @@ func runMigrationsCLI() error {
 
 // runDBBackupCLI P0-7: `main.go db-backup` 子命令 —— 元数据库备份.
 //   - SQLite: 安全快照 (WAL checkpoint + 整库拷贝到临时名后原子 rename),
-	//     支持输出目录与保留份数轮转.
+//     支持输出目录与保留份数轮转.
 //   - MySQL: 调用 mysqldump (要求 PATH 中可用), 输出到指定目录.
 //
 // 用法: main.go db-backup [--output-dir DIR] [--keep N]

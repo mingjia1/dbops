@@ -112,9 +112,17 @@ func openSQLite(sqlitePath string) (*Database, error) {
 	return &Database{Pool: pool, Dialect: DialectSQLite}, nil
 }
 
+// Close P1-8: SQLite 先执行 WAL checkpoint 把 -wal 日志合并回主文件再关连接池,
+// 避免停机后留下未 checkpoint 的 -wal/-shm 残留 (下次启动或备份工具读到的
+// 主文件不完整). MySQL 无此问题, 直接关池.
 func (db *Database) Close() error {
 	if db == nil || db.Pool == nil {
 		return nil
+	}
+	if db.Dialect == DialectSQLite {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = db.Pool.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 	}
 	return db.Pool.Close()
 }

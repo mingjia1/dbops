@@ -1,395 +1,218 @@
-﻿# MySQL Ops Platform / MySQL 操作平台
+﻿# MySQL Ops Platform / 智能 MySQL 运维平台
 
-> **商业化数据库架构级生命周期管理平台 / A commercial-grade DevOps platform**
-> 
-> 管理系统和 MySQL 实例，通过 Agent 执行操作，支持 HA/MHA/MGR/pxc 等集群架构。/ Manages MySQL hosts and instances through agents with HA/MHA/MGR/pxc cluster support.
-> 
-> [![Go Version][go-image]][go-url] [![Node.js][node-image]][node-url] [![License][license-image]][license-url] [![Language][lang-image]][lang-url] [![Status][status-image]][status-url] [![Build][build-image]][build-url]
-> 
-> **技术栈 / Tech Stack**
-> 
-> - **后端 / Backend**: Go 1.25+ + Gin + SQLite/MySQL + Redis
-> - **前端 / Frontend**: React 18 + TypeScript + Ant Design 5
-> - **Agent**: Go 1.21+ + HTTP + Bearer Token认证
-> 
-> **商业版本 / Commercial Edition**
-> 
-> - **CE** (社区版): 基础功能，MIT协议
-> - **EE** (企业版): CE + 高可用/升级/迁移/审计功能  
-> - **UE** (旗舰版): EE + AI智能化，商业授权
-> 
+> 面向数据库架构级生命周期管理的运维平台。
+>
+> 通过后端 API、React 控制台和主机侧 Agent，统一管理主机、MySQL 实例、集群、中间件、监控、备份、升级和角色切换。
+
+[![Go Version][go-image]][go-url] [![Node.js][node-image]][node-url] [![License][license-image]][license-url] [![Language][lang-image]][lang-url]
+
+- **中文文档**：[readme_ZH.md](../readme_ZH.md)
+- **英文文档**：[readme_US.md](../readme_US.md)
+- **运维手册**：[OPS_MANUAL.md](OPS_MANUAL.md)
+- **巡检报告**：[ops-review-2026-09-28.md](ops-review-2026-09-28.md)
+
 ---
 
-## 🎯 快速入门 / Quick Start
+## 技术栈
 
-### 主要命令 / Key Commands
+- **后端**：Go 1.25+ + Gin + SQLite/MySQL + Redis（可选）+ ClickHouse（可选）
+- **前端**：React 18 + TypeScript + Ant Design 5
+- **Agent**：Go 1.25+ + HTTP + Bearer Token 认证
+
+## 商业版本
+
+- **CE**（社区版）：基础功能，MIT 协议
+- **EE**（企业版）：CE + 高可用/升级/迁移/审计功能
+- **UE**（旗舰版）：EE + AI 智能化，商业授权
+
+---
+
+## 仓库布局
+
+```text
+backend/            Go 后端 API、服务、仓储、配置和迁移
+frontend/           React + TypeScript Web 控制台
+agent/              部署在被管主机上的 Go 执行 Agent
+bin/windows/        Windows 一键启停脚本 (start/stop/restart .bat/.ps1)
+bin/ubuntu/         Ubuntu 启停脚本
+bin/centos/         CentOS 启停脚本
+deploy/             systemd unit 与 docker-compose 生产交付形态
+scripts/            运维脚本，包括本地密钥扫描
+docs/               补充文档、运维手册和截图
+data/               本地开发数据（gitignore）
+logs/               本地运行日志（gitignore）
+Makefile            构建、测试、安装、打包和升级辅助命令
+.env.example        环境变量示例
+```
+
+> 注意：一键启停脚本位于 `bin/windows/`、`bin/ubuntu/`、`bin/centos/`，**不在仓库根目录**。
+
+---
+
+## 快速开始
+
+### 环境要求
+
+| 组件 | 版本 | 说明 |
+|------|------|------|
+| Go | 1.25+ | backend 与 agent 共用（见 `backend/go.mod`、`agent/go.mod`） |
+| Node.js | 18+ | 前端构建/运行 |
+| npm | 必需 | 前端依赖管理 |
+| PowerShell | 5.1+ | Windows 脚本 |
+| bash | Linux/macOS 必需 | Shell 脚本 |
+| Redis | 可选 | 缓存/队列场景 |
+| ClickHouse | 可选 | 监控数据存储 |
+
+### Windows 一键启动
+
+```powershell
+# 1. 配置环境变量
+copy .env.example .env
+# 编辑 .env，至少设置（启动时会强校验，缺省/占位/弱值直接拒启动）：
+#   DBOPS_DB_URL=dbops_user:strong-password@tcp(127.0.0.1:3306)/dbops_platform?parseTime=true&loc=Local
+#   DBOPS_JWT_SECRET=<>=32 chars>
+#   DBOPS_ENCRYPTION_KEY=<>=32 chars>
+#   DBOPS_AGENT_TOKEN=<>=16 chars>
+
+# 2. 构建并启动全部服务（脚本会自动编译 backend/agent/frontend）
+.\bin\windows\start.bat
+
+# 3. 验证
+Invoke-RestMethod http://localhost:8080/health
+
+# 4. 停止 / 重启
+.\bin\windows\stop.bat
+.\bin\windows\restart.bat
+
+# 5. 跳过编译，仅启动已有产物
+.\bin\windows\start.bat -SkipBuild
+```
+
+### Linux 启动（开发/调试）
 
 ```bash
-# 构建所有组件 / Build all components
+bash bin/ubuntu/start-all.sh   # 前台运行，Ctrl+C 停止
+bash bin/ubuntu/stop.sh
+```
+
+### 生产部署
+
+生产环境应使用 systemd 或 docker-compose，见 `deploy/systemd/` 与 `deploy/docker/`，详见 [OPS_MANUAL.md](OPS_MANUAL.md) §3.2。
+
+### 手动启动
+
+```bash
+cd backend && go run ./cmd/main.go
+cd agent && go run ./cmd/main.go
+cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+```
+
+---
+
+## 构建与测试
+
+```bash
+# 安装依赖
+make install-backend
+make install-agent
+make install-web
+
+# 构建所有组件
 make build
 
-# 运行测试 / Run tests  
+# 运行后端与 Agent 测试
 make test
 
-# 启动开发环境 / Start development environment
-make install-web
+# 信创单机生命周期测试（Agent 夹具 + 后端能力闸门 + 前端镜像）
+make test-xinchuang-lifecycle
+
+# 打离线安装包
+make dist
 ```
 
-### API访问 / API Access
-
-- **后台管理**: `http://localhost:8080`
-- **控制台访问**: `http://localhost:3000` 
-- **Agent服务**: `http://localhost:9090`
-
-### 一键启动 (Windows) / One-Click Start (Windows)
-
-```powershell
-.\start.bat
-```
-
-### 手动启动 / Manual Start
+等价的手动命令：
 
 ```bash
-cd platform-backend && go run ./cmd/main.go
-cd agent && go run ./cmd/main.go
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
+cd backend && go build -o bin/platform ./cmd/main.go
+cd agent && go build -o bin/agent ./cmd/main.go
+cd frontend && npm run build
 ```
 
 ---
 
-## 🏗️ 架构概览 / Architecture Overview
+## API 访问地址
 
-```text
-web-console (:3000)
-        |
-        | REST API /api/v1
-        v
-platform-backend (:8080)  ---- HTTP + Bearer token ---->  agent (:9090)
-        |
-        | metadata storage
-        v
-SQLite or MySQL, depending on storage_mode
-```
+| 服务 | 地址 | 协议 | 认证 |
+|------|------|------|------|
+| 后端 API | `http://localhost:8080` | HTTP/REST（`/api/v1/*`） | JWT |
+| Web 控制台 | `http://localhost:3000` | HTTP/WS | 会话 Cookie |
+| Agent 服务 | `http://localhost:9090` | HTTP（`/agent/tasks/*`） | Agent Token |
 
-**平台说明 / Platform Description**
-
-管理系统 MySQL 主机和实例，通过 Agent 执行操作。目标主机必须具备所需的操作系统访问权限和 MySQL 工具支持的集群架构 (HA/MHA/MGR/pxc)。
-
-**主要功能 / Core Features**
-
-- ✅ MySQL 集群管理 (HA/MHA/MGR/pxc)
-- ✅ 主机资源监控和实时告警
-- ✅ 自动化部署和定期备份
-- ✅ 安全审计和 RBAC 权限管理
-- ✅ 多租户和环境隔离
-- ✅ 监控和可观测性 (ClickHouse)
+> 8080 是**纯 REST API**，没有管理界面；管理界面在 3000。
 
 ---
 
-## 📂 仓库布局 / Repository Layout
+## 配置
 
-```text
-platform-backend/   Go 后端 API 和存储层 / Go backend API and storage layer
-web-console/        React 网页控制台 / React web console  
-agent/              Go 主机端执行 Agent / Go execution agent deployed on managed hosts
-bin/                Linux 辅助脚本 / Linux helper scripts for current components
-scripts/            运维辅助脚本 / Operational helper scripts
-docs/               补充文档和指南 / Supplemental reports and guides
-start.bat/.ps1      Windows 一键启动 / Windows all-in-one startup
-stop.bat/.ps1       Windows 一键停止 / Windows all-in-one shutdown
-Makefile            组件构建/测试工具 / Build/test helpers for current components
-```
+复制 `.env.example` 为 `.env` 并设置强值。后端示例配置见 `backend/config.yaml.example`（注意是仓库根下的 `backend/config.yaml.example`，不是 `backend/config/config.example.yaml`）。
 
----
-
-## 📋 系统要求 / Requirements
-
-### 技术要求 / Technical Requirements
-
-| 组件 / Component | 版本 / Version | 说明 / Description |
-|------------------|---------------|-------------------|
-| **Go** | 1.25+ | 后端服务开发语言 / Backend service development language |
-| **Node.js** | 18+ | 前端开发运行时 / Frontend development runtime |
-| **npm** | ✓ | 包管理器 / Package manager |
-| **PowerShell** | 5.1+ | Windows 系统 / Windows system |
-| **bash** | ✓ | Linux/macOS 系统 / Linux/macOS system |
-| **Redis** | 可选 | 缓存和消息队列 / Cache and message queue |
-| **ClickHouse** | 可选 | 监控数据存储 / Monitoring data storage |
-
-### 运行环境 / Runtime Environment
-
-| 服务 / Service | 端口 / Port | 协议 / Protocol | 认证 / Authentication |
-|----------------|------------|----------------|----------------------|
-| **平台后台** / Backend | 8080 | HTTP/REST | JWT Token |
-| **Web控制台** / Frontend | 3000 | HTTP/WS | 会话 Cookie |
-| **Agent服务** / Agent | 9090 | HTTP | Agent Token |
-
-### 主机需求 / Host Requirements
-
-目标 MySQL 主机必须具备:
-
-- `mysqld` - MySQL 服务端 / MySQL server
-- `mysql` 客户端 - 客户端工具 / Client tools  
-- 部署和备份所需工具 - 根据选定操作类型 / Deploy and backup tools based on operation type
-
----
-
-## ⚙️ 配置指南 / Configuration Guide
-
-### 环境配置 / Environment Configuration
-
-复制 `.env.example` 为 `.env` 并设置必要的变量:
-
-```env
-# 数据库连接 / Database Connection
-DBOPS_DB_URL=dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops?charset=utf8mb4&parseTime=true&loc=Local
-
-# 认证密钥 / Authentication
-DBOPS_JWT_SECRET=replace-with-at-least-32-chars
-DBOPS_AGENT_TOKEN=replace-with-at-least-16-chars
-
-# 加密密钥 / Encryption
-DBOPS_ENCRYPTION_KEY=replace-with-at-least-32-chars
-```
-
-### 后台配置 / Backend Configuration
-
-配置文件位于 `platform-backend/config/config.yaml`，系统同时支持环境变量覆盖。
+后端同时支持环境变量覆盖（`DBOPS_*` 前缀），优先级高于 yaml。
 
 ```yaml
-# 示例配置 / Example Configuration
-storage:
-  mode: mysql
-  dsn: dbops_user:replace-with-strong-password@tcp(localhost:3306)/mysql_ops
-
-auth:
-  jwt_secret: "your-jwt-secret-key"
-  agent_token: "your-agent-token-key"
+# backend/config.yaml 示例（扁平键名）
+server_port: "8080"
+storage_mode: "auto"          # auto | mysql | sqlite
+data_dir: "./data"
+database_url: "..."
+jwt_secret: "..."
+encryption_key: "..."
+agent_token: "..."
 ```
+
+安全注意事项：
+
+- 不要提交真实密钥、Token、数据库密码、SSH 私钥或 License 材料。
+- 敏感凭据使用 AES-GCM 加密落库。
+- 发布改动前建议执行本地密钥扫描：`.\scripts\scan-local-secrets.ps1`。
 
 ---
 
-## 🚀 构建与测试 / Build & Test
+## 支持的数据库架构
 
-### 一键构建 / Build
+- 单实例 MySQL 管理
+- HA 主从架构
+- MHA
+- MGR（需 MySQL 8.0+）
+- PXC
 
-```bash
-# 构建所有组件 / Build all components
-make build
-
-# 等效组件构建 / Equivalent component commands
-cd platform-backend && go build -o bin/platform ./cmd/main.go
-cd agent && go build -o bin/agent ./cmd/main.go
-cd web-console && npm run build
-```
-
-### 测试运行 / Test
-
-```bash
-# 运行后端测试 / Run backend tests
-cd platform-backend && go test ./...
-
-# 运行 Agent 测试 / Run agent tests
-cd agent && go test ./...
-
-# 前端类型检查和构建 / Frontend type checking and build
-cd web-console && npx tsc --noEmit && npm run build
-```
-
-### 开发命令 / Development Commands
-
-```bash
-# 安装前端依赖 / Install frontend dependencies
-make install-web
-
-# 启动开发服务器 / Start development server
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
-```
+信创/国产引擎（OceanBase、TiDB、Kingbase、openGauss、HighGo、GBase 8a/8s、达梦、神舟通用、GaussDB/PolarDB/TDSQL for MySQL）通过分层纳管接入，能力边界由 `backend/internal/services/flavor_capability.go` 的静态表统一约束。详见根目录 `tasklist.md` 与 `plan0731.md`。
 
 ---
 
-## 💻 Windows 系统使用 / Windows Usage
+## 文档资源
 
-### 启动服务 / Start Services
+- 中文文档：[readme_ZH.md](../readme_ZH.md)
+- 英文文档：[readme_US.md](../readme_US.md)
+- 运维手册：[OPS_MANUAL.md](OPS_MANUAL.md)
+- API 参考：[API.md](API.md)
+- 截图：[screenshots](screenshots)
+- 密钥扫描脚本：[scan-local-secrets.ps1](../scripts/scan-local-secrets.ps1)
 
-```powershell
-.\start.bat
-```
-
-此脚本将:
-1. 构建所有组件
-2. 启动 backend (8080)
-3. 启动 web-console (3000) 
-4. 启动 agent (9090)
-
-### 停止服务 / Stop Services
-
-```powershell
-.\stop.bat
-```
-
-此脚本将优雅地停止所有构建的服务。
+> 项目暂无 `CONTRIBUTING.md`、`SECURITY.md`、`specs/` 与 Swagger 文档；以上链接仅为占位说明，请勿参照执行。
 
 ---
 
-## 📝 注意事项 / Notes
+## 联系方式
 
-- **架构原则** / **Architecture Principles**: 坚持三组件架构 (backend, web-console, agent)，禁止新增 Django 或 Vue 模块
-- **安全原则** / **Security Principles**: 所有密钥仅从环境变量读取，敏感数据使用 AES-GCM 加密
-- **运维原则** / **Operations Principles**: 长期运行操作应通过后端 API 和 Agent 任务执行，而非直接使用 UI 脚本
-- **版本要求** / **Version Requirements**: Go 1.25+ / Node.js 18+ / React 18
+- GitHub：提交 Issue 或 Pull Request
+- 支持邮箱：`ice_out@sina.com`
+- 企业咨询：`ice_out@sina.com`
 
----
-
-## 🔗 相关链接 / Related Links
-
-### 文档资源 / Documentation
-
-- **项目规格文档** / **Project Specification**: 查看 `specs/` 目录中的完整规范体系
-- **API 文档** / **API Documentation**: 查看 backend 的 Swagger 文档
-- **前端指南** / **Frontend Guide**: 查看 `web-console/docs/` 中的组件文档
-
-### 开发资源 / Development Resources
-
-- **开发工作流** / **Development Workflow**: 遵循 OpenSpec + Superpowers 开发流程
-- **代码质量标准** / **Code Quality**: 所有代码均通过 `make test` 验证
-- **安全指南** / **Security Guide**: 查看 `SECURITY.md` 中的安全实践
-
-### 社区参与 / Community
-
-- **贡献指南** / **Contributing**: 查看 `CONTRIBUTING.md` 参与项目开发
-- **报告问题** / **Issue Tracker**: 在 GitHub 上提交问题
-- **技术讨论** / **Technical Discussions**: 参与讨论和最佳实践交流
-
----
-
-## 📊 项目状态 / Project Status
-
-<!-- GitHub Actions 状态 / GitHub Actions Status -->
-[![测试状态][test-image]][test-url]
-[![构建状态][ci-image]][ci-url]
-[![代码覆盖率][coverage-image]][coverage-url]
-
-<!-- 语言支持 / Language Support -->
-[![主要语言][lang-main-image]][lang-url]
-[![次要语言][lang-second-image]][lang-url]
-
-<!-- 版本信息 / Version Info -->
-[![当前版本][version-image]][version-url]
-[![发布日期][release-image]][release-url]
-
----
-
-## 🏅 商业授权 / Commercial License
-
-> **版本说明 / Version Information**
->
-> - **CE** (社区版): 基础功能，MIT协议，支持社区协作开发
-> - **EE** (企业版): 包含 CE + 高可用/升级/迁移/审计功能，企业级授权
-> - **UE** (旗舰版): 包含 EE + AI智能化，商业智能分析，旗舰级授权
->
-> **授权条款 / License Terms**
->
-> 企业版和旗舰版需要商业授权。许可证限制了使用、修改和分发权利。社区版遵循 MIT 许可证，允许自由使用、修改和分发。
-
----
-
-*本项目基于商业化开发工作流 (DBOps) 构建，支持从功能提案到实际实施的完整生命周期管理。*
-
-*This project is built with the DBOps commercial development workflow supporting the complete lifecycle from proposals to implementation.*
-
-[go-image]: https://img.shields.io/badge/Go-1.25+-blue.svg
-[go-url]: https://golang.org/dl/
-
-[node-image]: https://img.shields.io/badge/Node.js-18+-green.svg
-[node-url]: https://nodejs.org/en/
-
-[license-image]: https://img.shields.io/badge/License-MIT-yellow.svg
-[license-url]: LICENSE
-
-[lang-image]: https://img.shields.io/badge/Chinese-English-bilingual-ff69b4.svg
-[lang-url]: #readme
-
-[status-image]: https://img.shields.io/badge/Status-Active-brightgreen.svg
-[status-url]: https://github.com
-
-[build-image]: https://img.shields.io/badge/Build-Passed-success.svg
-[build-url]: https://github.com
-
-[test-image]: https://img.shields.io/badge/Tests-Passed-success.svg
-[test-url]: https://github.com
-
-[ci-image]: https://img.shields.io/badge/CI-Passed-success.svg
-[ci-url]: https://github.com
-
-[coverage-image]: https://img.shields.io/badge/Coverage-85%25+orange.svg
-[coverage-url]: https://github.com
-
-[lang-main-image]: https://img.shields.io/badge/Primary-Chinese-red.svg
-[lang-main-url]: #readme
-
-[lang-second-image]: https://img.shields.io/badge/Secondary-English-blue.svg
-[lang-second-url]: #readme
-
-[version-image]: https://img.shields.io/badge/Version-1.0.0-blue.svg
-[version-url]: https://github.com
-
-[release-image]: https://img.shields.io/badge/Release-2025-06-17-orange.svg
-[release-url]: https://github.com
-
-## Start On Windows
-
-```powershell
-.\start.bat
-```
-
-This builds and starts:
-
-- Backend: `http://localhost:8080`
-- Web console: `http://localhost:3000`
-- Local agent: `http://localhost:9090`
-
-Stop everything:
-
-```powershell
-.\stop.bat
-```
-
-## Start Manually
-
-```bash
-make install-web
-make build
-
-cd platform-backend && go run ./cmd/main.go
-cd agent && go run ./cmd/main.go
-cd web-console && npm run dev -- --host 0.0.0.0 --port 3000
-```
-
-## Build
-
-```bash
-make build
-```
-
-Equivalent component commands:
-
-```bash
-cd platform-backend && go build -o bin/platform ./cmd/main.go
-cd agent && go build -o bin/agent ./cmd/main.go
-cd web-console && npm run build
-```
-
-## Test
-
-```bash
-cd platform-backend && go test ./...
-cd agent && go test ./...
-cd web-console && npx tsc --noEmit && npm run build
-```
-
-## Notes
-
-- Do not add new Django or Vue modules. The active frontend is `web-console`.
-- Do not use root-level Python/Django entry points; they have been removed.
-- Long-running operational flows should go through backend APIs and Agent task execution, not direct UI-only scripts.
+[go-image]: https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go
+[go-url]: https://go.dev/
+[node-image]: https://img.shields.io/badge/Node.js-18+-339933?style=flat&logo=node.js
+[node-url]: https://nodejs.org/
+[license-image]: https://img.shields.io/badge/License-MIT-blue.svg
+[license-url]: https://opensource.org/licenses/MIT
+[lang-image]: https://img.shields.io/badge/Language-Go%20%7C%20TypeScript-blue
+[lang-url]: https://github.com/mingjia1/dbops

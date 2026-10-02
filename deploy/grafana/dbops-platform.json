@@ -1,0 +1,154 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "DBOps Platform",
+    "tags": ["dbops"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "15s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Platform Uptime",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 0, "w": 6, "h": 3 },
+        "targets": [
+          {
+            "expr": "dbops_process_uptime_seconds",
+            "legendFormat": "uptime",
+            "refId": "A"
+          }
+        ],
+        "unit": "s",
+        "valueName": "current"
+      },
+      {
+        "id": 2,
+        "title": "Goroutines",
+        "type": "stat",
+        "gridPos": { "x": 6, "y": 0, "w": 6, "h": 3 },
+        "targets": [
+          {
+            "expr": "dbops_goroutines",
+            "legendFormat": "goroutines",
+            "refId": "A"
+          }
+        ],
+        "unit": "short",
+        "valueName": "current"
+      },
+      {
+        "id": 3,
+        "title": "DB Connections",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 0, "w": 6, "h": 3 },
+        "targets": [
+          {
+            "expr": "dbops_db_open_connections",
+            "legendFormat": "open",
+            "refId": "A"
+          },
+          {
+            "expr": "dbops_db_max_open_connections",
+            "legendFormat": "max",
+            "refId": "B"
+          }
+        ],
+        "unit": "short",
+        "valueName": "current"
+      },
+      {
+        "id": 4,
+        "title": "Memory Usage",
+        "type": "stat",
+        "gridPos": { "x": 18, "y": 0, "w": 6, "h": 3 },
+        "targets": [
+          {
+            "expr": "dbops_memory_alloc_bytes / dbops_memory_sys_bytes * 100",
+            "legendFormat": "heap utilization %",
+            "refId": "A"
+          }
+        ],
+        "unit": "percent",
+        "valueName": "current"
+      },
+      {
+        "id": 10,
+        "title": "DB Connection Utilization",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 3, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "dbops_db_open_connections / dbops_db_max_open_connections * 100",
+            "legendFormat": "utilization %",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          { "label": "Percent", "max": 100, "min": 0 },
+          { "show": false }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": { "params": [80], "type": "gt" },
+              "operator": { "type": "and" },
+              "query": { "params": ["A", "5m", "now"] },
+              "type": "query"
+            }
+          ],
+          "frequency": "1m",
+          "name": "High DB Connections",
+          "message": "DB connection utilization is above 80%"
+        }
+      },
+      {
+        "id": 11,
+        "title": "Memory Trend",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 3, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "dbops_memory_alloc_bytes",
+            "legendFormat": "alloc",
+            "refId": "A"
+          },
+          {
+            "expr": "dbops_memory_sys_bytes",
+            "legendFormat": "sys",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          { "label": "Bytes", "format": "bytes" },
+          { "show": false }
+        ]
+      },
+      {
+        "id": 20,
+        "title": "Build Info",
+        "type": "table",
+        "gridPos": { "x": 0, "y": 11, "w": 24, "h": 4 },
+        "targets": [
+          {
+            "expr": "dbops_build_info",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": { "job": false, "instance": false },
+              "indexByName": {},
+              "renameByName": { "job": "Job", "instance": "Instance", "version": "Version" }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

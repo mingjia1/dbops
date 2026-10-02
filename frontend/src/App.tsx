@@ -45,6 +45,9 @@ const ArchUpgradePage = lazy(() => import('./pages/ArchUpgradePage'))
 const AuditVerifyPage = lazy(() => import('./pages/AuditVerifyPage'))
 const DrillPage = lazy(() => import('./pages/DrillPage'))
 const AlertManagePage = lazy(() => import('./pages/AlertManagePage'))
+const CapabilityMatrix = lazy(() => import('./pages/CapabilityMatrix'))
+const FirstDeployWizard = lazy(() => import('./pages/FirstDeployWizard'))
+const PlatformHealth = lazy(() => import('./pages/PlatformHealth'))
 
 function App() {
   const navigate = useNavigate()
@@ -78,6 +81,7 @@ function App() {
             <Route path="hosts/:id/edit" element={<HostForm />} />
             <Route path="instances" element={<InstanceList />} />
             <Route path="instances/:id" element={<InstanceDetail />} />
+            <Route path="capability-matrix" element={<CapabilityMatrix />} />
             <Route path="resources" element={<Navigate to="/dashboard/hosts" replace />} />
             <Route path="env-check" element={<EnvironmentCheck />} />
             <Route path="backup" element={<BackupManage />} />
@@ -110,6 +114,8 @@ function App() {
             <Route path="audit-verify" element={<AuditVerifyPage />} />
             <Route path="drills" element={<DrillPage />} />
             <Route path="alert-manage" element={<AlertManagePage />} />
+            <Route path="first-deploy" element={<FirstDeployWizard />} />
+            <Route path="platform-health" element={<PlatformHealth />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>

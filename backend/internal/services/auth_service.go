@@ -113,6 +113,8 @@ type Claims struct {
 	Role               string   `json:"role"`
 	Permissions        []string `json:"permissions"`
 	MustChangePassword bool     `json:"must_change_password,omitempty"`
+	// P1-3: 密码版本号 (password_changed_at 的 Unix 秒). 改密/重置后旧 token 全部失效.
+	PasswordVersion int64 `json:"pwv,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -188,6 +190,7 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 		Role:               tokenRole,
 		Permissions:        permissions,
 		MustChangePassword: mustChangePassword,
+		PasswordVersion:    passwordVersionOf(user),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -255,6 +258,11 @@ func (s *AuthService) refreshClaimsFromDB(claims *Claims) error {
 	}
 	if user == nil || user.Status != "active" {
 		return errors.New("user account is not active")
+	}
+	// P1-3: token 吊销 —— 改密/重置后 password_changed_at 前移, 带旧 pwv 的 token 全部失效.
+	// pwv=0 的存量 token (本功能上线前签发) 宽限放行, 下次登录自然带上新版本号.
+	if claims.PasswordVersion != 0 && claims.PasswordVersion != passwordVersionOf(user) {
+		return errors.New("token revoked: password has been changed since this token was issued")
 	}
 	permissions, _ := s.permissionsForUser(context.Background(), user)
 	mustChangePassword := userMustChangePassword(user)
@@ -342,6 +350,16 @@ func (s *AuthService) maybeGCSEETickets() {
 			sseTicketMu.Unlock()
 		}
 	}()
+}
+
+// passwordVersionOf P1-3: 从用户记录提取密码版本号 (password_changed_at Unix 毫秒, 0 表示从未设置).
+// 用毫秒而非秒: SQLite 保留亚秒精度, MySQL TIMESTAMP 截断到秒也不影响正确性 ——
+// 两端读到的都是同一存储值; 毫秒只是提高同一秒内两次改密的可区分性.
+func passwordVersionOf(user *models.User) int64 {
+	if user == nil || user.PasswordChangedAt == nil {
+		return 0
+	}
+	return user.PasswordChangedAt.UnixMilli()
 }
 
 func (s *AuthService) HasPermission(role, permission string) bool {

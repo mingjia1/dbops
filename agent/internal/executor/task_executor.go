@@ -104,6 +104,68 @@ type DeployTaskRequest struct {
 	Config     map[string]interface{} `json:"config"`
 }
 
+func (r *DeployTaskRequest) Normalize() {
+	if r.Config == nil {
+		return
+	}
+	host, _ := r.Config["target_host"].(string)
+	if host == "" {
+		host, _ = r.Config["host"].(string)
+	}
+	if host != "" {
+		r.Config["host"] = host
+	}
+	user, _ := r.Config["target_user"].(string)
+	if user == "" {
+		user, _ = r.Config["user"].(string)
+	}
+	if user != "" {
+		r.Config["user"] = user
+	}
+	pass, _ := r.Config["target_pass"].(string)
+	if pass == "" {
+		pass, _ = r.Config["mysql_password"].(string)
+	}
+	if pass == "" {
+		pass, _ = r.Config["mysql_pass"].(string)
+	}
+	if pass != "" {
+		r.Config["pass"] = pass
+	}
+	port := 0
+	switch v := r.Config["target_port"].(type) {
+	case int:
+		port = v
+	case float64:
+		port = int(v)
+	}
+	if port == 0 {
+		switch v := r.Config["port"].(type) {
+		case int:
+			port = v
+		case float64:
+			port = int(v)
+		}
+	}
+	if port > 0 {
+		r.Config["port"] = port
+	}
+}
+
+func (r *DeployTaskRequest) UnmarshalJSON(data []byte) error {
+	type Alias DeployTaskRequest
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.Normalize()
+	return nil
+}
+
 type TaskResult struct {
 	TaskID    string    `json:"task_id"`
 	Status    string    `json:"status"`

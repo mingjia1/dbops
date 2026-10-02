@@ -1,5 +1,5 @@
 import React from 'react'
-import { Form, Select, Input, InputNumber, Switch, Modal, Row, Col } from 'antd'
+import { Form, Select, Input, InputNumber, Switch, Modal, Row, Col, Alert } from 'antd'
 import type { VersionEntry } from '../services/api'
 import { strategyOptions } from '../services/upgradeHelpers'
 
@@ -9,6 +9,7 @@ interface ExecuteUpgradeModalProps {
   instanceOptions: { value: string; label: string }[]
   clusterOptions: { value: string; label: string }[]
   versionOptions: { value: string; label: string }[]
+  versions: VersionEntry[]
   versionsLoading: boolean
   versionInfo: React.ReactNode
   form: any
@@ -18,9 +19,19 @@ interface ExecuteUpgradeModalProps {
 
 const ExecuteUpgradeModal: React.FC<ExecuteUpgradeModalProps> = ({
   open, submitting, instanceOptions, clusterOptions, versionOptions,
-  versionsLoading, versionInfo, form, onCancel, onFinish,
+  versions, versionsLoading, versionInfo, form, onCancel, onFinish,
 }) => {
   const executeStrategy = Form.useWatch('strategy', form)
+  const targetVersionId = Form.useWatch('target_version', form)
+  const targetVersion = versions.find((v) => v.id === targetVersionId)
+
+  const agentCompatWarning = React.useMemo(() => {
+    if (!targetVersion) return undefined
+    const parts = []
+    if (targetVersion.min_agent_version) parts.push(`要求 Agent >= ${targetVersion.min_agent_version}`)
+    if (targetVersion.max_agent_version) parts.push(`要求 Agent <= ${targetVersion.max_agent_version}`)
+    return parts.length > 0 ? parts.join('；') : undefined
+  }, [targetVersion])
 
   return (
     <Modal
@@ -57,6 +68,9 @@ const ExecuteUpgradeModal: React.FC<ExecuteUpgradeModalProps> = ({
         <Form.Item name="target_version" label="目标版本" rules={[{ required: true, message: '请选择目标版本' }]}>
           <Select showSearch optionFilterProp="label" loading={versionsLoading} options={versionOptions} placeholder="选择目标版本" />
         </Form.Item>
+        {agentCompatWarning && (
+          <Alert type="warning" message={`Agent 版本约束: ${agentCompatWarning}`} style={{ marginBottom: 16 }} />
+        )}
         <Form.Item name="backup_enabled" label="数据是否已备份" valuePropName="checked">
           <Switch checkedChildren="已备份" unCheckedChildren="未备份" />
         </Form.Item>

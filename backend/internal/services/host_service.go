@@ -995,6 +995,7 @@ type ScannedInstance struct {
 	AlreadyManaged  bool   `json:"already_managed"`
 	ManagedID       string `json:"managed_instance_id,omitempty"`
 	Source          string `json:"source,omitempty"`
+	PortConfident   bool   `json:"port_confident,omitempty"`
 }
 
 type HostScanResult struct {
@@ -1097,19 +1098,18 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			si := probePort(host.Address, port, probeMySQL, username, password)
-			if si == nil {
-				return
-			}
-			si.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), port)
-			si.Source = "tcp"
-			if mid, ok := managedPorts[port]; ok {
-				si.AlreadyManaged = true
-				si.ManagedID = mid
-			}
-			mu.Lock()
-			scanned = append(scanned, *si)
-			mu.Unlock()
+		si := probePort(host.Address, port, probeMySQL, username, password)
+		if si == nil {
+			return
+		}
+		si.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), port)
+		if mid, ok := managedPorts[port]; ok {
+			si.AlreadyManaged = true
+			si.ManagedID = mid
+		}
+		mu.Lock()
+		scanned = append(scanned, *si)
+		mu.Unlock()
 		}(p)
 	}
 	wg.Wait()
@@ -1118,7 +1118,6 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 		processInstances := s.discoverByProcess(host)
 		for _, pi := range processInstances {
 			pi.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), pi.Port)
-			pi.Source = "process"
 			if mid, ok := managedPorts[pi.Port]; ok {
 				pi.AlreadyManaged = true
 				pi.ManagedID = mid
@@ -1132,6 +1131,7 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 					scanned[i].Socket = pi.Socket
 					scanned[i].ConfigPath = pi.ConfigPath
 					scanned[i].Source = "tcp+process"
+					scanned[i].PortConfident = pi.PortConfident
 					if pi.DataSizeMB > 0 {
 						scanned[i].DataSizeMB = pi.DataSizeMB
 					}
@@ -1300,70 +1300,89 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 
 		flavor := "mysql"
 		port := extractMysqldPort(cmdline)
+		source := "process-cmdline"
+		portConfident := port > 0
 		if strings.Contains(strings.ToLower(cmdline), "tidb-server") {
 			flavor = "tidb"
 			port = extractTiDBPort(cmdline)
 			if port == 0 {
 				port = 4000
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "kingbase") {
 			flavor = "kingbase"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = 54321
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "gaussdb") {
 			flavor = "opengauss"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = 5432
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "highgo") {
 			flavor = "highgo"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = 5432
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "oninit") {
-			// GBase 8s is Informix-derived: the server process is oninit and its
-			// listener port lives in sqlhosts, not on the command line.
 			flavor = "gbase8s"
 			port = gbase8sDefaultPort
+			source = "default-port"
+			portConfident = false
 		} else if strings.Contains(strings.ToLower(cmdline), "gclusterd") {
-			// GBase 8a MPP coordinator node (gcluster layer).
 			flavor = "gbase8a"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = gbase8aClusterDefaultPort
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "gbased") {
-			// GBase 8a MPP data node (gnode layer).
 			flavor = "gbase8a"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = gbase8aNodeDefaultPort
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "dmserver") {
-			// Dameng DM takes its dm.ini path as a positional argument and reads
-			// PORT_NUM from it; the port never appears on the command line.
 			flavor = "dm"
 			port = 0
 			if iniPath := extractDMIniPath(cmdline); iniPath != "" {
 				out, _ := runSSHCommand(client, fmt.Sprintf("grep -i '^[[:space:]]*PORT_NUM' %s 2>/dev/null | head -1", shellQuotePath(iniPath)))
 				port = parseDMPortNum(out)
+				if port > 0 {
+					source = "process-ini"
+					portConfident = true
+				}
 			}
 			if port == 0 {
 				port = dmDefaultPort
+				source = "default-port"
+				portConfident = false
 			}
 		} else if strings.Contains(strings.ToLower(cmdline), "oscarserver") || strings.Contains(strings.ToLower(cmdline), "osrvr") {
-			// ShenTong (OSCAR) is PostgreSQL-compatible and accepts the -p flag.
 			flavor = "shentong"
 			port = extractKingbasePort(cmdline)
 			if port == 0 {
 				port = shentongDefaultPort
+				source = "default-port"
+				portConfident = false
 			}
 		} else if port == 0 {
 			port = 3306
+			source = "default-port"
+			portConfident = false
 		}
 		if seen[port] {
 			continue
@@ -1421,15 +1440,17 @@ func (s *HostService) discoverByProcess(host *models.Host) []ScannedInstance {
 		}
 
 		si := ScannedInstance{
-			Port:       port,
-			Flavor:     flavor,
-			Running:    true,
-			PID:        pid,
-			MemoryMB:   rssKB / 1024,
-			Datadir:    datadir,
-			Socket:     socket,
-			ConfigPath: configPath,
-			DataSizeMB: dataSizeMB,
+			Port:          port,
+			Flavor:        flavor,
+			Running:       true,
+			PID:           pid,
+			MemoryMB:      rssKB / 1024,
+			Datadir:       datadir,
+			Socket:        socket,
+			ConfigPath:    configPath,
+			DataSizeMB:    dataSizeMB,
+			Source:        source,
+			PortConfident: portConfident,
 		}
 		instances = append(instances, si)
 	}
@@ -1652,8 +1673,10 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 
 	si := &ScannedInstance{
-		Port:    port,
-		Running: true,
+		Port:          port,
+		Running:       true,
+		Source:        "tcp-handshake",
+		PortConfident: true,
 	}
 
 	if !probeMySQL {
@@ -1661,8 +1684,6 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		return si
 	}
 
-	// Send a simple MySQL handshake probe: read greeting then close.
-	// MySQL server sends greeting packet on connect; first byte is length, second is sequence (0), then protocol version.
 	reader := bufio.NewReader(conn)
 	hdr, err := reader.Peek(5)
 	if err != nil || len(hdr) < 5 {
@@ -1696,7 +1717,6 @@ func probePort(host string, port int, probeMySQL bool, username, password string
 		return si
 	}
 
-	// greeting: 4-byte header + 0x0a (protocol 10) + server_version (null-terminated) + ...
 	rest := greeting[5:]
 	if idx := indexByte(rest, 0); idx > 0 {
 		si.VersionFull = string(rest[:idx])

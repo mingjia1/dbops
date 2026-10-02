@@ -398,10 +398,20 @@ const HostDetail: React.FC = () => {
       title: '发现方式', dataIndex: 'source', key: 'source',
       render: (s: string) => {
         if (s === 'tcp+process') return <Tooltip title="TCP 探测 + 进程发现"><Tag color="cyan">TCP+进程</Tag></Tooltip>
+        if (s === 'process-cmdline') return <Tooltip title="通过 ps 命令发现的 mysqld 进程，端口来自命令行"><Tag color="geekblue">进程(命令行)</Tag></Tooltip>
+        if (s === 'process-ini') return <Tooltip title="通过 dm.ini 等配置文件读取端口"><Tag color="geekblue">进程(配置文件)</Tag></Tooltip>
+        if (s === 'default-port') return <Tooltip title="端口为默认回退值，建议人工确认"><Tag color="orange">默认端口</Tag></Tooltip>
+        if (s === 'tcp-handshake') return <Tooltip title="通过 TCP 端口探测发现"><Tag color="blue">TCP</Tag></Tooltip>
         if (s === 'process') return <Tooltip title="通过 ps 命令发现的 mysqld 进程"><Tag color="geekblue">进程</Tag></Tooltip>
         if (s === 'tcp') return <Tooltip title="通过 TCP 端口探测发现"><Tag color="blue">TCP</Tag></Tooltip>
         return s || '-'
       },
+    },
+    {
+      title: '端口置信度', dataIndex: 'port_confident', key: 'port_confident',
+      render: (confident: boolean) => confident
+        ? <Tag color="success">可靠</Tag>
+        : <Tooltip title="端口为系统推断值，纳管前请确认"><Tag color="warning">待确认</Tag></Tooltip>,
     },
     {
       title: 'PID', dataIndex: 'pid', key: 'pid',

@@ -110,21 +110,24 @@ Optional integrations:
 backend/            Go backend API, services, repositories, config, and migrations
 frontend/           React + TypeScript web console
 agent/              Go execution agent deployed on managed hosts
-bin/                Helper binaries and scripts
+bin/windows/         Windows one-click start/stop scripts (start/stop/restart .bat/.ps1)
+bin/ubuntu/          Ubuntu start/stop scripts
+bin/centos/          CentOS start/stop scripts
+deploy/              systemd units and docker-compose production deployment
 scripts/            Operational helper scripts, including local secret scanning
 docs/               Supplemental documents and screenshots
 data/               Local development data
 logs/               Local runtime logs
 Makefile            Build, test, install, dist, and upgrade helpers
-start.bat/.ps1      Windows all-in-one startup
-stop.bat/.ps1       Windows all-in-one shutdown
+start.bat/.ps1      Windows all-in-one startup (in bin/windows/)
+stop.bat/.ps1       Windows all-in-one shutdown (in bin/windows/)
 ```
 
 ## Requirements
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Go | Backend 1.25+, Agent 1.21+ | Backend and Agent build/runtime |
+| Go | 1.25+ (shared by backend and agent, see their go.mod) | Backend and Agent build/runtime |
 | Node.js | 18+ | Frontend build/runtime |
 | npm | Required | Frontend dependency management |
 | PowerShell | 5.1+ | Windows scripts |
@@ -188,7 +191,7 @@ cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 Windows one-click startup:
 
 ```powershell
-.\start.bat
+.\bin\windows\start.bat
 ```
 
 Default local URLs:

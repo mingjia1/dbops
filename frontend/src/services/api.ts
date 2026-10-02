@@ -20,6 +20,38 @@ const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelle
 const agentSubmitFastTimeoutMs = 8000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove']
 
+const ERROR_HINTS: Record<number, string> = {
+  400: '请求参数有误，请检查表单填写内容。',
+  401: '登录已过期，请重新登录。',
+  403: '当前账号无权限执行该操作，请联系管理员。',
+  404: '请求的资源不存在，可能已被删除或路径错误。',
+  408: '请求超时，请检查网络或稍后重试。',
+  422: '数据校验失败，请检查输入内容。',
+  429: '操作过于频繁，请稍后再试。',
+  500: '服务器内部错误，请联系管理员或查看后端日志。',
+  502: '网关错误，后端服务可能未启动。',
+  503: '服务暂不可用，可能正在维护或过载，请稍后重试。',
+  504: '网关超时，后端响应太慢，请稍后重试。',
+}
+
+const getActionableMessage = (error: any): string => {
+  const status = error.response?.status
+  const backendMsg = error.response?.data?.message || error.message
+  if (!status && error.code) {
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return '请求超时，请检查网络连接或稍后重试。'
+    }
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      return '无法连接到服务器，请确认服务是否已启动且网络可达。'
+    }
+  }
+  if (status && ERROR_HINTS[status]) {
+    return `${backendMsg || '操作失败'}。${ERROR_HINTS[status]}`
+  }
+  if (backendMsg) return backendMsg
+  return 'Request failed'
+}
+
 export const extractTaskPayload = (value: any): any => {
   if (!value || typeof value !== 'object') return value
   if (typeof value.status === 'string') return value
@@ -87,7 +119,7 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
     if (!error.config?.suppressGlobalError) {
-      const errMsg = error.response?.data?.message || error.message || 'Request failed'
+      const errMsg = getActionableMessage(error)
       showErrorToast(errMsg)
     }
     return Promise.reject(error)
@@ -511,6 +543,7 @@ export interface ScannedInstance {
   already_managed?: boolean
   managed_instance_id?: string
   source?: string
+  port_confident?: boolean
 }
 
 export interface HostScanResult {
@@ -1029,6 +1062,8 @@ export interface VersionEntry {
   local_available?: boolean
   upgrade_from: string[]
   upgrade_notes?: string
+  min_agent_version?: string
+  max_agent_version?: string
 }
 
 export const versionApi = {

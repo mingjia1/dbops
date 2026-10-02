@@ -1208,6 +1208,10 @@ func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.I
 		return nil, err
 	}
 
+	if err := validateAgentVersionForUpgrade(ctx, s.agentClient, host, port, targetVersion); err != nil {
+		return nil, err
+	}
+
 	cfg := map[string]interface{}{
 		"task_id":        taskID,
 		"upgrade_type":   upgradeType,
@@ -1243,6 +1247,33 @@ func (s *UpgradeService) dispatchUpgrade(ctx context.Context, instance *models.I
 		"instance_id": instance.ID,
 		"config":      cfg,
 	})
+}
+
+func validateAgentVersionForUpgrade(ctx context.Context, agentClient *AgentClient, host string, port int, targetVersion string) error {
+	entry := findUpgradeCatalogEntry(targetVersion, "")
+	if entry == nil {
+		return nil
+	}
+	if entry.MinAgentVersion == "" && entry.MaxAgentVersion == "" {
+		return nil
+	}
+
+	agentVer, err := agentClient.GetAgentVersion(ctx, host, port)
+	if err != nil {
+		return fmt.Errorf("failed to get agent version: %w", err)
+	}
+	if agentVer == "" {
+		return fmt.Errorf("agent version is empty; cannot verify upgrade compatibility")
+	}
+
+	agentMM := MajorVersion(agentVer)
+	if entry.MinAgentVersion != "" && versionLessThan(agentMM, MajorVersion(entry.MinAgentVersion)) {
+		return fmt.Errorf("agent version %s is too old for target version %s (requires >= %s)", agentVer, targetVersion, entry.MinAgentVersion)
+	}
+	if entry.MaxAgentVersion != "" && versionLessThan(MajorVersion(entry.MaxAgentVersion), agentMM) {
+		return fmt.Errorf("agent version %s is newer than supported by target version %s (requires <= %s)", agentVer, targetVersion, entry.MaxAgentVersion)
+	}
+	return nil
 }
 
 func (s *UpgradeService) applyUpgradePackageMetadata(cfg map[string]interface{}, targetVersion string) {

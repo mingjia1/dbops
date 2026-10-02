@@ -110,21 +110,24 @@ SQLite 或 MySQL，取决于存储模式配置
 backend/            Go 后端 API、服务、仓储、配置和迁移
 frontend/           React + TypeScript Web 控制台
 agent/              部署在被管主机上的 Go 执行 Agent
-bin/                辅助二进制和脚本
+bin/windows/         Windows 一键启动/停止脚本 (start/stop/restart .bat/.ps1)
+bin/ubuntu/          Ubuntu 启停脚本
+bin/centos/          CentOS 启停脚本
+deploy/              systemd unit 与 docker-compose 生产交付形态
 scripts/            运维脚本，包括本地密钥扫描
 docs/               补充文档和截图
 data/               本地开发数据
 logs/               本地运行日志
 Makefile            构建、测试、安装、打包和升级辅助命令
-start.bat/.ps1      Windows 一键启动
-stop.bat/.ps1       Windows 一键停止
+start.bat/.ps1      Windows 一键启动（位于 bin/windows/）
+stop.bat/.ps1       Windows 一键停止（位于 bin/windows/）
 ```
 
 ## 系统要求
 
 | 组件 | 版本 | 说明 |
 |------|------|------|
-| Go | Backend 1.25+，Agent 1.21+ | 后端和 Agent 构建/运行 |
+| Go | 1.25+（backend/agent 共用，见各自 go.mod） | 后端和 Agent 构建/运行 |
 | Node.js | 18+ | 前端构建/运行 |
 | npm | 必需 | 前端依赖管理 |
 | PowerShell | 5.1+ | Windows 脚本 |
@@ -188,7 +191,7 @@ cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 Windows 一键启动：
 
 ```powershell
-.\start.bat
+.\bin\windows\start.bat
 ```
 
 默认本地访问地址：

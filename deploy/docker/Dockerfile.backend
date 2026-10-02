@@ -1,0 +1,14 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /build
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /build/dbops-backend ./cmd/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates curl
+WORKDIR /opt/dbops-platform
+COPY --from=builder /build/dbops-backend ./bin/dbops-backend
+COPY backend/config ./config
+EXPOSE 8080
+CMD ["./bin/dbops-backend"]
