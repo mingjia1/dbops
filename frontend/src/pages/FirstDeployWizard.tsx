@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Button, Form, Input, InputNumber, message, Modal, Steps, Table, Tag } from 'antd'
+import { Button, Form, Input, InputNumber, message, Modal, Space, Steps, Table, Tag } from 'antd'
 import { PlusOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { hostApi, instanceApi, type Host, type ScannedInstance } from '../services/api'
 
 const STORAGE_KEY = 'dbops_first_deploy_dismissed'
+const COMPLETED_KEY = 'dbops_first_deploy_completed'
 
 interface HostForm {
   name: string
@@ -25,6 +26,12 @@ interface InstanceForm {
   os_user?: string
 }
 
+declare global {
+  interface Window {
+    openFirstDeployWizard?: () => void
+  }
+}
+
 const FirstDeployWizard: React.FC = () => {
   const [visible, setVisible] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -37,9 +44,18 @@ const FirstDeployWizard: React.FC = () => {
   const [hostForm] = Form.useForm<HostForm>()
   const [instanceForm] = Form.useForm<InstanceForm>()
 
+  const openWizard = () => {
+    localStorage.removeItem(STORAGE_KEY)
+    setVisible(true)
+    setCurrentStep(0)
+  }
+
   useEffect(() => {
+    window.openFirstDeployWizard = openWizard
+
     const dismissed = localStorage.getItem(STORAGE_KEY)
-    if (dismissed) return
+    const completed = localStorage.getItem(COMPLETED_KEY)
+    if (dismissed || completed) return
 
     const load = async () => {
       try {
@@ -177,8 +193,7 @@ const FirstDeployWizard: React.FC = () => {
         os_user: values.os_user || 'mysql',
       })
       message.success('实例创建成功，请在实例管理页执行部署')
-      localStorage.setItem(STORAGE_KEY, 'true')
-      setVisible(false)
+      handleComplete()
     } catch {
       // ignore
     } finally {
@@ -188,6 +203,11 @@ const FirstDeployWizard: React.FC = () => {
 
   const handleDismiss = () => {
     localStorage.setItem(STORAGE_KEY, 'true')
+    setVisible(false)
+  }
+
+  const handleComplete = () => {
+    localStorage.setItem(COMPLETED_KEY, 'true')
     setVisible(false)
   }
 
@@ -304,7 +324,15 @@ const FirstDeployWizard: React.FC = () => {
       title="快速部署向导"
       open={visible}
       onCancel={handleDismiss}
-      footer={<Button onClick={handleDismiss}>稍后再说</Button>}
+      footer={
+        <Space>
+          {currentStep === 3 ? (
+            <Button type="primary" onClick={handleComplete}>完成</Button>
+          ) : (
+            <Button onClick={handleDismiss}>稍后再说</Button>
+          )}
+        </Space>
+      }
       width={Math.min(window.innerWidth * 0.96, 640)}
       styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' } }}
     >

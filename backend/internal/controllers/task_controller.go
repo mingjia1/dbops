@@ -67,14 +67,13 @@ func (c *TaskController) ListByInstance(ctx *gin.Context) {
 	}
 	limit := 50
 	if v := ctx.Query("limit"); v != "" {
-		// 简单解析, 失败 fallback 50
 		var n int
-		for _, c := range v {
-			if c < '0' || c > '9' {
+		for _, ch := range v {
+			if ch < '0' || ch > '9' {
 				n = -1
 				break
 			}
-			n = n*10 + int(c-'0')
+			n = n*10 + int(ch-'0')
 		}
 		if n > 0 && n <= 200 {
 			limit = n
@@ -92,5 +91,28 @@ func (c *TaskController) ListByInstance(ctx *gin.Context) {
 		"code":    200,
 		"message": "success",
 		"data":    tasks,
+	})
+}
+
+// Retry 重试失败的任务（仅对支持重试的任务类型有效）.
+func (c *TaskController) Retry(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "task id required"})
+		return
+	}
+	task, err := c.taskRepo.GetByID(ctx.Request.Context(), id)
+	if err != nil || task == nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "task not found"})
+		return
+	}
+	if task.Status != "failed" && task.Status != "error" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "only failed/error tasks can be retried", "data": gin.H{"current_status": task.Status}})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "retry not implemented in this version",
+		"data":    task,
 	})
 }

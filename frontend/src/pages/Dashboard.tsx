@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Avatar, Dropdown, Form, Input, Layout, Menu, message, Modal, Space, Switch, Tooltip, Typography } from 'antd'
-import { BulbFilled, BulbOutlined, DatabaseOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { BulbFilled, BulbOutlined, DatabaseOutlined, LogoutOutlined, RocketOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../services/api'
 import { useTheme } from '../hooks/useTheme'
@@ -118,6 +118,9 @@ const Dashboard: React.FC = () => {
               unCheckedChildren={<BulbOutlined />}
               style={{ marginRight: 16 }}
             />
+          </Tooltip>
+          <Tooltip title="快速部署">
+            <RocketOutlined style={{ color: 'rgba(255,255,255,0.85)', marginRight: 16, cursor: 'pointer', fontSize: 18 }} onClick={() => window.openFirstDeployWizard?.()} />
           </Tooltip>
           <Dropdown menu={userMenu} placement="bottomRight">
             <Space style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.85)' }}>

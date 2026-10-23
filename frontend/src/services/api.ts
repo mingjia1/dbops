@@ -1164,6 +1164,8 @@ export const taskApi = {
     api.get(`/tasks/${id}/logs`).then(rejectBusinessError),
   getStatus: (id: string) =>
     api.get(`/tasks/${id}/status`).then(rejectBusinessError),
+  retry: (id: string) =>
+    api.post(`/tasks/${id}/retry`).then(rejectBusinessError),
 }
 
 /** 是否任务终态（供进度 UI 判断）。 */

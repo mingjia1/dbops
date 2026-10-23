@@ -26,6 +26,7 @@ import {
   YAxis,
 } from 'recharts'
 import { instanceApi, monitorApi } from '../services/api'
+import api from '../services/api'
 import { palette } from '../appTheme'
 
 interface MetricPoint {
@@ -171,6 +172,45 @@ const MonitorDashboard: React.FC = () => {
   const [monitorMessage, setMonitorMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [stats, setStats] = useState({ total: 0, healthy: 0, unhealthy: 0, stopped: 0 })
+  const [platformHealth, setPlatformHealth] = useState<{ name: string; status: string; detail?: string }[]>([])
+  const [platformHealthLoading, setPlatformHealthLoading] = useState(false)
+
+  const fetchPlatformHealth = async () => {
+    setPlatformHealthLoading(true)
+    try {
+      const base = api.defaults.baseURL || window.location.origin
+      const endpoints = [
+        { name: 'Backend', url: `${base}/health/ready` },
+        { name: 'Redis', url: `${base}/health/redis` },
+        { name: 'ClickHouse', url: `${base}/health/clickhouse` },
+        { name: 'Agents', url: `${base}/health/agents` },
+      ]
+      const results = await Promise.allSettled(
+        endpoints.map(async (endpoint) => {
+          const start = performance.now()
+          try {
+            const res = await fetch(endpoint.url, { method: 'GET', mode: 'cors' })
+            const payload = await res.json().catch(() => ({}))
+            const detail = payload?.data?.error || payload?.message || `HTTP ${res.status}`
+            const status = String(payload?.data?.status || payload?.data?.status || '').toLowerCase()
+            return { name: endpoint.name, status: res.ok ? (status === 'disabled' ? 'disabled' : status === 'down' ? 'down' : 'healthy') : 'down', detail, latencyMs: Math.round(performance.now() - start) }
+          } catch (err: any) {
+            return { name: endpoint.name, status: 'down' as const, detail: err?.message || 'unreachable', latencyMs: Math.round(performance.now() - start) }
+          }
+        }),
+      )
+      const settled = results.map((r, idx) => r.status === 'fulfilled' ? r.value : { name: endpoints[idx].name, status: 'down' as const, detail: 'unreachable' })
+      setPlatformHealth(settled)
+    } catch {
+      setPlatformHealth([])
+    } finally {
+      setPlatformHealthLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchPlatformHealth()
+  }, [])
 
   const fetchInstances = async () => {
     try {
@@ -242,6 +282,28 @@ const MonitorDashboard: React.FC = () => {
         <Col xs={24} md={6}><Card><Statistic title="Unhealthy" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} /></Card></Col>
         <Col xs={24} md={6}><Card><Statistic title="Stopped" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} /></Card></Col>
       </Row>
+
+      <Card
+        title={<Space><DatabaseOutlined /> 平台健康状态</Space>}
+        style={{ marginTop: 16 }}
+        extra={<Button icon={<ReloadOutlined />} size="small" onClick={fetchPlatformHealth} loading={platformHealthLoading}>刷新</Button>}
+      >
+        <Row gutter={[16, 16]}>
+          {platformHealth.map((item) => (
+            <Col xs={24} md={6} key={item.name}>
+              <Card size="small">
+                <Statistic
+                  title={item.name}
+                  value={item.status}
+                  valueStyle={{ color: item.status === 'healthy' ? '#52c41a' : item.status === 'disabled' ? '#faad14' : '#ff4d4f' }}
+                  prefix={item.status === 'healthy' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+                />
+                {item.detail && <div style={{ marginTop: 8, fontSize: 12, color: '#8c8c8c' }}>{item.detail}</div>}
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      </Card>
 
       <Card
         title={<Space><span>Instance Metrics</span>{selectedInstanceObj && <Tag color="blue">{selectedInstanceObj.name}</Tag>}</Space>}

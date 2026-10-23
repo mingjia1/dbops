@@ -22,31 +22,38 @@ const PlatformHealth: React.FC = () => {
     const results: HealthStatus[] = []
     const base = api.defaults.baseURL || window.location.origin
 
-    const check = async (name: string, url: string, expect: number): Promise<HealthStatus> => {
+    const check = async (name: string, url: string): Promise<HealthStatus> => {
       const start = performance.now()
       try {
         const res = await fetch(url, { method: 'GET', mode: 'cors' })
         const latency = Math.round(performance.now() - start)
-        if (res.ok) {
-          return { name, status: 'healthy', detail: `HTTP ${res.status}`, latencyMs: latency }
-        }
-        return { name, status: 'degraded', detail: `HTTP ${res.status}`, latencyMs: latency }
+        const payload = await res.json().catch(() => ({}))
+        const detail = payload?.data?.error || payload?.message || `HTTP ${res.status}`
+        const statusRaw = String(payload?.data?.status || '').toLowerCase()
+        const status = res.ok
+          ? statusRaw === 'disabled'
+            ? 'degraded'
+            : statusRaw === 'down'
+              ? 'down'
+              : 'healthy'
+          : 'degraded'
+        return { name, status, detail, latencyMs: latency }
       } catch (err: any) {
         return { name, status: 'down', detail: err?.message || 'unreachable', latencyMs: Math.round(performance.now() - start) }
       }
     }
 
-    const backend = await check('Backend', `${base}/health/ready`, 200)
+    const backend = await check('Backend', `${base}/health/ready`)
     results.push(backend)
 
-    const redis = await check('Redis', `${base}/health/redis`, 200)
+    const redis = await check('Redis', `${base}/health/redis`)
     results.push(redis)
 
-    const clickhouse = await check('ClickHouse', `${base}/health/clickhouse`, 200)
+    const clickhouse = await check('ClickHouse', `${base}/health/clickhouse`)
     results.push(clickhouse)
 
-    const agentCount = await check('Agent Connectivity', `${base}/health/agents`, 200)
-    results.push(agentCount)
+    const agents = await check('Agents', `${base}/health/agents`)
+    results.push(agents)
 
     setChecks(results)
     setLastChecked(new Date().toLocaleString())

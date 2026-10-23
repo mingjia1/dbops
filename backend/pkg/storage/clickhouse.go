@@ -136,6 +136,10 @@ func (ch *ClickHouse) initTables(ctx context.Context) error {
 	return nil
 }
 
+func (ch *ClickHouse) Ping(ctx context.Context) error {
+	return ch.conn.Ping(ctx)
+}
+
 func (ch *ClickHouse) WriteMetric(ctx context.Context, instanceID, metricName string, value float64, timestamp time.Time) error {
 	if err := ch.conn.Exec(ctx, `
 		INSERT INTO metrics (instance_id, metric_name, value, timestamp)

@@ -130,10 +130,12 @@ stop.bat/.ps1       Windows 一键停止（位于 bin/windows/）
 | Go | 1.25+（backend/agent 共用，见各自 go.mod） | 后端和 Agent 构建/运行 |
 | Node.js | 18+ | 前端构建/运行 |
 | npm | 必需 | 前端依赖管理 |
-| PowerShell | 5.1+ | Windows 脚本 |
+| PowerShell | 5.1+ | Windows 开发/Console |
 | bash | Linux/macOS 必需 | Shell 脚本 |
 | Redis | 可选 | 缓存/队列场景 |
 | ClickHouse | 可选 | 监控数据存储 |
+
+> **生产环境说明**：Backend 和 Agent 必须部署在 Linux 上（systemd/docker）。Windows 仅用于开发或运行 Web Console 前端，不推荐用于生产。
 
 目标 MySQL 主机需要具备选定操作所需的系统权限和 MySQL 工具。根据部署计划不同，还可能需要 MySQL 安装包、备份工具、Keepalived、ProxySQL 或包下载访问能力。
 
@@ -218,6 +220,18 @@ cd frontend && npm run build
 - 核心数据库部署完成后，如果中间件、健康检查或基线备份失败，部署可进入 `partial` 状态并保留已创建资源。
 - 后端启动时会识别中断的部署并标记为 interrupted。
 - MGR 和 PXC 重新部署前，建议确认主机安装包布局、MySQL 数据目录、插件路径和 Agent 版本。
+
+## 生产环境部署检查清单
+
+- [ ] Backend 部署在 Linux 上，使用 systemd 或 docker 管理
+- [ ] 已设置强 `DBOPS_JWT_SECRET`、`DBOPS_ENCRYPTION_KEY`、`DBOPS_AGENT_TOKEN`
+- [ ] 平台元数据已配置定期备份（SQLite 或 MySQL）
+- [ ] 已配置防火墙规则，只开放必要端口（8080、9090、SSH）
+- [ ] 已启用 TLS（可选但推荐）
+- [ ] 已配置 `/metrics` 监控和告警
+- [ ] 已配置日志轮转（journald 或 logrotate）
+- [ ] 已测试升级流程和回滚预案
+- [ ] 已记录 DR 恢复步骤并定期演练
 
 ## 文档
 

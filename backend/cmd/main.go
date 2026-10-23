@@ -486,6 +486,51 @@ func main() {
 		}
 	})
 
+	r.GET("/health/redis", func(c *gin.Context) {
+		if redisClient != nil && redisClient.Client != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := redisClient.Client.Ping(ctx).Err(); err != nil {
+				c.JSON(503, gin.H{"code": 503, "data": gin.H{"status": "down", "error": err.Error()}})
+				return
+			}
+			c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "healthy"}})
+			return
+		}
+		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "disabled"}})
+	})
+
+	r.GET("/health/clickhouse", func(c *gin.Context) {
+		if clickhouse != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := clickhouse.Ping(ctx); err != nil {
+				c.JSON(503, gin.H{"code": 503, "data": gin.H{"status": "down", "error": err.Error()}})
+				return
+			}
+			c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "healthy"}})
+			return
+		}
+		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "disabled"}})
+	})
+
+	r.GET("/health/agents", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		defer cancel()
+		hosts, err := hostRepo.List(ctx, 1000, 0)
+		if err != nil {
+			c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "unknown", "error": err.Error(), "total_hosts": 0}})
+			return
+		}
+		online := 0
+		for _, h := range hosts {
+			if h.AgentStatus == "online" || h.AgentStatus == "running" {
+				online++
+			}
+		}
+		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "ok", "total_hosts": len(hosts), "online_agents": online}})
+	})
+
 	api := r.Group("/api/v1")
 	{
 		auth := api.Group("/auth")
@@ -1196,6 +1241,7 @@ func main() {
 				tasks.GET("/:id", taskController.GetByID)
 				tasks.GET("/:id/status", taskController.GetStatus)
 				tasks.GET("/:id/logs", taskController.GetLogs)
+				tasks.POST("/:id/retry", taskController.Retry)
 				tasks.GET("", taskController.ListByInstance)
 			}
 
