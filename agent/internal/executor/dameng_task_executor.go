@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var damengPassword = regexp.MustCompile(`^[A-Za-z0-9!@#%+=._-]{12,48}$`)
@@ -66,6 +67,9 @@ func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRe
 	if err := e.starter(ctx, filepath.Join(req.Dameng.InstallDir, "bin", "dmserver"), filepath.Join(req.Dameng.DataDir, "dm.ini")); err != nil {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("start dameng server: %w", err)), nil
 	}
+	if err := e.waitForDamengReady(ctx, req, 60*time.Second); err != nil {
+		return flavorTaskFailure(req.TaskID, err), nil
+	}
 	if err := e.configureDameng(ctx, req); err != nil {
 		return flavorTaskFailure(req.TaskID, err), nil
 	}
@@ -74,6 +78,29 @@ func (e *FlavorTaskExecutor) executeDameng(ctx context.Context, req FlavorTaskRe
 		data["restart_required"] = true
 	}
 	return flavorTaskCompleted(req.TaskID, "dameng single-instance deployment completed", data), nil
+}
+
+// waitForDamengReady polls disql until the server accepts connections, so the
+// deploy does not fail on a one-shot check racing dmserver startup.
+func (e *FlavorTaskExecutor) waitForDamengReady(ctx context.Context, req FlavorTaskRequest, timeout time.Duration) error {
+	bin := filepath.Join(req.Dameng.InstallDir, "bin", "disql")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if _, err := e.handlers["dm"].runner(ctx, bin, damengConnection(req), "-e", "SELECT 1"); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("dameng server not ready within %s: %w", timeout, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("dameng readiness wait cancelled: %w", ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func (e *FlavorTaskExecutor) monitorDameng(ctx context.Context, req FlavorTaskRequest) (map[string]interface{}, error) {
