@@ -350,3 +350,42 @@ func TestEnvironmentCheck_EmptyHosts(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
+
+func TestEnvironmentCheck_CheckIDUniqueWithinSameSecond(t *testing.T) {
+	tctx := context.Background()
+	service := newTestEnvCheckService(t, tctx)
+	ctx, cancel := newTestEnvCheckCtx()
+	defer cancel()
+
+	req := EnvironmentCheckRequest{
+		Hosts: []HostConfig{{Host: "127.0.0.1", Port: 1, Username: "u", Password: "p"}},
+	}
+	first, err := service.Execute(ctx, req)
+	require.NoError(t, err)
+	second, err := service.Execute(ctx, req)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.CheckID, second.CheckID)
+}
+
+func TestEnvironmentCheck_ExportContainsResults(t *testing.T) {
+	tctx := context.Background()
+	service := newTestEnvCheckService(t, tctx)
+	ctx, cancel := newTestEnvCheckCtx()
+	defer cancel()
+
+	created, err := service.Execute(ctx, EnvironmentCheckRequest{
+		Hosts: []HostConfig{{Host: "127.0.0.1", Port: 1, Username: "u", Password: "p"}},
+	})
+	require.NoError(t, err)
+
+	report, err := service.Export(ctx, created.CheckID)
+	require.NoError(t, err)
+	assert.Contains(t, report, created.CheckID)
+	assert.Contains(t, report, "port_reachable")
+	assert.Contains(t, report, "| network |")
+	assert.Contains(t, report, "127.0.0.1")
+
+	_, err = service.Export(ctx, "check-not-exist")
+	assert.Error(t, err)
+}

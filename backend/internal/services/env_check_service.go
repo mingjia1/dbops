@@ -68,7 +68,7 @@ func (s *EnvironmentCheckService) Execute(ctx context.Context, req EnvironmentCh
 	}
 
 	result := &EnvironmentCheckResult{
-		CheckID:   fmt.Sprintf("check-%d", time.Now().Unix()),
+		CheckID:   fmt.Sprintf("check-%d", time.Now().UnixNano()),
 		Status:    "running",
 		CreatedAt: time.Now(),
 		Results:   []CheckResult{},
@@ -243,9 +243,24 @@ func (s *EnvironmentCheckService) GetByID(ctx context.Context, checkID string) (
 }
 
 func (s *EnvironmentCheckService) Export(ctx context.Context, checkID string) (string, error) {
-	report := fmt.Sprintf("# Environment Check Report: %s\n\nStatus: completed\nDate: %s\n",
-		checkID, time.Now().Format("2006-01-02 15:04:05"))
-	return report, nil
+	result, err := s.GetByID(ctx, checkID)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Environment Check Report: %s\n\nStatus: %s\nDate: %s\n\n",
+		checkID, result.Status, result.CreatedAt.Format("2006-01-02 15:04:05"))
+
+	currentHost := ""
+	for _, r := range result.Results {
+		if r.Host != currentHost {
+			currentHost = r.Host
+			fmt.Fprintf(&b, "## Host: %s\n\n| Category | Name | Status | Value | Suggestion |\n|---|---|---|---|---|\n", currentHost)
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", r.Category, r.Name, r.Status, r.Value, r.Suggestion)
+	}
+	return b.String(), nil
 }
 
 func agentSystemResults(data map[string]interface{}) []CheckResult {

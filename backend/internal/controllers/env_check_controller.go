@@ -57,6 +57,14 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 	case "json":
 		ctx.Header("Content-Disposition", "attachment; filename="+checkID+".json")
 		ctx.JSON(http.StatusOK, result)
+	case "text":
+		report, err := c.service.Export(ctx.Request.Context(), checkID)
+		if err != nil {
+			utils.NotFoundResponse(ctx, "Check result not found")
+			return
+		}
+		ctx.Header("Content-Disposition", "attachment; filename="+checkID+".md")
+		ctx.String(http.StatusOK, report)
 	case "pdf":
 		ctx.JSON(http.StatusNotImplemented, gin.H{
 			"code":    501,
