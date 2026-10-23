@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -156,8 +157,7 @@ func validateGBase8aLifecycle(req FlavorTaskRequest) error {
 }
 
 func gbase8aBackupPath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && strings.HasPrefix(clean, gbase8aBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..") && !strings.ContainsAny(path, "\r\n")
+	return posixPathUnder(path, gbase8aBackupRoot, false) && !strings.ContainsAny(path, "\r\n")
 }
 
 func gbase8aMigrationFile(uri string) bool {
@@ -194,7 +194,7 @@ func gbase8aRecoverExpression(restore *GBase8aRestoreConfig) string {
 }
 
 func gbase8aGCRCMan(req FlavorTaskRequest) string {
-	return filepath.Join(req.GBase8a.InstallPrefix, "server", "bin", "gcrcman.py")
+	return path.Join(req.GBase8a.InstallPrefix, "server", "bin", "gcrcman.py")
 }
 
 func validateGBase8aConfig(req FlavorTaskRequest) error {
@@ -219,13 +219,11 @@ func validateGBase8aConfig(req FlavorTaskRequest) error {
 }
 
 func gbase8aPath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && (clean == gbase8aRoot || strings.HasPrefix(clean, gbase8aRoot+string(filepath.Separator))) && !strings.Contains(path, "..")
+	return posixPathUnder(path, gbase8aRoot, true)
 }
 
 func gbase8aCertificateFile(path string) bool {
-	clean := filepath.Clean(path)
-	if !filepath.IsAbs(path) || !strings.HasPrefix(clean, gbase8aCertificateRoot+string(filepath.Separator)) || strings.Contains(path, "..") {
+	if !absolutePath(path) || !posixPathUnder(path, gbase8aCertificateRoot, false) {
 		return false
 	}
 	info, err := os.Lstat(path)
@@ -288,7 +286,7 @@ func writeGBase8aTLSConfig(req FlavorTaskRequest, current []byte, tls *FlavorTLS
 	if tls == nil {
 		return fmt.Errorf("gbase8a TLS configuration is required")
 	}
-	configPath := filepath.Join(req.GBase8a.InstallPrefix, "gbase_8a_gcluster.cnf")
+	configPath := path.Join(req.GBase8a.InstallPrefix, "gbase_8a_gcluster.cnf")
 	info, err := os.Lstat(configPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("gbase8a TLS configuration must be a regular file")
@@ -334,5 +332,5 @@ func (e *FlavorTaskExecutor) gbase8aSQL(ctx context.Context, req FlavorTaskReque
 }
 
 func gbase8aBinary(req FlavorTaskRequest, binary string) string {
-	return filepath.Join(req.GBase8a.InstallPrefix, "bin", binary)
+	return path.Join(req.GBase8a.InstallPrefix, "bin", binary)
 }

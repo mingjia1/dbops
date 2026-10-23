@@ -195,7 +195,7 @@ func validateDamengLifecycle(req FlavorTaskRequest) error {
 }
 
 func damengBackupPath(path string) bool {
-	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), damengBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, damengBackupRoot, false)
 }
 
 func damengConnection(req FlavorTaskRequest) string {
@@ -215,7 +215,7 @@ func validateDamengConfig(req FlavorTaskRequest) error {
 	if req.TLS.Enabled {
 		for _, path := range []string{req.TLS.CAFile, req.TLS.CertFile, req.TLS.KeyFile} {
 			info, err := os.Stat(path)
-			if !filepath.IsAbs(path) || err != nil || !info.Mode().IsRegular() {
+			if !absolutePath(path) || err != nil || !info.Mode().IsRegular() {
 				return fmt.Errorf("dameng TLS file %q is unavailable", path)
 			}
 		}
@@ -228,7 +228,7 @@ func damengStrongPassword(value string) bool {
 }
 
 func damengPath(path string) bool {
-	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), "/opt/dbops/dm/") && !strings.Contains(path, "..")
+	return posixPathUnder(path, "/opt/dbops/dm/", false)
 }
 
 func damengPackageAvailable(manifest LocalPackageManifest) bool {

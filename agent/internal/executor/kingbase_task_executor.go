@@ -174,7 +174,7 @@ func validateKingbaseLifecycle(req FlavorTaskRequest) error {
 }
 
 func kingbaseBackupPath(path string) bool {
-	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), kingbaseBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, kingbaseBackupRoot, false)
 }
 
 func kingbaseDumpPath(path string) bool {
@@ -198,7 +198,7 @@ func validateKingbaseConfig(req FlavorTaskRequest) error {
 		}
 		for _, path := range []string{req.TLS.CAFile, req.TLS.CertFile, req.TLS.KeyFile} {
 			info, err := os.Lstat(path)
-			if !filepath.IsAbs(path) || err != nil || !info.Mode().IsRegular() {
+			if !absolutePath(path) || err != nil || !info.Mode().IsRegular() {
 				return fmt.Errorf("kingbase TLS file %q must be an available regular absolute file", path)
 			}
 		}
@@ -207,8 +207,7 @@ func validateKingbaseConfig(req FlavorTaskRequest) error {
 }
 
 func kingbasePath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && strings.HasPrefix(clean, kingbaseRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, kingbaseRoot, false)
 }
 
 func kingbaseCIDR(value string) bool {

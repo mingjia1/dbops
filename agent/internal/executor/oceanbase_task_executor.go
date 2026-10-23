@@ -161,7 +161,7 @@ func validateOceanBaseConfig(req FlavorTaskRequest) error {
 			return fmt.Errorf("oceanbase identifier %q is invalid", value)
 		}
 	}
-	if !filepath.IsAbs(c.DataDir) || strings.Contains(filepath.Clean(c.DataDir), "..") {
+	if !absolutePath(c.DataDir) || strings.Contains(c.DataDir, "..") {
 		return fmt.Errorf("oceanbase data_dir must be an absolute clean path")
 	}
 	for _, value := range []string{c.SystemMemory, c.DatafileSize, c.TenantMemory, c.TenantLogDiskSize} {
@@ -190,7 +190,7 @@ func validateOceanBaseConfig(req FlavorTaskRequest) error {
 	}
 	if req.TLS.Enabled {
 		for _, path := range []string{req.TLS.CAFile, req.TLS.CertFile, req.TLS.KeyFile} {
-			if !filepath.IsAbs(path) || strings.Contains(filepath.Clean(path), "..") {
+			if !absolutePath(path) || strings.Contains(path, "..") {
 				return fmt.Errorf("oceanbase TLS paths must be absolute clean paths")
 			}
 			info, err := os.Stat(path)
@@ -218,8 +218,7 @@ func validateOceanBaseConfig(req FlavorTaskRequest) error {
 
 func validateOceanBaseRemovalPath(path string) error {
 	const root = "/data/oceanbase"
-	cleaned := filepath.Clean(path)
-	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+	if !posixPathUnder(path, root, true) {
 		return fmt.Errorf("oceanbase teardown data_dir must remain under %s", root)
 	}
 	return nil

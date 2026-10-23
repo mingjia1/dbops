@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -93,6 +94,9 @@ func TestOpenGaussRejectsBundleAndUnsafeConfiguration(t *testing.T) {
 	certFile := filepath.Join(certDir, "cert.pem")
 	if err := os.WriteFile(certFile, []byte("certificate"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symbolic links on windows requires elevated privileges")
 	}
 	link := filepath.Join(certDir, "cert-link.pem")
 	if err := os.Symlink(certFile, link); err != nil {

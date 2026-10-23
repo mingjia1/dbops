@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -26,6 +27,9 @@ func TestParseProcNetTCP_Empty(t *testing.T) {
 }
 
 func TestScanUsedPorts_M4(t *testing.T) {
+	if _, err := os.Stat("/proc/net/tcp"); err != nil {
+		t.Skip("/proc/net/tcp not available on this OS")
+	}
 	scanner := NewPortScanner()
 	ports, err := scanner.ScanUsedPorts()
 	if err != nil {

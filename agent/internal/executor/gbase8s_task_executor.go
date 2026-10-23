@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -156,17 +156,15 @@ func validateGBase8sConfig(req FlavorTaskRequest) error {
 }
 
 func gbase8sBackupPath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && strings.HasPrefix(clean, gbase8sBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, gbase8sBackupRoot, false)
 }
 
 func gbase8sIndependentBackupDirectories(tapeDirectory, logicalLogDirectory string) bool {
-	return gbase8sBackupPath(tapeDirectory) && gbase8sBackupPath(logicalLogDirectory) && filepath.Clean(tapeDirectory) != filepath.Clean(logicalLogDirectory)
+	return gbase8sBackupPath(tapeDirectory) && gbase8sBackupPath(logicalLogDirectory) && path.Clean(tapeDirectory) != path.Clean(logicalLogDirectory)
 }
 
 func gbase8sPath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && strings.HasPrefix(clean, gbase8sRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, gbase8sRoot, false)
 }
 
 func gbase8sInstallerAvailable(manifest LocalPackageManifest) bool {
@@ -179,7 +177,7 @@ func gbase8sInstallerAvailable(manifest LocalPackageManifest) bool {
 }
 
 func gbase8sBinary(req FlavorTaskRequest, binary string) string {
-	return filepath.Join(req.GBase8s.InstallDir, "bin", binary)
+	return path.Join(req.GBase8s.InstallDir, "bin", binary)
 }
 
 func (e *FlavorTaskExecutor) configureGBase8s(ctx context.Context, req FlavorTaskRequest) error {

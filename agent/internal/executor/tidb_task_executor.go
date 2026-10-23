@@ -208,7 +208,7 @@ func tidbStoragePath(value string) bool {
 }
 
 func tidbLocalPath(value string) bool {
-	return filepath.IsAbs(value) && strings.HasPrefix(filepath.Clean(value), tidbBackupRoot+string(filepath.Separator)) && !strings.Contains(value, "..")
+	return posixPathUnder(value, tidbBackupRoot, false)
 }
 
 func tidbTiUPPath() (string, error) {
@@ -216,7 +216,9 @@ func tidbTiUPPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve TiUP home: %w", err)
 	}
-	return filepath.Join(home, ".tiup", "bin", "tiup"), nil
+	// The agent targets Linux hosts; keep the TiUP path in POSIX form so the
+	// command name stays stable regardless of the OS the agent binary runs on.
+	return filepath.ToSlash(filepath.Join(home, ".tiup", "bin", "tiup")), nil
 }
 
 func (e *FlavorTaskExecutor) configureTiDB(ctx context.Context, req FlavorTaskRequest) error {
@@ -227,11 +229,11 @@ func (e *FlavorTaskExecutor) configureTiDB(ctx context.Context, req FlavorTaskRe
 	if err := os.WriteFile(filepath.Join(workDir, "topology.yaml"), []byte(tidbTopology(req)), 0o600); err != nil {
 		return fmt.Errorf("write tidb topology: %w", err)
 	}
-	home, err := os.UserHomeDir()
+	tiup, err := tidbTiUPPath()
 	if err != nil {
-		return fmt.Errorf("resolve TiUP home: %w", err)
+		return err
 	}
-	if _, err := e.handlers["tidb"].runner(ctx, filepath.Join(home, ".tiup", "bin", "tiup"), "cluster", "reload", req.TiDB.ClusterName, "-R", "tidb,pd,tikv", "--yes"); err != nil {
+	if _, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "reload", req.TiDB.ClusterName, "-R", "tidb,pd,tikv", "--yes"); err != nil {
 		return fmt.Errorf("reload tidb cluster configuration: %w", err)
 	}
 	return nil
@@ -253,7 +255,7 @@ func validateTiDBConfig(req FlavorTaskRequest) error {
 	if req.TLS.Enabled {
 		for _, path := range []string{req.TLS.CAFile, req.TLS.CertFile, req.TLS.KeyFile} {
 			info, err := os.Stat(path)
-			if !filepath.IsAbs(path) || strings.Contains(filepath.Clean(path), "..") || err != nil || !info.Mode().IsRegular() {
+			if !absolutePath(path) || strings.Contains(path, "..") || err != nil || !info.Mode().IsRegular() {
 				return fmt.Errorf("tidb TLS file %q is unavailable", path)
 			}
 		}
@@ -292,11 +294,10 @@ func (e *FlavorTaskExecutor) deployTiDB(ctx context.Context, req FlavorTaskReque
 	if _, err := e.handlers["tidb"].runner(ctx, "sh", filepath.Join(serverDir, "local_install.sh")); err != nil {
 		return "", fmt.Errorf("install offline tiup: %w", err)
 	}
-	home, err := os.UserHomeDir()
+	tiup, err := tidbTiUPPath()
 	if err != nil {
-		return "", fmt.Errorf("resolve TiUP home: %w", err)
+		return "", err
 	}
-	tiup := filepath.Join(home, ".tiup", "bin", "tiup")
 	topology := filepath.Join(workDir, "topology.yaml")
 	if _, err := e.handlers["tidb"].runner(ctx, tiup, "cluster", "deploy", c.ClusterName, req.Version, topology, "--user", c.DeployUser); err != nil {
 		return "", fmt.Errorf("deploy tidb cluster: %w", err)

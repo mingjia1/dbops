@@ -175,7 +175,7 @@ func validateOpenGaussLifecycle(req FlavorTaskRequest) error {
 }
 
 func openGaussBackupPath(path string) bool {
-	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), openGaussBackupRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, openGaussBackupRoot, false)
 }
 
 func validateOpenGaussConfig(req FlavorTaskRequest) error {
@@ -192,7 +192,7 @@ func validateOpenGaussConfig(req FlavorTaskRequest) error {
 	if req.TLS.Enabled {
 		for _, path := range []string{req.TLS.CAFile, req.TLS.CertFile, req.TLS.KeyFile} {
 			info, err := os.Lstat(path)
-			if !filepath.IsAbs(path) || err != nil || !info.Mode().IsRegular() {
+			if !absolutePath(path) || err != nil || !info.Mode().IsRegular() {
 				return fmt.Errorf("opengauss TLS file %q is unavailable", path)
 			}
 		}
@@ -201,8 +201,7 @@ func validateOpenGaussConfig(req FlavorTaskRequest) error {
 }
 
 func openGaussPath(path string) bool {
-	clean := filepath.Clean(path)
-	return filepath.IsAbs(path) && strings.HasPrefix(clean, openGaussRoot+string(filepath.Separator)) && !strings.Contains(path, "..")
+	return posixPathUnder(path, openGaussRoot, false)
 }
 
 func openGaussInstallerAvailable(manifest LocalPackageManifest) bool {
