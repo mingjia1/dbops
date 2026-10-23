@@ -201,12 +201,12 @@ func (e *MigrationExecutor) ExecutePhysicalMigration(ctx context.Context, req De
 		"--result-file="+backupDir+"/full-backup.sql",
 	)
 
-	if err := dumpCmd.Run(); err != nil {
+	if out, err := dumpCmd.CombinedOutput(); err != nil {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
 			Progress:  20,
-			Message:   fmt.Sprintf("Physical backup failed on source: %v", err),
+			Message:   fmt.Sprintf("Physical backup failed on source: %v, output: %s", err, strings.TrimSpace(string(out))),
 			Timestamp: time.Now(),
 		}, nil
 	}

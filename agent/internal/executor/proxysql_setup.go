@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type ProxySQLSetup struct{}
@@ -64,13 +65,24 @@ func (s *ProxySQLSetup) ConfigureBackends(ctx context.Context, cfg ProxySQLConfi
 	return nil
 }
 
-func (s *ProxySQLSetup) Start(ctx context.Context) error {
+func (s *ProxySQLSetup) Start(ctx context.Context, cfg ProxySQLConfig) error {
 	cmd := exec.CommandContext(ctx, "systemctl", "enable", "proxysql")
 	if err := cmd.Run(); err != nil {
 		return err
 	}
 	cmd = exec.CommandContext(ctx, "systemctl", "restart", "proxysql")
-	return cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("restart proxysql failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	// Post-start verification: the admin interface must answer, otherwise the
+	// proxy is down and traffic cannot be routed to backends.
+	verifyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	verifyCmd := proxySQLAdminCommand(verifyCtx, cfg, "SELECT 1")
+	if out, err := verifyCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("proxysql admin interface not responding after start: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func normalizeProxySQLConfig(cfg *ProxySQLConfig) {

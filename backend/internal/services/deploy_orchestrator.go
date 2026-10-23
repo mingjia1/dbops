@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -237,7 +238,7 @@ func (o *DeployOrchestrator) phaseReplicate(ctx context.Context, req DeployOrche
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var instIDs []string
-	var firstErr error
+	var nodeErrs []string
 
 	for _, node := range replicaNodes {
 		wg.Add(1)
@@ -263,9 +264,7 @@ func (o *DeployOrchestrator) phaseReplicate(ctx context.Context, req DeployOrche
 
 			if _, err := o.pluginExecutor.RunExecute(ctx, kernelPluginName, env, nil); err != nil {
 				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("node %s: %w", n.Address, err)
-				}
+				nodeErrs = append(nodeErrs, fmt.Sprintf("node %s: %v", n.Address, err))
 				mu.Unlock()
 				return
 			}
@@ -290,8 +289,10 @@ func (o *DeployOrchestrator) phaseReplicate(ctx context.Context, req DeployOrche
 
 	wg.Wait()
 
-	if firstErr != nil {
-		return &PhaseResult{Phase: "replicate", Status: "failed", Message: firstErr.Error()}, nil, firstErr
+	if len(nodeErrs) > 0 {
+		// Report every failed node so operators can see the full blast radius.
+		err := fmt.Errorf("%d replica node(s) failed: %s", len(nodeErrs), strings.Join(nodeErrs, "; "))
+		return &PhaseResult{Phase: "replicate", Status: "failed", Message: err.Error()}, nil, err
 	}
 
 	return &PhaseResult{

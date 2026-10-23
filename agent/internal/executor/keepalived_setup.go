@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type KeepalivedSetup struct{}
@@ -115,7 +116,18 @@ func (s *KeepalivedSetup) Start(ctx context.Context) error {
 		return err
 	}
 	cmd = exec.CommandContext(ctx, "systemctl", "restart", "keepalived")
-	return cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("restart keepalived failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	// Post-start verification: the service must actually be active, otherwise
+	// the VIP never comes up and failover silently does not work.
+	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	checkCmd := exec.CommandContext(waitCtx, "systemctl", "is-active", "--quiet", "keepalived")
+	if out, err := checkCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("keepalived not active after start: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func validateKeepalivedConfig(cfg *KeepalivedConfig) error {

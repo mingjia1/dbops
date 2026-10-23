@@ -228,7 +228,7 @@ func (e *TaskExecutor) ExecuteProxySQLSetup(ctx context.Context, req DeployTaskR
 	if err := setup.ConfigureBackends(ctx, cfg); err != nil {
 		return middlewareTaskResult(req.TaskID, "failed", 70, "ProxySQL backend config failed: "+err.Error(), nil), nil
 	}
-	if err := setup.Start(ctx); err != nil {
+	if err := setup.Start(ctx, cfg); err != nil {
 		return middlewareTaskResult(req.TaskID, "failed", 90, "ProxySQL start failed: "+err.Error(), nil), nil
 	}
 	return middlewareTaskResult(req.TaskID, "completed", 100, "ProxySQL setup completed", map[string]any{"proxy_host": cfg.ProxyHost, "proxy_port": cfg.ProxyPort, "backends": cfg.Backends}), nil
