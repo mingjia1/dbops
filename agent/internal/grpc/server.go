@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -26,7 +27,7 @@ func NewAgentGRPCServer(executor TaskExecutor) *AgentGRPCServer {
 	}
 }
 
-func (s *AgentGRPCServer) ExecuteTaskStream(taskID string, config map[string]interface{}, progressFn func(progress int, stage, logLine, status string)) error {
+func (s *AgentGRPCServer) ExecuteTaskStream(taskID string, config map[string]interface{}, progressFn func(progress int, stage, logLine, status string)) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -35,12 +36,17 @@ func (s *AgentGRPCServer) ExecuteTaskStream(taskID string, config map[string]int
 	s.mu.Unlock()
 
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("task %s panicked: %v\n%s", taskID, r, debug.Stack())
+			err = fmt.Errorf("task panicked: %v", r)
+		}
 		s.mu.Lock()
 		delete(s.activeTasks, taskID)
 		s.mu.Unlock()
 	}()
 
-	return s.executor.ExecuteTask(ctx, taskID, config, progressFn)
+	err = s.executor.ExecuteTask(ctx, taskID, config, progressFn)
+	return err
 }
 
 func (s *AgentGRPCServer) HealthCheck() (string, string) {

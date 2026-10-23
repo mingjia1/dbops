@@ -817,15 +817,17 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// If so, skip initialization and just start MySQL.
 	// For MGR deployments, always re-initialize to get a clean group state.
 	needInit := true
-	// When a MySQL password is explicitly provided, always re-initialize
-	// to ensure clean auth plugin setup (avoids stale mysql_native_password
-	// users from previous deployments on MySQL 8.4+ where the plugin is removed).
-	if installType != "mgr" && mysqlPass == "" {
-		if _, err := os.Stat(dataDir); err == nil {
-			if isDataDirInitialized(dataDir) {
-				needInit = false
-			}
+	alreadyInitialized := false
+	if _, err := os.Stat(dataDir); err == nil {
+		if isDataDirInitialized(dataDir) {
+			alreadyInitialized = true
 		}
+	}
+	if installType != "mgr" {
+		// Idempotency guard: an initialized data dir is never wiped, even when a
+		// MySQL password is provided. Re-running a deploy must not destroy
+		// existing data; the password-set step after startup handles auth setup.
+		needInit = !alreadyInitialized
 	}
 
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
@@ -959,7 +961,13 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 	// Only run initialization if the data directory hasn't been initialized yet.
 	if needInit {
 		if rmErr := os.RemoveAll(dataDir); rmErr != nil {
-		} else {
+			return &TaskResult{
+				TaskID:    req.TaskID,
+				Status:    "failed",
+				Progress:  0,
+				Message:   fmt.Sprintf("clean data dir before init failed: %v", rmErr),
+				Timestamp: time.Now(),
+			}, nil
 		}
 
 		initArgs := []string{

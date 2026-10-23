@@ -92,11 +92,13 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
   useEffect(() => {
     if (!enabled || !taskID) return
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     // P0-6: 不再把长效 JWT 拼进 URL (?token= 会泄漏到历史/日志/Referer)。
     // 优先用 POST /auth/sse-ticket 换 60s 一次性 ticket；拿不到 (离线/测试环境) 则
     // 降级为裸 URL —— 后端同源场景下 HttpOnly cookie 会自动带上。
     const connect = async () => {
+      if (cancelled) return
       let url = `${baseURL}/tasks/stream/${taskID}`
       try {
         const res = await fetch('/api/v1/auth/sse-ticket', {
@@ -132,10 +134,15 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
         }
       }
 
-      source.onerror = (err) => {
+      source.onerror = () => {
         setConnected(false)
-        if (onError) onError(new Error('SSE connection lost'))
         source.close()
+        if (cancelled) return
+        // ticket 是一次性短时凭据，断线后旧 URL 不可复用，必须重新换票再连。
+        if (onError) onError(new Error('SSE connection lost, retrying'))
+        retryTimer = setTimeout(() => {
+          if (!cancelled) void connect()
+        }, 3000)
       }
     }
 
@@ -143,6 +150,7 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
 
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       if (sourceRef.current) {
         sourceRef.current.close()
         sourceRef.current = null
