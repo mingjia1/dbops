@@ -815,19 +815,19 @@ func (e *TaskExecutor) deploySingleInstance(ctx context.Context, req DeployTaskR
 
 	// Check if data directory exists and has been initialized.
 	// If so, skip initialization and just start MySQL.
-	// For MGR deployments, always re-initialize to get a clean group state.
-	needInit := true
+	// Idempotency guard: an initialized data dir is never wiped on re-submission,
+	// for MGR too — a retried deploy task must not destroy existing data. Group
+	// replication state is re-established by initializeMGR after start. Explicit
+	// clean re-init stays available via the "force" deploy config key.
 	alreadyInitialized := false
 	if _, err := os.Stat(dataDir); err == nil {
 		if isDataDirInitialized(dataDir) {
 			alreadyInitialized = true
 		}
 	}
-	if installType != "mgr" {
-		// Idempotency guard: an initialized data dir is never wiped, even when a
-		// MySQL password is provided. Re-running a deploy must not destroy
-		// existing data; the password-set step after startup handles auth setup.
-		needInit = !alreadyInitialized
+	needInit := !alreadyInitialized
+	if configBool(req.Config, "force") {
+		needInit = true
 	}
 
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
