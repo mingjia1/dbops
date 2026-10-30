@@ -292,3 +292,11 @@ cd agent && go build ./... && go vet ./... && go test ./cmd
 # Frontend
 cd frontend && npx tsc --noEmit && npm test -- --run && npm run build
 ```
+
+### 遗留（本轮未闭环）
+
+- **ldap/sso/capacity_predict 三个特性无路由可接线** —— API 面本身不存在（只有 auth.ldap_enabled／oauth2_enabled 等开关字段），本轮记录为"待后续"，非遗漏而是没有挂载点。
+- **权限模型双轨收敛（P2-3）** —— 只完成评估与文档化（OPS_MANUAL 附录 G），代码未改。按计划刻意延后到独立变更窗口（涉及 98 处 RequirePermission）。
+- **真实部署链路演练**：systemd/容器实际启动、SSE ticket 端到端、TOFU 首连/密钥变更实测 —— 本 VM 无 systemd/docker/浏览器；已做 `make dist`、migrate、pprof、优雅停机、ready 三情形等可执行部分，**Docker 镜像构建未实跑**。
+- 观察项 4（启动即编译 agent）：默认行为仍在，但已文档化（DBOPS_SKIP_AGENT_BINARY_BUILD + 发布产物内置）—— 属"缓解+文档化"而非根除。
+

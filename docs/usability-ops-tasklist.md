@@ -13,7 +13,7 @@
 - [x] B5: Windows host onboarding — added section 3.3.1 in `docs/OPS_MANUAL.md` covering Windows agent deployment (NSSM/sc.exe), WinRM prerequisites, platform host addition steps, and known limitations (no `ps` discovery, TCP-only scanning)
 
 ## Pending
-- [ ] Backend validation for B3 could be extended with structured error codes/messages for frontend localization
+- [x] Backend validation for B3 extended with structured error codes/messages for frontend localization (UpgradeError codes: agent_unavailable/agent_version_empty/agent_version_too_old/agent_version_too_new/upgrade_incompatible)
 
 ## Verification
 - Frontend: `cd frontend && npm test -- --run` (307 tests pass) and `npm run build` (TypeScript + Vite build succeeds)
