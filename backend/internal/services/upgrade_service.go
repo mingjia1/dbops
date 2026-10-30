@@ -1134,7 +1134,7 @@ func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID, source
 // 但 agent 端 xtrabackup 还在跑没人管. 修: go func() 异步派, 失败/成功都更新 taskRepo 状态,
 // frontend 永远能 GET /api/v1/tasks/:id 拿真实进度.
 func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *models.Instance, upgradeType, targetVersion string, extraConfig map[string]interface{}) {
-	go func() {
+	GoBackground(func() {
 		if lockKey != "" {
 			lock := s.lockForInstance(lockKey)
 			lock.Lock()
@@ -1160,7 +1160,7 @@ func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *mode
 			status, progress, message := normalizeUpgradeAgentTaskResult(result)
 			_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, status, progress, message)
 		}
-	}()
+	})
 }
 
 // normalizeUpgradeAgentTaskResult maps Agent business status to persisted task status.
@@ -1260,18 +1260,37 @@ func validateAgentVersionForUpgrade(ctx context.Context, agentClient *AgentClien
 
 	agentVer, err := agentClient.GetAgentVersion(ctx, host, port)
 	if err != nil {
-		return fmt.Errorf("failed to get agent version: %w", err)
+		// agent が unreachable / timeout した場合は構造化エラーで返し、フロントエンドが再試行/連絡可能にする.
+		return &utils.UpgradeError{
+			Code:    utils.CodeAgentUnavailable,
+			Message: "agent is unavailable; cannot verify upgrade compatibility",
+			Details: fmt.Sprintf("target=%s agent_error=%s", targetVersion, err.Error()),
+		}
 	}
 	if agentVer == "" {
-		return fmt.Errorf("agent version is empty; cannot verify upgrade compatibility")
+		return &utils.UpgradeError{
+			Code:    utils.CodeAgentVersionEmpty,
+			Message: "agent version is empty; cannot verify upgrade compatibility",
+			Details: fmt.Sprintf("target=%s", targetVersion),
+		}
 	}
 
 	agentMM := MajorVersion(agentVer)
 	if entry.MinAgentVersion != "" && versionLessThan(agentMM, MajorVersion(entry.MinAgentVersion)) {
-		return fmt.Errorf("agent version %s is too old for target version %s (requires >= %s)", agentVer, targetVersion, entry.MinAgentVersion)
+		return utils.AgentVersionError(
+			utils.CodeAgentVersionTooOld,
+			agentVer,
+			targetVersion,
+			entry.MinAgentVersion,
+		)
 	}
 	if entry.MaxAgentVersion != "" && versionLessThan(MajorVersion(entry.MaxAgentVersion), agentMM) {
-		return fmt.Errorf("agent version %s is newer than supported by target version %s (requires <= %s)", agentVer, targetVersion, entry.MaxAgentVersion)
+		return utils.AgentVersionError(
+			utils.CodeAgentVersionTooNew,
+			agentVer,
+			targetVersion,
+			entry.MaxAgentVersion,
+		)
 	}
 	return nil
 }

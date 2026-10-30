@@ -17,11 +17,22 @@ func SafeJoinUnder(baseDir, subPath string) (string, error) {
 		return "", fmt.Errorf("resolve base dir: %w", err)
 	}
 	cleaned := filepath.Clean(subPath)
-	// 显式拒绝: 绝对路径 / 带根斜杠 / 盘符 / 向上跳级. Windows 下 filepath.IsAbs 不认 "/x",
-	// 但 Linux 上 Join(base, "/x") 会直接逃出 base, 因此按平台无关规则拦截.
-	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "\\") ||
-		filepath.VolumeName(cleaned) != "" ||
-		cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || strings.HasPrefix(cleaned, "../") {
+	// P2-H: 显式拒绝: 绝对路径 / 带根斜杠 / 盘符 / 向上跳级 —— 必须按**平台无关**规则判定.
+	// filepath 的分隔符与盘符语义随平台变化 (Linux 上 Separator='/', VolumeName 恒为空),
+	// 只按本机规则判断会让 `..\..\x`、`C:\x` 在 Linux 上被当作普通文件名放行,
+	// 而这类 Windows 形态的路径一旦被下游按 Windows 语义处理就越界了.
+	// 因此先把 "\" 归一为 "/" 再判: 绝对路径 / 盘符 / 任意位置的 ".." 段.
+	norm := strings.ReplaceAll(cleaned, "\\", "/")
+	hasDrive := len(norm) >= 2 && norm[1] == ':' &&
+		(norm[0]|0x20) >= 'a' && (norm[0]|0x20) <= 'z'
+	hasDotDot := false
+	for _, seg := range strings.Split(norm, "/") {
+		if seg == ".." {
+			hasDotDot = true
+			break
+		}
+	}
+	if filepath.IsAbs(cleaned) || strings.HasPrefix(norm, "/") || hasDrive || hasDotDot {
 		return "", fmt.Errorf("invalid sub path %q: escapes base dir", subPath)
 	}
 	joined := filepath.Join(baseAbs, cleaned)

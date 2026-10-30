@@ -9,7 +9,8 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o backend ./cmd/main.go
+# P0-B 后 cmd/ 包含多个源文件, 必须按包构建 (单文件 ./cmd/main.go 会漏编译).
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o backend ./cmd
 
 FROM alpine:3.22
 

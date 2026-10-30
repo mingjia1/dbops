@@ -26,8 +26,23 @@ storage_mode: "auto"
 # Empty string defaults to <data_dir>/dbops.db
 sqlite_path: ""
 
-# Data directory for persistence files
+# Data directory for persistence files (P0-A)
+# Relative paths are resolved to absolute paths against the process working
+# directory at startup and printed in the startup log, so systemd / container /
+# manual runs behave the same. When empty: legacy ../db/dbops.db is reused if
+# present (with a warning), otherwise ./data is used.
 data_dir: "./data"
+
+# Platform metadata DB backup output dir (P0-A/P0-B)
+# Empty string defaults to <data_dir>/backups
+backup_dir: ""
+
+# Scheduled metadata DB snapshots (P0-B)
+# db_backup_interval: Go duration (12h/24h). "0" / "off" disables the scheduler.
+# db_backup_keep: number of snapshots retained (older ones rotated out).
+# Snapshots also stay available manually via `main.go db-backup` / make target.
+db_backup_interval: "24h"
+db_backup_keep: 7
 
 # Database URL (DSN format)
 # Can also be set via DBOPS_DB_URL env var

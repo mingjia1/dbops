@@ -101,14 +101,10 @@ export function useTaskSSE(options: UseTaskSSEOptions) {
       if (cancelled) return
       let url = `${baseURL}/tasks/stream/${taskID}`
       try {
+        // P1-B: 换票请求同样只靠 HttpOnly cookie, 不再从 localStorage 带 JWT.
         const res = await fetch('/api/v1/auth/sse-ticket', {
           method: 'POST',
           credentials: 'include',
-          headers: {
-            ...(typeof localStorage !== 'undefined' && localStorage.getItem('token')
-              ? { Authorization: `Bearer ${localStorage.getItem('token')}` }
-              : {}),
-          },
         })
         if (res.ok) {
           const data = await res.json()

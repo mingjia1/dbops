@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -232,6 +233,39 @@ func TestLoad_AllowedOriginsParsing(t *testing.T) {
 	}
 }
 
+// P0-B: 定时快照间隔解析 —— 关闭值、合法值、非法值必须区分.
+func TestParseBackupInterval(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", 24 * time.Hour, false},
+		{"12h", 12 * time.Hour, false},
+		{"30m", 30 * time.Minute, false},
+		{"0", 0, false},
+		{"off", 0, false},
+		{"false", 0, false},
+		{"soon", 0, true},
+		{"-1h", 0, true},
+	} {
+		got, err := parseBackupInterval(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseBackupInterval(%q) = %v, want error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseBackupInterval(%q) error: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseBackupInterval(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 func backendEnvKeysForTest() []string {
 	return []string{
 		"DBOPS_SERVER_PORT",
@@ -249,6 +283,9 @@ func backendEnvKeysForTest() []string {
 		"DBOPS_AGENT_TOKEN",
 		"DBOPS_CLICKHOUSE_URL",
 		"DBOPS_DATA_DIR",
+		"DBOPS_BACKUP_DIR",
+		"DBOPS_DB_BACKUP_INTERVAL",
+		"DBOPS_DB_BACKUP_KEEP",
 		"DBOPS_ALLOWED_ORIGINS",
 		"DBOPS_AI_BASE_URL",
 		"DBOPS_AI_API_KEY",

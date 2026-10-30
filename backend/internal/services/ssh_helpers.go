@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
@@ -15,11 +16,24 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// knownHostsDir P0-A: TOFU 主机密钥库所在目录. 默认 "./data" 保持旧行为
+// (单测不依赖 config), main.go 启动时用 config 解析后的绝对 DataDir 覆盖,
+// 避免从不同 cwd 启动时各写一份 known_hosts 互相不认识.
+var knownHostsDir = "./data"
+
+// SetKnownHostsDir 由 main.go 在启动时调用 (传入绝对数据目录).
+func SetKnownHostsDir(dir string) {
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	knownHostsDir = dir
+}
+
 // knownHostsPath 返回 TOFU 主机密钥库的统一路径.
-// 与 InstanceService 既有约定保持一致 (./data), 避免同一台主机在
+// 与 InstanceService 既有约定保持一致, 避免同一台主机在
 // 不同服务里各存一份 known_hosts 导致互相不认识.
 func knownHostsPath() string {
-	return filepath.Join("./data", "known_hosts")
+	return filepath.Join(knownHostsDir, "known_hosts")
 }
 
 // tofuHostKeyCallback 返回 TOFU (Trust On First Use) 主机密钥回调:

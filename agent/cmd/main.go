@@ -33,7 +33,9 @@ type metricsTaskCollector interface {
 func agentAuthMiddleware(agentToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if agentToken == "" {
-			c.AbortWithStatusJSON(500, gin.H{"code": 500, "message": "agent_token not configured"})
+			// P2-A: 未配置 token 是服务不可用 (配置缺失), 不是服务端内部错误 ——
+			// 返 503 让编排方按"暂不可用"重试/告警, 而不是误报成 5xx 故障.
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "agent_token not configured"})
 			return
 		}
 		h := c.GetHeader("Authorization")

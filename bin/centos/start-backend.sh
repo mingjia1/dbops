@@ -44,5 +44,5 @@ if [ -f "$BINARY" ]; then
     exec ./$BINARY
 else
     echo "Starting MySQL Ops Platform Backend (go run)..."
-    go run cmd/main.go
+    go run ./cmd
 fi

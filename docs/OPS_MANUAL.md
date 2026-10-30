@@ -120,7 +120,7 @@ Invoke-RestMethod http://localhost:8080/health
 
 ```bash
 # 1. 在构建机上交叉编译
-GOOS=linux GOARCH=amd64 go build -o build/platform-linux-amd64 ./backend/cmd/main.go
+GOOS=linux GOARCH=amd64 go build -o build/platform-linux-amd64 ./backend/cmd
 GOOS=linux GOARCH=amd64 go build -o build/agent-linux-amd64 ./agent/cmd/main.go
 
 # 2. 推送二进制到目标服务器
@@ -350,7 +350,7 @@ bash bin/ubuntu/start-web.sh
 bash bin/ubuntu/stop.sh
 
 # 直接调试 (手动)
-cd backend && go run ./cmd/main.go
+cd backend && go run ./cmd
 cd agent && go run ./cmd/main.go
 cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 ```
@@ -716,6 +716,7 @@ mysql -h 192.0.2.21 -P 3307 -u root -pexample_password -e "SELECT @@version, @@s
 4. MGR 不兼容 MySQL 5.7
 5. restore 功能仅支持 xtrabackup 和 mysqldump 格式
 6. upgrade 在 5.7→5.7 同级升级会失败（需要跨版本验证）
+7. 平台当前仅支持单副本部署：任务编排、SSE 推送、WS 连接仍是进程内存态（“任务在 A 副本跑、SSE 订在 B 副本”会割裂）。登录限流已迁 Redis（`INCR+EXPIRE`，Redis 不可用时自动回退进程内限流并告警），已具备跨副本能力，但其余会话/任务状态未共享，扩容第二副本前需先完成状态外置。
 
 ---
 
@@ -922,6 +923,22 @@ groups:
 | **AI Provider** | AI 诊断不可用 | 智能诊断页面显示“未配置 AI 提供商”；不影响其他功能 |
 
 启动时日志会明确提示每个依赖的可用状态，运维人员可通过日志确认当前运行模式。
+
+### 10.6 pprof 性能剖析（需 admin 权限）
+
+平台挂载了标准 Go 运行时剖析端点，**必须携带 admin 凭据**（`Authorization: Bearer <token>` 或 admin 登录后的 `auth_token` cookie），无凭据返 401、非 admin 返 403 —— 堆/协程转储可能包含内存中的凭据，切勿对公网开放：
+
+```bash
+# 需要 profile 的话 go tool pprof 可直接带 basic auth 取数
+go tool pprof http://admin:<password>@host:8080/debug/pprof/heap
+go tool pprof http://admin:<password>@host:8080/debug/pprof/profile?seconds=30
+
+# 常用端点: /debug/pprof/ (索引) goroutine heap allocs block mutex
+#          threadcreate cmdline profile trace symbol
+curl -H "Authorization: Bearer $TOKEN" "http://host:8080/debug/pprof/goroutine?debug=1"
+```
+
+日志目录约定：仓库根 `logs/`（已入 `.gitignore`）用于本地/手工运行时的落盘日志，systemd 部署走 journald，其他环境按附录 D 的 logrotate 配置轮转。
 
 ---
 
@@ -1163,3 +1180,38 @@ chown -R dbops:dbops /opt/dbops-platform
 - 高危操作（部署、升级、删除）
 - Agent 注册/删除
 
+
+---
+
+## 附录 G: 权限模型双轨评估（P2-3，2026-10-30 结论）
+
+> 本轮只做评估与文档化，不改鉴权语义；改动面涉及全部 98 处 `RequirePermission` 路由，需独立变更窗口。
+
+### G.1 现状：两套权限源并存
+
+| 轨道 | 位置 | 内容 | 生效时机 |
+|------|------|------|---------|
+| **DB 轨（主）** | `roles` / 用户-角色关联表，经 `AuthService.permissionsForUser` | 角色自定义权限列表 | 每次 `ValidateToken` 刷新进 JWT claims 的 `permissions` |
+| **硬编码轨（兜底）** | `pkg/middleware/middleware.go` 的 `RequirePermission` 内嵌 map（4 个角色）+ `auth_service.go` 内嵌 map（6 个角色） | 固定角色权限模板 | claims 中无 permissions 时 |
+
+中间件判定顺序（`middleware.RequirePermission`）：`role==""` → 401；`role=="admin"` → **直接放行**；查 claims 的 `permissions`（DB 来源）→ 精确/`x:*` 前缀匹配；未命中 → 回落硬编码 map。
+
+### G.2 已识别的漂移风险（按严重度）
+
+1. **DB 空授权会被兜底重新放行**：`permissionsForUser` 在 DB 中角色存在但权限为空时返回空切片 → claims 带空 `permissions` → 中间件精确匹配失败 → **落入硬编码 map 重新授予**（如 operator 拿回 `backup:execute`）。即"DB 显式收回"可能被兜底抵消。
+2. **两份硬编码 map 内容不一致**：中间件 4 角色（dba/operator/developer/auditor），auth 服务 6 角色（多 admin/viewer），语义已分叉。
+3. **`admin` 恒放行**：中间件对 admin 角色无条件通过，绕过 DB 权限表——DB 侧收敛 admin 权限不会生效。
+4. **兜底只看 role 名**：第三方 IdP/LDAP 同步的自定义角色名不在 map 中 → 静默无权限（fail-closed，方向正确但排障不直观）。
+
+### G.3 收敛建议（后续变更窗口执行）
+
+1. 明确 **DB 为唯一权威源**：claims `permissions` 由 `permissionsForUser` 全量产出；中间件删除 role 硬编码回落（未命中即 403），DB 未接入的降级模式（JSON store/standalone）由启动横幅显式提示。
+2. 合并两份硬编码 map 为单一常量表（若保留兜底），并加单测断言两处不再漂移。
+3. `admin` 改为等价 `*` 权限判断，与 DB 权限表同源。
+4. 迁移前先补可观测：权限拒绝日志带上 `source=claims|fallback|admin-bypass`，量化兜底命中率后再移除。
+
+### G.4 当前可依赖的安全性质
+
+- 权限检查是 fail-closed 的（未匹配一律 403）；
+- claims 每请求从 DB 刷新（改密/禁用即时生效，见 P1-3）；
+- 高危接口（备份恢复、failover、升级、删除、relay）全部显式 `RequirePermission("admin")`。

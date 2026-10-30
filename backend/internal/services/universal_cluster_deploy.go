@@ -161,11 +161,11 @@ func (s *ClusterDeployService) SubmitClusterDeploy(ctx context.Context, req Univ
 		}
 	}
 
-	go func() {
+	GoBackground(func() {
 		if _, err := s.ExecuteClusterDeployPlan(context.Background(), plan, normalized); err != nil {
 			log.Printf("ERROR: async cluster deployment %s failed to start: %v", plan.DeploymentID, err)
 		}
-	}()
+	})
 
 	if s.repo != nil {
 		deadline := time.Now().Add(2 * time.Second)

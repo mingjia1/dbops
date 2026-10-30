@@ -6,10 +6,10 @@ import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordE
 import { usePlatformSettings } from '../services/useSettings'
 
 const { Text } = Typography
-const buildAuthHeaders = (): Record<string, string> => {
-  const token = localStorage.getItem('token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+// P1-B: 单轨鉴权 —— 不再读 localStorage token 拼 Authorization, 统一依赖同源
+// HttpOnly cookie; 下面的 fetch 调用显式带 credentials: 'include' 以覆盖反代场景.
+const credentialedFetch = (url: string, init: RequestInit = {}): Promise<Response> =>
+  fetch(url, { credentials: 'include', ...init })
 
 const getErrorMessage = (err: any) => err?.response?.data?.message || err?.message || '未知错误'
 
@@ -420,7 +420,7 @@ const PackageTab: React.FC = () => {
   const handleScanRelay = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: '' }) })
+      const res = await fetch('/api/v1/relay/scan-remote', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: '' }) })
       const json = await parseFetchJson(res)
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
@@ -435,7 +435,7 @@ const PackageTab: React.FC = () => {
     if (!relayHostId) { message.warning('请先选择中继主机'); return }
     setLoading(true)
     try {
-      const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
+      const res = await fetch('/api/v1/relay/scan-remote-ssh', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host_id: relayHostId, path: relayPath }) })
       const json = await parseFetchJson(res)
       const m = new Map<string, {size: string; path: string}>()
       for (const p of (json?.data?.packages || [])) m.set(p.name, { size: p.size || '-', path: p.path || p.name })
@@ -451,7 +451,7 @@ const PackageTab: React.FC = () => {
       // 从远程主机拉取到中继服务器
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '拉取中...' }))
       try {
-        const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
+        const res = await fetch('/api/v1/relay/pull-from-relay', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host_id: relayHostId, file_path: remoteInfo.path }) })
         const json = await parseFetchJson(res)
         if (json?.code === 200) { message.success(`${c.fn} 已拉取`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`拉取失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
@@ -461,7 +461,7 @@ const PackageTab: React.FC = () => {
       // 从镜像下载
       setDownloading(c.fn); setProgress(prev => ({ ...prev, [c.fn]: '下载中...' }))
       try {
-        const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
+        const res = await fetch('/api/v1/relay/download-to-relay', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: c.url, filename: c.fn, target_path: `${c.p.toLowerCase()}/${c.v}` }) })
         const json = await parseFetchJson(res)
         if (json?.code === 200) { message.success(`${c.fn} 下载完成`); handleScanRelay(); setProgress(prev => ({ ...prev, [c.fn]: '完成' })) }
         else { message.error(`下载失败: ${json?.message}`); setProgress(prev => ({ ...prev, [c.fn]: '失败' })) }
@@ -473,7 +473,7 @@ const PackageTab: React.FC = () => {
   const handleUpload = async (file: File) => {
     const fd = new FormData(); fd.append('file', file)
     try {
-      const res = await fetch('/api/v1/relay/upload', { method: 'POST', headers: { ...buildAuthHeaders() }, body: fd })
+      const res = await credentialedFetch('/api/v1/relay/upload', { method: 'POST', body: fd })
       const json = await parseFetchJson(res)
       if (json?.code === 200) { message.success(`${file.name} 上传成功`); handleScanRelay() } else message.error(`上传失败: ${json?.message}`)
     } catch (e: any) { message.error(`上传失败: ${getErrorMessage(e)}`) }
@@ -481,7 +481,7 @@ const PackageTab: React.FC = () => {
 
   const handleDelete = async (fn: string) => {
     try {
-      const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: JSON.stringify({ path: fn }) })
+      const res = await fetch('/api/v1/relay/delete-package', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: fn }) })
       const json = await parseFetchJson(res)
       if (json?.code === 200) { message.success('已删除'); handleScanRelay() } else message.error(`删除失败: ${json?.message}`)
     } catch (e: any) { message.error(`删除失败: ${getErrorMessage(e)}`) }

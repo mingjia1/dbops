@@ -78,6 +78,10 @@ func (c *UpgradeController) ExecuteInPlaceUpgrade(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteInPlaceUpgrade(ctx.Request.Context(), req)
 	if err != nil {
+		if ue, ok := utils.IsUpgradeError(err); ok {
+			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to execute in-place upgrade", err)
 		return
 	}
@@ -94,6 +98,10 @@ func (c *UpgradeController) ExecuteLogicalMigration(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteLogicalMigration(ctx.Request.Context(), req)
 	if err != nil {
+		if ue, ok := utils.IsUpgradeError(err); ok {
+			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to execute logical migration", err)
 		return
 	}
@@ -110,6 +118,10 @@ func (c *UpgradeController) ExecuteRollingUpgrade(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteRollingUpgrade(ctx.Request.Context(), req)
 	if err != nil {
+		if ue, ok := utils.IsUpgradeError(err); ok {
+			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "Failed to execute rolling upgrade", err)
 		return
 	}

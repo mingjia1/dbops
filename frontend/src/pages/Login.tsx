@@ -24,8 +24,10 @@ const Login: React.FC = () => {
         password: values.password,
       })
       if (res && res.code === 200 && res.data) {
-        const { token, user, must_change_password } = res.data
-        if (token) localStorage.setItem('token', token)
+        const { user, must_change_password } = res.data
+        // P1-B: token 只进 HttpOnly cookie (后端 Set-Cookie), localStorage 不再
+        // 保存长效 JWT; 这里顺手清掉历史版本遗留的 token.
+        localStorage.removeItem('token')
         const nextUser = user ? { ...user, must_change_password: user.must_change_password === true || must_change_password === true } : user
         if (nextUser) localStorage.setItem('user', JSON.stringify(nextUser))
         message.success('欢迎回来，' + (user?.username || ''))

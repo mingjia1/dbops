@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,6 +30,7 @@ import (
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
+	"github.com/jackcode/mysql-ops-platform/pkg/license"
 	"github.com/jackcode/mysql-ops-platform/pkg/logger"
 	"github.com/jackcode/mysql-ops-platform/pkg/middleware"
 	"github.com/jackcode/mysql-ops-platform/pkg/storage"
@@ -106,12 +108,16 @@ func main() {
 		logInstance.Info(fmt.Sprintf("Agent binaries ready: linux=%s windows=%s", report.LinuxPath, report.WindowsPath))
 	}
 
-	// Force use old database file
-	sqlitePath := cfg.SQLitePath
-	if sqlitePath == "" {
-		sqlitePath = "../db/dbops.db"
+	// P0-A/P1-6: 数据目录/元数据库/备份目录在 config.Load 内统一解析为
+	// 绝对路径, 这里只打印实际生效值, 便于 systemd/容器/手工启动排障.
+	sqlitePath := sqlitePathOf(cfg)
+	logInstance.Info("Data directory (absolute): " + cfg.DataDir)
+	logInstance.Info("SQLite database (absolute): " + sqlitePath)
+	logInstance.Info("Backup directory (absolute): " + cfg.BackupDir)
+	if cfg.UsedLegacyDataDir {
+		logInstance.Warn("Using legacy data dir (../db) for backward compatibility; set DBOPS_DATA_DIR explicitly to migrate (see .env.example)")
 	}
-	logInstance.Info("Forcing SQLite path: " + sqlitePath)
+	services.SetKnownHostsDir(cfg.DataDir)
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		logInstance.Warn("Failed to create data dir " + cfg.DataDir + ": " + err.Error())
@@ -285,6 +291,7 @@ func main() {
 	clusterDeployService.SetScaleService(scaleSvc)
 
 	settingsRepo := repositories.NewPlatformSettingsRepository(db)
+	authService.SetSettingsRepository(settingsRepo)
 	settingsController := controllers.NewSettingsController(settingsRepo)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
@@ -399,6 +406,15 @@ func main() {
 	licenseService := services.NewLicenseService(licenseRepo, auditService, cfg.EncryptionKey)
 	licenseController := controllers.NewLicenseController(licenseService)
 
+	// P1-A: 商业版功能门禁接线. 此前 pkg/middleware/license.go 的 RequireFeature
+	// 全仓零调用 —— EE/UE 功能差异只有 flavor 闸门, license 层形同虚设.
+	// 这里统一用请求 context 查 license (可取消/带超时).
+	requireFeature := func(feature license.Feature) gin.HandlerFunc {
+		return middleware.RequireFeature(func(ctx *gin.Context, f license.Feature) bool {
+			return licenseService.HasFeature(ctx.Request.Context(), f)
+		}, feature)
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	// P0-3: 限制 body 上限 10MB, 防止大文件上传 DoS.
@@ -410,7 +426,10 @@ func main() {
 	}
 	r.MaxMultipartMemory = maxMem
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
-	r.Use(middleware.RateLimitByIP(middleware.NewRateLimiter(100, time.Second)))
+	// P1-D: 限流器各自持有清理协程, 停机时统一 Stop (幂等且等待协程退出).
+	globalIPRateLimiter := middleware.NewRateLimiter(100, time.Second)
+	var loginMemoryLimiter *middleware.RateLimiter
+	r.Use(middleware.RateLimitByIP(globalIPRateLimiter))
 	r.Use(middleware.Logger(logInstance))
 	r.Use(middleware.ErrorHandler())
 
@@ -437,6 +456,16 @@ func main() {
 	// P1-9: 平台自身可观测性出口 —— Prometheus 文本格式, 只含聚合运行时数值
 	// (内存/goroutine/DB连接池), 无凭据无用户数据. 公网部署时建议反向代理限源.
 	dbStats := MetricsStatsProvider(db)
+	// P0-B: 元数据库定时快照 —— 复用 db-backup 子命令的 SQLite/MySQL 快照与轮转,
+	// 失败只记 Error + 计数 (通过 /metrics 暴露), 不阻断服务.
+	dbBackupScheduler := newDBBackupScheduler(cfg.DBBackupInterval, cfg.DBBackupKeep, cfg.BackupDir, func() error {
+		if isMySQLDSN(cfg.DatabaseURL) && !strings.EqualFold(cfg.StorageMode, "sqlite") {
+			return backupMySQL(cfg.DatabaseURL, cfg.BackupDir, cfg.DBBackupKeep)
+		}
+		return backupSQLite(sqlitePathOf(cfg), cfg.BackupDir, cfg.DBBackupKeep)
+	}, logInstance)
+	dbBackupScheduler.Start()
+	defer dbBackupScheduler.Stop()
 	r.GET("/metrics", middleware.MetricsHandler(middleware.MetricsStats{
 		StartTime:      startTime,
 		Version:        "1.0.0",
@@ -446,7 +475,42 @@ func main() {
 		DBIdle:         dbStats.idle,
 		DBWaitCount:    dbStats.waitCount,
 		DBWaitDuration: dbStats.waitDuration,
+		DBBackupSuccessCount: func() int64 {
+			ok, _, _ := dbBackupScheduler.Stats()
+			return ok
+		},
+		DBBackupFailureCount: func() int64 {
+			_, fail, _ := dbBackupScheduler.Stats()
+			return fail
+		},
+		DBBackupLastSuccess: func() int64 {
+			_, _, last := dbBackupScheduler.Stats()
+			return last
+		},
 	}))
+
+	// P1-E: 运行时性能剖析出口 —— 挂在 admin 鉴权链上 (堆/协程转储可能含内存中
+	// 的凭据, 绝不公开). 路径与标准 /debug/pprof 一致, 可直接取数:
+	//   go tool pprof http://<admin>:<pass>@host:8080/debug/pprof/heap
+	//   curl -H "Authorization: Bearer $TOKEN" ".../debug/pprof/profile?seconds=10"
+	pprofGroup := r.Group("/debug/pprof")
+	pprofGroup.Use(authController.ValidateToken)
+	pprofGroup.Use(middleware.RequirePermission("admin"))
+	{
+		pprofGroup.GET("/", gin.WrapF(pprof.Index))
+		pprofGroup.GET("/allocs", gin.WrapF(pprof.Handler("allocs").ServeHTTP))
+		pprofGroup.GET("/block", gin.WrapF(pprof.Handler("block").ServeHTTP))
+		pprofGroup.GET("/goroutine", gin.WrapF(pprof.Handler("goroutine").ServeHTTP))
+		pprofGroup.GET("/heap", gin.WrapF(pprof.Handler("heap").ServeHTTP))
+		pprofGroup.GET("/mutex", gin.WrapF(pprof.Handler("mutex").ServeHTTP))
+		pprofGroup.GET("/threadcreate", gin.WrapF(pprof.Handler("threadcreate").ServeHTTP))
+		pprofGroup.GET("/cmdline", gin.WrapF(pprof.Cmdline))
+		pprofGroup.GET("/profile", gin.WrapF(pprof.Profile))
+		pprofGroup.GET("/symbol", gin.WrapF(pprof.Symbol))
+		pprofGroup.POST("/symbol", gin.WrapF(pprof.Symbol))
+		pprofGroup.GET("/trace", gin.WrapF(pprof.Trace))
+	}
+
 	r.GET("/health/ready", func(c *gin.Context) {
 		healthTimeout := 2 * time.Second
 		if v := os.Getenv("DBOPS_HEALTH_CHECK_TIMEOUT"); v != "" {
@@ -478,6 +542,24 @@ func main() {
 			}
 		} else {
 			checks["redis"] = "disabled"
+		}
+		// P2-C: 监控链路依赖 ClickHouse, 显式配置时纳入就绪检查 ——
+		// 否则 CH 故障时监控/告警已挂, ready 却仍是绿的.
+		// 三种情形: 未显式配置 (CH 是可选依赖, 与 OPS_MANUAL 10.5 一致) → disabled 跳过;
+		// 配置了但启动时客户端初始化失败 → 不就绪 (监控降级且不会自愈, 需修复后重启);
+		// 已初始化 → 实际 ping, 运行期故障立即 503.
+		if clickhouse != nil {
+			if err := clickhouse.Ping(ctx); err != nil {
+				checks["clickhouse"] = err.Error()
+				allOK = false
+			} else {
+				checks["clickhouse"] = "ok"
+			}
+		} else if cfg.ClickHouseConfigured {
+			checks["clickhouse"] = "configured but unavailable at startup (monitoring standalone; fix CH and restart)"
+			allOK = false
+		} else {
+			checks["clickhouse"] = "disabled"
 		}
 		if allOK {
 			c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "ready", "checks": checks}})
@@ -536,7 +618,20 @@ func main() {
 		auth := api.Group("/auth")
 		{
 			// P0-3: 登录端点 5 req/min per IP, 抗撞库.
-			loginLimiter := middleware.LoginRateLimit(middleware.NewRateLimiter(5, time.Minute))
+			// P1-C: 优先用 Redis 固定窗口计数 (多副本共享、重启不丢), Redis 不可用
+			// 时自动回退进程内限流并告警一次 —— 限流存储故障不得拖挂登录接口.
+			memoryLoginLimiter := middleware.NewRateLimiter(5, time.Minute)
+			loginMemoryLimiter = memoryLoginLimiter
+			var loginKeyLimiter middleware.KeyLimiter = memoryLoginLimiter
+			if redisClient != nil && redisClient.Client != nil {
+				if redisLimiter := middleware.NewRedisRateLimiter(redisClient.Client, 5, time.Minute, memoryLoginLimiter); redisLimiter != nil {
+					loginKeyLimiter = redisLimiter
+					logInstance.Info("Login rate limiter: redis (fallback=memory)")
+				}
+			} else {
+				logInstance.Info("Login rate limiter: in-memory (redis not configured)")
+			}
+			loginLimiter := middleware.LoginRateLimit(loginKeyLimiter)
 			auth.POST("/login", loginLimiter, authController.Login)
 			auth.POST("/register", loginLimiter, authController.Register)
 			auth.POST("/logout", authController.Logout)
@@ -711,8 +806,9 @@ func main() {
 				ha.POST("/health/batch", healthCheckController.BatchHealthCheck)
 				ha.POST("/preflight", failoverController.PreflightFailover)
 				// B2: 自动/手动 failover 是最危险操作, 强制 admin.
-				ha.POST("/failover", middleware.RequirePermission("admin"), failoverController.ExecuteAutoFailover)
-				ha.POST("/manual-switch", middleware.RequirePermission("admin"), failoverController.ExecuteManualFailover)
+				// P1-A: 自动 failover 属 EE 特性, CE 套餐不开放.
+				ha.POST("/failover", middleware.RequirePermission("admin"), requireFeature(license.FeatureAutoFailover), failoverController.ExecuteAutoFailover)
+				ha.POST("/manual-switch", middleware.RequirePermission("admin"), requireFeature(license.FeatureAutoFailover), failoverController.ExecuteManualFailover)
 				ha.GET("/status", failoverController.GetClusterStatus)
 			}
 
@@ -1160,20 +1256,22 @@ func main() {
 				alerts.POST("/evaluate", alertController.EvaluateAlert)
 				alerts.POST("/trigger", middleware.RequirePermission("admin"), alertController.TriggerAlert)
 				alerts.GET("/history", alertController.GetAlertHistory)
-				alerts.POST("/notifications", middleware.RequirePermission("admin"), alertController.SendNotification)
+				alerts.POST("/notifications", middleware.RequirePermission("admin"), requireFeature(license.FeatureNotifyChannel), alertController.SendNotification)
 				alerts.GET("/notifications/channels", alertController.ListNotificationChannels)
-				alerts.POST("/notifications/channels", middleware.RequirePermission("admin"), alertController.CreateNotificationChannel)
+				// P1-A: 通知渠道属于 EE 的 notify_channel 特性 (CE 可查看告警, 不可配置渠道).
+				alerts.POST("/notifications/channels", middleware.RequirePermission("admin"), requireFeature(license.FeatureNotifyChannel), alertController.CreateNotificationChannel)
 				alerts.GET("/notifications/channels/:id", alertController.GetNotificationChannel)
-				alerts.PUT("/notifications/channels/:id", middleware.RequirePermission("admin"), alertController.UpdateNotificationChannel)
-				alerts.DELETE("/notifications/channels/:id", middleware.RequirePermission("admin"), alertController.DeleteNotificationChannel)
+				alerts.PUT("/notifications/channels/:id", middleware.RequirePermission("admin"), requireFeature(license.FeatureNotifyChannel), alertController.UpdateNotificationChannel)
+				alerts.DELETE("/notifications/channels/:id", middleware.RequirePermission("admin"), requireFeature(license.FeatureNotifyChannel), alertController.DeleteNotificationChannel)
 				alerts.GET("/templates", alertTemplateController.List)
 				alerts.POST("/templates", middleware.RequirePermission("admin"), alertTemplateController.Create)
 				alerts.GET("/templates/:id", alertTemplateController.Get)
 				alerts.DELETE("/templates/:id", middleware.RequirePermission("admin"), alertTemplateController.Delete)
 				alerts.GET("/escalations", escalationController.List)
-				alerts.POST("/escalations", middleware.RequirePermission("admin"), escalationController.Create)
+				// P1-A: 告警升级 (alert_upgrade) 为 EE 特性.
+				alerts.POST("/escalations", middleware.RequirePermission("admin"), requireFeature(license.FeatureAlertUpgrade), escalationController.Create)
 				alerts.GET("/escalations/:id", escalationController.Get)
-				alerts.DELETE("/escalations/:id", middleware.RequirePermission("admin"), escalationController.Delete)
+				alerts.DELETE("/escalations/:id", middleware.RequirePermission("admin"), requireFeature(license.FeatureAlertUpgrade), escalationController.Delete)
 				alerts.GET("/silences", silenceController.List)
 				alerts.POST("/silences", middleware.RequirePermission("admin"), silenceController.Create)
 				alerts.GET("/silences/:id", silenceController.Get)
@@ -1191,6 +1289,7 @@ func main() {
 			}
 
 			faults := protected.Group("/faults")
+			faults.Use(requireFeature(license.FeatureChaosTest))
 			{
 				faults.GET("/templates", faultController.ListTemplates)
 				faults.POST("/templates", middleware.RequirePermission("admin"), faultController.CreateTemplate)
@@ -1216,12 +1315,13 @@ func main() {
 
 			ai := protected.Group("/ai")
 			{
-				ai.POST("/diagnosis", aiController.Diagnosis)
-				ai.GET("/diagnoses", aiController.ListDiagnoses)
-				ai.GET("/diagnoses/:id", aiController.GetDiagnosis)
-				ai.POST("/sql-advisor", aiController.SQLAdvice)
-				ai.GET("/sql-advices", aiController.ListSQLAdvice)
-				ai.GET("/sql-advices/:id", aiController.GetSQLAdvice)
+				// P1-A: AI 助手 (diagnosis) 与 SQL 优化建议 (sql_advisor) 均为 UE 特性.
+				ai.POST("/diagnosis", requireFeature(license.FeatureAIAssistant), aiController.Diagnosis)
+				ai.GET("/diagnoses", requireFeature(license.FeatureAIAssistant), aiController.ListDiagnoses)
+				ai.GET("/diagnoses/:id", requireFeature(license.FeatureAIAssistant), aiController.GetDiagnosis)
+				ai.POST("/sql-advisor", requireFeature(license.FeatureSQLOptimize), aiController.SQLAdvice)
+				ai.GET("/sql-advices", requireFeature(license.FeatureSQLOptimize), aiController.ListSQLAdvice)
+				ai.GET("/sql-advices/:id", requireFeature(license.FeatureSQLOptimize), aiController.GetSQLAdvice)
 			}
 
 			approvals := protected.Group("/approvals")
@@ -1260,7 +1360,7 @@ func main() {
 			auditLogs := protected.Group("/audit-logs")
 			{
 				auditLogs.GET("", auditController.ListAuditLogs)
-				auditLogs.GET("/verify-chain", auditController.VerifyChain)
+				auditLogs.GET("/verify-chain", requireFeature(license.FeatureAuditChain), auditController.VerifyChain)
 				auditLogs.GET("/:id", auditController.GetAuditLogByID)
 			}
 
@@ -1272,6 +1372,7 @@ func main() {
 			}
 
 			masking := protected.Group("/masking")
+			masking.Use(requireFeature(license.FeatureDataMasking))
 			{
 				masking.GET("", maskingController.List)
 				masking.POST("", middleware.RequirePermission("admin"), maskingController.Create)
@@ -1282,6 +1383,7 @@ func main() {
 
 			keys := protected.Group("/keys")
 			keys.Use(middleware.RequirePermission("admin"))
+			keys.Use(requireFeature(license.FeatureKeyRotation))
 			{
 				keys.POST("/rotate", keyRotationController.RotateKey)
 				keys.GET("/versions", keyRotationController.ListKeyVersions)
@@ -1296,14 +1398,20 @@ func main() {
 		}
 	}
 
-	if _, err := os.Stat("./frontend/dist"); err == nil {
-		r.Static("/assets", "./frontend/dist/assets")
+	// P0-A: 前端静态产物路径也按 cwd 解析为绝对路径并打印,
+	// 避免从不同目录启动时"找不到 dist"与日志不可追。
+	frontendDist, absErr := filepath.Abs("./frontend/dist")
+	if absErr != nil {
+		frontendDist = "./frontend/dist"
+	}
+	if _, err := os.Stat(frontendDist); err == nil {
+		r.Static("/assets", filepath.Join(frontendDist, "assets"))
 		r.NoRoute(func(c *gin.Context) {
-			c.File("./frontend/dist/index.html")
+			c.File(filepath.Join(frontendDist, "index.html"))
 		})
-		logInstance.Info("Serving frontend SPA from ./frontend/dist")
+		logInstance.Info("Serving frontend SPA from " + frontendDist)
 	} else {
-		logInstance.Info("Frontend SPA not found at ./frontend/dist, API-only mode")
+		logInstance.Info("Frontend SPA not found at " + frontendDist + ", API-only mode")
 	}
 
 	logInstance.Info("Server starting on port " + cfg.ServerPort)
@@ -1356,10 +1464,40 @@ func main() {
 		logInstance.Warn("Server shutdown timeout, forcing close: " + err.Error())
 	}
 	logInstance.Info("Server exited")
+
+	// P1-D: 有界停机序列 ——
+	//  1) srv.Shutdown 已排空在途 HTTP (含 SSE 长连接);
+	//  2) 等待后台任务 (部署/扫描/升级派发) 把状态落库, 超时就告警放行;
+	//  3) 停元数据库快照调度器 (等进行中的备份收尾);
+	//  4) 停限流器清理协程;
+	//  5) defer db.Close() 做 SQLite WAL checkpoint 并关连接池.
+	logInstance.Info("Waiting for background tasks to flush (max 10s)...")
+	if !services.WaitForBackground(10 * time.Second) {
+		logInstance.Warn("Background tasks did not finish within 10s; continuing shutdown (check task status after restart)")
+	}
+	logInstance.Info("Stopping background jobs...")
+	dbBackupScheduler.Stop()
+	globalIPRateLimiter.Stop()
+	if loginMemoryLimiter != nil {
+		loginMemoryLimiter.Stop()
+	}
+	logInstance.Info("Shutdown complete")
 }
 
 func runMigrations(db *repositories.Database) error {
 	return repositories.RunMigrations(context.Background(), db)
+}
+
+// sqlitePathOf P0-A: config.Load 解析后的 SQLite 路径必为绝对路径;
+// 手工构造的 config (单测) 回退到 <data_dir>/dbops.db, 再回退旧默认值.
+func sqlitePathOf(cfg *config.Config) string {
+	if cfg.SQLitePath != "" {
+		return cfg.SQLitePath
+	}
+	if cfg.DataDir != "" {
+		return filepath.Join(cfg.DataDir, "dbops.db")
+	}
+	return filepath.Clean("../db/dbops.db")
 }
 
 // dbMetricsStats P1-9: 把 sql.DBStat 导出为 /metrics 可用的取值函数 (nil 安全).
@@ -1448,6 +1586,7 @@ func defaultInt(v, fallback int) int {
 
 func writeBootstrapAdminCredential(dataDir, username, password string) (string, error) {
 	if dataDir == "" {
+		// 手工构造 config 时的兑底; config.Load 解析后 dataDir 必为绝对路径.
 		dataDir = "../db"
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
@@ -1490,11 +1629,7 @@ func runMigrationsCLI() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	sqlitePath := cfg.SQLitePath
-	if sqlitePath == "" {
-		sqlitePath = "../db/dbops.db"
-	}
-	db, err := repositories.NewDatabaseWithMode(cfg.DatabaseURL, sqlitePath, cfg.StorageMode)
+	db, err := repositories.NewDatabaseWithMode(cfg.DatabaseURL, sqlitePathOf(cfg), cfg.StorageMode)
 	if err != nil {
 		return fmt.Errorf("open database (mode=%s): %w", cfg.StorageMode, err)
 	}
@@ -1513,7 +1648,7 @@ func runDBBackupCLI() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	outDir := "./backups"
+	outDir := cfg.BackupDir
 	keep := 7
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -1541,11 +1676,7 @@ func runDBBackupCLI() error {
 	if isMySQLDSN(cfg.DatabaseURL) && !strings.EqualFold(cfg.StorageMode, "sqlite") {
 		backupErr = backupMySQL(cfg.DatabaseURL, outDir, keep)
 	} else {
-		sqlitePath := cfg.SQLitePath
-		if sqlitePath == "" {
-			sqlitePath = "../db/dbops.db"
-		}
-		backupErr = backupSQLite(sqlitePath, outDir, keep)
+		backupErr = backupSQLite(sqlitePathOf(cfg), outDir, keep)
 	}
 	if backupErr != nil {
 		return backupErr

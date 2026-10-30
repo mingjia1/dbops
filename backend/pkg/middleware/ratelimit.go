@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ type RateLimiter struct {
 	limit    int
 	interval time.Duration
 	stopCh   chan struct{}
+	doneCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func NewRateLimiter(limit int, interval time.Duration) *RateLimiter {
@@ -25,8 +28,12 @@ func NewRateLimiter(limit int, interval time.Duration) *RateLimiter {
 		limit:    limit,
 		interval: interval,
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
-	go r.cleanup()
+	go func() {
+		defer close(r.doneCh)
+		r.cleanup()
+	}()
 	return r
 }
 
@@ -58,8 +65,13 @@ func (r *RateLimiter) cleanup() {
 	}
 }
 
+// Stop P1-D: 停止清理协程并等待其退出. 幂等 (重复调用不 panic).
 func (r *RateLimiter) Stop() {
-	close(r.stopCh)
+	if r == nil {
+		return
+	}
+	r.stopOnce.Do(func() { close(r.stopCh) })
+	<-r.doneCh
 }
 
 // Allow 记录一次命中, 返回 true=放行 / false=超限.
@@ -86,8 +98,14 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
+// KeyLimiter P1-C: 限流器统一接口. 内存版 (*RateLimiter) 与 Redis 版
+// (*RedisRateLimiter) 都实现它, 中间件只依赖这个抽象.
+type KeyLimiter interface {
+	Allow(key string) bool
+}
+
 // RateLimitByIP P0-3: 全局限流中间件. 默认 100 req/s per IP, 超过返 429.
-func RateLimitByIP(limiter *RateLimiter) gin.HandlerFunc {
+func RateLimitByIP(limiter KeyLimiter) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		ip := ctx.ClientIP()
 		if !limiter.Allow(ip) {
@@ -101,15 +119,28 @@ func RateLimitByIP(limiter *RateLimiter) gin.HandlerFunc {
 	}
 }
 
+// loginRateLimitDisabled P2-B: 开关语义与 .env.example 对齐.
+// 接受 1/true/yes/on (启用禁用) 与 0/false/no/off (不禁用),
+// 避免以前只认 "=1" 导致 .env.example 写 false 时被误读.
+func loginRateLimitDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DBOPS_LOGIN_RATELIMIT_DISABLE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default: // "", "0", "false", "no", "off" 及其他取值都视为不禁用
+		return false
+	}
+}
+
 // LoginRateLimit 登录端点专用, 更严格 (5 req/min per IP).
-// 通过环境变量 DBOPS_LOGIN_RATELIMIT_DISABLE=1 可禁用 (用于 e2e).
-func LoginRateLimit(limiter *RateLimiter) gin.HandlerFunc {
-	if os.Getenv("DBOPS_LOGIN_RATELIMIT_DISABLE") == "1" {
+// P1-C: limiter 可注入 Redis 版 (多副本共享); P2-B: 开关支持 true/false 写法.
+// 通过环境变量 DBOPS_LOGIN_RATELIMIT_DISABLE=1/true 可禁用 (用于 e2e).
+func LoginRateLimit(limiter KeyLimiter) gin.HandlerFunc {
+	if loginRateLimitDisabled() {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(ctx *gin.Context) {
 		ip := ctx.ClientIP()
-		if !limiter.Allow("login:"+ip) {
+		if !limiter.Allow("login:" + ip) {
 			ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"code":    429,
 				"message": "too many login attempts, please try again later",

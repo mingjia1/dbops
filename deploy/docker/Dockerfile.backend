@@ -3,7 +3,8 @@ WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /build/dbops-backend ./cmd/main.go
+# P0-B 后 cmd/ 包含多个源文件, 按包构建 (单文件 ./cmd/main.go 会漏编译).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /build/dbops-backend ./cmd
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates curl

@@ -25,7 +25,7 @@ build-web:
 run: run-backend run-agent run-web
 
 run-backend:
-	cd backend && go run ./cmd/main.go
+	cd backend && go run ./cmd
 
 run-agent:
 	cd agent && go run ./cmd/main.go
@@ -73,7 +73,7 @@ lint:
 	cd agent && golangci-lint run
 
 db-migrate:
-	cd backend && go run ./cmd/main.go migrate
+	cd backend && go run ./cmd migrate
 
 dist: build-backend build-agent build-web
 	rm -rf dist && mkdir -p dist/bin dist/config dist/scripts
@@ -81,7 +81,10 @@ dist: build-backend build-agent build-web
 	cp agent/bin/agent dist/bin/dbops-agent
 	cp -r backend/config/*.yaml dist/config/ 2>/dev/null || true
 	cp -r bin dist/scripts/bin 2>/dev/null || true
-	cp frontend/build dist/web -r 2>/dev/null || cp -r frontend/dist dist/web 2>/dev/null || true
+	# P2-D: 前端产物固定为 frontend/dist (vite 默认 outDir, frontend/Makefile clean 也只删 dist).
+	# 不再 "|| cp build || true" 掩盖产物缺失 —— 缺失就明确失败, 否则离线包会打出一个空 web 目录.
+	@test -d frontend/dist || { echo "ERROR: frontend/dist not found; run 'make build-web' before 'make dist'." >&2; exit 1; }
+	cp -r frontend/dist dist/web
 	tar -czf dbops-offline-$(shell date +%Y%m%d).tar.gz dist/
 	@echo "Offline package: dbops-offline-$(shell date +%Y%m%d).tar.gz"
 
@@ -93,8 +96,31 @@ pre-upgrade-check:
 	@curl -sf http://localhost:8080/health/ready > /dev/null || (echo "ERROR: Backend not ready at http://localhost:8080"; exit 1)
 	@echo "Backing up platform metadata..."
 	@mkdir -p /backup
-	@if [ -f data/dbops.db ]; then tar -czf /backup/dbops-platform-$$(date +%Y%m%d-%H%M%S).tar.gz data/dbops.db data/*.json 2>/dev/null || true; fi
-	@if [ -f deploy/systemd/dbops-platform.service ]; then systemctl is-active --quiet dbops-platform && cp /opt/dbops-platform/bin/dbops-backend /opt/dbops-platform/bin/dbops-backend.bak || true; fi
+	@set -e; \
+	FILES=""; \
+	for f in "$${DBOPS_DATA_DIR:-}/dbops.db" data/dbops.db db/dbops.db backend/data/dbops.db; do \
+		case "$$f" in "/dbops.db"|"") continue;; esac; \
+		if [ -f "$$f" ]; then FILES="$$FILES $$f"; fi; \
+	done; \
+	for d in "$${DBOPS_DATA_DIR:-}" data db backend/data; do \
+		case "$$d" in ""|/") continue;; esac; \
+		if [ -d "$$d" ]; then \
+			for j in "$$d"/*.json; do \
+				if [ -f "$$j" ]; then FILES="$$FILES $$j"; fi; \
+			done; \
+		fi; \
+	done; \
+	if [ -n "$$FILES" ]; then \
+		ARCHIVE="/backup/dbops-platform-$$(date +%Y%m%d-%H%M%S).tar.gz"; \
+		tar -czf "$$ARCHIVE" $$FILES || { echo "ERROR: metadata backup failed; aborting upgrade (restore manually with make rollback)"; exit 1; }; \
+		echo "Metadata backup OK: $$ARCHIVE"; \
+	else \
+		echo "No platform metadata found (fresh install?) - skipping metadata backup"; \
+	fi
+	@if [ -f deploy/systemd/dbops-platform.service ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then \
+		cp /opt/dbops-platform/bin/dbops-backend /opt/dbops-platform/bin/dbops-backend.bak || { echo "ERROR: failed to back up current backend binary"; exit 1; }; \
+		echo "Backend binary backed up"; \
+	fi
 	@echo "Pre-upgrade checks passed."
 
 upgrade-apply:
@@ -105,7 +131,7 @@ upgrade-apply:
 	@if [ -f backend/bin/platform ]; then cp backend/bin/platform /usr/local/bin/dbops-backend; else echo "backend/bin/platform not found"; exit 1; fi
 	@if [ -f agent/bin/agent ]; then cp agent/bin/agent /usr/local/bin/dbops-agent; else echo "agent/bin/agent not found"; exit 1; fi
 	@echo "Running DB migrations..."
-	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform && sleep 5 && systemctl restart dbops-platform; else cd backend && go run ./cmd/main.go migrate; fi
+	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform && sleep 5 && systemctl restart dbops-platform; else cd backend && go run ./cmd migrate; fi
 	@echo "Verifying upgrade..."
 	@curl -sf http://localhost:8080/health/ready > /dev/null || (echo "ERROR: Backend health check failed after upgrade"; echo "Rollback: cp /opt/dbops-platform/bin/dbops-backend.bak /opt/dbops-platform/bin/dbops-backend && systemctl restart dbops-platform"; exit 1)
 	@echo "Starting services..."
@@ -124,7 +150,13 @@ rollback:
 	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl stop dbops-platform dbops-agent; fi
 	@echo "Restoring previous binaries..."
 	@if [ -f /opt/dbops-platform/bin/dbops-backend.bak ]; then cp /opt/dbops-platform/bin/dbops-backend.bak /opt/dbops-platform/bin/dbops-backend; echo "Backend binary restored"; else echo "No backup found"; exit 1; fi
-	@if [ -f /backup/dbops-platform-*.tar.gz ]; then LATEST=$$(ls -t /backup/dbops-platform-*.tar.gz 2>/dev/null | head -1); if [ -n "$$LATEST" ]; then echo "Restoring metadata from $$LATEST..."; tar -xzf $$LATEST -C /opt/dbops-platform/; fi; fi
+	@if ls /backup/dbops-platform-*.tar.gz >/dev/null 2>&1; then \
+		LATEST=$$(ls -t /backup/dbops-platform-*.tar.gz 2>/dev/null | head -1); \
+		echo "Restoring metadata from $$LATEST..."; \
+		tar -xzf "$$LATEST" -C /opt/dbops-platform/ || { echo "ERROR: metadata restore failed from $$LATEST"; exit 1; }; \
+	else \
+		echo "No metadata backup found under /backup; skipping metadata restore"; \
+	fi
 	@echo "Starting services..."
 	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform dbops-agent; fi
 	@echo "Verifying..."
@@ -157,7 +189,7 @@ test-backup-restore:
 	@echo "Step 1: Running backup..."
 	@scripts/backup-platform.sh
 	@echo "Step 2: Verifying backup files..."
-	@ls -lh /backup/dbops-platform-* 2>/dev/null || fail "No backup files found"
+	@ls -lh /backup/dbops-platform-* 2>/dev/null || (echo "ERROR: No backup files found"; exit 1)
 	@echo "Step 3: Simulating restore..."
 	@RESTORE_TMP=$$(mktemp -d) && \
 	 LATEST=$$(ls -t /backup/dbops-platform-*.tar.gz 2>/dev/null | head -1) && \

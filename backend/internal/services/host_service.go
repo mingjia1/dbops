@@ -929,7 +929,7 @@ func (s *HostService) StartTestConnection(ctx context.Context, hostID string) (*
 	s.testResults[taskID] = initial
 	s.taskMu.Unlock()
 
-	go s.runConnectionTest(taskID, host)
+	GoBackground(func() { s.runConnectionTest(taskID, host) })
 
 	return initial, nil
 }
@@ -1056,7 +1056,7 @@ func (s *HostService) StartScanInstances(ctx context.Context, hostID string, req
 	s.scanResults[taskID] = initial
 	s.scanMu.Unlock()
 
-	go s.runScan(taskID, host, ports, probeMySQL, username, password, req.DiscoverProcess)
+	GoBackground(func() { s.runScan(taskID, host, ports, probeMySQL, username, password, req.DiscoverProcess) })
 
 	return initial, nil
 }
@@ -1098,18 +1098,18 @@ func (s *HostService) runScan(taskID string, host *models.Host, ports []int, pro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-		si := probePort(host.Address, port, probeMySQL, username, password)
-		if si == nil {
-			return
-		}
-		si.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), port)
-		if mid, ok := managedPorts[port]; ok {
-			si.AlreadyManaged = true
-			si.ManagedID = mid
-		}
-		mu.Lock()
-		scanned = append(scanned, *si)
-		mu.Unlock()
+			si := probePort(host.Address, port, probeMySQL, username, password)
+			if si == nil {
+				return
+			}
+			si.RecommendedName = fmt.Sprintf("%s-%d", sanitizeName(host.Name), port)
+			if mid, ok := managedPorts[port]; ok {
+				si.AlreadyManaged = true
+				si.ManagedID = mid
+			}
+			mu.Lock()
+			scanned = append(scanned, *si)
+			mu.Unlock()
 		}(p)
 	}
 	wg.Wait()

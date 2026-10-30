@@ -102,7 +102,7 @@ bash bin/ubuntu/stop.sh
 ### 手动启动
 
 ```bash
-cd backend && go run ./cmd/main.go
+cd backend && go run ./cmd
 cd agent && go run ./cmd/main.go
 cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 ```
@@ -133,7 +133,7 @@ make dist
 等价的手动命令：
 
 ```bash
-cd backend && go build -o bin/platform ./cmd/main.go
+cd backend && go build -o bin/platform ./cmd
 cd agent && go build -o bin/agent ./cmd/main.go
 cd frontend && npm run build
 ```

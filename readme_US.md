@@ -183,7 +183,7 @@ make build
 Run components manually:
 
 ```bash
-cd backend && go run ./cmd/main.go
+cd backend && go run ./cmd
 cd agent && go run ./cmd/main.go
 cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 ```
