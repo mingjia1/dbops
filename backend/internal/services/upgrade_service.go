@@ -1260,18 +1260,37 @@ func validateAgentVersionForUpgrade(ctx context.Context, agentClient *AgentClien
 
 	agentVer, err := agentClient.GetAgentVersion(ctx, host, port)
 	if err != nil {
-		return fmt.Errorf("failed to get agent version: %w", err)
+		// agent が unreachable / timeout した場合は構造化エラーで返し、フロントエンドが再試行/連絡可能にする.
+		return &utils.UpgradeError{
+			Code:    utils.CodeAgentUnavailable,
+			Message: "agent is unavailable; cannot verify upgrade compatibility",
+			Details: fmt.Sprintf("target=%s agent_error=%s", targetVersion, err.Error()),
+		}
 	}
 	if agentVer == "" {
-		return fmt.Errorf("agent version is empty; cannot verify upgrade compatibility")
+		return &utils.UpgradeError{
+			Code:    utils.CodeAgentVersionEmpty,
+			Message: "agent version is empty; cannot verify upgrade compatibility",
+			Details: fmt.Sprintf("target=%s", targetVersion),
+		}
 	}
 
 	agentMM := MajorVersion(agentVer)
 	if entry.MinAgentVersion != "" && versionLessThan(agentMM, MajorVersion(entry.MinAgentVersion)) {
-		return fmt.Errorf("agent version %s is too old for target version %s (requires >= %s)", agentVer, targetVersion, entry.MinAgentVersion)
+		return utils.AgentVersionError(
+			utils.CodeAgentVersionTooOld,
+			agentVer,
+			targetVersion,
+			entry.MinAgentVersion,
+		)
 	}
 	if entry.MaxAgentVersion != "" && versionLessThan(MajorVersion(entry.MaxAgentVersion), agentMM) {
-		return fmt.Errorf("agent version %s is newer than supported by target version %s (requires <= %s)", agentVer, targetVersion, entry.MaxAgentVersion)
+		return utils.AgentVersionError(
+			utils.CodeAgentVersionTooNew,
+			agentVer,
+			targetVersion,
+			entry.MaxAgentVersion,
+		)
 	}
 	return nil
 }

@@ -291,6 +291,7 @@ func main() {
 	clusterDeployService.SetScaleService(scaleSvc)
 
 	settingsRepo := repositories.NewPlatformSettingsRepository(db)
+	authService.SetSettingsRepository(settingsRepo)
 	settingsController := controllers.NewSettingsController(settingsRepo)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)

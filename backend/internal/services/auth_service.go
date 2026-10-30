@@ -26,6 +26,7 @@ type AuthService struct {
 	standalone  bool
 	jwtSecret   string
 	tokenExpiry time.Duration
+	settingsRepo *repositories.PlatformSettingsRepository
 }
 
 func NewAuthService(userRepo *repositories.UserRepository, jwtSecret string, auditSvc ...*AuditService) *AuthService {
@@ -71,6 +72,11 @@ func (s *AuthService) IsStandalone() bool {
 
 func (s *AuthService) SetRoleRepository(roleRepo *repositories.RoleRepository) {
 	s.roleRepo = roleRepo
+}
+
+// P1-4: 允许设置 settings 仓库以消费 password_policy.
+func (s *AuthService) SetSettingsRepository(settingsRepo *repositories.PlatformSettingsRepository) {
+	s.settingsRepo = settingsRepo
 }
 
 type LoginRequest struct {
@@ -404,6 +410,20 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 	if s.IsStandalone() || s.userRepo == nil {
 		return errors.New("password change is not available in standalone mode")
 	}
+	// P1-4: 消费 settings.password_policy (若已配置), 否则使用默认策略兜底.
+	if s.settingsRepo != nil {
+		if raw, err := s.settingsRepo.Get(ctx, "password_policy"); err == nil && raw != "" {
+			policy := utils.ParsePasswordPolicy(raw)
+			if err := utils.ValidatePasswordPolicy(req.NewPassword, policy); err != nil {
+				return err
+			}
+		} else {
+			// 策略未配置 / 读失败 → 使用默认策略兜底 (等同于当前 ValidatePasswordComplexity).
+			if err := utils.ValidatePasswordPolicy(req.NewPassword, utils.PasswordPolicy{}); err != nil {
+				return err
+			}
+		}
+	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return err
@@ -432,6 +452,19 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswordsRequest) (int64, error) {
 	if s.IsStandalone() || s.userRepo == nil {
 		return 0, errors.New("password reset is not available in standalone mode")
+	}
+	// P1-4: 消费 settings.password_policy (若已配置), 否则使用默认策略兜底.
+	if s.settingsRepo != nil {
+		if raw, err := s.settingsRepo.Get(ctx, "password_policy"); err == nil && raw != "" {
+			policy := utils.ParsePasswordPolicy(raw)
+			if err := utils.ValidatePasswordPolicy(req.NewPassword, policy); err != nil {
+				return 0, err
+			}
+		} else {
+			if err := utils.ValidatePasswordPolicy(req.NewPassword, utils.PasswordPolicy{}); err != nil {
+				return 0, err
+			}
+		}
 	}
 	// P1-4: 复杂度校验 (重置全员口令同样不豁免).
 	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
