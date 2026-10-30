@@ -224,3 +224,40 @@ func newCompatAccountRouteTestRouter() *gin.Engine {
 	registerCompatAccountRoutes(router.Group("/api/v1/accounts", agentAuthMiddleware("test-agent-token")), executor.NewAccountManager())
 	return router
 }
+
+// P2-A: agent_token 未配置返 503 (服务不可用), 不是 500 (内部错误);
+// 凭据缺失/错误仍是 401.
+func TestAgentAuthMiddlewareStatusCodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handlerFor := func(token string) gin.HandlerFunc { return agentAuthMiddleware(token) }
+
+	tests := []struct {
+		name       string
+		token      string
+		authHeader string
+		want       int
+	}{
+		{"unconfigured token returns 503", "", "Bearer whatever", http.StatusServiceUnavailable},
+		{"missing bearer returns 401", "configured-token", "", http.StatusUnauthorized},
+		{"wrong bearer returns 401", "configured-token", "Bearer wrong", http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/x", handlerFor(tt.token), func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.want {
+				t.Fatalf("status = %d, want %d (body=%s)", w.Code, tt.want, w.Body.String())
+			}
+		})
+	}
+}

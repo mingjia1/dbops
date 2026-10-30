@@ -64,7 +64,7 @@ make install-web
 
 ## API Access / 访问地址
 
-- **Backend Admin / 后台管理**: `http://localhost:8080`
+- **Backend API / 后端接口**（纯 REST API，无管理界面；探活 `/health`、就绪 `/health/ready`、指标 `/metrics`）: `http://localhost:8080`
 - **Web Console / 控制台**: `http://localhost:3000`
 - **Agent Service / Agent服务**: `http://localhost:9090`
 

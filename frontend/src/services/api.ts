@@ -89,18 +89,10 @@ const showErrorToast = (msg: string) => {
   }
 }
 
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+// P1-B: 单轨鉴权 —— HttpOnly cookie (auth_token) 是唯一凭据源, 不再往
+// localStorage 写长效 JWT (XSS 下可直接丢权), 也不再手工拼 Authorization.
+// withCredentials 让浏览器自动携带同源 cookie; 后端 ValidateToken 优先 header
+// 后回退 cookie 的双轨容忍已无调用方.
 
 api.interceptors.response.use(
   (response) => {
@@ -110,6 +102,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !error.config?.suppressAuthLogout) {
       // P1: clear both token and user so Dashboard does not render stale user data
       // after the request has already been redirected to /login.
+      // (token 已不再写入, removeItem 仅清理历史残留)
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       triggerLogout()

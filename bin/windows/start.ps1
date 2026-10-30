@@ -275,7 +275,7 @@ try {
         $needBackend = Test-NeedRebuild -SourceDir $BackendDir -ExePath $BackendExe
         if ($needBackend) {
             Invoke-Build -Title "5. 编译后端 (Go)" -WorkingDir $BackendDir `
-                -Command "go build -o bin\platform.exe .\cmd\main.go"
+                -Command "go build -o bin\platform.exe .\cmd"
         } else {
             Write-Step "5. 编译后端 (Go) - 跳过 (源码未变化)"
             Write-Info "[信息] 现有产物已是最新: $BackendExe"

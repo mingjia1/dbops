@@ -22,6 +22,11 @@ type MetricsStats struct {
 	StartTime time.Time
 	// Version: 平台版本号.
 	Version string
+	// P0-B: 元数据库定时快照统计 (可为 nil, 跳过输出).
+	DBBackupSuccessCount func() int64
+	DBBackupFailureCount func() int64
+	// DBBackupLastSuccess: 最近一次成功快照的 unix 秒, 0 表示从未成功.
+	DBBackupLastSuccess func() int64
 }
 
 // MetricsHandler 返回 Prometheus text/plain; version=0.0.4 格式的 /metrics 处理器.
@@ -70,6 +75,15 @@ func MetricsHandler(stats MetricsStats) gin.HandlerFunc {
 		}
 		if stats.DBWaitDuration != nil {
 			write("dbops_db_wait_duration_seconds_total", "Total time waited for connections.", "counter", stats.DBWaitDuration().Seconds())
+		}
+		if stats.DBBackupSuccessCount != nil {
+			write("dbops_db_backup_success_total", "Successful platform metadata DB snapshots.", "counter", float64(stats.DBBackupSuccessCount()))
+		}
+		if stats.DBBackupFailureCount != nil {
+			write("dbops_db_backup_failure_total", "Failed platform metadata DB snapshots.", "counter", float64(stats.DBBackupFailureCount()))
+		}
+		if stats.DBBackupLastSuccess != nil {
+			write("dbops_db_backup_last_success_timestamp_seconds", "Unix time of last successful metadata DB snapshot.", "gauge", float64(stats.DBBackupLastSuccess()))
 		}
 	}
 }

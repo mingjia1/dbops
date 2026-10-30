@@ -1134,7 +1134,7 @@ func (s *UpgradeService) createAndTrackTask(taskType, instanceID, planID, source
 // 但 agent 端 xtrabackup 还在跑没人管. 修: go func() 异步派, 失败/成功都更新 taskRepo 状态,
 // frontend 永远能 GET /api/v1/tasks/:id 拿真实进度.
 func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *models.Instance, upgradeType, targetVersion string, extraConfig map[string]interface{}) {
-	go func() {
+	GoBackground(func() {
 		if lockKey != "" {
 			lock := s.lockForInstance(lockKey)
 			lock.Lock()
@@ -1160,7 +1160,7 @@ func (s *UpgradeService) dispatchAndTrack(lockKey, taskID string, instance *mode
 			status, progress, message := normalizeUpgradeAgentTaskResult(result)
 			_ = s.taskRepo.UpdateStatusWithMessage(context.Background(), taskID, status, progress, message)
 		}
-	}()
+	})
 }
 
 // normalizeUpgradeAgentTaskResult maps Agent business status to persisted task status.

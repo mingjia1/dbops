@@ -2,11 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 
 const API_BASE = '/api/v1'
 
-const buildAuthHeaders = (): Record<string, string> => {
-  const token = localStorage.getItem('token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
+// P1-B: 单轨鉴权 —— 只依赖同源 HttpOnly cookie (credentials: 'include'),
+// 不再从 localStorage 读 token 拼 Authorization.
 async function readJson(res: Response): Promise<any> {
   try {
     return await res.json()
@@ -18,7 +15,6 @@ async function readJson(res: Response): Promise<any> {
 async function fetchSettings(): Promise<Record<string, string>> {
   const res = await fetch(`${API_BASE}/settings`, {
     credentials: 'include',
-    headers: buildAuthHeaders(),
   })
   if (!res.ok) return {}
   const json = await res.json()
@@ -29,7 +25,7 @@ async function saveSetting(key: string, value: string): Promise<void> {
   const res = await fetch(`${API_BASE}/settings/${key}`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value }),
   })
   const json = await readJson(res)

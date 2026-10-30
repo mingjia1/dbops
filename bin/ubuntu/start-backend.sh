@@ -44,5 +44,5 @@ else
     fi
 
     echo "Starting MySQL Ops Platform Backend (go run)..."
-    exec go run ./cmd/main.go
+    exec go run ./cmd
 fi

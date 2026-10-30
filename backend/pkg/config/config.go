@@ -2,34 +2,48 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	ServerPort      string
-	TLSCertPath     string
-	TLSKeyPath      string
-	LogLevel        string
-	DatabaseURL     string
-	SQLitePath      string
-	StorageMode     string
-	RedisURL        string
-	RedisPassword   string
-	RedisDB         int
-	JWTSecret       string
-	EncryptionKey   string
-	AgentToken      string
-	ClickHouseURL   string
-	DataDir         string
-	AllowedOrigins  []string
-	AIBaseURL       string
-	AIAPIKey        string
-	AIModel         string
-	AIMaxTokens     int
-	ClusterDefaults ClusterDefaults
-	ServerTimeouts  ServerTimeouts
+	ServerPort    string
+	TLSCertPath   string
+	TLSKeyPath    string
+	LogLevel      string
+	DatabaseURL   string
+	StorageMode   string
+	RedisURL      string
+	RedisPassword string
+	RedisDB       int
+	JWTSecret     string
+	EncryptionKey string
+	AgentToken    string
+	ClickHouseURL string
+	// P2-C: clickhouse_url 是否被显式配置 (env `DBOPS_CLICKHOUSE_URL` 非空或配置文件含该键).
+	// 默认值恒非空 (viper SetDefault 指向 localhost:9000), 仅凭 URL 非空无法区分
+	// "运维显式要求 CH" 与 "代码默认值"; 未显式配置时 CH 是可选依赖, 就绪检查跳过.
+	ClickHouseConfigured bool
+	DataDir              string
+	SQLitePath    string
+	// P0-A: 元数据库备份目录 (db-backup 子命令与定时快照的输出位置).
+	BackupDir string
+	// P0-A: 未显式配置 data_dir 且沿用了旧的 ../db 目录 (调用方打弃用告警).
+	UsedLegacyDataDir bool
+	// P0-B: 元数据库定时快照间隔 (0=关闭) 与保留份数.
+	DBBackupInterval time.Duration
+	DBBackupKeep     int
+	AllowedOrigins   []string
+	AIBaseURL        string
+	AIAPIKey         string
+	AIModel          string
+	AIMaxTokens      int
+	ClusterDefaults  ClusterDefaults
+	ServerTimeouts   ServerTimeouts
 }
 
 type ServerTimeouts struct {
@@ -69,11 +83,18 @@ func Load() (*Config, error) {
 	viper.SetDefault("log_level", "warning")
 	viper.SetDefault("database_url", "")
 	viper.SetDefault("sqlite_path", "") // 空表示使用 <DataDir>/dbops.db
+	// P0-A: data_dir 不再设死 "../db". 空值时 resolveDataPaths 先兼容旧部署的
+	// ../db/dbops.db (存在则沿用), 否则回落到 ./data, 与 .env.example 一致.
+	viper.SetDefault("data_dir", "")
+	// P0-A: 备份目录空值时取 <data_dir>/backups.
+	viper.SetDefault("backup_dir", "")
+	// P0-B: 元数据库定时快照. "0" / "off" 表示关闭; 无效值 Load 直接报错.
+	viper.SetDefault("db_backup_interval", "24h")
+	viper.SetDefault("db_backup_keep", 7)
 	viper.SetDefault("redis_url", "localhost:6379")
 	viper.SetDefault("redis_password", "")
 	viper.SetDefault("redis_db", 0)
 	viper.SetDefault("clickhouse_url", "clickhouse://default@localhost:9000/default")
-	viper.SetDefault("data_dir", "../db")
 	// 存储模式: auto = 先试 MySQL 再回退 SQLite; mysql = 强制 MySQL (连不上 fail);
 	// sqlite = 强制 SQLite. 默认 auto, 显式声明避免静默降级.
 	viper.SetDefault("storage_mode", "auto")
@@ -105,27 +126,49 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// P0-A/P1-6: 数据目录相关路径统一解析为绝对路径 (详见 paths.go),
+	// 使 systemd / 容器 / 手工启动在不同 cwd 下行为一致.
+	absDataDir, absSQLitePath, usedLegacy := resolveDataPaths(
+		viper.GetString("data_dir"), viper.GetString("sqlite_path"))
+	absBackupDir := resolveBackupDir(viper.GetString("backup_dir"), absDataDir)
+
+	// P0-B: 定时快照参数. 区分 "0"(关闭) 与非法值 (报错), 避免拼写错误静默变成关闭备份.
+	backupInterval, err := parseBackupInterval(viper.GetString("db_backup_interval"))
+	if err != nil {
+		return nil, err
+	}
+	backupKeep := viper.GetInt("db_backup_keep")
+	if backupKeep < 1 {
+		backupKeep = 7
+	}
+
+	clickHouseConfigured := os.Getenv("DBOPS_CLICKHOUSE_URL") != "" || viper.InConfig("clickhouse_url")
+
 	return &Config{
-		ServerPort:     viper.GetString("server_port"),
-		TLSCertPath:    viper.GetString("tls_cert_path"),
-		TLSKeyPath:     viper.GetString("tls_key_path"),
-		LogLevel:       viper.GetString("log_level"),
-		DatabaseURL:    viper.GetString("database_url"),
-		SQLitePath:     viper.GetString("sqlite_path"),
-		StorageMode:    viper.GetString("storage_mode"),
-		RedisURL:       viper.GetString("redis_url"),
-		RedisPassword:  viper.GetString("redis_password"),
-		RedisDB:        viper.GetInt("redis_db"),
-		JWTSecret:      viper.GetString("jwt_secret"),
-		EncryptionKey:  viper.GetString("encryption_key"),
-		AgentToken:     viper.GetString("agent_token"),
-		ClickHouseURL:  viper.GetString("clickhouse_url"),
-		DataDir:        viper.GetString("data_dir"),
-		AIBaseURL:      viper.GetString("ai_base_url"),
-		AIAPIKey:       viper.GetString("ai_api_key"),
-		AIModel:        viper.GetString("ai_model"),
-		AIMaxTokens:    viper.GetInt("ai_max_tokens"),
-		AllowedOrigins: splitCSV(viper.GetString("allowed_origins")),
+		ServerPort:    viper.GetString("server_port"),
+		TLSCertPath:   viper.GetString("tls_cert_path"),
+		TLSKeyPath:    viper.GetString("tls_key_path"),
+		LogLevel:      viper.GetString("log_level"),
+		DatabaseURL:   viper.GetString("database_url"),
+		SQLitePath:    absSQLitePath,
+		StorageMode:   viper.GetString("storage_mode"),
+		RedisURL:      viper.GetString("redis_url"),
+		RedisPassword: viper.GetString("redis_password"),
+		RedisDB:       viper.GetInt("redis_db"),
+		JWTSecret:     viper.GetString("jwt_secret"),
+		EncryptionKey: viper.GetString("encryption_key"),
+		AgentToken:    viper.GetString("agent_token"),
+		ClickHouseURL:        viper.GetString("clickhouse_url"), DataDir: absDataDir,
+		ClickHouseConfigured: clickHouseConfigured,
+		BackupDir:         absBackupDir,
+		UsedLegacyDataDir: usedLegacy,
+		DBBackupInterval:  backupInterval,
+		DBBackupKeep:      backupKeep,
+		AIBaseURL:         viper.GetString("ai_base_url"),
+		AIAPIKey:          viper.GetString("ai_api_key"),
+		AIModel:           viper.GetString("ai_model"),
+		AIMaxTokens:       viper.GetInt("ai_max_tokens"),
+		AllowedOrigins:    splitCSV(viper.GetString("allowed_origins")),
 		ClusterDefaults: ClusterDefaults{
 			ReplicationUser: viper.GetString("cluster_defaults.replication_user"),
 			ReplicationPass: viper.GetString("cluster_defaults.replication_pass"),
@@ -158,6 +201,9 @@ func bindBackendEnv() {
 		"agent_token":                       "DBOPS_AGENT_TOKEN",
 		"clickhouse_url":                    "DBOPS_CLICKHOUSE_URL",
 		"data_dir":                          "DBOPS_DATA_DIR",
+		"backup_dir":                        "DBOPS_BACKUP_DIR",
+		"db_backup_interval":                "DBOPS_DB_BACKUP_INTERVAL",
+		"db_backup_keep":                    "DBOPS_DB_BACKUP_KEEP",
 		"allowed_origins":                   "DBOPS_ALLOWED_ORIGINS",
 		"ai_base_url":                       "DBOPS_AI_BASE_URL",
 		"ai_api_key":                        "DBOPS_AI_API_KEY",
@@ -175,6 +221,28 @@ func bindBackendEnv() {
 	for key, envName := range bindings {
 		_ = viper.BindEnv(key, envName)
 	}
+}
+
+// parseBackupInterval P0-B: 解析元数据库定时快照间隔.
+//   - "" / 未配置 -> 24h (viper 默认)
+//   - "0" / "off" / "false" -> 0, 关闭定时快照
+//   - 其他非法值 -> 返回错误, 避免拼写错误静默变成"关闭备份"
+func parseBackupInterval(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 24 * time.Hour, nil
+	}
+	if raw == "0" || strings.EqualFold(raw, "off") || strings.EqualFold(raw, "false") || strings.EqualFold(raw, "disabled") {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid db_backup_interval %q: %w (use e.g. 12h/24h, or 0 to disable)", raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid db_backup_interval %q: must be >= 0", raw)
+	}
+	return d, nil
 }
 
 func splitCSV(s string) []string {

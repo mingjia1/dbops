@@ -680,7 +680,9 @@ func (s *InstanceService) Deploy(ctx context.Context, id string) (*DeployResult,
 	}
 	instance.Connection = *conn
 
-	go s.runInstanceDeployAsync(id, task.ID, agentHost, agentPort, instance, mysqlPassword, conn.Port, userIDFromCtx(ctx))
+	GoBackground(func() {
+		s.runInstanceDeployAsync(id, task.ID, agentHost, agentPort, instance, mysqlPassword, conn.Port, userIDFromCtx(ctx))
+	})
 
 	return &DeployResult{
 		TaskID:   task.ID,

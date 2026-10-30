@@ -42,8 +42,10 @@ describe('ProtectedRoute', () => {
     expect(localStorage.getItem('user')).toContain('tester')
   })
 
-  it('rejects invalid local tokens before trusting stale client state', async () => {
+  it('clears legacy localStorage tokens and relies on the cookie session', async () => {
+    // P1-B: 历史版本会把 JWT 写进 localStorage; 现在 session 完全由 /auth/me (cookie) 决定.
     localStorage.setItem('token', 'short-token')
+    vi.mocked(authApi.me).mockResolvedValue({ data: { username: 'tester' } } as any)
 
     renderRoute(
       <ProtectedRoute>
@@ -51,8 +53,8 @@ describe('ProtectedRoute', () => {
       </ProtectedRoute>
     )
 
-    await waitFor(() => expect(screen.getByText('login page')).toBeInTheDocument())
-    expect(authApi.me).not.toHaveBeenCalled()
+    expect(await screen.findByText('protected content')).toBeInTheDocument()
+    expect(authApi.me).toHaveBeenCalled()
     expect(localStorage.getItem('token')).toBeNull()
   })
 
