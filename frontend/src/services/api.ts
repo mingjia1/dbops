@@ -1,5 +1,5 @@
 import axios, { type AxiosRequestConfig } from 'axios'
-import { message } from 'antd'
+import { message } from '../components/antdMessage'
 import { triggerLogout } from './authEvents'
 
 declare module 'axios' {

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Card, Button, Space, Modal, Select, message, Popconfirm } from 'antd'
+import { Card, Button, Space, Modal, Select, Popconfirm } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   PlusOutlined, MinusOutlined, ReloadOutlined, DeleteOutlined,
 } from '@ant-design/icons'

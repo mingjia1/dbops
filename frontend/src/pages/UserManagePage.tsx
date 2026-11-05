@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, message } from 'antd'
+import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import { DeleteOutlined, EditOutlined, KeyOutlined, PlusOutlined, UserOutlined } from '@ant-design/icons'
 import { PlatformRole, roleApi, userApi } from '../services/api'
 

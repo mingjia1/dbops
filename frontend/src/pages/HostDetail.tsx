@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import {
-  Card, Descriptions, Button, Space, Tag, Spin, message, Alert, Table, Popconfirm, Form,
-  Tabs, Result, Statistic, Row, Col, Badge, Tooltip,
-} from 'antd'
+import { Card, Descriptions, Button, Space, Tag, Spin, Alert, Table, Popconfirm, Form, Tabs, Result, Statistic, Row, Col, Badge, Tooltip } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   ArrowLeftOutlined, ThunderboltOutlined, DatabaseOutlined, PlusOutlined,
   ScanOutlined, ImportOutlined, CheckCircleOutlined, CloseCircleOutlined,

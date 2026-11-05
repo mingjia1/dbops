@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import {
-  Button, Card, Empty, Form, Modal, Select, Space, Table, Tabs, Tag, Tooltip, message,
-} from 'antd'
+import { Button, Card, Empty, Form, Modal, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
+import { message } from '../components/antdMessage'
 import { DeleteOutlined, FileSearchOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { backupApi, instanceApi, type Instance } from '../services/api'

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import {
-  Button, Card, Col, Descriptions, Form, Modal, Result, Row, Select, Space, Statistic, Table, Tabs, Tag, message,
-} from 'antd'
+import { Button, Card, Col, Descriptions, Form, Modal, Result, Row, Select, Space, Statistic, Table, Tabs, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   AlertOutlined, HeartOutlined, SafetyCertificateOutlined, SwapOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'

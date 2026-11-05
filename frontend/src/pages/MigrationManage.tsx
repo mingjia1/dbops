@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Button, Space, Table, message, Tag, Progress, Divider, Modal, Tabs } from 'antd'
+import { Card, Button, Space, Table, Tag, Progress, Divider, Modal, Tabs } from 'antd'
+import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons'
 import { migrationApi, instanceApi } from '../services/api'
 import MigrationFormSection from '../components/MigrationFormSection'

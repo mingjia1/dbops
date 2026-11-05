@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Table, Button, Modal, Form, Input, Select, Space, Tag, message, Popconfirm, Tabs, Descriptions } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Select, Space, Tag, Popconfirm, Tabs, Descriptions } from 'antd'
+import { message } from '../components/antdMessage'
 import { FileSearchOutlined, PlusOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import api from '../services/api'
 

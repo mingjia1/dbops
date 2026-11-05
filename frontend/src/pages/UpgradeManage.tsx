@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import {
-  Button, Card, Descriptions, Form, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, message,
-} from 'antd'
+import { Button, Card, Descriptions, Form, Modal, Progress, Select, Space, Spin, Table, Tag, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   CheckCircleOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RollbackOutlined,
 } from '@ant-design/icons'

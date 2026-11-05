@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Modal, Select, Button, Space, Alert, Spin, Descriptions, message } from 'antd'
+import { Modal, Select, Button, Space, Alert, Spin, Descriptions } from 'antd'
+import { message } from '../components/antdMessage'
 import { SwapOutlined } from '@ant-design/icons'
 import { roleSwitchApi } from '../services/api'
 

@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import {
-  Alert, Button, Card, Col, Input, Radio, Result, Row, Select,
-  Space, Steps, Typography, message,
-} from 'antd'
+import { Alert, Button, Card, Col, Input, Radio, Result, Row, Select, Space, Steps, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   CheckCircleOutlined, CloudServerOutlined, RocketOutlined, SafetyOutlined,
 } from '@ant-design/icons'

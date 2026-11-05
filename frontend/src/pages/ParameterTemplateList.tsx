@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Card, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Table, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {

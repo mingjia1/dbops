@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Alert, Button, Card, Col, Form, Input, InputNumber, message, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 import { authApi, hostApi } from '../services/api'
 import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordEnabled, setDefaultMySQLCredential, setSecondaryPassword } from '../services/sessionSecrets'

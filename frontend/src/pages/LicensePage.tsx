@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Descriptions, Button, Upload, message, Tag, Space, Alert } from 'antd'
+import { Card, Descriptions, Button, Upload, Tag, Space, Alert } from 'antd'
+import { message } from '../components/antdMessage'
 import { SafetyCertificateOutlined, UploadOutlined, ReloadOutlined } from '@ant-design/icons'
 import api from '../services/api'
 

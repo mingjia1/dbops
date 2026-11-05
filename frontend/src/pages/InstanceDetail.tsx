@@ -1,26 +1,6 @@
 ﻿import React, { useEffect, useState } from 'react'
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Col,
-  Descriptions,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Popconfirm,
-  Row,
-  Select,
-  Space,
-  Spin,
-  Statistic,
-  Table,
-  Tabs,
-  Tag,
-  message,
-} from 'antd'
+import { Alert, Button, Card, Checkbox, Col, Descriptions, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Spin, Statistic, Table, Tabs, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   ArrowLeftOutlined,
   DeleteOutlined,

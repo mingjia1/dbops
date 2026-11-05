@@ -1,24 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import {
-  Button,
-  Card,
-  Col,
-  Collapse,
-  Empty,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Progress,
-  Radio,
-  Row,
-  Space,
-  Spin,
-  Statistic,
-  Table,
-  Tag,
-  message,
-} from 'antd'
+import { Button, Card, Col, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Radio, Row, Space, Spin, Statistic, Table, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,

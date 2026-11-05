@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Button, Card, Divider, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, CopyOutlined, DatabaseOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { extractTaskPayload, hostApi, instanceApi, versionApi, clusterDeployApi, type Host, type Instance, type VersionEntry } from '../services/api'

@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react'
-import {
-  Alert, Button, Checkbox, Col, Drawer, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tag, Typography, message,
-} from 'antd'
+import { Alert, Button, Checkbox, Col, Drawer, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tag, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import { EyeOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons'
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'

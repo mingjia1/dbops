@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Button, Card, Dropdown, Empty, Form, Input, InputNumber, message, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Card, Dropdown, Empty, Form, Input, InputNumber, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd'
+import { message } from '../components/antdMessage'
 import { DatabaseOutlined, DesktopOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'

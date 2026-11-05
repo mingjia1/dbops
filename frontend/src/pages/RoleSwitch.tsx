@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Descriptions, Form, Result, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Card, Descriptions, Form, Result, Select, Space, Table, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import { HistoryOutlined, RetweetOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { instanceApi, roleSwitchApi, type Instance } from '../services/api'

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Alert, Button, Card, Select, Space, Steps, Tag, message } from 'antd'
+import { Alert, Button, Card, Select, Space, Steps, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { upgradeApi, versionApi } from '../services/api'
 

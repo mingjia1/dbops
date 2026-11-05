@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Avatar, Dropdown, Form, Input, Layout, Menu, message, Modal, Space, Switch, Tooltip, Typography } from 'antd'
+import { Avatar, Dropdown, Form, Input, Layout, Menu, Modal, Space, Switch, Tooltip, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import { BulbFilled, BulbOutlined, DatabaseOutlined, LogoutOutlined, RocketOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../services/api'

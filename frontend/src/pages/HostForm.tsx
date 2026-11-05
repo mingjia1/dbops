@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Card, Form, Input, InputNumber, Select, Button, Space, message, Spin } from 'antd'
+import { Card, Form, Input, InputNumber, Select, Button, Space, Spin } from 'antd'
+import { message } from '../components/antdMessage'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { hostApi, Host } from '../services/api'
 

@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import {
-  Button, Card, Checkbox, Col, Form, Input, InputNumber, message, Modal, Row, Segmented, Select, Space, Tabs, Typography,
-} from 'antd'
+import { Button, Card, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tabs, Typography } from 'antd'
+import { message } from '../components/antdMessage'
 import { ClusterOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
 import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
@@ -766,6 +765,7 @@ const ClusterDeploy: React.FC = () => {
               {
                 key: 'ha',
                 label: 'HA 主从',
+                forceRender: true,
                 children: renderForm('ha', haForm,
                   null,
                   (values) => runDeploy('ha', values),
@@ -774,6 +774,7 @@ const ClusterDeploy: React.FC = () => {
               {
                 key: 'mha',
                 label: 'MHA 部署',
+                forceRender: true,
                 children: renderForm('mha', mhaForm,
                   <>
                     <Col {...halfColProps}>
@@ -818,6 +819,7 @@ const ClusterDeploy: React.FC = () => {
               {
                 key: 'mgr',
                 label: 'MGR 部署',
+                forceRender: true,
                 children: renderForm('mgr', mgrForm,
                   <>
                     <Col {...halfColProps}>
@@ -837,6 +839,7 @@ const ClusterDeploy: React.FC = () => {
               {
                 key: 'pxc',
                 label: 'PXC 部署',
+                forceRender: true,
                 children: renderForm('pxc', pxcForm,
                   <>
                     <Col {...thirdColProps}>
