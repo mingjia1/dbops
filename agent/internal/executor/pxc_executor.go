@@ -121,7 +121,26 @@ func (e *TaskExecutor) DeployPXC(ctx context.Context, req DeployTaskRequest) (*T
 	config := parsePXCConfig(req.Config)
 	config.ReplicatePass = pxcOptionSafePassword(config.ReplicatePass)
 
-	if len(config.Nodes) == 0 {
+	// Sub-actions routed through the same /agent/tasks/deploy endpoint:
+	// destroy removes a deployed PXC node, verify checks wsrep sync status,
+	// join/bootstrap/leave serve the /api/v1/pxc/setup arch-plugin route.
+	if action := configString(req.Config, "action"); action != "" {
+		switch action {
+		case "destroy":
+			return e.DestroyPXC(ctx, req)
+		case "verify":
+			return e.VerifyPXC(ctx, req)
+		case "join", "bootstrap":
+			return e.pxcClusterSetup(ctx, req, action)
+		case "leave":
+			if _, ok := req.Config["remove_data"]; !ok {
+				req.Config["remove_data"] = false
+			}
+			return e.DestroyPXC(ctx, req)
+		}
+	}
+
+	if len(config.Nodes) == 0 && !config.Bootstrap {
 		return &TaskResult{
 			TaskID:    req.TaskID,
 			Status:    "failed",
@@ -1035,4 +1054,140 @@ func (e *TaskExecutor) monitorPXCSyncWithAuth(ctx context.Context, nodeHost stri
 	}
 
 	return status
+}
+
+// pxcClusterSetup serves the /api/v1/pxc/setup arch-plugin route:
+// join/bootstrap map the plugin payload onto a full PXC deploy config and
+// reuse DeployPXC; leave stops the node without wiping data.
+func (e *TaskExecutor) pxcClusterSetup(ctx context.Context, req DeployTaskRequest, action string) (*TaskResult, error) {
+	cfg := req.Config
+	cfg["deploy_mode"] = "pxc"
+	cfg["bootstrap"] = action == "bootstrap"
+	if configString(cfg, "node_host") == "" {
+		cfg["node_host"] = configString(cfg, "node_address")
+	}
+	// Derive the gcomm member list from wsrep_cluster_addr when the caller
+	// did not send an explicit nodes list (plugin contract).
+	if _, hasNodes := cfg["nodes"]; !hasNodes {
+		addr := strings.TrimPrefix(configString(cfg, "wsrep_cluster_addr"), "gcomm://")
+		var nodes []interface{}
+		for _, part := range strings.Split(addr, ",") {
+			if strings.TrimSpace(part) != "" {
+				nodes = append(nodes, strings.TrimSpace(part))
+			}
+		}
+		if len(nodes) > 0 {
+			cfg["nodes"] = nodes
+		}
+	}
+	delete(cfg, "action")
+	inner := DeployTaskRequest{TaskID: req.TaskID, InstanceID: req.InstanceID, Config: cfg}
+	return e.DeployPXC(ctx, inner)
+}
+
+// DestroyPXC stops the managed PXC mysqld for the given port and removes the
+// config/log files written by DeployPXC. Data removal is gated behind
+// remove_data and a datadir allowlist read from the managed cnf itself.
+func (e *TaskExecutor) DestroyPXC(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	port := configInt(req.Config, "mysql_port")
+	if port == 0 {
+		return &TaskResult{TaskID: req.TaskID, Status: "failed", Message: "PXC destroy requires mysql_port", Timestamp: time.Now()}, nil
+	}
+	removeData := true
+	if v, ok := req.Config["remove_data"].(bool); ok {
+		removeData = v
+	}
+
+	script := fmt.Sprintf(`
+set -u
+port=%d
+remove_data=%s
+cnf=/etc/dbops-pxc/dbops-pxc-$port.cnf
+init_cnf=/etc/dbops-pxc/dbops-pxc-$port-init.cnf
+stopped=no
+datadir=""
+removed=()
+if [ -f "$cnf" ]; then
+  datadir=$(awk -F= '$1 ~ /^[[:space:]]*datadir[[:space:]]*$/ {print $2}' "$cnf" | head -1 | xargs)
+  pidfile=$(awk -F= '$1 ~ /^[[:space:]]*pid-file[[:space:]]*$/ {print $2}' "$cnf" | head -1 | xargs)
+  if [ -n "$pidfile" ] && [ -f "$pidfile" ]; then
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+      if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q mysqld; then
+        kill "$pid" 2>/dev/null || true
+        for i in $(seq 1 30); do [ -d "/proc/$pid" ] || break; sleep 1; done
+        if [ -d "/proc/$pid" ]; then kill -9 "$pid" 2>/dev/null || true; fi
+        stopped=yes
+      else
+        echo "pid $pid in $pidfile is not mysqld; not killing"
+      fi
+    fi
+    rm -f "$pidfile"
+  fi
+  rm -f "$cnf" "$init_cnf"
+  removed+=("config")
+fi
+rm -f /var/log/dbops-pxc/pxc-$port-error.log /var/log/dbops-pxc/pxc-$port-startup.log
+if [ -n "$datadir" ]; then
+  case "$datadir" in
+    /data/mysql/pxc-*|/var/lib/mysql/pxc-*|/tmp/dbops-pxc*|/data/mysql/[0-9]*/pxc)
+      if [ "$remove_data" = "true" ]; then
+        rm -rf "$datadir"
+        removed+=("datadir:$datadir")
+      else
+        echo "datadir $datadir kept (remove_data=false)"
+      fi
+      ;;
+    *)
+      echo "refuse to remove datadir $datadir: not a managed PXC path"
+      ;;
+  esac
+fi
+if [ "$stopped" = "yes" ]; then
+  echo "pxc mysqld stopped"
+fi
+if [ ${#removed[@]} -gt 0 ]; then
+  echo "removed: ${removed[*]}"
+else
+  echo "nothing to remove (no managed PXC config for port $port)"
+fi
+`, port, map[bool]string{true: "true", false: "false"}[removeData])
+
+	out, err := exec.CommandContext(ctx, "bash", "-lc", script).CombinedOutput()
+	if err != nil {
+		return &TaskResult{
+			TaskID:  req.TaskID,
+			Status:  "failed",
+			Message: fmt.Sprintf("PXC destroy failed: %v, output: %s", err, strings.TrimSpace(string(out))),
+			Timestamp: time.Now(),
+		}, nil
+	}
+	return &TaskResult{
+		TaskID:    req.TaskID,
+		Status:    "completed",
+		Progress:  100,
+		Message:   fmt.Sprintf("PXC node destroyed (port %d): %s", port, strings.TrimSpace(string(out))),
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// VerifyPXC checks wsrep sync status of the local PXC node.
+func (e *TaskExecutor) VerifyPXC(ctx context.Context, req DeployTaskRequest) (*TaskResult, error) {
+	port := configInt(req.Config, "mysql_port")
+	if port == 0 {
+		return &TaskResult{TaskID: req.TaskID, Status: "failed", Message: "PXC verify requires mysql_port", Timestamp: time.Now()}, nil
+	}
+	user := defaultString(configString(req.Config, "mysql_user"), "root")
+	pass := configString(req.Config, "mysql_password")
+	expected := configInt(req.Config, "expected_nodes")
+
+	status := e.monitorPXCSyncWithAuth(ctx, "127.0.0.1", port, user, pass)
+	msg := fmt.Sprintf("wsrep_cluster_size=%d cluster_status=%s wsrep_ready=%v local_state=%s", status.ClusterSize, status.ClusterStatus, status.Ready, status.LocalState)
+	if status.ClusterStatus != "Primary" || !status.Ready {
+		return &TaskResult{TaskID: req.TaskID, Status: "failed", Message: "PXC verify failed: " + msg, Timestamp: time.Now()}, nil
+	}
+	if expected > 0 && status.ClusterSize != expected {
+		return &TaskResult{TaskID: req.TaskID, Status: "failed", Message: fmt.Sprintf("PXC verify failed: cluster size %d != expected %d (%s)", status.ClusterSize, expected, msg), Timestamp: time.Now()}, nil
+	}
+	return &TaskResult{TaskID: req.TaskID, Status: "completed", Progress: 100, Message: "PXC verify passed: " + msg, Timestamp: time.Now()}, nil
 }

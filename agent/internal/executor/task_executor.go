@@ -122,16 +122,6 @@ func (r *DeployTaskRequest) Normalize() {
 	if user != "" {
 		r.Config["user"] = user
 	}
-	pass, _ := r.Config["target_pass"].(string)
-	if pass == "" {
-		pass, _ = r.Config["mysql_password"].(string)
-	}
-	if pass == "" {
-		pass, _ = r.Config["mysql_pass"].(string)
-	}
-	if pass != "" {
-		r.Config["pass"] = pass
-	}
 	port := 0
 	switch v := r.Config["target_port"].(type) {
 	case int:

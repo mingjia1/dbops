@@ -12,10 +12,65 @@ type PXCGaleraAddonPlugin struct {
 	agentCaller func(ctx context.Context, host string, agentPort int, path string, payload map[string]interface{}) (map[string]interface{}, error)
 }
 
-func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
+func stringFromMap(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, _ := m[key].(string)
+	return v
+}
+
+// setupPayload builds the /api/v1/pxc/setup request body. The agent maps
+// action=join/bootstrap onto a full DeployPXC run and action=leave onto a
+// non-destructive stop, so it needs port/datadir/credentials here.
+func (p *PXCGaleraAddonPlugin) setupPayload(env plugins.PluginEnv, node plugins.PluginNode, action, wsrepAddr string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"task_id":      fmt.Sprintf("pxc-%s-%s-%s", action, env.ClusterID, node.Address),
+		"action":       action,
+		"node_address": node.Address,
+	}
+	if wsrepAddr != "" {
+		payload["wsrep_cluster_addr"] = wsrepAddr
+	}
+	if node.MySQLPort > 0 {
+		payload["mysql_port"] = node.MySQLPort
+	}
+	if node.DataDir != "" {
+		payload["data_dir"] = node.DataDir
+	}
+	if node.Basedir != "" {
+		payload["basedir"] = node.Basedir
+	}
+	if env.Credentials.RootUser != "" {
+		payload["mysql_user"] = env.Credentials.RootUser
+	}
+	if env.Credentials.RootPassword != "" {
+		payload["mysql_password"] = env.Credentials.RootPassword
+	}
+	if env.Credentials.ReplUser != "" {
+		payload["replicate_user"] = env.Credentials.ReplUser
+		payload["replicate_pass"] = env.Credentials.ReplPassword
+	}
+	if name := stringFromMap(env.Custom, "cluster_name"); name != "" {
+		payload["cluster_name"] = name
+	} else if env.ClusterID != "" {
+		payload["cluster_name"] = env.ClusterID
+	}
+	if sst := stringFromMap(env.Custom, "sst_method"); sst != "" {
+		payload["sst_method"] = sst
+	}
+	return payload
+}
+
+func (p *PXCGaleraAddonPlugin) call(ctx context.Context, host string, agentPort int, payload map[string]interface{}) error {
 	if p.agentCaller == nil {
 		return fmt.Errorf("agent caller not configured")
 	}
+	_, err := p.agentCaller(ctx, host, agentPort, "/api/v1/pxc/setup", payload)
+	return err
+}
+
+func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, newNode plugins.PluginNode) error {
 	wsrepPort := 4567
 	if v, ok := env.Custom["wsrep_port"]; ok {
 		if port, ok := v.(int); ok && port > 0 {
@@ -23,25 +78,12 @@ func (p *PXCGaleraAddonPlugin) Join(ctx context.Context, env plugins.PluginEnv, 
 		}
 	}
 	bootstrap := env.Nodes[0]
-	payload := map[string]interface{}{
-		"task_id":            fmt.Sprintf("pxc-join-%s-%s", env.ClusterID, newNode.Address),
-		"action":             "join",
-		"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort),
-		"node_address":       newNode.Address,
-	}
-	_, err := p.agentCaller(ctx, newNode.Address, newNode.AgentPort, "/api/v1/pxc/setup", payload)
-	return err
+	addr := fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort)
+	return p.call(ctx, newNode.Address, newNode.AgentPort, p.setupPayload(env, newNode, "join", addr))
 }
 
 func (p *PXCGaleraAddonPlugin) Leave(ctx context.Context, env plugins.PluginEnv, node plugins.PluginNode) error {
-	if p.agentCaller == nil {
-		return fmt.Errorf("agent caller not configured")
-	}
-	payload := map[string]interface{}{
-		"task_id": fmt.Sprintf("pxc-leave-%s-%s", env.ClusterID, node.Address),
-		"action":  "leave",
-	}
-	_, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", payload)
+	err := p.call(ctx, node.Address, node.AgentPort, p.setupPayload(env, node, "leave", ""))
 	if err != nil {
 		fmt.Printf("WARN: PXC leave failed for %s: %v — remaining Galera nodes may need manual cleanup\n", node.Address, err)
 	}
@@ -64,9 +106,6 @@ func (p *PXCGaleraAddonPlugin) Prepare(_ context.Context, env plugins.PluginEnv)
 }
 
 func (p *PXCGaleraAddonPlugin) Execute(ctx context.Context, env plugins.PluginEnv, params map[string]interface{}) (*plugins.PluginResult, error) {
-	if p.agentCaller == nil {
-		return nil, fmt.Errorf("agent caller not configured")
-	}
 	wsrepPort := 4567
 	if v, ok := env.Custom["wsrep_port"]; ok {
 		if port, ok := v.(int); ok && port > 0 {
@@ -88,24 +127,14 @@ func (p *PXCGaleraAddonPlugin) Execute(ctx context.Context, env plugins.PluginEn
 		node := env.Nodes[0]
 		bootstrap = &node
 	}
-	bootstrapPayload := map[string]interface{}{
-		"task_id":           fmt.Sprintf("pxc-bootstrap-%s", env.ClusterID),
-		"action":            "bootstrap",
-		"wsrep_cluster_addr": "gcomm://",
-		"node_address":      bootstrap.Address,
-	}
-	if _, err := p.agentCaller(ctx, bootstrap.Address, bootstrap.AgentPort, "/api/v1/pxc/setup", bootstrapPayload); err != nil {
+	bootstrapPayload := p.setupPayload(env, *bootstrap, "bootstrap", "")
+	if err := p.call(ctx, bootstrap.Address, bootstrap.AgentPort, bootstrapPayload); err != nil {
 		return nil, fmt.Errorf("PXC bootstrap on %s: %w", bootstrap.Address, err)
 	}
 
 	for _, node := range env.Nodes[1:] {
-		joinPayload := map[string]interface{}{
-			"task_id":           fmt.Sprintf("pxc-join-%s-%s", env.ClusterID, node.Address),
-			"action":            "join",
-			"wsrep_cluster_addr": fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort),
-			"node_address":      node.Address,
-		}
-		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", joinPayload); err != nil {
+		addr := fmt.Sprintf("gcomm://%s:%d", bootstrap.Address, wsrepPort)
+		if err := p.call(ctx, node.Address, node.AgentPort, p.setupPayload(env, node, "join", addr)); err != nil {
 			return nil, fmt.Errorf("PXC join on %s: %w", node.Address, err)
 		}
 	}
@@ -121,21 +150,10 @@ func (p *PXCGaleraAddonPlugin) Rollback(_ context.Context, _ plugins.PluginEnv) 
 }
 
 func (p *PXCGaleraAddonPlugin) Teardown(ctx context.Context, env plugins.PluginEnv) error {
-	if p.agentCaller == nil {
-		return nil
-	}
-	// Best-effort: ask each non-bootstrap node to leave the Galera cluster.
-	// Bootstrap node cannot be removed while it's the last seed node.
+	// Best-effort: ask each node to leave the Galera cluster (stop, keep data).
 	var errs []error
 	for _, node := range env.Nodes {
-		if node.Role == "bootstrap" {
-			continue
-		}
-		payload := map[string]interface{}{
-			"task_id": fmt.Sprintf("pxc-teardown-%s-%s", env.ClusterID, node.Address),
-			"action":  "leave",
-		}
-		if _, err := p.agentCaller(ctx, node.Address, node.AgentPort, "/api/v1/pxc/setup", payload); err != nil {
+		if err := p.call(ctx, node.Address, node.AgentPort, p.setupPayload(env, node, "leave", "")); err != nil {
 			errs = append(errs, fmt.Errorf("leave %s: %w", node.Address, err))
 		}
 	}

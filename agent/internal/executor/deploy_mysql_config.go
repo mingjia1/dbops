@@ -53,6 +53,11 @@ var allowedDeployConfigKeys = map[string]bool{
 	"wsrep_ssl_enabled":              true,
 	"pxc_encrypt_cluster_traffic":    true,
 	"wsrep_sst_port":                 true,
+	// PXC destroy / verify / join bootstrap / leave sub-actions
+	"remove_data":                    true,
+	"expected_nodes":                 true,
+	"wsrep_cluster_addr":             true,
+	"node_address":                   true,
 	"install_type":                   true,
 	"is_primary":                     true,
 	"seeds":                          true,

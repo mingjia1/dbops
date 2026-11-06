@@ -304,6 +304,31 @@ func main() {
 	authAgent := agentAuthMiddleware(cfg.AgentToken)
 	registerCompatAccountRoutes(r.Group("/api/v1/accounts", authAgent), accountManager)
 
+	// PXC 扩缩容 arch 插件入口 (join/bootstrap/leave), 复用 DeployPXC 执行器.
+	pxcSetup := r.Group("/api/v1", authAgent)
+	pxcSetup.POST("/pxc/setup", func(c *gin.Context) {
+		var req executor.DeployTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": 400, "message": "Invalid request"})
+			return
+		}
+		if req.Config == nil {
+			req.Config = map[string]interface{}{}
+		}
+		if action, _ := req.Config["action"].(string); action == "" {
+			c.JSON(400, gin.H{"code": 400, "message": "action is required (join/bootstrap/leave)"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		defer cancel()
+		result, err := taskExecutor.ExecuteDeploy(ctx, req)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": "Execution failed"})
+			return
+		}
+		c.JSON(200, gin.H{"code": 200, "message": "success", "data": result})
+	})
+
 	agent := r.Group("/agent", authAgent)
 	{
 		tasks := agent.Group("/tasks")
