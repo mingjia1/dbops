@@ -650,8 +650,13 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	_ = s.repo.Delete(ctx, clusterID) // ignore error if not found
 
 	// Create deployment record with plan/request persistence
+	depClusterID := req.ClusterID
+	if depClusterID == "" {
+		depClusterID = clusterID
+	}
 	dep := &models.ClusterDeployment{
 		ID:          clusterID,
+		ClusterID:   depClusterID,
 		ClusterType: clusterType,
 		Name:        name,
 		Status:      "running",
@@ -688,6 +693,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 	if totalSteps == 0 {
 		totalSteps = 1
 	}
+	// Completed node steps, used to roll back an in-progress PXC deployment
+	// when a later step fails.
+	var completedPXCSteps []PlanStep
 
 	for i, step := range plan.Steps {
 		progressPct := 5 + (i * 85 / totalSteps)
@@ -752,6 +760,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			if targetNode == nil {
 				errMsg := fmt.Sprintf("target node %q not found for step %s", step.TargetNode, step.ID)
 				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.rollbackPXCDeploy(ctx, clusterID, plan, completedPXCSteps)
 				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
 				finish := time.Now()
 				return s.buildPartialResponse(ctx, clusterID, clusterType, name, dep, errMsg, &finish), nil
@@ -767,6 +776,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		if s.agentClient == nil {
 			errMsg := "agent client not configured"
 			s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+			s.rollbackPXCDeploy(ctx, clusterID, plan, completedPXCSteps)
 			s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
 			if s.nodeRepo != nil {
 				if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg); err != nil {
@@ -791,6 +801,7 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			if err != nil {
 				errMsg := fmt.Sprintf("agent call failed on %s: %v", targetNode.Host, err)
 				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.rollbackPXCDeploy(ctx, clusterID, plan, completedPXCSteps)
 				s.repo.UpdateStatusWithError(ctx, clusterID, "failed", errMsg)
 				if s.nodeRepo != nil {
 					if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "failed", step.Name, errMsg, errMsg); err != nil {
@@ -804,6 +815,11 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 			if isFailedDeployStatus(normalizeDeployStatus(result.Status)) {
 				errMsg := fmt.Sprintf("deploy failed on %s: %s", targetNode.Host, result.Message)
 				s.updateStepStatus(clusterID, step.Name, "failed", result.Message)
+				// Roll back already-completed PXC nodes so the failed deployment
+				// leaves no running mysqld behind and can be retried cleanly.
+				if clusterType == ClusterTypePXC {
+					s.rollbackPXCDeploy(ctx, clusterID, plan, completedPXCSteps)
+				}
 				// Mark whole deployment as failed for critical steps
 				// Secondary/join failures are marked as partial (some nodes may still be OK)
 				isCritical := step.Type == "bootstrap" || step.Type == "deploy" || step.Type == "configure"
@@ -823,6 +839,9 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 
 		nodeReadyMsg := fmt.Sprintf("节点 %s (%s) 部署成功", targetNode.Host, targetNode.Role)
 		s.updateStepStatus(clusterID, step.Name, "completed", nodeReadyMsg)
+		if clusterType == ClusterTypePXC {
+			completedPXCSteps = append(completedPXCSteps, step)
+		}
 		if s.nodeRepo != nil {
 			if err := s.nodeRepo.UpdateStatusByInstanceID(ctx, clusterID, targetNode.ID, "completed", step.Name, nodeReadyMsg, ""); err != nil {
 				log.Printf("WARN: failed to update node %s status to completed: %v", targetNode.ID, err)
@@ -830,6 +849,18 @@ func (s *ClusterDeployService) ExecuteClusterDeployPlan(ctx context.Context, pla
 		}
 
 	case "verify":
+		if clusterType == ClusterTypePXC {
+			if err := s.verifyPXCPlan(ctx, plan, req); err != nil {
+				errMsg := fmt.Sprintf("集群验证失败: %v", err)
+				s.updateStepStatus(clusterID, step.Name, "failed", errMsg)
+				s.repo.UpdateStatusWithError(ctx, clusterID, "partial", errMsg)
+				finish := time.Now()
+				resp := s.buildStatusResponse(ctx, clusterID, clusterType, name, dep, "partial", errMsg, &finish)
+				finalResp = resp
+				finalErr = err
+				return resp, nil
+			}
+		}
 		s.updateStepStatus(clusterID, step.Name, "completed", "验证完成")
 		if step.TargetNode != "" && s.nodeRepo != nil {
 			targetNode := findPlanNode(plan.Nodes, step.TargetNode)
@@ -1701,8 +1732,38 @@ func (s *ClusterDeployService) buildStatusResponse(ctx context.Context, clusterI
 		resp.Steps = prog.Steps
 		resp.Logs = prog.Logs
 	}
+	// Completed deployments surface their MySQL credentials in plaintext so
+	// the UI can show the credentials modal after async submit + polling.
+	if resp.MySQLPassword == "" && s.instRepo != nil && s.encKey != "" {
+		if user, pass, ok := s.firstInstanceCredential(ctx, clusterID); ok {
+			resp.MySQLUser = user
+			resp.MySQLPassword = pass
+		}
+	}
 	s.clearProgress(clusterID)
 	return resp
+}
+
+// firstInstanceCredential returns the root credential of the first instance
+// belonging to the cluster (platform stores it encrypted at rest).
+func (s *ClusterDeployService) firstInstanceCredential(ctx context.Context, clusterID string) (string, string, bool) {
+	if s.instRepo == nil {
+		return "", "", false
+	}
+	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
+	if err != nil || len(instances) == 0 || instances[0] == nil {
+		return "", "", false
+	}
+	conn, err := s.instRepo.GetConnection(ctx, instances[0].ID)
+	if err != nil || conn == nil {
+		return "", "", false
+	}
+	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
+	if err != nil {
+		log.Printf("WARN: failed to decrypt credential for cluster %s instance %s: %v", clusterID, instances[0].ID, err)
+		return "", "", false
+	}
+	return conn.Username, password, true
 }
 
 // Deprecated: Use DeployCluster with TypedMHARequestToUniversal instead.
@@ -1769,6 +1830,12 @@ func (s *ClusterDeployService) GetDeploymentStatus(ctx context.Context, deployme
 		FinishedAt:   dep.FinishedAt,
 		CreatedAt:    dep.CreatedAt,
 		Nodes:        nodes,
+	}
+	// Completed deployments surface their MySQL credentials in plaintext so
+	// the UI can show them after async submit + polling.
+	if user, pass, ok := s.firstInstanceCredential(ctx, deploymentID); ok {
+		resp.MySQLUser = user
+		resp.MySQLPassword = pass
 	}
 	if prog != nil {
 		resp.Stage = prog.Stage
@@ -1963,7 +2030,14 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 		return nil, err
 	}
 	nodes := s.deploymentNodes(ctx, dep.ID)
-	decommissioned, err := s.decommissionClusterInstances(ctx, dep.ID)
+	destroyWarnings := []string{}
+	if dep.ClusterType == ClusterTypePXC {
+		// PXC nodes are started outside systemd (nohup mysqld) and leave
+		// /etc/dbops-pxc + datadir behind; generic instance decommission never
+		// touches them. Clean each node physically before metadata teardown.
+		destroyWarnings = s.destroyPXCNodes(ctx, dep.ID)
+	}
+	decommissioned, err := s.decommissionClusterInstances(ctx, dep.ID, dep.ClusterType == ClusterTypePXC)
 	if err != nil {
 		return nil, err
 	}
@@ -1977,6 +2051,9 @@ func (s *ClusterDeployService) DestroyCluster(ctx context.Context, clusterID str
 	message := fmt.Sprintf("Cluster %s destroyed after full backup verification and remote database cleanup", dep.ID)
 	if decommissioned == 0 {
 		message = fmt.Sprintf("Cluster %s deployment metadata destroyed; no managed instances were found to back up or decommission", dep.ID)
+	}
+	if len(destroyWarnings) > 0 {
+		message += "; physical cleanup warnings: " + strings.Join(destroyWarnings, "; ")
 	}
 	return &DeployResponse{
 		DeploymentID: dep.ID,
@@ -2007,7 +2084,10 @@ func (s *ClusterDeployService) resolveDeploymentForDestroy(ctx context.Context, 
 	return nil, nameErr
 }
 
-func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string) (int, error) {
+func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context, clusterID string, tolerateBackupFailure bool) (int, error) {
+	if s.instRepo == nil {
+		return 0, nil
+	}
 	instances, err := s.instRepo.ListByClusterID(ctx, clusterID)
 	if err != nil {
 		return 0, err
@@ -2019,7 +2099,7 @@ func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context,
 		if inst == nil {
 			continue
 		}
-		if err := s.backupAndDecommissionClusterInstance(ctx, inst.ID); err != nil {
+		if err := s.backupAndDecommissionClusterInstance(ctx, inst.ID, tolerateBackupFailure); err != nil {
 			return 0, &ClusterDestroyOperationError{
 				ClusterID:  clusterID,
 				InstanceID: inst.ID,
@@ -2031,19 +2111,31 @@ func (s *ClusterDeployService) decommissionClusterInstances(ctx context.Context,
 	return len(instances), nil
 }
 
-func (s *ClusterDeployService) backupAndDecommissionClusterInstance(ctx context.Context, instanceID string) error {
+func (s *ClusterDeployService) backupAndDecommissionClusterInstance(ctx context.Context, instanceID string, tolerateBackupFailure bool) error {
 	if s.backupSvc == nil {
-		return fmt.Errorf("backup service not configured; cannot proceed with destroy without backup for instance %s", instanceID)
-	}
-	backup, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{
-		InstanceID: instanceID,
-		BackupType: "full",
-	})
-	if err != nil {
-		return fmt.Errorf("full backup failed for instance %s, destroy aborted: %w", instanceID, err)
-	}
-	if err := validateRemovalBackup(backup); err != nil {
-		return fmt.Errorf("backup validation failed for instance %s, destroy aborted: %w", instanceID, err)
+		if tolerateBackupFailure {
+			log.Printf("WARN: backup service not configured; proceeding with decommission of instance %s (destroy requested)", instanceID)
+		} else {
+			return fmt.Errorf("backup service not configured; cannot proceed with destroy without backup for instance %s", instanceID)
+		}
+	} else {
+		backup, err := s.backupSvc.ExecuteBackup(ctx, ExecuteBackupRequest{
+			InstanceID: instanceID,
+			BackupType: "full",
+		})
+		if err != nil {
+			if tolerateBackupFailure {
+				log.Printf("WARN: full backup failed for instance %s: %v; proceeding with destroy as requested", instanceID, err)
+			} else {
+				return fmt.Errorf("full backup failed for instance %s, destroy aborted: %w", instanceID, err)
+			}
+		} else if verr := validateRemovalBackup(backup); verr != nil {
+			if tolerateBackupFailure {
+				log.Printf("WARN: backup validation failed for instance %s: %v; proceeding with destroy as requested", instanceID, verr)
+			} else {
+				return fmt.Errorf("backup validation failed for instance %s, destroy aborted: %w", instanceID, verr)
+			}
+		}
 	}
 	if err := s.decommissionClusterInstance(ctx, instanceID); err != nil {
 		return err
@@ -2093,6 +2185,153 @@ func (s *ClusterDeployService) decommissionClusterInstance(ctx context.Context, 
 	}
 	if !isSuccessfulTaskStatus(result.Status) {
 		return fmt.Errorf("decommission failed: %s", result.Message)
+	}
+	return nil
+}
+
+// destroyPXCNodes physically removes a deployed PXC node on every host of the
+// deployment (stops nohup mysqld, deletes /etc/dbops-pxc config and datadir).
+// Best-effort: failures become warnings so a dead host cannot block destroy.
+func (s *ClusterDeployService) destroyPXCNodes(ctx context.Context, deploymentID string) []string {
+	dbNodes := s.loadNodesFromDB(ctx, deploymentID)
+	if len(dbNodes) == 0 {
+		return []string{"no deployment nodes found; nothing to clean on hosts"}
+	}
+	warnings := []string{}
+	for _, node := range dbNodes {
+		if err := s.destroyPXCNodeViaAgent(ctx, deploymentID, node.Host, node.MySQLPort, true); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s:%d %v", node.Host, node.MySQLPort, err))
+		}
+	}
+	return warnings
+}
+
+func (s *ClusterDeployService) destroyPXCNodeViaAgent(ctx context.Context, deploymentID, host string, mysqlPort int, removeData bool) error {
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
+	agentPort := 9090
+	if h := s.findHostByAddress(ctx, host); h != nil && h.AgentPort > 0 {
+		agentPort = h.AgentPort
+	}
+	payload := map[string]interface{}{
+		"task_id": fmt.Sprintf("pxc-destroy-%s-%s", deploymentID, host),
+		"config": map[string]interface{}{
+			"deploy_mode": "pxc",
+			"action":      "destroy",
+			"mysql_port":  mysqlPort,
+			"remove_data": removeData,
+		},
+	}
+	result, err := s.agentClient.DeployCluster(ctx, host, agentPort, payload)
+	if err != nil {
+		return err
+	}
+	if result == nil || !isSuccessfulTaskStatus(result.Status) {
+		msg := "empty result"
+		if result != nil {
+			msg = result.Message
+		}
+		return fmt.Errorf("destroy action failed: %s", msg)
+	}
+	log.Printf("INFO: PXC destroy on %s:%d completed: %s", host, mysqlPort, result.Message)
+	return nil
+}
+
+func (s *ClusterDeployService) findHostByAddress(ctx context.Context, address string) *models.Host {
+	if s.hostRepo == nil {
+		return nil
+	}
+	hosts, err := s.hostRepo.List(ctx, 1000, 0)
+	if err != nil {
+		return nil
+	}
+	for i := range hosts {
+		if hosts[i].Address == address {
+			return &hosts[i]
+		}
+	}
+	return nil
+}
+
+// rollbackPXCDeploy cleans up nodes that already completed a deploy step when
+// a later PXC step fails, so the deployment can be retried from scratch.
+func (s *ClusterDeployService) rollbackPXCDeploy(ctx context.Context, clusterID string, plan *ClusterDeployPlan, completed []PlanStep) {
+	if len(completed) == 0 {
+		return
+	}
+	var warns []string
+	cleaned := 0
+	for _, step := range completed {
+		node := findPlanNode(plan.Nodes, step.TargetNode)
+		if node == nil {
+			continue
+		}
+		port := 0
+		switch v := step.Config["mysql_port"].(type) {
+		case int:
+			port = v
+		case float64:
+			port = int(v)
+		}
+		if err := s.destroyPXCNodeViaAgent(ctx, clusterID, node.Host, port, true); err != nil {
+			warns = append(warns, fmt.Sprintf("%s: %v", node.Host, err))
+		} else {
+			cleaned++
+		}
+	}
+	if len(warns) > 0 {
+		log.Printf("WARN: PXC deploy rollback for %s had failures (%d/%d cleaned): %s", clusterID, cleaned, len(completed), strings.Join(warns, "; "))
+	} else {
+		log.Printf("INFO: PXC deploy rollback cleaned %d node(s) of %s", cleaned, clusterID)
+	}
+}
+
+// verifyPXCPlan runs a real wsrep verification against the bootstrap node:
+// cluster must be Primary+Ready and size must equal the planned node count.
+func (s *ClusterDeployService) verifyPXCPlan(ctx context.Context, plan *ClusterDeployPlan, req UniversalClusterDeployRequest) error {
+	if s.agentClient == nil {
+		return fmt.Errorf("agent client not configured")
+	}
+	var bootstrap *PlanNode
+	for i := range plan.Nodes {
+		if plan.Nodes[i].Role == "bootstrap" {
+			bootstrap = &plan.Nodes[i]
+			break
+		}
+	}
+	if bootstrap == nil {
+		bootstrap = &plan.Nodes[0]
+	}
+	agentPort := bootstrap.AgentPort
+	if agentPort == 0 {
+		if h := s.findHostByAddress(ctx, bootstrap.Host); h != nil && h.AgentPort > 0 {
+			agentPort = h.AgentPort
+		} else {
+			agentPort = 9090
+		}
+	}
+	payload := map[string]interface{}{
+		"task_id": fmt.Sprintf("pxc-verify-%s", plan.DeploymentID),
+		"config": map[string]interface{}{
+			"deploy_mode":    "pxc",
+			"action":         "verify",
+			"mysql_port":     bootstrap.MySQLPort,
+			"mysql_user":     req.MySQL.User,
+			"mysql_password": req.MySQL.Password,
+			"expected_nodes": len(plan.Nodes),
+		},
+	}
+	result, err := s.agentClient.DeployCluster(ctx, bootstrap.Host, agentPort, payload)
+	if err != nil {
+		return fmt.Errorf("verify call to %s failed: %w", bootstrap.Host, err)
+	}
+	if result == nil || !isSuccessfulTaskStatus(result.Status) {
+		msg := "empty result"
+		if result != nil {
+			msg = result.Message
+		}
+		return fmt.Errorf("PXC verify failed: %s", msg)
 	}
 	return nil
 }

@@ -56,8 +56,10 @@ func WaitForBackground(timeout time.Duration) bool {
 	}
 }
 
-// ResetBackgroundForTest 仅测试用: 丢弃可能残留的等待 goroutine 视图.
+// ResetBackgroundForTest 仅测试用: 先有界等待存量任务收尾, 再重置计数.
+// 直接换新 WaitGroup 会让残留 goroutine 的 Done 落在新计数器上, 触发负计数 panic.
 func ResetBackgroundForTest() {
+	WaitForBackground(2 * time.Second)
 	bgMu.Lock()
 	defer bgMu.Unlock()
 	bgWg = sync.WaitGroup{}

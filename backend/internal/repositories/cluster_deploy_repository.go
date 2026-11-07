@@ -79,11 +79,11 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 	for rows.Next() {
 		var dep models.ClusterDeployment
 		var startedAt, finishedAt sql.NullTime
-		var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+		var clusterID, displayName, arch, mysqlVersion, configJSON, errorMessage sql.NullString
 		var nodes sql.NullInt64
 		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
 			&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
-			&startedAt, &finishedAt, &dep.ErrorMessage,
+			&startedAt, &finishedAt, &errorMessage,
 			&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
 			&dep.CreatedAt, &dep.UpdatedAt); err != nil {
 			return nil, err
@@ -93,6 +93,9 @@ func (r *ClusterDeployRepository) List(ctx context.Context, limit, offset int) (
 		}
 		if finishedAt.Valid {
 			dep.FinishedAt = &finishedAt.Time
+		}
+		if errorMessage.Valid {
+			dep.ErrorMessage = errorMessage.String
 		}
 		if clusterID.Valid {
 			dep.ClusterID = clusterID.String
@@ -125,11 +128,11 @@ func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {
 }) (*models.ClusterDeployment, error) {
 	var dep models.ClusterDeployment
 	var startedAt, finishedAt sql.NullTime
-	var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+	var clusterID, displayName, arch, mysqlVersion, configJSON, errorMessage sql.NullString
 	var nodes sql.NullInt64
 	err := scanner.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
 		&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
-		&startedAt, &finishedAt, &dep.ErrorMessage,
+		&startedAt, &finishedAt, &errorMessage,
 		&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
 		&dep.CreatedAt, &dep.UpdatedAt)
 	if err != nil {
@@ -143,6 +146,9 @@ func (r *ClusterDeployRepository) scanClusterDeployment(scanner interface {
 	}
 	if finishedAt.Valid {
 		dep.FinishedAt = &finishedAt.Time
+	}
+	if errorMessage.Valid {
+		dep.ErrorMessage = errorMessage.String
 	}
 	if clusterID.Valid {
 		dep.ClusterID = clusterID.String
@@ -262,11 +268,11 @@ func (r *ClusterDeployRepository) ListClusters(ctx context.Context) ([]models.Cl
 	for rows.Next() {
 		var dep models.ClusterDeployment
 		var startedAt, finishedAt sql.NullTime
-		var clusterID, displayName, arch, mysqlVersion, configJSON sql.NullString
+		var clusterID, displayName, arch, mysqlVersion, configJSON, errorMessage sql.NullString
 		var nodes sql.NullInt64
 		if err := rows.Scan(&dep.ID, &dep.ClusterType, &dep.Name, &dep.Status,
 			&dep.RequestJSON, &dep.PlanJSON, &dep.CustomJSON,
-			&startedAt, &finishedAt, &dep.ErrorMessage,
+			&startedAt, &finishedAt, &errorMessage,
 			&clusterID, &displayName, &arch, &nodes, &mysqlVersion, &configJSON,
 			&dep.CreatedAt, &dep.UpdatedAt); err != nil {
 			return nil, err
@@ -276,6 +282,9 @@ func (r *ClusterDeployRepository) ListClusters(ctx context.Context) ([]models.Cl
 		}
 		if finishedAt.Valid {
 			dep.FinishedAt = &finishedAt.Time
+		}
+		if errorMessage.Valid {
+			dep.ErrorMessage = errorMessage.String
 		}
 		if clusterID.Valid {
 			dep.ClusterID = clusterID.String

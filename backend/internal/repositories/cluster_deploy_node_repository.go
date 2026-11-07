@@ -75,7 +75,8 @@ func (r *ClusterDeployNodeRepository) GetByID(ctx context.Context, id string) (*
 	query := `SELECT id, deployment_id, instance_id, host, mysql_port, role, status, current_step, message, started_at, finished_at, error_message FROM cluster_deploy_nodes WHERE id = ?`
 	var node models.ClusterDeployNode
 	var startedAt, finishedAt sql.NullTime
-	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(&node.ID, &node.DeploymentID, &node.InstanceID, &node.Host, &node.MySQLPort, &node.Role, &node.Status, &node.CurrentStep, &node.Message, &startedAt, &finishedAt, &node.ErrorMessage)
+	var errorMessage sql.NullString
+	err := r.db.Pool.QueryRowContext(ctx, query, id).Scan(&node.ID, &node.DeploymentID, &node.InstanceID, &node.Host, &node.MySQLPort, &node.Role, &node.Status, &node.CurrentStep, &node.Message, &startedAt, &finishedAt, &errorMessage)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("deploy node not found")
@@ -87,6 +88,9 @@ func (r *ClusterDeployNodeRepository) GetByID(ctx context.Context, id string) (*
 	}
 	if finishedAt.Valid {
 		node.FinishedAt = &finishedAt.Time
+	}
+	if errorMessage.Valid {
+		node.ErrorMessage = errorMessage.String
 	}
 	return &node, nil
 }
@@ -106,7 +110,8 @@ func (r *ClusterDeployNodeRepository) ListByDeploymentID(ctx context.Context, de
 	for rows.Next() {
 		var node models.ClusterDeployNode
 		var startedAt, finishedAt sql.NullTime
-		if err := rows.Scan(&node.ID, &node.DeploymentID, &node.InstanceID, &node.Host, &node.MySQLPort, &node.Role, &node.Status, &node.CurrentStep, &node.Message, &startedAt, &finishedAt, &node.ErrorMessage); err != nil {
+		var errorMessage sql.NullString
+		if err := rows.Scan(&node.ID, &node.DeploymentID, &node.InstanceID, &node.Host, &node.MySQLPort, &node.Role, &node.Status, &node.CurrentStep, &node.Message, &startedAt, &finishedAt, &errorMessage); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -114,6 +119,9 @@ func (r *ClusterDeployNodeRepository) ListByDeploymentID(ctx context.Context, de
 		}
 		if finishedAt.Valid {
 			node.FinishedAt = &finishedAt.Time
+		}
+		if errorMessage.Valid {
+			node.ErrorMessage = errorMessage.String
 		}
 		nodes = append(nodes, node)
 	}
