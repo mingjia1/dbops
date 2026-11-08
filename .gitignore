@@ -258,3 +258,7 @@ tree-sitter.wasm
 tasklist.md
 kilo
 .kilo/
+
+# ---------- 运行时/代理工作区 ----------
+.workbuddy/
+db/known_hosts
