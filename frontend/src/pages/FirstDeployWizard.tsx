@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Button, Form, Input, InputNumber, message, Modal, Space, Steps, Table, Tag } from 'antd'
+import { Button, Form, Input, InputNumber, Modal, Space, Steps, Table, Tag } from 'antd'
+import { message } from '../components/antdMessage'
 import { PlusOutlined, RocketOutlined, ScanOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { hostApi, instanceApi, type Host, type ScannedInstance } from '../services/api'
 
@@ -32,7 +33,7 @@ declare global {
   }
 }
 
-const FirstDeployWizard: React.FC = () => {
+const FirstDeployWizard: React.FC<{ forceOpen?: boolean }> = ({ forceOpen = false }) => {
   const [visible, setVisible] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
   const [hosts, setHosts] = useState<Host[]>([])
@@ -53,24 +54,31 @@ const FirstDeployWizard: React.FC = () => {
   useEffect(() => {
     window.openFirstDeployWizard = openWizard
 
+    // 作为路由页挂载时 (App.tsx first-deploy 传 forceOpen) 忽略"稍后再说"标记,
+    // 否则点过一次稍后再说后该路由永远渲染空白页 (组件本身只有 Modal, 无页面内容).
     const dismissed = localStorage.getItem(STORAGE_KEY)
     const completed = localStorage.getItem(COMPLETED_KEY)
-    if (dismissed || completed) return
-
-    const load = async () => {
-      try {
-        const res: any = await hostApi.list(1000, 0)
-        const items = res.data || []
-        setHosts(items)
-        if (items.length > 0) {
-          setSelectedHost(items[0])
-        }
-      } catch {
-        // ignore
-      }
+    if (forceOpen && (dismissed || completed)) {
+      localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem(COMPLETED_KEY)
     }
-    load().then(() => setVisible(true))
-  }, [])
+
+    if (!(dismissed || completed) || forceOpen) {
+      const load = async () => {
+        try {
+          const res: any = await hostApi.list(1000, 0)
+          const items = res.data || []
+          setHosts(items)
+          if (items.length > 0) {
+            setSelectedHost(items[0])
+          }
+        } catch {
+          // ignore
+        }
+      }
+      load().then(() => setVisible(true))
+    }
+  }, [forceOpen])
 
   const handleAddHost = async () => {
     try {

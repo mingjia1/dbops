@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import ProtectedRoute from './components/ProtectedRoute'
 import { onLogout } from './services/authEvents'
+import { AntdMessageBridge } from './components/antdMessage'
 
 // P0: 20 个 page 静态 import 全部进 1 个 1.9MB chunk, 3G 首屏 5s 白屏.
 // 改 lazy() 按需加载, 每个 page 独立 chunk. 总入口只 ~250KB.
@@ -62,6 +63,7 @@ function App() {
     // P1: 用 <AntApp> 包根, 让 Login / Dashboard 等页面的 AntApp.useApp()
     // 拿到正确的 message / modal / notification context (之前是 antd 静态 fallback).
     <AntApp>
+      <AntdMessageBridge />
       <Suspense fallback={<div style={{ padding: 32, textAlign: 'center' }}><Spin size="large" /></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -114,7 +116,7 @@ function App() {
             <Route path="audit-verify" element={<AuditVerifyPage />} />
             <Route path="drills" element={<DrillPage />} />
             <Route path="alert-manage" element={<AlertManagePage />} />
-            <Route path="first-deploy" element={<FirstDeployWizard />} />
+            <Route path="first-deploy" element={<FirstDeployWizard forceOpen />} />
             <Route path="platform-health" element={<PlatformHealth />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

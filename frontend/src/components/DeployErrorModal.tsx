@@ -30,8 +30,8 @@ const DeployErrorModal: React.FC<DeployErrorModalProps> = ({ open, detail, onClo
             <Table
               size="small"
               pagination={false}
-              rowKey={(row, index) => `${row.name}-${index}`}
-              dataSource={detail.steps}
+              rowKey="key"
+              dataSource={detail.steps.map((step, i) => ({ ...step, key: String(i) }))}
               columns={[
                 { title: '步骤', dataIndex: 'name', key: 'name', width: 220 },
                 {
