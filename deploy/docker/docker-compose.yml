@@ -4,7 +4,7 @@ services:
   backend:
     image: dbops-backend:latest
     build:
-      context: .../../..
+      context: ../..
       dockerfile: deploy/docker/Dockerfile.backend
     ports:
       - "8080:8080"
@@ -28,7 +28,7 @@ services:
   agent:
     image: dbops-agent:latest
     build:
-      context: .../../..
+      context: ../..
       dockerfile: deploy/docker/Dockerfile.agent
     environment:
       - DBOPS_BACKEND_URL=http://backend:8080
