@@ -172,7 +172,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if cfg.ClickHouseURL != "clickhouse://user:pass@clickhouse:9000/dbops" {
 		t.Errorf("ClickHouseURL = %q, want env override", cfg.ClickHouseURL)
 	}
-	if cfg.DataDir != "/data/dbops" {
+	if cfg.DataDir != mustAbs(t, "/data/dbops") {
 		t.Errorf("DataDir = %q, want env override", cfg.DataDir)
 	}
 	if got := strings.Join(cfg.AllowedOrigins, ","); got != "http://localhost:5173,https://ops.example.com" {
