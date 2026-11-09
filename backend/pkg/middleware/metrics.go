@@ -49,7 +49,6 @@ func MetricsHandler(stats MetricsStats) gin.HandlerFunc {
 
 		write("dbops_process_uptime_seconds", "Seconds since process start.", "gauge",
 			time.Since(stats.StartTime).Seconds())
-		write("dbops_build_info", "Build metadata.", "gauge", 1) // labels via extra line
 		fmt.Fprintf(w, "dbops_build_info{version=%q} 1\n", stats.Version)
 
 		write("dbops_goroutines", "Number of goroutines.", "gauge", float64(runtime.NumGoroutine()))
