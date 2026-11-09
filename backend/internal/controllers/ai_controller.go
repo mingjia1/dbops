@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
+	"github.com/jackcode/mysql-ops-platform/pkg/aiprovider"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
 )
 
@@ -18,6 +19,34 @@ func NewAIController(service *services.AIService) *AIController {
 
 type DiagnosisRequest struct {
 	InstanceID string `json:"instance_id" binding:"required"`
+}
+
+type ChatMessageRequest struct {
+	Role    string `json:"role" binding:"required,oneof=user assistant"`
+	Content string `json:"content" binding:"required"`
+}
+
+type ChatRequest struct {
+	Messages []ChatMessageRequest `json:"messages" binding:"required,min=1,dive"`
+}
+
+// Chat forwards an operations chat conversation to the configured AI provider.
+func (c *AIController) Chat(ctx *gin.Context) {
+	var req ChatRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		return
+	}
+	messages := make([]aiprovider.Message, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		messages = append(messages, aiprovider.Message{Role: m.Role, Content: m.Content})
+	}
+	resp, err := c.service.Chat(ctx.Request.Context(), messages)
+	if err != nil {
+		utils.InternalServerErrorResponse(ctx, "AI chat failed", err)
+		return
+	}
+	utils.SuccessResponse(ctx, gin.H{"reply": resp.Content, "model": resp.Model})
 }
 
 func (c *AIController) Diagnosis(ctx *gin.Context) {

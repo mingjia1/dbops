@@ -28,6 +28,29 @@ func NewAIService(provider aiprovider.Provider, diagnosisRepo *repositories.Diag
 	}
 }
 
+// Chat answers an operations question through the configured AI provider.
+// History is clamped to the last 20 messages to bound token usage.
+func (s *AIService) Chat(ctx context.Context, messages []aiprovider.Message) (*aiprovider.ChatResponse, error) {
+	if s.provider == nil {
+		return nil, fmt.Errorf("AI provider is not configured")
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("at least one message is required")
+	}
+	if len(messages) > 20 {
+		messages = messages[len(messages)-20:]
+	}
+	chatReq := aiprovider.ChatRequest{
+		Messages: append([]aiprovider.Message{{Role: "system", Content: OpsAssistantSystemPrompt}}, messages...),
+	}
+	return s.provider.Chat(ctx, chatReq)
+}
+
+// OpsAssistantSystemPrompt grounds the AI chat panel in DBA operations.
+const OpsAssistantSystemPrompt = `You are a senior database operations assistant for a multi-flavor DB ops platform (MySQL, Dameng, Kingbase, openGauss, GBase 8a/8s, OceanBase, TiDB).
+Answer in the user's language. Be concise and concrete: give ordered, actionable steps with commands where possible.
+Never propose destructive operations (drop, truncate, rm, force-uninstall) without a verified backup and explicit human approval.`
+
 // Diagnosis runs AI diagnosis for an instance.
 func (s *AIService) Diagnosis(ctx context.Context, instanceID string) (*models.DiagnosisRecord, error) {
 	if s.provider == nil {

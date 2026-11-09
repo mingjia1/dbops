@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Card, Table, Button, Modal, Input, Space, Tag, message, Descriptions, Tabs, Typography } from 'antd'
 import { RobotOutlined, SearchOutlined, BulbOutlined } from '@ant-design/icons'
 import api from '../services/api'
@@ -24,6 +24,13 @@ interface SQLAdvice {
   created_at: string
 }
 
+interface ChatMsg {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+const CHAT_WELCOME: ChatMsg = { role: 'assistant', content: '你好，我是 AI 运维助手。可以询问实例诊断、参数调优、备份恢复、故障排查等问题。' }
+
 export default function AIDiagnosisPage() {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [advices, setAdvices] = useState<SQLAdvice[]>([])
@@ -32,6 +39,14 @@ export default function AIDiagnosisPage() {
   const [instanceID, setInstanceID] = useState('')
   const [sqlText, setSqlText] = useState('')
   const [loading, setLoading] = useState(false)
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([CHAT_WELCOME])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const chatBoxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight })
+  }, [chatMessages, chatLoading])
 
   const fetchDiagnoses = async () => {
     try { const res = await api.get('/ai/diagnoses'); setDiagnoses(res.data || []) } catch {}
@@ -55,6 +70,25 @@ export default function AIDiagnosisPage() {
     try { await api.post('/ai/sql-advisor', { sql_text: sqlText }); message.success('SQL 分析完成'); setAdvisorOpen(false); fetchAdvices() }
     catch (err: any) { message.error(err.message) }
     finally { setLoading(false) }
+  }
+
+  const handleChat = async () => {
+    const text = chatInput.trim()
+    if (!text || chatLoading) return
+    const history = [...chatMessages.filter(m => m !== CHAT_WELCOME || chatMessages.length === 1), { role: 'user' as const, content: text }]
+    setChatMessages([...chatMessages, { role: 'user', content: text }])
+    setChatInput('')
+    setChatLoading(true)
+    try {
+      const res = await api.post('/ai/chat', { messages: history.slice(-20) })
+      const reply = res.data?.reply || '（空回复）'
+      setChatMessages(prev => [...prev, { role: 'assistant', content: reply }])
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || err.message)
+      setChatMessages(prev => [...prev, { role: 'assistant', content: '请求失败：' + (err?.response?.data?.message || err.message) }])
+    } finally {
+      setChatLoading(false)
+    }
   }
 
   const diagColumns = [
@@ -91,6 +125,28 @@ export default function AIDiagnosisPage() {
               </div>
               <Table columns={sqlColumns} dataSource={advices} rowKey="id" size="small" />
             </>
+          )},
+          { key: 'chat', label: 'AI 运维助手', children: (
+            <div style={{ display: 'flex', flexDirection: 'column', height: 480 }}>
+              <div ref={chatBoxRef} style={{ flex: 1, overflowY: 'auto', background: '#fafafa', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+                {chatMessages.map((m, i) => (
+                  <div key={i} style={{ textAlign: m.role === 'user' ? 'right' : 'left', marginBottom: 10 }}>
+                    <div style={{ display: 'inline-block', maxWidth: '80%', padding: '8px 12px', borderRadius: 8, background: m.role === 'user' ? '#e6f4ff' : '#fff', border: '1px solid #f0f0f0', whiteSpace: 'pre-wrap', textAlign: 'left' }}>{m.content}</div>
+                  </div>
+                ))}
+                {chatLoading && <div style={{ color: '#999' }}>AI 正在思考…</div>}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <TextArea
+                  rows={2}
+                  placeholder="向 AI 运维助手提问，Enter 发送，Shift+Enter 换行"
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChat() } }}
+                />
+                <Button type="primary" icon={<RobotOutlined />} loading={chatLoading} onClick={handleChat}>发送</Button>
+              </div>
+            </div>
           )},
         ]} />
       </Card>

@@ -1315,8 +1315,9 @@ func main() {
 
 			ai := protected.Group("/ai")
 			{
-				// P1-A: AI 助手 (diagnosis) 与 SQL 优化建议 (sql_advisor) 均为 UE 特性.
+				// P1-A: AI 助手 (diagnosis/chat) 与 SQL 优化建议 (sql_advisor) 均为 UE 特性.
 				ai.POST("/diagnosis", requireFeature(license.FeatureAIAssistant), aiController.Diagnosis)
+				ai.POST("/chat", requireFeature(license.FeatureAIAssistant), aiController.Chat)
 				ai.GET("/diagnoses", requireFeature(license.FeatureAIAssistant), aiController.ListDiagnoses)
 				ai.GET("/diagnoses/:id", requireFeature(license.FeatureAIAssistant), aiController.GetDiagnosis)
 				ai.POST("/sql-advisor", requireFeature(license.FeatureSQLOptimize), aiController.SQLAdvice)

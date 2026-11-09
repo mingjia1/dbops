@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/monkeycode/mysql-ops-agent/internal/aioptimizer"
 )
 
 type FlavorTLSConfig struct {
@@ -15,6 +17,14 @@ type FlavorTLSConfig struct {
 	CAFile   string `json:"ca_file,omitempty"`
 	CertFile string `json:"cert_file,omitempty"`
 	KeyFile  string `json:"key_file,omitempty"`
+}
+
+// AIOpsConfig enables the optional AI optimizer for diagnose/smart-fix runs.
+// LLM is optional: without it the diagnose operation still returns collected
+// evidence plus deterministic findings (heuristic mode).
+type AIOpsConfig struct {
+	LLM          *aioptimizer.LLMConfig `json:"llm,omitempty"`
+	ConfirmApply bool                   `json:"confirm_apply,omitempty"`
 }
 
 // FlavorTaskRequest is the common Agent payload for a dedicated 信创 executor.
@@ -34,6 +44,7 @@ type FlavorTaskRequest struct {
 	OpenGauss   *OpenGaussConfig `json:"opengauss,omitempty"`
 	GBase8a     *GBase8aConfig   `json:"gbase8a,omitempty"`
 	GBase8s     *GBase8sConfig   `json:"gbase8s,omitempty"`
+	AI          *AIOpsConfig     `json:"ai,omitempty"`
 }
 
 // OceanBaseConfig contains the fixed single-node inputs accepted by the
@@ -382,6 +393,12 @@ func (e *FlavorTaskExecutor) Execute(ctx context.Context, req FlavorTaskRequest)
 	handler := e.handlers[normalizeFlavorTask(req.Flavor)]
 	if handler == nil || handler.flavor != normalizeFlavorTask(req.Flavor) {
 		return flavorTaskFailure(req.TaskID, fmt.Errorf("flavor %q is not registered", req.Flavor)), nil
+	}
+	// AI operations diagnose a running instance and never touch the local
+	// package bundle, so they run before manifest validation.
+	switch req.Operation {
+	case "diagnose", "smart-fix":
+		return e.executeAIOps(ctx, req)
 	}
 	manifest, err := ValidateLocalPackageBundle(e.packageRoot, handler.flavor, req.Version)
 	if err != nil {
