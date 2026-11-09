@@ -3,12 +3,22 @@ package config
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return absolute
+}
 
 func TestSplitCSV(t *testing.T) {
 	tests := []struct {
@@ -86,6 +96,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.DataDir == "" {
 		t.Error("DataDir is empty, want a default path")
 	}
+	if !filepath.IsAbs(cfg.SQLitePath) || filepath.Base(cfg.SQLitePath) != "dbops.db" {
+		t.Errorf("SQLitePath = %q, want an absolute dbops.db path", cfg.SQLitePath)
+	}
 	// Redis defaults (may be empty if config file doesn't set it)
 	// Not asserting a specific value because local config.yaml may override
 }
@@ -150,7 +163,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want env override", cfg.LogLevel)
 	}
-	if cfg.SQLitePath != "/data/dbops.db" {
+	if cfg.SQLitePath != mustAbs(t, "/data/dbops.db") {
 		t.Errorf("SQLitePath = %q, want env override", cfg.SQLitePath)
 	}
 	if cfg.RedisURL != "redis.local:6379" || cfg.RedisPassword != "redis-secret" || cfg.RedisDB != 2 {
