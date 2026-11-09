@@ -181,6 +181,8 @@ export const authApi = {
 
   me: () =>
     api.get('/auth/me'),
+
+  logout: () => api.post('/auth/logout'),
   
   register: (username: string, password: string, email: string, role: string) =>
     api.post('/auth/register', { username, password, email, role }),

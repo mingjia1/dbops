@@ -33,10 +33,14 @@ const Dashboard: React.FC = () => {
     }
   }, [])
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login', { replace: true })
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } finally {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      navigate('/login', { replace: true })
+    }
   }
 
   const submitChangePassword = async () => {

@@ -87,7 +87,7 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token              string   `json:"token"`
+	Token              string   `json:"-"`
 	ExpiresAt          int64    `json:"expires_at"`
 	User               UserInfo `json:"user"`
 	MustChangePassword bool     `json:"must_change_password,omitempty"`
@@ -297,8 +297,8 @@ type sseTicket struct {
 }
 
 var (
-	sseTicketMu      sync.Mutex
-	sseTickets       = map[string]sseTicket{}
+	sseTicketMu        sync.Mutex
+	sseTickets         = map[string]sseTicket{}
 	sseTicketGCRunning bool
 )
 

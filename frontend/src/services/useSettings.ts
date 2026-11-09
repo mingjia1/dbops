@@ -4,6 +4,7 @@ const API_BASE = '/api/v1'
 
 // P1-B: 单轨鉴权 —— 只依赖同源 HttpOnly cookie (credentials: 'include'),
 // 不再从 localStorage 读 token 拼 Authorization.
+
 async function readJson(res: Response): Promise<any> {
   try {
     return await res.json()
