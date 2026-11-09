@@ -2,22 +2,25 @@ package auth
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type LDAPConfig struct {
-	Server   string `json:"server"`
-	Port     int    `json:"port"`
-	BaseDN   string `json:"base_dn"`
-	BindDN   string `json:"bind_dn"`
-	BindPass string `json:"bind_pass"`
-	Filter   string `json:"filter"`
-	UseTLS   bool   `json:"use_tls"`
-	Timeout  int    `json:"timeout"`
+	Server     string `json:"server"`
+	Port       int    `json:"port"`
+	BaseDN     string `json:"base_dn"`
+	BindDN     string `json:"bind_dn"`
+	BindPass   string `json:"bind_pass"`
+	Filter     string `json:"filter"`
+	UseTLS     bool   `json:"use_tls"`
+	CACertFile string `json:"ca_cert_file"`
+	Timeout    int    `json:"timeout"`
 }
 
 type LDAPAuthenticator struct {
@@ -46,7 +49,22 @@ func (a *LDAPAuthenticator) Authenticate(username, password string) (map[string]
 	defer conn.Close()
 
 	if a.config.UseTLS {
-		tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true})
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: a.config.Server}
+		if a.config.CACertFile != "" {
+			pem, err := os.ReadFile(a.config.CACertFile)
+			if err != nil {
+				return nil, fmt.Errorf("read ldap CA certificate: %w", err)
+			}
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				return nil, fmt.Errorf("load system CA certificates: %w", err)
+			}
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("ldap CA certificate %s contains no valid certificates", a.config.CACertFile)
+			}
+			tlsConfig.RootCAs = pool
+		}
+		tlsConn := tls.Client(conn, tlsConfig)
 		if err := tlsConn.Handshake(); err != nil {
 			return nil, fmt.Errorf("ldap tls handshake failed: %w", err)
 		}
@@ -86,8 +104,8 @@ func (a *LDAPAuthenticator) Authenticate(username, password string) (map[string]
 	}
 
 	return map[string]string{
-		"username":   username,
-		"dn":         userDN,
+		"username": username,
+		"dn":       userDN,
 	}, nil
 }
 

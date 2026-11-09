@@ -48,7 +48,10 @@ func tofuHostKeyCallback(knownHostsFile, hostAddr string) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if _, statErr := os.Stat(knownHostsFile); statErr == nil {
 			cb, cbErr := knownhosts.New(knownHostsFile)
-			if cbErr == nil {
+			if cbErr != nil {
+				return fmt.Errorf("cannot parse known_hosts file %s: %w", knownHostsFile, cbErr)
+			}
+			{
 				verifyErr := cb(hostname, remote, key)
 				if verifyErr == nil {
 					return nil

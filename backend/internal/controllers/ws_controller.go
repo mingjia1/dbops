@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
+	"github.com/jackcode/mysql-ops-platform/pkg/middleware"
 )
 
 type WSController struct {
@@ -52,5 +53,5 @@ func (c *WSController) RegisterRoutes(r *gin.RouterGroup, authMiddleware ...gin.
 	handler := gin.HandlerFunc(c.HandleTaskStream)
 	// P0-6: SSE 走专用鉴权变体 (支持一次性 ticket), 不吃组上的默认 ValidateToken.
 	mw := authMiddleware[0]
-	r.GET("/tasks/stream/:taskID", mw, handler)
+	r.GET("/tasks/stream/:taskID", mw, middleware.RequirePermission("admin"), handler)
 }
