@@ -128,8 +128,8 @@ upgrade-apply:
 	@echo "Stopping services..."
 	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl stop dbops-platform dbops-agent; else echo "Services not managed by systemd, skipping stop"; fi
 	@echo "Installing new binaries..."
-	@if [ -f backend/bin/platform ]; then cp backend/bin/platform /usr/local/bin/dbops-backend; else echo "backend/bin/platform not found"; exit 1; fi
-	@if [ -f agent/bin/agent ]; then cp agent/bin/agent /usr/local/bin/dbops-agent; else echo "agent/bin/agent not found"; exit 1; fi
+	@if [ -f backend/bin/platform ]; then cp backend/bin/platform /opt/dbops-platform/bin/dbops-backend; else echo "backend/bin/platform not found"; exit 1; fi
+	@if [ -f agent/bin/agent ]; then cp agent/bin/agent /opt/dbops-platform/bin/dbops-agent; else echo "agent/bin/agent not found"; exit 1; fi
 	@echo "Running DB migrations..."
 	@if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet dbops-platform; then systemctl start dbops-platform && sleep 5 && systemctl restart dbops-platform; else cd backend && go run ./cmd migrate; fi
 	@echo "Verifying upgrade..."

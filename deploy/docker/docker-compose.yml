@@ -4,17 +4,17 @@ services:
   backend:
     image: dbops-backend:latest
     build:
-      context: .
+      context: .../../..
       dockerfile: deploy/docker/Dockerfile.backend
     ports:
       - "8080:8080"
     environment:
-      - DBOPS_DB_DRIVER=sqlite
-      - DBOPS_DB_DSN=/data/dbops.db
+      - DBOPS_STORAGE_MODE=sqlite
+      - DBOPS_SQLITE_PATH=/data/dbops.db
       - DBOPS_SKIP_AGENT_BINARY_BUILD=true
     volumes:
       - dbops-data:/data
-      - ./backend/config:/opt/dbops-platform/config:ro
+      - ../../backend/config:/opt/dbops-platform/config:ro
     depends_on:
       - redis
       - clickhouse
@@ -28,7 +28,7 @@ services:
   agent:
     image: dbops-agent:latest
     build:
-      context: .
+      context: .../../..
       dockerfile: deploy/docker/Dockerfile.agent
     environment:
       - DBOPS_BACKEND_URL=http://backend:8080
@@ -62,8 +62,8 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./frontend/dist:/usr/share/nginx/html:ro
-      - ./deploy/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../frontend/dist:/usr/share/nginx/html:ro
+      - ../../deploy/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
     restart: unless-stopped
