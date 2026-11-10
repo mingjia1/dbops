@@ -29,7 +29,6 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     children: [
       { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
       { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
-      { key: '/dashboard/capability-matrix', icon: <DatabaseOutlined />, label: '能力矩阵' },
       { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
     ],
   },
