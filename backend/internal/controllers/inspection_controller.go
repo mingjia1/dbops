@@ -36,7 +36,8 @@ func (c *InspectionController) CreateTemplate(ctx *gin.Context) {
 		return
 	}
 	if err := c.service.CreateInspectionTemplate(ctx.Request.Context(), &t); err != nil {
-		utils.InternalServerErrorResponse(ctx, "创建巡检模板失败", err)
+		// 校验类错误(名称/类别为空)应返回 400 而非 500
+		utils.BadRequestResponse(ctx, "创建巡检模板失败: "+err.Error())
 		return
 	}
 	utils.SuccessResponse(ctx, t)
@@ -61,7 +62,7 @@ func (c *InspectionController) UpdateTemplate(ctx *gin.Context) {
 	}
 	t.ID = id
 	if err := c.service.UpdateInspectionTemplate(ctx.Request.Context(), &t); err != nil {
-		utils.InternalServerErrorResponse(ctx, "更新巡检模板失败", err)
+		utils.BadRequestResponse(ctx, "更新巡检模板失败: "+err.Error())
 		return
 	}
 	utils.SuccessResponse(ctx, t)

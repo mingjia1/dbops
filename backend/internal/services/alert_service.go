@@ -492,7 +492,21 @@ func (s *AlertService) DeleteSilence(ctx context.Context, id string) error {
 
 // --- Inspection Templates ---
 
+// validateInspectionTemplate: 模板名称与类别必填, 避免空壳模板入库
+func validateInspectionTemplate(t *models.InspectionTemplate) error {
+	if strings.TrimSpace(t.Name) == "" {
+		return fmt.Errorf("template name is required")
+	}
+	if strings.TrimSpace(t.Category) == "" {
+		return fmt.Errorf("template category is required")
+	}
+	return nil
+}
+
 func (s *AlertService) CreateInspectionTemplate(ctx context.Context, t *models.InspectionTemplate) error {
+	if err := validateInspectionTemplate(t); err != nil {
+		return err
+	}
 	t.CreatedAt = time.Now()
 	t.UpdatedAt = time.Now()
 	return s.inspectionTplRepo.Create(ctx, t)
@@ -507,6 +521,9 @@ func (s *AlertService) GetInspectionTemplate(ctx context.Context, id string) (*m
 }
 
 func (s *AlertService) UpdateInspectionTemplate(ctx context.Context, t *models.InspectionTemplate) error {
+	if err := validateInspectionTemplate(t); err != nil {
+		return err
+	}
 	t.UpdatedAt = time.Now()
 	return s.inspectionTplRepo.Update(ctx, t)
 }
@@ -555,13 +572,17 @@ func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.Insp
 	var issues []string
 
 	// 1. Check instance health
-	healthMetrics := []string{"cpu", "mem", "disk", "connections", "qps"}
+	// agent 实际采集的 MySQL 指标集不含 cpu/mem/disk(仅 qps/connections/tps/innodb_*),
+	// 因此只有 connections/qps 是必选; cpu/mem/disk 为可选检查, 采集到才参与评分,
+	// 避免"监控指标不完整"降级导致评分路径永远走不到(全部报告 score=0)。
+	requiredMetrics := []string{"connections", "qps"}
+	optionalMetrics := []string{"cpu", "mem", "disk"}
 	if s.monitorService == nil {
 		return inspectionDataUnavailable(tpl, "监控指标服务不可用")
 	}
 	metrics, err := s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
 		InstanceID: instanceID,
-		Metrics:    healthMetrics,
+		Metrics:    append(append([]string{}, requiredMetrics...), optionalMetrics...),
 	})
 	if err != nil {
 		return inspectionDataUnavailable(tpl, fmt.Sprintf("监控指标查询失败: %v", err))
@@ -571,7 +592,7 @@ func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.Insp
 		metricMap[m.Name] = m.Value
 	}
 	missingMetrics := make([]string, 0)
-	for _, name := range healthMetrics {
+	for _, name := range requiredMetrics {
 		if _, ok := metricMap[name]; !ok {
 			missingMetrics = append(missingMetrics, name)
 		}
