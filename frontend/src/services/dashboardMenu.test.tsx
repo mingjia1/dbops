@@ -124,6 +124,6 @@ describe('findOpenKeys', () => {
     expect(findOpenKeys('/dashboard/license', items)).toEqual(['/dashboard/system'])
     expect(findOpenKeys('/dashboard/hosts', items)).toEqual(['/dashboard/resources'])
     expect(findOpenKeys('/dashboard/backup', items)).toEqual(['/dashboard/ops'])
-    expect(findOpenKeys('/dashboard/first-deploy', items)).toEqual(['/dashboard/deploy'])
+    expect(findOpenKeys('/dashboard/first-deploy', items)).toEqual(['/dashboard/resources'])
   })
 })
