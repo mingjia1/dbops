@@ -21,33 +21,50 @@ export type MenuItem = Required<MenuProps>['items'][number]
  * excluded — they are reached from list pages, not the sidebar).
  */
 export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
-  { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
-  { key: '/dashboard/platform-health', icon: <HeartOutlined />, label: '平台健康' },
   { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
-  { key: '/dashboard/first-deploy', icon: <RocketOutlined />, label: '快速部署' },
+  {
+    key: '/dashboard/monitoring',
+    icon: <AlertOutlined />,
+    label: '监控告警',
+    children: [
+      { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
+      { key: '/dashboard/platform-health', icon: <HeartOutlined />, label: '平台健康' },
+      { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
+      { key: '/dashboard/alert-manage', icon: <AlertOutlined />, label: '告警管理' },
+    ],
+  },
   {
     key: '/dashboard/resources',
     icon: <DesktopOutlined />,
-    label: '主机与实例',
+    label: '资源管理',
     children: [
       { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
       { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
       { key: '/dashboard/capability-matrix', icon: <DatabaseOutlined />, label: '引擎能力矩阵' },
+      { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
     ],
   },
-  { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
-  { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
   {
     key: '/dashboard/deploy',
     icon: <RocketOutlined />,
-    label: '集群部署',
+    label: '部署管理',
     children: [
+      { key: '/dashboard/first-deploy', icon: <RocketOutlined />, label: '快速部署' },
+      { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
       { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署 - 流程编排' },
       { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '集群部署 - 表单' },
     ],
   },
-  { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
-  { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
+  {
+    key: '/dashboard/ops',
+    icon: <RetweetOutlined />,
+    label: '运维管理',
+    children: [
+      { key: '/dashboard/ha', icon: <HeartOutlined />, label: '高可用管理' },
+      { key: '/dashboard/role-switch', icon: <RetweetOutlined />, label: '角色切换' },
+      { key: '/dashboard/backup', icon: <CloudOutlined />, label: '备份管理' },
+    ],
+  },
   {
     key: '/dashboard/migration-upgrade',
     icon: <SwapOutlined />,
@@ -59,7 +76,6 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
       { key: '/dashboard/arch-upgrade', icon: <SwapOutlined />, label: '架构升级' },
     ],
   },
-  { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
   {
     key: '/dashboard/diagnostics',
     icon: <ExperimentOutlined />,
@@ -72,20 +88,11 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     ],
   },
   {
-    key: '/dashboard/alert-center',
-    icon: <AlertOutlined />,
-    label: '告警中心',
-    children: [
-      { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
-      { key: '/dashboard/alert-manage', icon: <AlertOutlined />, label: '告警管理' },
-    ],
-  },
-  { key: '/dashboard/approvals', icon: <SafetyOutlined />, label: '审批管理' },
-  {
     key: '/dashboard/security',
     icon: <LockOutlined />,
     label: '安全与合规',
     children: [
+      { key: '/dashboard/approvals', icon: <SafetyOutlined />, label: '审批管理' },
       { key: '/dashboard/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
       { key: '/dashboard/audit-verify', icon: <AuditOutlined />, label: '审计链验证' },
       { key: '/dashboard/masking', icon: <LockOutlined />, label: '数据脱敏' },
@@ -164,15 +171,22 @@ export const mapMenuItemsWithNavigate = (
   items: MenuItem[],
   onNavigate: (path: string) => void,
 ): MenuItem[] => {
+  // 用 span 携带 data-menu-key: antd items API 不透传任意 DOM 属性,
+  // 而 DashboardTour 引导需要按 key 定位菜单项 DOM。
+  const withMenuKey = (label: React.ReactNode, key: string): React.ReactNode => (
+    <span data-menu-key={key}>{label}</span>
+  )
   const mapped = items.map((item) => {
     if (!item || typeof item === 'number') return item
     if ('children' in item && item.children) {
       return {
         ...(item as unknown as object),
+        label: withMenuKey((item as unknown as { label: React.ReactNode }).label, String(item.key)),
         children: (item.children as MenuItem[]).map((child) => {
           if (!child || typeof child === 'number') return child
           return {
             ...(child as unknown as object),
+            label: withMenuKey((child as unknown as { label: React.ReactNode }).label, String(child.key)),
             onClick: () => onNavigate(String((child as unknown as Record<string, unknown>).key)),
           }
         }),
@@ -180,6 +194,7 @@ export const mapMenuItemsWithNavigate = (
     }
     return {
       ...(item as unknown as object),
+      label: withMenuKey((item as unknown as { label: React.ReactNode }).label, String(item.key)),
       onClick: () => onNavigate(String((item as unknown as Record<string, unknown>).key)),
     }
   })

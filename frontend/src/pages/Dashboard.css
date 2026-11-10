@@ -1,11 +1,11 @@
-/* Apple-style dashboard shell: translucent header, glass sidebar, light bg */
+/* Apple-style dashboard shell: solid translucent header, light bg */
+/* 注意: 不使用 backdrop-filter —— 它会创建 stacking context, 干扰引导遮罩
+   与弹层的层叠表现; 背景改为高不透明度纯色, 视觉差异可忽略。 */
 .dashboard-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(255, 255, 255, 0.96) !important;
   padding: 0 24px;
   height: 52px;
   line-height: 52px;
@@ -41,9 +41,7 @@
 }
 
 .dashboard-sider {
-  background: rgba(245, 245, 247, 0.85) !important;
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(245, 245, 247, 0.96) !important;
   border-right: 0.5px solid var(--apple-separator) !important;
 }
 

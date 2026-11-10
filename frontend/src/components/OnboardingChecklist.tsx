@@ -16,9 +16,17 @@ interface OnboardingStep {
 
 const OnboardingChecklist: React.FC = () => {
   const [visible, setVisible] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [steps, setSteps] = useState<OnboardingStep[]>([])
   const [results, setResults] = useState<Record<string, boolean>>({})
+
+  // 引导 (Tour) 打开期间隐藏本清单, 避免遮罩与常驻提醒视觉叠层混乱
+  useEffect(() => {
+    const onTourToggle = (e: Event) => setTourOpen(Boolean((e as CustomEvent).detail))
+    window.addEventListener('dbops-tour-toggle', onTourToggle)
+    return () => window.removeEventListener('dbops-tour-toggle', onTourToggle)
+  }, [])
 
   useEffect(() => {
     const dismissed = localStorage.getItem('dbops_onboarding_dismissed')
@@ -99,7 +107,7 @@ const OnboardingChecklist: React.FC = () => {
     setVisible(false)
   }
 
-  if (!visible) return null
+  if (!visible || tourOpen) return null
 
   const completedCount = Object.values(results).filter(Boolean).length
   const allDone = completedCount === steps.length

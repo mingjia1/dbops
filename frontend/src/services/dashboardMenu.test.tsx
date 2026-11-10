@@ -122,8 +122,10 @@ describe('findOpenKeys', () => {
     expect(findOpenKeys('/dashboard/migration-orchestrate', items)).toEqual([
       '/dashboard/migration-upgrade',
     ])
-    expect(findOpenKeys('/dashboard/alert-manage', items)).toEqual(['/dashboard/alert-center'])
+    expect(findOpenKeys('/dashboard/alert-manage', items)).toEqual(['/dashboard/monitoring'])
     expect(findOpenKeys('/dashboard/license', items)).toEqual(['/dashboard/security'])
     expect(findOpenKeys('/dashboard/hosts', items)).toEqual(['/dashboard/resources'])
+    expect(findOpenKeys('/dashboard/backup', items)).toEqual(['/dashboard/ops'])
+    expect(findOpenKeys('/dashboard/first-deploy', items)).toEqual(['/dashboard/deploy'])
   })
 })
