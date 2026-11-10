@@ -21,7 +21,17 @@ func NewMonitorController(service *services.MonitorService) *MonitorController {
 func (c *MonitorController) QueryMetrics(ctx *gin.Context) {
 	instanceID := ctx.Query("instance_id")
 	end := time.Now()
-	start := end.Add(-1 * time.Hour)
+	// range: 1h(默认) / 24h / 7d, 支持仪表盘按小时/天/周粒度查看.
+	var duration time.Duration
+	switch ctx.Query("range") {
+	case "24h":
+		duration = 24 * time.Hour
+	case "7d":
+		duration = 7 * 24 * time.Hour
+	default:
+		duration = 1 * time.Hour
+	}
+	start := end.Add(-duration)
 
 	metrics, err := c.service.QueryMetrics(ctx.Request.Context(), services.MetricQueryRequest{
 		InstanceID: instanceID,

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Statistic, Tag, Tooltip } from 'antd'
+import { Alert, Button, Card, Col, Empty, Row, Segmented, Select, Space, Spin, Statistic, Tag, Tooltip } from 'antd'
 import {
   AlertOutlined,
   ArrowUpOutlined,
@@ -85,8 +85,25 @@ function formatDuration(seconds: number | undefined) {
   return `${minutes}m`
 }
 
-const seriesData = (series?: MetricPoint[]) =>
-  (series || []).map((point) => ({ ...point, time: point.ts ? new Date(point.ts).toLocaleTimeString() : '-' }))
+type MonitorRange = '1h' | '24h' | '7d'
+
+const RANGE_OPTIONS = [
+  { label: '近1小时', value: '1h' as MonitorRange },
+  { label: '近24小时', value: '24h' as MonitorRange },
+  { label: '近7天', value: '7d' as MonitorRange },
+]
+
+// 短跨度用时分秒, 跨天档位补充日期, 时间轴一眼可读.
+const formatPointTime = (ts: string, range: MonitorRange) => {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ts
+  if (range === '1h') return d.toLocaleTimeString('zh-CN', { hour12: false })
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+const seriesData = (series: MetricPoint[] | undefined, range: MonitorRange) =>
+  (series || []).map((point) => ({ ...point, time: formatPointTime(point.ts, range) }))
 
 const hasMetricData = (bundle: MetricBundle) =>
   Object.values(bundle).some((value) => (Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null))
@@ -166,6 +183,7 @@ const normalizeMetrics = (raw: any): MetricBundle | null => {
 const MonitorDashboard: React.FC = () => {
   const [instances, setInstances] = useState<any[]>([])
   const [selectedInstance, setSelectedInstance] = useState<string | undefined>(undefined)
+  const [range, setRange] = useState<MonitorRange>('1h')
   const [metrics, setMetrics] = useState<MetricBundle | null>(null)
   const [monitorStatus, setMonitorStatus] = useState<MonitorStatus>('configured')
   const [monitorMessage, setMonitorMessage] = useState('')
@@ -232,7 +250,7 @@ const MonitorDashboard: React.FC = () => {
     if (!selectedInstance) return
     setLoading(true)
     try {
-      const res: any = await monitorApi.queryMetrics(selectedInstance)
+      const res: any = await monitorApi.queryMetrics(selectedInstance, range)
       const data = res?.data || res || {}
       const status = (data?.status || (Array.isArray(data) && data.length === 0 ? 'no_data' : 'configured')) as MonitorStatus
       const normalized = normalizeMetrics(data?.metrics ?? data)
@@ -254,7 +272,7 @@ const MonitorDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchMetrics()
-  }, [selectedInstance])
+  }, [selectedInstance, range])
 
   const selectedInstanceObj = instances.find((item) => item.id === selectedInstance)
   const trafficData = useMemo(() => [
@@ -313,6 +331,7 @@ const MonitorDashboard: React.FC = () => {
         style={{ marginTop: 16 }}
         extra={(
           <Space>
+            <Segmented options={RANGE_OPTIONS} value={range} onChange={(v) => setRange(v as MonitorRange)} />
             <Select
               placeholder="选择实例"
               style={{ width: 240 }}
@@ -361,7 +380,7 @@ const MonitorDashboard: React.FC = () => {
               <Col xs={24} xl={12}>
                 <Card title="QPS 趋势" size="small">
                   <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={seriesData(metrics.qps)}>
+                    <LineChart data={seriesData(metrics.qps, range)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="time" />
                       <YAxis />
@@ -374,7 +393,7 @@ const MonitorDashboard: React.FC = () => {
               <Col xs={24} xl={12}>
                 <Card title="TPS 趋势" size="small">
                   <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart data={seriesData(metrics.tps)}>
+                    <AreaChart data={seriesData(metrics.tps, range)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="time" />
                       <YAxis />
@@ -387,7 +406,7 @@ const MonitorDashboard: React.FC = () => {
               <Col xs={24} xl={12}>
                 <Card title="连接数" size="small">
                   <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={seriesData(metrics.connections)}>
+                    <LineChart data={seriesData(metrics.connections, range)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="time" />
                       <YAxis />
@@ -400,7 +419,7 @@ const MonitorDashboard: React.FC = () => {
               <Col xs={24} xl={12}>
                 <Card title="资源使用" size="small">
                   <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart data={seriesData(metrics.cpu || metrics.memory || metrics.disk)}>
+                    <AreaChart data={seriesData(metrics.cpu || metrics.memory || metrics.disk, range)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="time" />
                       <YAxis />

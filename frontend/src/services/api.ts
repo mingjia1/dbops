@@ -627,8 +627,8 @@ export interface DiscoveredBackup {
 }
 
 export const monitorApi = {
-  queryMetrics: (instanceId: string) =>
-    api.get(`/monitoring/metrics?instance_id=${instanceId}`),
+  queryMetrics: (instanceId: string, range: '1h' | '24h' | '7d' = '1h') =>
+    api.get(`/monitoring/metrics?instance_id=${instanceId}&range=${range}`),
 }
 
 export interface DataMigrationStatus {
