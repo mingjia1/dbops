@@ -28,7 +28,6 @@ describe('getDashboardMenuItems', () => {
       '/dashboard/home',
       '/dashboard/hosts',
       '/dashboard/instances',
-      '/dashboard/capability-matrix',
       '/dashboard/env-check',
       '/dashboard/backup',
       '/dashboard/cluster-deploy',
@@ -45,7 +44,6 @@ describe('getDashboardMenuItems', () => {
       '/dashboard/fault-injection',
       '/dashboard/drills',
       '/dashboard/alert-rules',
-      '/dashboard/alert-manage',
       '/dashboard/approvals',
       '/dashboard/audit-logs',
       '/dashboard/audit-verify',
@@ -122,8 +120,8 @@ describe('findOpenKeys', () => {
     expect(findOpenKeys('/dashboard/migration-orchestrate', items)).toEqual([
       '/dashboard/migration-upgrade',
     ])
-    expect(findOpenKeys('/dashboard/alert-manage', items)).toEqual(['/dashboard/monitoring'])
-    expect(findOpenKeys('/dashboard/license', items)).toEqual(['/dashboard/security'])
+    expect(findOpenKeys('/dashboard/alert-rules', items)).toEqual(['/dashboard/monitoring'])
+    expect(findOpenKeys('/dashboard/license', items)).toEqual(['/dashboard/system'])
     expect(findOpenKeys('/dashboard/hosts', items)).toEqual(['/dashboard/resources'])
     expect(findOpenKeys('/dashboard/backup', items)).toEqual(['/dashboard/ops'])
     expect(findOpenKeys('/dashboard/first-deploy', items)).toEqual(['/dashboard/deploy'])

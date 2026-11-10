@@ -5,7 +5,7 @@ import {
   FileTextOutlined, HddOutlined, HeartOutlined,
   AppstoreOutlined, RetweetOutlined, RocketOutlined, SettingOutlined, SwapOutlined, PartitionOutlined,
   SafetyOutlined, UserOutlined, ExperimentOutlined, ThunderboltOutlined, RobotOutlined, KeyOutlined,
-  FileSearchOutlined, LockOutlined, CopyrightOutlined,
+  FileSearchOutlined, LockOutlined, CopyrightOutlined, PlusSquareOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 
@@ -37,10 +37,10 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     icon: <RocketOutlined />,
     label: '部署管理',
     children: [
-      { key: '/dashboard/first-deploy', icon: <RocketOutlined />, label: '快速部署' },
+      { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署' },
+      { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '实例部署' },
       { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
-      { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '流程编排' },
-      { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '表单部署' },
+      { key: '/dashboard/first-deploy', icon: <PlusSquareOutlined />, label: '接入向导' },
     ],
   },
   {

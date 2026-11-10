@@ -327,7 +327,7 @@ const FirstDeployWizard: React.FC<{ forceOpen?: boolean }> = ({ forceOpen = fals
 
   return (
     <Modal
-      title="快速部署向导"
+      title="接入向导"
       forceRender
       open={visible}
       onCancel={handleDismiss}

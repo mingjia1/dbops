@@ -137,7 +137,7 @@ const Dashboard: React.FC = () => {
               style={{ marginRight: 16 }}
             />
           </Tooltip>
-          <Tooltip title="快速部署">
+          <Tooltip title="接入向导">
             <RocketOutlined style={{ color: 'rgba(255,255,255,0.85)', marginRight: 16, cursor: 'pointer', fontSize: 18 }} onClick={() => window.openFirstDeployWizard?.()} />
           </Tooltip>
           <Dropdown menu={userMenu} placement="bottomRight">
