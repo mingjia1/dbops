@@ -125,36 +125,36 @@ export const UpgradeWizard: React.FC<UpgradeWizardProps> = ({
   const filtered = catalog.filter((v) => v.flavor === (currentFlavor || 'mysql'))
 
   const steps = [
-    { title: 'Version', description: 'Select target version' },
-    { title: 'Check', description: 'Run compatibility check' },
-    { title: 'Strategy', description: 'Choose execution mode' },
-    { title: 'Submit', description: 'Start the upgrade task' },
+    { title: '选择版本', description: '选定目标版本' },
+    { title: '兼容检查', description: '执行兼容性检查' },
+    { title: '升级策略', description: '选择执行方式' },
+    { title: '提交执行', description: '启动升级任务' },
   ]
 
   const warnings = compatResult?.incompatibilities.filter((item) => item.level !== 'error').map((item) => item.description) || []
   const errors = compatResult?.incompatibilities.filter((item) => item.level === 'error').map((item) => item.description) || []
 
   return (
-    <Card title="Upgrade Wizard" style={{ maxWidth: 700 }}>
+    <Card title="升级向导" style={{ maxWidth: 700 }}>
       <Steps current={step} items={steps} style={{ marginBottom: 24 }} />
 
       {step === 0 && (
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
-            <div style={{ marginBottom: 8 }}>Current version: <Tag>{currentVersion || 'unknown'}</Tag></div>
+            <div style={{ marginBottom: 8 }}>当前版本: <Tag>{currentVersion || '未知'}</Tag></div>
             <Select
               style={{ width: '100%' }}
-              placeholder="Select target version"
+              placeholder="选择目标版本"
               value={targetVersion || undefined}
               onChange={setTargetVersion}
               options={filtered.map((v) => ({
-                label: `${v.flavor} ${v.version}${v.is_lts ? ' (LTS)' : ''}${v.local_available ? ' [Exists]' : ' [Download]'} - EOL: ${v.eol_date}`,
+                label: `${v.flavor} ${v.version}${v.is_lts ? ' (LTS)' : ''}${v.local_available ? ' [已存在]' : ' [需下载]'} - 生命周期截止: ${v.eol_date}`,
                 value: v.version,
               }))}
             />
           </div>
           <Button type="primary" onClick={handlePreCheck} loading={checking}>
-            Run compatibility check
+            执行兼容性检查
           </Button>
         </Space>
       )}
@@ -166,30 +166,30 @@ export const UpgradeWizard: React.FC<UpgradeWizardProps> = ({
               type="success"
               showIcon
               icon={<CheckCircleOutlined />}
-              message="Compatibility check passed"
-              description={`Source ${compatResult.source_version} -> target ${compatResult.target_version}`}
+              message="兼容性检查通过"
+              description={`源版本 ${compatResult.source_version} → 目标版本 ${compatResult.target_version}`}
             />
           ) : (
             <Alert
               type="error"
               showIcon
               icon={<WarningOutlined />}
-              message="Upgrade path is not compatible"
-              description={errors.join('; ') || 'Compatibility check failed'}
+              message="升级路径不兼容"
+              description={errors.join('；') || '兼容性检查未通过'}
             />
           )}
           {warnings.length > 0 && (
-            <Alert type="warning" showIcon message="Warnings" description={warnings.join('; ')} />
+            <Alert type="warning" showIcon message="警告" description={warnings.join('; ')} />
           )}
           {compatResult.recommendations.length > 0 && (
-            <Card type="inner" title="Recommendations" size="small">
+            <Card type="inner" title='升级建议' size="small">
               <ul>{compatResult.recommendations.map((item, index) => <li key={index}>{item}</li>)}</ul>
             </Card>
           )}
           <Space>
-            <Button onClick={() => setStep(0)}>Back</Button>
+            <Button onClick={() => setStep(0)}>上一步</Button>
             <Button type="primary" disabled={!compatResult.is_compatible} onClick={() => setStep(2)}>
-              Choose strategy
+              选择策略
             </Button>
           </Space>
         </Space>
@@ -202,16 +202,16 @@ export const UpgradeWizard: React.FC<UpgradeWizardProps> = ({
             value={strategy}
             onChange={setStrategy}
             options={[
-              { label: 'In-place upgrade', value: 'inplace' },
-              { label: 'Rolling upgrade', value: 'rolling' },
-              { label: 'Logical migration', value: 'logical' },
+              { label: '原地升级', value: 'inplace' },
+              { label: '滚动升级', value: 'rolling' },
+              { label: '逻辑迁移', value: 'logical' },
             ]}
           />
-          <Alert type="info" showIcon message={`Plan ID: ${planID || '-'}`} />
+          <Alert type="info" showIcon message={`方案 ID: ${planID || '-'}`} />
           <Space>
-            <Button onClick={() => setStep(1)}>Back</Button>
+            <Button onClick={() => setStep(1)}>上一步</Button>
             <Button type="primary" onClick={handleExecute} loading={upgrading}>
-              Submit upgrade
+              提交升级
             </Button>
           </Space>
         </Space>

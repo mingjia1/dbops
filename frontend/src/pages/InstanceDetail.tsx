@@ -388,7 +388,7 @@ const InstanceDetail: React.FC = () => {
 
   const userColumns: ColumnsType<AdminRow> = [
     { title: '用户', dataIndex: 'user', key: 'user' },
-    { title: 'Host', dataIndex: 'host', key: 'host' },
+    { title: '主机', dataIndex: 'host', key: 'host' },
     { title: '认证插件', dataIndex: 'plugin', key: 'plugin' },
     { title: '锁定', dataIndex: 'account_locked', key: 'account_locked' },
   ]

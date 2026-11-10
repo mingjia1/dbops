@@ -37,7 +37,7 @@ const SecurityTab: React.FC = () => {
   const handleChangePlatformPassword = async () => {
     const values = await accountForm.validateFields()
     if (values.new_password !== values.confirm_password) {
-      message.error('Passwords do not match')
+      message.error('两次输入的密码不一致')
       return
     }
     await authApi.changePassword({
@@ -50,11 +50,11 @@ const SecurityTab: React.FC = () => {
     }
     accountForm.resetFields()
     setMustChangePlatformPassword(false)
-    message.success('Platform password changed')
+    message.success('平台密码已修改')
   }
 
   const accountPasswordCard = (
-    <Card type="inner" title="Platform Account Password" size="small">
+    <Card type="inner" title="平台账号密码" size="small">
       {mustChangePlatformPassword && (
         <Alert
           type="warning"
@@ -65,13 +65,13 @@ const SecurityTab: React.FC = () => {
         />
       )}
       <Form form={accountForm} layout="vertical" size="small">
-        <Form.Item name="current_password" label="Current Password" rules={[{ required: true }]}>
+        <Form.Item name="current_password" label="当前密码" rules={[{ required: true }]}>
           <Input.Password size="small" autoComplete="current-password" />
         </Form.Item>
-        <Form.Item name="new_password" label="New Password" rules={[{ required: true, min: 8 }]}>
+        <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8 }]}>
           <Input.Password size="small" autoComplete="new-password" />
         </Form.Item>
-        <Form.Item name="confirm_password" label="Confirm New Password" rules={[{ required: true }]}>
+        <Form.Item name="confirm_password" label="确认新密码" rules={[{ required: true }]}>
           <Input.Password size="small" autoComplete="new-password" />
         </Form.Item>
         <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleChangePlatformPassword}>
@@ -88,20 +88,20 @@ const SecurityTab: React.FC = () => {
   const handleSave = async () => {
     const values = await form.validateFields()
     if (values.password !== values.confirm_password) {
-      message.error('Passwords do not match')
+      message.error('两次输入的密码不一致')
       return
     }
     await setSecondaryPassword(values.password)
     setEnabled(true)
     form.resetFields()
-    message.success('Secondary password enabled for this browser session')
+    message.success('二级密码已启用（本次浏览器会话有效）')
   }
 
   const handleDisable = () => {
     clearSecondaryPassword()
     setEnabled(false)
     form.resetFields()
-    message.success('Secondary password disabled')
+    message.success('二级密码已停用')
   }
 
   return (
@@ -110,14 +110,14 @@ const SecurityTab: React.FC = () => {
         {accountPasswordCard}
       </Col>
       <Col span={12}>
-        <Card type="inner" title="Credential Guard" size="small">
+        <Card type="inner" title="凭据保护" size="small">
           <Space align="center" style={{ marginBottom: 8 }}>
             <Switch
               checked={enabled}
               onChange={(checked) => {
                 if (checked) {
                   handleSave().catch(() => {
-                    message.warning('Enter and confirm the secondary password first')
+                    message.warning('请先输入并确认二级密码')
                     setEnabled(false)
                   })
                   return
@@ -125,29 +125,29 @@ const SecurityTab: React.FC = () => {
                 handleDisable()
               }}
             />
-            <Tag color={enabled ? 'success' : 'default'}>{enabled ? 'Enabled' : 'Disabled'}</Tag>
+            <Tag color={enabled ? 'success' : 'default'}>{enabled ? '已启用' : '未启用'}</Tag>
           </Space>
           <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-            The secondary password is stored only as a salted hash in session state. It is not written to platform settings or local storage.
+            二级密码仅以加盐哈希形式保存在会话状态中，不会写入平台设置或本地存储。
           </Text>
           <Form form={form} layout="vertical" size="small">
-            <Form.Item name="password" label="Secondary Password" rules={[{ required: true }]}>
+            <Form.Item name="password" label="二级密码" rules={[{ required: true }]}>
               <Input.Password size="small" autoComplete="new-password" />
             </Form.Item>
-            <Form.Item name="confirm_password" label="Confirm Password" rules={[{ required: true }]}>
+            <Form.Item name="confirm_password" label="确认密码" rules={[{ required: true }]}>
               <Input.Password size="small" autoComplete="new-password" />
             </Form.Item>
             <Form.Item>
               <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleSave}>
-                {enabled ? 'Rotate' : 'Enable'}
+                {enabled ? '轮换' : '启用'}
               </Button>
-              {enabled && <Button size="small" danger style={{ marginLeft: 8 }} onClick={handleDisable}>Disable</Button>}
+              {enabled && <Button size="small" danger style={{ marginLeft: 8 }} onClick={handleDisable}>停用</Button>}
             </Form.Item>
           </Form>
         </Card>
       </Col>
       <Col span={12}>
-        <Card type="inner" title="Password Policy" size="small"><PasswordPolicyForm /></Card>
+        <Card type="inner" title="密码策略" size="small"><PasswordPolicyForm /></Card>
       </Col>
     </Row>
   )
@@ -193,10 +193,10 @@ const PasswordPolicyForm: React.FC = () => {
         <Col span={8}><Form.Item name="history_count" label="历史密码数"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
       </Row>
       <Space wrap style={{ marginBottom: 8 }}>
-        <Form.Item name="require_uppercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 大写</Form.Item>
-        <Form.Item name="require_lowercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 小写</Form.Item>
-        <Form.Item name="require_digit" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 数字</Form.Item>
-        <Form.Item name="require_special" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /> 特殊字符</Form.Item>
+        <Form.Item name="require_uppercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>大写
+        <Form.Item name="require_lowercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>小写
+        <Form.Item name="require_digit" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>数字
+        <Form.Item name="require_special" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>特殊字符
       </Space>
       <Button size="small" type="primary" onClick={handleSave}>保存策略</Button>
     </Form>
@@ -239,7 +239,7 @@ const MetricsTab: React.FC = () => {
     try {
       await save('metrics_thresholds', j)
       localStorage.setItem(METRICS_KEY, j)
-      message.success('Metrics thresholds saved')
+      message.success('监控阈值已保存')
     } catch (err: any) {
       message.error('保存监控阈值失败: ' + getErrorMessage(err))
     }
@@ -248,7 +248,7 @@ const MetricsTab: React.FC = () => {
   const saveCred = async () => {
     const v = await credForm.validateFields()
     setDefaultMySQLCredential({ username: v.mysql_user || 'root', password: v.mysql_password })
-    message.success('MySQL credential cached only for the current app session')
+    message.success('MySQL 凭据仅缓存在当前应用会话中')
   }
 
   const F = ({ name, label }: { name: string; label: string }) => (
@@ -258,32 +258,32 @@ const MetricsTab: React.FC = () => {
   return (
     <Row gutter={16}>
       <Col span={5}>
-        <Card type="inner" title="MySQL Session Credential" size="small">
+        <Card type="inner" title="MySQL 会话凭据" size="small">
           <Form form={credForm} layout="vertical" size="small" initialValues={{ mysql_user: 'root' }}>
-            <Form.Item name="mysql_user" label="Username" rules={[{ required: true }]}><Input size="small" /></Form.Item>
-            <Form.Item name="mysql_password" label="Password" rules={[{ required: true, min: 8 }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>Stored only in runtime memory for this app session.</Text>
-            <Button size="small" type="primary" onClick={saveCred}>Save</Button>
+            <Form.Item name="mysql_user" label="用户名" rules={[{ required: true }]}><Input size="small" /></Form.Item>
+            <Form.Item name="mysql_password" label="密码" rules={[{ required: true, min: 8 }]}><Input.Password size="small" autoComplete="new-password" /></Form.Item>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>仅保存在本应用会话的运行内存中。</Text>
+            <Button size="small" type="primary" onClick={saveCred}>保存</Button>
           </Form>
         </Card>
       </Col>
       <Col span={19}>
-        <Card type="inner" title="Metric Thresholds" size="small">
+        <Card type="inner" title="监控阈值" size="small">
           <Form form={form} layout="horizontal" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }} size="small">
-            <Text strong style={{ fontSize: 12 }}>General</Text>
+            <Text strong style={{ fontSize: 12 }}>通用</Text>
             <Row gutter={8} style={{ marginBottom: 4 }}>
-              <F name="connection_warn" label="Connections warn" /><F name="qps_warn" label="QPS warn" /><F name="slow_query_warn" label="Slow query warn" /><F name="repl_lag_warn" label="Lag warn" />
+              <F name="connection_warn" label="连接数警告" /><F name="qps_warn" label="QPS 警告" /><F name="slow_query_warn" label="慢查询警告" /><F name="repl_lag_warn" label="复制延迟警告" />
             </Row>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="connection_critical" label="Connections critical" /><F name="qps_critical" label="QPS critical" /><F name="slow_query_critical" label="Slow query critical" /><F name="repl_lag_critical" label="Lag critical" />
+              <F name="connection_critical" label="连接数严重" /><F name="qps_critical" label="QPS 严重" /><F name="slow_query_critical" label="慢查询严重" /><F name="repl_lag_critical" label="复制延迟严重" />
             </Row>
             <Text strong style={{ fontSize: 12 }}>MySQL 8.0+</Text>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="buffer_pool_warn" label="Buffer pool %" /><F name="deadlock_warn_per_hour" label="Deadlocks/hour" /><F name="tmp_table_warn" label="Tmp table MB" /><F name="thread_running_warn" label="Threads running" />
+              <F name="buffer_pool_warn" label="缓冲池 %" /><F name="deadlock_warn_per_hour" label="死锁/小时" /><F name="tmp_table_warn" label="临时表 MB" /><F name="thread_running_warn" label="活跃线程数" />
             </Row>
             <Text strong style={{ fontSize: 12 }}>Resources</Text>
             <Row gutter={8} style={{ marginBottom: 12 }}>
-              <F name="disk_warn" label="Disk warn %" /><F name="disk_critical" label="Disk critical %" /><F name="mem_warn" label="Memory warn %" /><F name="cpu_warn" label="CPU warn %" />
+              <F name="disk_warn" label="磁盘警告 %" /><F name="disk_critical" label="磁盘严重 %" /><F name="mem_warn" label="内存警告 %" /><F name="cpu_warn" label="CPU 警告 %" />
             </Row>
             <Button size="small" type="primary" onClick={saveMetrics}>Save thresholds</Button>
           </Form>
@@ -495,7 +495,7 @@ const PackageTab: React.FC = () => {
       <Card type="inner" size="small" style={{ marginBottom: 12 }}>
         <Row gutter={8} align="middle">
           <Col span={5}><Select size="small" style={{ width: '100%' }} value={relayHostId} onChange={(v) => { setRelayHostId(v); saveCfg(v, relayPath) }} placeholder="中继主机" options={hosts.map(h => ({ value: h.id, label: `${h.name} (${h.address})` }))} /></Col>
-          <Col span={3}><Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={(e) => saveCfg(relayHostId, e.target.value)} placeholder="/opt" addonBefore="路径" /></Col>
+          <Col span={3}><Input size="small" value={relayPath} onChange={(e) => setRelayPath(e.target.value)} onBlur={(e) => saveCfg(relayHostId, e.target.value)} placeholder="/opt" prefix="路径" /></Col>
           <Col span={2}><Button size="small" icon={<ReloadOutlined />} onClick={handleScanRelay} loading={loading}>刷新</Button></Col>
           <Col span={3}><Button size="small" icon={<DownloadOutlined />} onClick={handleScanRemote} loading={loading} disabled={!relayHostId}>扫描远程</Button></Col>
           <Col span={3}>
@@ -513,7 +513,7 @@ const PackageTab: React.FC = () => {
 
       <Card type="inner" title="安装包目录" size="small"
         extra={<Space size={8}>
-          <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 70 }} options={[{ value: 'all', label: 'OS' }, { value: 'Linux', label: 'Linux' }, { value: 'Win', label: 'Win' }]} />
+          <Select size="small" value={osFilter} onChange={setOsFilter} style={{ width: 70 }} options={[{ value: 'all', label: '系统' }, { value: 'Linux', label: 'Linux' }, { value: 'Win', label: 'Win' }]} />
           <Select size="small" value={productFilter} onChange={setProductFilter} style={{ width: 80 }} options={[{ value: 'all', label: '产品' }, { value: 'MySQL', label: 'MySQL' }, { value: 'Percona', label: 'Percona' }, { value: 'MariaDB', label: 'MariaDB' }]} />
         </Space>}>
         <Table size="small" pagination={false} scroll={{ y: 400 }}
@@ -523,7 +523,7 @@ const PackageTab: React.FC = () => {
             { title: 'OS', dataIndex: 'os', key: 'os', width: 45, render: (v: string) => <Tag style={{ fontSize: 10 }}>{v}</Tag> },
             { title: '产品', dataIndex: 'p', key: 'p', width: 65, render: (v: string) => <Tag color={v === 'MySQL' ? 'blue' : v === 'Percona' ? 'purple' : 'orange'}>{v}</Tag> },
             { title: '版本', dataIndex: 'v', key: 'v', width: 80 },
-            { title: 'arch', dataIndex: 'arch', key: 'arch', width: 50 },
+            { title: '架构', dataIndex: 'arch', key: 'arch', width: 50 },
             { title: '说明', dataIndex: 'n', key: 'n', width: 80, ellipsis: true },
             { title: '文件名', dataIndex: 'fn', key: 'fn', ellipsis: true },
             { title: '状态', dataIndex: 'hasIt', key: 'st', width: 70,

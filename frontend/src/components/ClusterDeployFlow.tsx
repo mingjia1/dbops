@@ -285,12 +285,12 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
           <Form layout="vertical" style={{ maxWidth: '100%' }}>
             <Row gutter={12}>
               <Col span={24}>
-                <Form.Item label="Cluster ID" required>
+                <Form.Item label="集群 ID" required>
                   <Input value={spec.cluster_id} onChange={(event) => updateSpec({ cluster_id: event.target.value })} />
                 </Form.Item>
               </Col>
               <Col span={24}>
-                <Form.Item label="MySQL version" required>
+                <Form.Item label="MySQL 版本" required>
                   <Select
                     showSearch
                     optionFilterProp="label"
@@ -301,23 +301,23 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item label="Default port">
+                <Form.Item label="默认端口">
                   <InputNumber min={1} max={65535} style={{ width: '100%' }} value={spec.mysql_port} onChange={(value) => updateSpec({ mysql_port: value || 3306 })} />
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item label="Replication user">
+                <Form.Item label="复制账号">
                   <Input value={spec.repl_user} onChange={(event) => updateSpec({ repl_user: event.target.value })} />
                 </Form.Item>
               </Col>
               <Col span={24}>
-                <Form.Item label="Replication password">
+                <Form.Item label="复制密码">
                   <Input.Password value={spec.repl_password} onChange={(event) => updateSpec({ repl_password: event.target.value })} />
                 </Form.Item>
               </Col>
               {spec.arch === 'mgr' && (
                 <Col span={24}>
-                  <Form.Item label="MGR group name">
+                  <Form.Item label="MGR 组名">
                     <Input value={String(spec.custom?.group_name || '')} onChange={(event) => updateCustom({ group_name: event.target.value })} />
                   </Form.Item>
                 </Col>
@@ -325,12 +325,12 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
               {spec.arch === 'pxc' && (
                 <>
                   <Col span={12}>
-                    <Form.Item label="wsrep port">
+                    <Form.Item label="wsrep 端口">
                       <InputNumber min={1} max={65535} style={{ width: '100%' }} value={Number(spec.custom?.wsrep_port || 4567)} onChange={(value) => updateCustom({ wsrep_port: value || 4567 })} />
                     </Form.Item>
                   </Col>
                   <Col span={12}>
-                    <Form.Item label="SST method">
+                    <Form.Item label="SST 方式">
                       <Select
                         value={String(spec.custom?.sst_method || 'xtrabackup-v2')}
                         options={[{ value: 'xtrabackup-v2', label: 'xtrabackup-v2' }, { value: 'mariabackup', label: 'mariabackup' }]}
@@ -361,7 +361,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                     <Select
                       value={node.host_id}
                       options={hostOptions}
-                      placeholder="Select host"
+                      placeholder="选择主机"
                       onChange={(value) => updateDbNode(node.id, { host_id: value })}
                     />
                   </Space>
@@ -386,7 +386,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                     <Input placeholder="VIP" value={middlewareByID(spec, 'keepalived')?.vip} onChange={(event) => updateMiddleware('keepalived', { vip: event.target.value })} />
                   </Col>
                   <Col span={10}>
-                    <Input placeholder="Interface" value={middlewareByID(spec, 'keepalived')?.vip_interface} onChange={(event) => updateMiddleware('keepalived', { vip_interface: event.target.value })} />
+                    <Input placeholder="网卡接口" value={middlewareByID(spec, 'keepalived')?.vip_interface} onChange={(event) => updateMiddleware('keepalived', { vip_interface: event.target.value })} />
                   </Col>
                 </Row>
               )}
@@ -401,7 +401,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                   <Select
                     value={middlewareByID(spec, 'proxysql')?.proxy_host_id}
                     options={hostOptions}
-                    placeholder="ProxySQL host"
+                    placeholder="ProxySQL 主机"
                     onChange={(value) => {
                       const host = hosts.find((item) => item.id === value)
                       updateMiddleware('proxysql', { proxy_host_id: value, proxy_agent_port: host?.agent_port || 9090 })
@@ -470,23 +470,23 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
       >
         {selectedDbNode && (
           <Form layout="vertical">
-            <Form.Item label="Host" required>
+            <Form.Item label="主机" required>
               <Select value={selectedDbNode.host_id} options={hostOptions} onChange={(value) => updateDbNode(selectedDbNode.id, { host_id: value })} />
             </Form.Item>
-            <Form.Item label="MySQL port">
+            <Form.Item label="MySQL 端口">
               <InputNumber min={1} max={65535} style={{ width: '100%' }} value={selectedDbNode.mysql_port || spec.mysql_port} onChange={(value) => updateDbNode(selectedDbNode.id, { mysql_port: value || spec.mysql_port })} />
             </Form.Item>
-            <Form.Item label="Data directory">
+            <Form.Item label="数据目录">
               <Input placeholder={`/data/mysql/${selectedDbNode.mysql_port || spec.mysql_port}`} value={selectedDbNode.data_dir} onChange={(event) => updateDbNode(selectedDbNode.id, { data_dir: event.target.value })} />
             </Form.Item>
-            <Form.Item label="Base directory">
+            <Form.Item label="安装目录">
               <Input placeholder={`/usr/local/mysql-${selectedDbNode.mysql_port || spec.mysql_port}`} value={selectedDbNode.basedir} onChange={(event) => updateDbNode(selectedDbNode.id, { basedir: event.target.value })} />
             </Form.Item>
             <Form.Item label="server_id">
               <InputNumber min={1} style={{ width: '100%' }} value={selectedDbNode.server_id} onChange={(value) => updateDbNode(selectedDbNode.id, { server_id: value || undefined })} />
             </Form.Item>
             {spec.arch === 'mgr' && selectedDbNode.role !== 'manager' && (
-              <Form.Item label="Group communication port">
+              <Form.Item label="组通信端口">
                 <InputNumber
                   min={1}
                   max={65535}
@@ -508,7 +508,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
             <Form.Item label="VIP">
               <Input value={selectedMiddleware.vip} onChange={(event) => updateMiddleware('keepalived', { vip: event.target.value })} />
             </Form.Item>
-            <Form.Item label="VIP interface">
+            <Form.Item label="VIP 网卡接口">
               <Input value={selectedMiddleware.vip_interface} onChange={(event) => updateMiddleware('keepalived', { vip_interface: event.target.value })} />
             </Form.Item>
           </Form>
@@ -530,10 +530,10 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                 }}
               />
             </Form.Item>
-            <Form.Item label="ProxySQL service port">
+            <Form.Item label="ProxySQL 服务端口">
               <InputNumber min={1} max={65535} style={{ width: '100%' }} value={selectedMiddleware.proxy_port || 6033} onChange={(value) => updateMiddleware('proxysql', { proxy_port: value || 6033 })} />
             </Form.Item>
-            <Form.Item label="Agent port">
+            <Form.Item label="Agent 端口">
               <InputNumber min={1} max={65535} style={{ width: '100%' }} value={selectedMiddleware.proxy_agent_port || 9090} onChange={(value) => updateMiddleware('proxysql', { proxy_agent_port: value || 9090 })} />
             </Form.Item>
           </Form>
@@ -546,7 +546,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
               </Checkbox>
             </Form.Item>
             {selectedTool.id === 'baseline_backup' && (
-              <Form.Item label="Backup type">
+              <Form.Item label="备份类型">
                 <Select
                   value={selectedTool.backup_type || 'full'}
                   options={[{ value: 'full', label: 'full' }, { value: 'incremental', label: 'incremental' }]}
