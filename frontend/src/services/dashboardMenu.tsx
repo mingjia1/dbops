@@ -40,7 +40,7 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     children: [
       { key: '/dashboard/hosts', icon: <DesktopOutlined />, label: '主机管理' },
       { key: '/dashboard/instances', icon: <DatabaseOutlined />, label: '实例管理' },
-      { key: '/dashboard/capability-matrix', icon: <DatabaseOutlined />, label: '引擎能力矩阵' },
+      { key: '/dashboard/capability-matrix', icon: <DatabaseOutlined />, label: '能力矩阵' },
       { key: '/dashboard/topology', icon: <ApartmentOutlined />, label: '拓扑视图' },
     ],
   },
@@ -51,8 +51,8 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     children: [
       { key: '/dashboard/first-deploy', icon: <RocketOutlined />, label: '快速部署' },
       { key: '/dashboard/env-check', icon: <SettingOutlined />, label: '环境检查' },
-      { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '集群部署 - 流程编排' },
-      { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '集群部署 - 表单' },
+      { key: '/dashboard/cluster-deploy', icon: <ClusterOutlined />, label: '流程编排' },
+      { key: '/dashboard/deploy-wizard', icon: <RocketOutlined />, label: '表单部署' },
     ],
   },
   {
@@ -97,8 +97,7 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
       { key: '/dashboard/audit-verify', icon: <AuditOutlined />, label: '审计链验证' },
       { key: '/dashboard/masking', icon: <LockOutlined />, label: '数据脱敏' },
       { key: '/dashboard/key-rotation', icon: <KeyOutlined />, label: '密钥轮换' },
-      { key: '/dashboard/license', icon: <CopyrightOutlined />, label: '许可证' },
-      { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '系统设置' },
+      { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '安全设置' },
     ],
   },
   {
@@ -107,11 +106,12 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     label: '系统管理',
     children: [
       { key: '/dashboard/data-storage', icon: <HddOutlined />, label: '数据存储' },
-      { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: 'Agent 管理' },
+      { key: '/dashboard/agent-manage', icon: <DesktopOutlined />, label: '代理管理' },
       { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
       ...(hasUserManage ? [{ key: '/dashboard/users', icon: <UserOutlined />, label: '用户与认证' }] : []),
       { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
-      { key: '/dashboard/parameter-enhanced', icon: <FileTextOutlined />, label: '参数模板（增强）' },
+      { key: '/dashboard/parameter-enhanced', icon: <FileTextOutlined />, label: '参数增强' },
+      { key: '/dashboard/license', icon: <CopyrightOutlined />, label: '许可证' },
     ],
   },
 ]
