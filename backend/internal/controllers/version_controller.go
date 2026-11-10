@@ -106,7 +106,7 @@ func (c *VersionController) ValidatePath(ctx *gin.Context) {
 		TargetVersion string `json:"target_version"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "invalid request")
+		utils.BadRequestResponse(ctx, "请求无效")
 		return
 	}
 	// Accept from_version/to_version as aliases
@@ -123,7 +123,7 @@ func (c *VersionController) ValidatePath(ctx *gin.Context) {
 		}
 	}
 	if req.SourceVersion == "" || req.TargetVersion == "" {
-		utils.BadRequestResponse(ctx, "source_version and target_version are required")
+		utils.BadRequestResponse(ctx, "缺少 source_version 与 target_version")
 		return
 	}
 	if req.SourceFlavor == "" {

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -23,13 +24,13 @@ func NewInstanceController(service *services.InstanceService) *InstanceControlle
 func (c *InstanceController) Create(ctx *gin.Context) {
 	var req services.CreateInstanceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	instance, err := c.service.Create(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create instance", err)
+		utils.InternalServerErrorResponse(ctx, "创建实例失败", err)
 		return
 	}
 
@@ -39,13 +40,13 @@ func (c *InstanceController) Create(ctx *gin.Context) {
 func (c *InstanceController) BatchCreate(ctx *gin.Context) {
 	var req services.BatchCreateInstanceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.BatchCreate(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create instances", err)
+		utils.InternalServerErrorResponse(ctx, "批量创建实例失败", err)
 		return
 	}
 
@@ -57,7 +58,7 @@ func (c *InstanceController) GetByID(ctx *gin.Context) {
 
 	instance, err := c.service.GetByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Instance not found")
+		utils.NotFoundResponse(ctx, "实例不存在")
 		return
 	}
 
@@ -76,7 +77,7 @@ func (c *InstanceController) List(ctx *gin.Context) {
 		instances, err = c.service.List(ctx.Request.Context(), limit, offset)
 	}
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list instances", err)
+		utils.InternalServerErrorResponse(ctx, "获取实例列表失败", err)
 		return
 	}
 
@@ -88,13 +89,13 @@ func (c *InstanceController) Update(ctx *gin.Context) {
 
 	var req services.UpdateInstanceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	instance, err := c.service.Update(ctx.Request.Context(), id, req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update instance", err)
+		utils.InternalServerErrorResponse(ctx, "更新实例失败", err)
 		return
 	}
 
@@ -105,7 +106,7 @@ func (c *InstanceController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 
 	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete instance", err)
+		utils.InternalServerErrorResponse(ctx, "删除实例失败", err)
 		return
 	}
 
@@ -117,7 +118,7 @@ func (c *InstanceController) DetectVersion(ctx *gin.Context) {
 
 	version, err := c.service.DetectVersion(ctx.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to detect version", err)
+		utils.InternalServerErrorResponse(ctx, "版本探测失败", err)
 		return
 	}
 
@@ -129,7 +130,11 @@ func (c *InstanceController) Deploy(ctx *gin.Context) {
 
 	result, err := c.service.Deploy(ctx.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to deploy instance", err)
+				if services.IsAgentTransportError(err) {
+			utils.ErrorResponse(ctx, http.StatusServiceUnavailable, "Agent 不在线或网络不可达，请检查主机 Agent 状态后重试", err)
+			return
+		}
+		utils.InternalServerErrorResponse(ctx, "部署实例失败", err)
 		return
 	}
 
@@ -141,7 +146,7 @@ func (c *InstanceController) HealthCheck(ctx *gin.Context) {
 
 	result, err := c.service.HealthCheck(ctx.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to check instance health", err)
+		utils.InternalServerErrorResponse(ctx, "实例健康检查失败", err)
 		return
 	}
 
@@ -173,7 +178,7 @@ func (c *InstanceController) GetReplicationStatus(ctx *gin.Context) {
 
 	result, err := c.service.ReplicationStatus(ctx.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get replication status", err)
+		utils.InternalServerErrorResponse(ctx, "获取复制状态失败", err)
 		return
 	}
 
@@ -185,13 +190,17 @@ func (c *InstanceController) AdminAction(ctx *gin.Context) {
 
 	var req services.InstanceAdminRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.AdminAction(ctx.Request.Context(), id, req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute instance admin action", err)
+				if services.IsAgentTransportError(err) {
+			utils.ErrorResponse(ctx, http.StatusServiceUnavailable, "Agent 不在线或网络不可达，请检查主机 Agent 状态后重试", err)
+			return
+		}
+		utils.InternalServerErrorResponse(ctx, "执行实例管理操作失败", err)
 		return
 	}
 
@@ -203,12 +212,12 @@ func (c *InstanceController) ForceResetPassword(ctx *gin.Context) {
 
 	var req services.ForceResetPasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	if err := c.service.ForceResetInstancePassword(ctx.Request.Context(), id, req); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to force reset password", err)
+		utils.InternalServerErrorResponse(ctx, "强制重置密码失败", err)
 		return
 	}
 
@@ -220,13 +229,13 @@ func (c *InstanceController) UpdateStatus(ctx *gin.Context) {
 
 	var req services.UpdateInstanceStatusRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	instance, err := c.service.UpdateInstanceStatus(ctx.Request.Context(), id, req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update instance status", err)
+		utils.InternalServerErrorResponse(ctx, "更新实例状态失败", err)
 		return
 	}
 
@@ -237,7 +246,11 @@ func (c *InstanceController) RecoverCluster(ctx *gin.Context) {
 	id := ctx.Param("id")
 	result, err := c.service.RecoverCluster(ctx.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to recover cluster", err)
+				if services.IsAgentTransportError(err) {
+			utils.ErrorResponse(ctx, http.StatusServiceUnavailable, "Agent 不在线或网络不可达，请检查主机 Agent 状态后重试", err)
+			return
+		}
+		utils.InternalServerErrorResponse(ctx, "集群恢复失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -251,10 +264,10 @@ func (c *InstanceController) GetCredentials(ctx *gin.Context) {
 	creds, err := c.service.GetInstanceCredentials(ctx.Request.Context(), id)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			utils.NotFoundResponse(ctx, "Instance credentials not found")
+			utils.NotFoundResponse(ctx, "实例凭据不存在")
 			return
 		}
-		utils.InternalServerErrorResponse(ctx, "Failed to retrieve instance credentials", err)
+		utils.InternalServerErrorResponse(ctx, "获取实例凭据失败", err)
 		return
 	}
 
@@ -264,13 +277,13 @@ func (c *InstanceController) GetCredentials(ctx *gin.Context) {
 func (c *InstanceController) BatchUpdatePassword(ctx *gin.Context) {
 	var req services.BatchPasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.BatchUpdatePassword(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update instance passwords", err)
+		utils.InternalServerErrorResponse(ctx, "更新实例密码失败", err)
 		return
 	}
 

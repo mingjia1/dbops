@@ -19,7 +19,7 @@ func (c *EscalationController) List(ctx *gin.Context) {
 	ruleID := ctx.Query("rule_id")
 	list, err := c.service.ListEscalations(ctx.Request.Context(), ruleID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list escalations", err)
+		utils.InternalServerErrorResponse(ctx, "获取告警升级单列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, list)
@@ -28,11 +28,11 @@ func (c *EscalationController) List(ctx *gin.Context) {
 func (c *EscalationController) Create(ctx *gin.Context) {
 	var e models.AlertEscalation
 	if err := ctx.ShouldBindJSON(&e); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	if err := c.service.CreateEscalation(ctx.Request.Context(), &e); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create escalation", err)
+		utils.InternalServerErrorResponse(ctx, "创建告警升级单失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, e)
@@ -42,7 +42,7 @@ func (c *EscalationController) Get(ctx *gin.Context) {
 	id := ctx.Param("id")
 	e, err := c.service.GetEscalation(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Escalation not found")
+		utils.NotFoundResponse(ctx, "告警升级单不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, e)
@@ -51,7 +51,7 @@ func (c *EscalationController) Get(ctx *gin.Context) {
 func (c *EscalationController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if err := c.service.DeleteEscalation(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete escalation", err)
+		utils.InternalServerErrorResponse(ctx, "删除告警升级单失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"id": id, "deleted": true})
@@ -68,7 +68,7 @@ func NewSilenceController(service *services.AlertService) *SilenceController {
 func (c *SilenceController) List(ctx *gin.Context) {
 	list, err := c.service.ListSilences(ctx.Request.Context())
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list silences", err)
+		utils.InternalServerErrorResponse(ctx, "获取静默规则列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, list)
@@ -77,11 +77,11 @@ func (c *SilenceController) List(ctx *gin.Context) {
 func (c *SilenceController) Create(ctx *gin.Context) {
 	var s models.AlertSilence
 	if err := ctx.ShouldBindJSON(&s); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	if err := c.service.CreateSilence(ctx.Request.Context(), &s); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create silence", err)
+		utils.InternalServerErrorResponse(ctx, "创建静默规则失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, s)
@@ -91,7 +91,7 @@ func (c *SilenceController) Get(ctx *gin.Context) {
 	id := ctx.Param("id")
 	s, err := c.service.GetSilence(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Silence not found")
+		utils.NotFoundResponse(ctx, "静默规则不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, s)
@@ -101,12 +101,12 @@ func (c *SilenceController) Update(ctx *gin.Context) {
 	id := ctx.Param("id")
 	var s models.AlertSilence
 	if err := ctx.ShouldBindJSON(&s); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	s.ID = id
 	if err := c.service.UpdateSilence(ctx.Request.Context(), &s); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update silence", err)
+		utils.InternalServerErrorResponse(ctx, "更新静默规则失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, s)
@@ -115,7 +115,7 @@ func (c *SilenceController) Update(ctx *gin.Context) {
 func (c *SilenceController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if err := c.service.DeleteSilence(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete silence", err)
+		utils.InternalServerErrorResponse(ctx, "删除静默规则失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"id": id, "deleted": true})

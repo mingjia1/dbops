@@ -33,7 +33,7 @@ func (c *UpgradeController) PlanUpgradePath(ctx *gin.Context) {
 		FromVersion   string `json:"from_version"`
 	}
 	if err := ctx.ShouldBindJSON(&controllerReq); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -46,7 +46,7 @@ func (c *UpgradeController) PlanUpgradePath(ctx *gin.Context) {
 		FromVersion:   controllerReq.FromVersion,
 	})
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to plan upgrade path", err)
+		utils.InternalServerErrorResponse(ctx, "规划升级路径失败", err)
 		return
 	}
 
@@ -56,13 +56,13 @@ func (c *UpgradeController) PlanUpgradePath(ctx *gin.Context) {
 func (c *UpgradeController) CheckCompatibility(ctx *gin.Context) {
 	var req services.CheckCompatibilityRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.CheckCompatibility(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to check compatibility", err)
+		utils.InternalServerErrorResponse(ctx, "兼容性检查失败", err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (c *UpgradeController) CheckCompatibility(ctx *gin.Context) {
 func (c *UpgradeController) ExecuteInPlaceUpgrade(ctx *gin.Context) {
 	var req services.ExecuteInPlaceUpgradeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -82,7 +82,7 @@ func (c *UpgradeController) ExecuteInPlaceUpgrade(ctx *gin.Context) {
 			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
 			return
 		}
-		utils.InternalServerErrorResponse(ctx, "Failed to execute in-place upgrade", err)
+		utils.InternalServerErrorResponse(ctx, "执行原地升级失败", err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (c *UpgradeController) ExecuteInPlaceUpgrade(ctx *gin.Context) {
 func (c *UpgradeController) ExecuteLogicalMigration(ctx *gin.Context) {
 	var req services.ExecuteLogicalMigrationRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -102,7 +102,7 @@ func (c *UpgradeController) ExecuteLogicalMigration(ctx *gin.Context) {
 			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
 			return
 		}
-		utils.InternalServerErrorResponse(ctx, "Failed to execute logical migration", err)
+		utils.InternalServerErrorResponse(ctx, "执行逻辑迁移失败", err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (c *UpgradeController) ExecuteLogicalMigration(ctx *gin.Context) {
 func (c *UpgradeController) ExecuteRollingUpgrade(ctx *gin.Context) {
 	var req services.ExecuteRollingUpgradeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -122,7 +122,7 @@ func (c *UpgradeController) ExecuteRollingUpgrade(ctx *gin.Context) {
 			utils.ErrorResponse(ctx, utils.UpgradeHTTPStatus(ue), ue.Message, nil)
 			return
 		}
-		utils.InternalServerErrorResponse(ctx, "Failed to execute rolling upgrade", err)
+		utils.InternalServerErrorResponse(ctx, "执行滚动升级失败", err)
 		return
 	}
 
@@ -132,13 +132,13 @@ func (c *UpgradeController) ExecuteRollingUpgrade(ctx *gin.Context) {
 func (c *UpgradeController) RollbackUpgrade(ctx *gin.Context) {
 	var req services.RollbackUpgradeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.RollbackUpgrade(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to rollback upgrade", err)
+		utils.InternalServerErrorResponse(ctx, "回滚升级失败", err)
 		return
 	}
 
@@ -154,7 +154,7 @@ func (c *UpgradeController) ListHistory(ctx *gin.Context) {
 		"upgrade_rollback",
 	}, limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list upgrade history", err)
+		utils.InternalServerErrorResponse(ctx, "获取升级历史失败", err)
 		return
 	}
 	history := make([]UpgradeHistoryItem, 0, len(tasks))
@@ -169,7 +169,7 @@ func (c *UpgradeController) GetUpgradeByID(ctx *gin.Context) {
 
 	task, err := c.taskRepo.GetByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Upgrade task not found")
+		utils.NotFoundResponse(ctx, "升级任务不存在")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (c *UpgradeController) GenerateUpgradeReport(ctx *gin.Context) {
 
 	result, err := c.service.GenerateUpgradeReport(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to generate upgrade report", err)
+		utils.InternalServerErrorResponse(ctx, "生成升级报告失败", err)
 		return
 	}
 

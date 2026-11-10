@@ -17,13 +17,13 @@ func NewParameterTemplateController(service *services.ParameterTemplateService) 
 func (c *ParameterTemplateController) Create(ctx *gin.Context) {
 	var req services.CreateParameterTemplateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	template, err := c.service.Create(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create parameter template", err)
+		utils.InternalServerErrorResponse(ctx, "创建参数模板失败", err)
 		return
 	}
 
@@ -35,7 +35,7 @@ func (c *ParameterTemplateController) GetByID(ctx *gin.Context) {
 
 	template, err := c.service.GetByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Parameter template not found")
+		utils.NotFoundResponse(ctx, "参数模板不存在")
 		return
 	}
 
@@ -47,7 +47,7 @@ func (c *ParameterTemplateController) List(ctx *gin.Context) {
 
 	templates, err := c.service.List(ctx.Request.Context(), limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list parameter templates", err)
+		utils.InternalServerErrorResponse(ctx, "获取参数模板列表失败", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (c *ParameterTemplateController) List(ctx *gin.Context) {
 func (c *ParameterTemplateController) ListPresets(ctx *gin.Context) {
 	templates, err := c.service.ListPresets(ctx.Request.Context())
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list preset templates", err)
+		utils.InternalServerErrorResponse(ctx, "获取预置模板列表失败", err)
 		return
 	}
 
@@ -69,13 +69,13 @@ func (c *ParameterTemplateController) Update(ctx *gin.Context) {
 
 	var req services.UpdateParameterTemplateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	template, err := c.service.Update(ctx.Request.Context(), id, req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update parameter template", err)
+		utils.InternalServerErrorResponse(ctx, "更新参数模板失败", err)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (c *ParameterTemplateController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 
 	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete parameter template", err)
+		utils.InternalServerErrorResponse(ctx, "删除参数模板失败", err)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (c *ParameterTemplateController) GetParameters(ctx *gin.Context) {
 
 	parameters, err := c.service.GetParameters(ctx.Request.Context(), id, versionPtr)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get parameters", err)
+		utils.InternalServerErrorResponse(ctx, "获取参数失败", err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (c *ParameterTemplateController) Validate(ctx *gin.Context) {
 
 	var req services.ValidateParametersRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -124,7 +124,7 @@ func (c *ParameterTemplateController) Validate(ctx *gin.Context) {
 
 	result, err := c.service.ValidateParameters(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to validate parameters", err)
+		utils.InternalServerErrorResponse(ctx, "参数校验失败", err)
 		return
 	}
 
@@ -134,7 +134,7 @@ func (c *ParameterTemplateController) Validate(ctx *gin.Context) {
 func (c *ParameterTemplateController) Recommend(ctx *gin.Context) {
 	var req services.RecommendParametersRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -153,7 +153,7 @@ func (c *ParameterTemplateController) Recommend(ctx *gin.Context) {
 
 	result, err := c.service.RecommendParameters(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to generate recommendations", err)
+		utils.InternalServerErrorResponse(ctx, "生成升级建议失败", err)
 		return
 	}
 
@@ -163,13 +163,13 @@ func (c *ParameterTemplateController) Recommend(ctx *gin.Context) {
 func (c *ParameterTemplateController) Apply(ctx *gin.Context) {
 	var req services.ApplyParameterTemplateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.Apply(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to apply parameter template", err)
+		utils.InternalServerErrorResponse(ctx, "应用参数模板失败", err)
 		return
 	}
 

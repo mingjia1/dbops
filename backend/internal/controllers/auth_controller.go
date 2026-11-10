@@ -20,7 +20,7 @@ func NewAuthController(authService *services.AuthService) *AuthController {
 func (c *AuthController) Login(ctx *gin.Context) {
 	var req services.LoginRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	req.IPAddress = ctx.ClientIP()
@@ -28,7 +28,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 
 	resp, err := c.authService.Login(ctx.Request.Context(), req)
 	if err != nil {
-		utils.UnauthorizedResponse(ctx, "Authentication failed")
+		utils.UnauthorizedResponse(ctx, "认证失败")
 		return
 	}
 
@@ -53,7 +53,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	req.Role = "operator"
@@ -79,7 +79,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 func (c *AuthController) Me(ctx *gin.Context) {
 	user, err := c.authService.CurrentUser(requestContext(ctx), ctx.GetString("user_id"))
 	if err != nil {
-		utils.UnauthorizedResponse(ctx, "Invalid user session")
+		utils.UnauthorizedResponse(ctx, "用户会话无效")
 		return
 	}
 	utils.SuccessResponse(ctx, user)
@@ -88,7 +88,7 @@ func (c *AuthController) Me(ctx *gin.Context) {
 func (c *AuthController) ChangePassword(ctx *gin.Context) {
 	var req services.ChangePasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	userID := ctx.GetString("user_id")
@@ -102,7 +102,7 @@ func (c *AuthController) ChangePassword(ctx *gin.Context) {
 func (c *AuthController) ResetAllPasswords(ctx *gin.Context) {
 	var req services.ResetAllPasswordsRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	updated, err := c.authService.ResetAllPasswords(requestContext(ctx), req)
@@ -152,7 +152,7 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 		token = cookieToken
 	}
 	if token == "" {
-		utils.UnauthorizedResponse(ctx, "Missing authorization token")
+		utils.UnauthorizedResponse(ctx, "缺少认证令牌")
 		ctx.Abort()
 		return
 	}
@@ -170,14 +170,14 @@ func (c *AuthController) ValidateToken(ctx *gin.Context) {
 		claims, err = c.authService.ValidateToken(token)
 	}
 	if err != nil {
-		utils.UnauthorizedResponse(ctx, "Invalid token")
+		utils.UnauthorizedResponse(ctx, "令牌无效")
 		ctx.Abort()
 		return
 	}
 
 	setClaimsContext(ctx, claims)
 	if claims.MustChangePassword && !isPasswordChangeAllowedPath(ctx.Request.URL.Path) {
-		utils.ErrorResponse(ctx, http.StatusForbidden, "Password change required before continuing", nil)
+		utils.ErrorResponse(ctx, http.StatusForbidden, "需要先修改密码后才能继续操作", nil)
 		ctx.Abort()
 		return
 	}
@@ -193,7 +193,7 @@ func isPasswordChangeAllowedPath(path string) bool {
 func (c *AuthController) IssueSSETicket(ctx *gin.Context) {
 	claimsVal, ok := ctx.Get("user_id")
 	if !ok || claimsVal == nil {
-		utils.UnauthorizedResponse(ctx, "Missing authorization")
+		utils.UnauthorizedResponse(ctx, "缺少认证信息")
 		return
 	}
 	userID := ctx.GetString("user_id")

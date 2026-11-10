@@ -19,7 +19,7 @@ func (c *AlertTemplateController) List(ctx *gin.Context) {
 	category := ctx.Query("category")
 	templates, err := c.service.ListAlertTemplates(ctx.Request.Context(), category)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list alert templates", err)
+		utils.InternalServerErrorResponse(ctx, "获取告警模板列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, templates)
@@ -28,11 +28,11 @@ func (c *AlertTemplateController) List(ctx *gin.Context) {
 func (c *AlertTemplateController) Create(ctx *gin.Context) {
 	var tpl models.AlertTemplate
 	if err := ctx.ShouldBindJSON(&tpl); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	if err := c.service.CreateAlertTemplate(ctx.Request.Context(), &tpl); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create alert template", err)
+		utils.InternalServerErrorResponse(ctx, "创建告警模板失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, tpl)
@@ -42,7 +42,7 @@ func (c *AlertTemplateController) Get(ctx *gin.Context) {
 	id := ctx.Param("id")
 	tpl, err := c.service.GetAlertTemplate(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Alert template not found")
+		utils.NotFoundResponse(ctx, "告警模板不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, tpl)
@@ -51,7 +51,7 @@ func (c *AlertTemplateController) Get(ctx *gin.Context) {
 func (c *AlertTemplateController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if err := c.service.DeleteAlertTemplate(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete alert template", err)
+		utils.InternalServerErrorResponse(ctx, "删除告警模板失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"id": id, "deleted": true})

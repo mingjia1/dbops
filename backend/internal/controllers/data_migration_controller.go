@@ -37,7 +37,7 @@ func (c *DataMigrationController) GetStatus(ctx *gin.Context) {
 	// 谎报 dialect (例如 backend 跑 SQLite, GetStatus 这次能连 MySQL 返 mysql).
 	// 修: 直接复用 running backend 的 db 实例, 拿到的 dialect 与启动日志一致.
 	if c.db == nil {
-		utils.InternalServerErrorResponse(ctx, "db not initialized", nil)
+		utils.InternalServerErrorResponse(ctx, "数据库未初始化", nil)
 		return
 	}
 	db := c.db
@@ -83,7 +83,7 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 	sqlitePath := c.resolveSQLitePath()
 	db, err := repositories.NewDatabase(c.cfg.DatabaseURL, sqlitePath)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "open db failed", err)
+		utils.InternalServerErrorResponse(ctx, "打开数据库失败", err)
 		return
 	}
 	defer db.Close()
@@ -91,7 +91,7 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 	importer := repositories.NewJSONImporter(c.cfg.DataDir)
 	n, err := importer.ImportAll(context.Background(), db)
 	if err != nil {
-		utils.ErrorResponse(ctx, 500, "import failed", err)
+		utils.ErrorResponse(ctx, 500, "导入失败", err)
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{
@@ -104,21 +104,21 @@ func (c *DataMigrationController) ImportLegacyJSON(ctx *gin.Context) {
 // MigrateToMySQL 触发 SQLite -> MySQL 全量迁移
 func (c *DataMigrationController) MigrateToMySQL(ctx *gin.Context) {
 	if c.cfg.DatabaseURL == "" {
-		utils.BadRequestResponse(ctx, "mysql DSN is empty; please set database_url in config.yaml first")
+		utils.BadRequestResponse(ctx, "MySQL DSN 为空，请先在 config.yaml 中设置 database_url")
 		return
 	}
 	sqlitePath := c.resolveSQLitePath()
 
 	src, err := repositories.NewDatabase("", sqlitePath)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "open sqlite failed", err)
+		utils.InternalServerErrorResponse(ctx, "打开 SQLite 失败", err)
 		return
 	}
 	defer src.Close()
 
 	dst, err := repositories.NewDatabase(c.cfg.DatabaseURL, "")
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "open mysql failed", err)
+		utils.InternalServerErrorResponse(ctx, "打开 MySQL 失败", err)
 		return
 	}
 	defer dst.Close()
@@ -126,7 +126,7 @@ func (c *DataMigrationController) MigrateToMySQL(ctx *gin.Context) {
 	mig := repositories.NewMigrator()
 	res, err := mig.Migrate(src, dst)
 	if err != nil {
-		utils.ErrorResponse(ctx, 500, "migration failed", err)
+		utils.ErrorResponse(ctx, 500, "迁移失败", err)
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{

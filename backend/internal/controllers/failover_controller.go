@@ -19,7 +19,7 @@ func NewFailoverController(service *services.FailoverService) *FailoverControlle
 func (c *FailoverController) ExecuteAutoFailover(ctx *gin.Context) {
 	var req services.FailoverRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -30,7 +30,7 @@ func (c *FailoverController) ExecuteAutoFailover(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteAutoFailover(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute auto failover", err)
+		utils.InternalServerErrorResponse(ctx, "执行自动故障切换失败", err)
 		return
 	}
 
@@ -40,7 +40,7 @@ func (c *FailoverController) ExecuteAutoFailover(ctx *gin.Context) {
 func (c *FailoverController) ExecuteManualFailover(ctx *gin.Context) {
 	var req services.FailoverRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -51,7 +51,7 @@ func (c *FailoverController) ExecuteManualFailover(ctx *gin.Context) {
 
 	result, err := c.service.ExecuteManualFailover(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute manual failover", err)
+		utils.InternalServerErrorResponse(ctx, "执行手动故障切换失败", err)
 		return
 	}
 
@@ -61,13 +61,13 @@ func (c *FailoverController) ExecuteManualFailover(ctx *gin.Context) {
 func (c *FailoverController) PreflightFailover(ctx *gin.Context) {
 	var req services.FailoverPreflightRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.PreflightFailover(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to execute preflight check", err)
+		utils.InternalServerErrorResponse(ctx, "执行预检失败", err)
 		return
 	}
 
@@ -77,19 +77,19 @@ func (c *FailoverController) PreflightFailover(ctx *gin.Context) {
 func (c *FailoverController) GetClusterStatus(ctx *gin.Context) {
 	clusterID := ctx.Query("cluster_id")
 	if clusterID == "" {
-		utils.BadRequestResponse(ctx, "cluster_id is required")
+		utils.BadRequestResponse(ctx, "缺少 cluster_id")
 		return
 	}
 
 	master, err := c.service.GetCurrentMaster(ctx.Request.Context(), clusterID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get current master", err)
+		utils.InternalServerErrorResponse(ctx, "获取当前主节点失败", err)
 		return
 	}
 
 	slaves, err := c.service.GetSlaves(ctx.Request.Context(), clusterID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get slaves", err)
+		utils.InternalServerErrorResponse(ctx, "获取从节点列表失败", err)
 		return
 	}
 
@@ -102,7 +102,7 @@ func (c *FailoverController) GetClusterStatus(ctx *gin.Context) {
 
 	history, err := c.service.GetFailoverHistory(ctx.Request.Context(), clusterID, historyLimit)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get failover history", err)
+		utils.InternalServerErrorResponse(ctx, "获取故障切换历史失败", err)
 		return
 	}
 

@@ -47,7 +47,7 @@ func (c *PluginController) List(ctx *gin.Context) {
 func (c *PluginController) Get(ctx *gin.Context) {
 	name := ctx.Param("name")
 	if name == "" {
-		utils.BadRequestResponse(ctx, "plugin name is required")
+		utils.BadRequestResponse(ctx, "缺少插件名称")
 		return
 	}
 

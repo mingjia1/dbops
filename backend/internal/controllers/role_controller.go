@@ -19,7 +19,7 @@ func NewRoleController(service *services.RoleService) *RoleController {
 func (c *RoleController) List(ctx *gin.Context) {
 	roles, err := c.service.List(requestContext(ctx))
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list roles", err)
+		utils.InternalServerErrorResponse(ctx, "获取角色列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, roles)
@@ -28,7 +28,7 @@ func (c *RoleController) List(ctx *gin.Context) {
 func (c *RoleController) Create(ctx *gin.Context) {
 	var req services.CreateRoleRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	role, err := c.service.Create(requestContext(ctx), req)
@@ -42,7 +42,7 @@ func (c *RoleController) Create(ctx *gin.Context) {
 func (c *RoleController) Update(ctx *gin.Context) {
 	var req services.UpdateRoleRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	role, err := c.service.Update(requestContext(ctx), ctx.Param("id"), req)

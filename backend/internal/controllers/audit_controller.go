@@ -53,7 +53,7 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 	if startDate != "" {
 		t, parseErr := parseAuditTime(startDate, false)
 		if parseErr != nil {
-			utils.BadRequestResponse(ctx, "Invalid start_date")
+			utils.BadRequestResponse(ctx, "start_date 参数无效")
 			return
 		}
 		filter.StartTime = &t
@@ -61,7 +61,7 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 	if endDate != "" {
 		t, parseErr := parseAuditTime(endDate, true)
 		if parseErr != nil {
-			utils.BadRequestResponse(ctx, "Invalid end_date")
+			utils.BadRequestResponse(ctx, "end_date 参数无效")
 			return
 		}
 		filter.EndTime = &t
@@ -69,7 +69,7 @@ func (c *AuditController) ListAuditLogs(ctx *gin.Context) {
 
 	result, err := c.service.ListAuditLogsFiltered(ctx.Request.Context(), filter, limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list audit logs", err)
+		utils.InternalServerErrorResponse(ctx, "获取审计日志列表失败", err)
 		return
 	}
 
@@ -81,7 +81,7 @@ func (c *AuditController) GetAuditLogByID(ctx *gin.Context) {
 
 	auditLog, err := c.service.GetAuditLogByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Audit log not found")
+		utils.NotFoundResponse(ctx, "审计日志不存在")
 		return
 	}
 
@@ -91,13 +91,13 @@ func (c *AuditController) GetAuditLogByID(ctx *gin.Context) {
 func (c *AuditController) CreateAuditLog(ctx *gin.Context) {
 	var req services.CreateAuditLogRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	auditLog, err := c.service.CreateAuditLog(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create audit log", err)
+		utils.InternalServerErrorResponse(ctx, "创建审计日志失败", err)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (c *AuditController) VerifyChain(ctx *gin.Context) {
 		id = ctx.Query("id")
 	}
 	if id == "" {
-		utils.BadRequestResponse(ctx, "id is required")
+		utils.BadRequestResponse(ctx, "缺少 id")
 		return
 	}
 
@@ -120,7 +120,7 @@ func (c *AuditController) VerifyChain(ctx *gin.Context) {
 			utils.NotFoundResponse(ctx, err.Error())
 			return
 		}
-		utils.InternalServerErrorResponse(ctx, "Chain verification failed", err)
+		utils.InternalServerErrorResponse(ctx, "审计链校验失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"valid": ok, "message": msg})

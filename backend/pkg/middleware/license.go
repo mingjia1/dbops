@@ -24,7 +24,7 @@ func RequireFeature(checker FeatureChecker, feature license.Feature) gin.Handler
 			"code":    403,
 			"error":   "feature_not_licensed",
 			"feature": string(feature),
-			"message": "This feature requires " + string(feature) + " which is not available in your current license tier. Please upgrade to Enterprise or Ultimate Edition.",
+			"message": "该功能需要 " + string(feature) + "，当前许可证版本不支持。请升级到企业版或旗舰版。",
 		})
 		ctx.Abort()
 	}

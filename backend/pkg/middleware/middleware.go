@@ -43,21 +43,21 @@ func ErrorHandler() gin.HandlerFunc {
 			}
 			err := ctx.Errors.Last()
 			status := http.StatusInternalServerError
-			message := "Internal server error"
+			message := "服务器内部错误"
 			errMsg := err.Error()
 			switch {
 			case strings.Contains(errMsg, "validation"):
 				status = http.StatusBadRequest
-				message = "Invalid request parameters"
+				message = "请求参数有误"
 			case strings.Contains(errMsg, "unauthorized") || strings.Contains(errMsg, "token"):
 				status = http.StatusUnauthorized
-				message = "Authentication required"
+				message = "需要登录认证"
 			case strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "permission"):
 				status = http.StatusForbidden
-				message = "Permission denied"
+				message = "无权限执行该操作"
 			case strings.Contains(errMsg, "not found"):
 				status = http.StatusNotFound
-				message = "Resource not found"
+				message = "资源不存在"
 			}
 			ctx.JSON(status, gin.H{
 				"code":     status,
@@ -109,7 +109,7 @@ func RequirePermission(permission string) gin.HandlerFunc {
 		if role == "" {
 			ctx.JSON(http.StatusUnauthorized, gin.H{
 				"code":    401,
-				"message": "Unauthorized",
+				"message": "登录已过期，请重新登录",
 			})
 			ctx.Abort()
 			return
@@ -153,7 +153,7 @@ func RequirePermission(permission string) gin.HandlerFunc {
 		if !hasPermission {
 			ctx.JSON(http.StatusForbidden, gin.H{
 				"code":    403,
-				"message": "Permission denied",
+				"message": "无权限执行该操作",
 			})
 			ctx.Abort()
 			return

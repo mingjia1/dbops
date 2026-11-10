@@ -21,7 +21,7 @@ func (c *UserController) List(ctx *gin.Context) {
 	limit, offset := parsePagination(ctx)
 	users, err := c.service.List(requestContext(ctx), limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list users", err)
+		utils.InternalServerErrorResponse(ctx, "获取用户列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, users)
@@ -30,7 +30,7 @@ func (c *UserController) List(ctx *gin.Context) {
 func (c *UserController) GetByID(ctx *gin.Context) {
 	user, err := c.service.GetByID(requestContext(ctx), ctx.Param("id"))
 	if err != nil {
-		utils.NotFoundResponse(ctx, "User not found")
+		utils.NotFoundResponse(ctx, "用户不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, user)
@@ -39,7 +39,7 @@ func (c *UserController) GetByID(ctx *gin.Context) {
 func (c *UserController) Create(ctx *gin.Context) {
 	var req services.CreateUserRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	user, err := c.service.Create(requestContext(ctx), req)
@@ -53,7 +53,7 @@ func (c *UserController) Create(ctx *gin.Context) {
 func (c *UserController) Update(ctx *gin.Context) {
 	var req services.UpdateUserRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	user, err := c.service.Update(requestContext(ctx), ctx.Param("id"), req)
@@ -67,11 +67,11 @@ func (c *UserController) Update(ctx *gin.Context) {
 func (c *UserController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if ctx.GetString("user_id") == id {
-		utils.ErrorResponse(ctx, http.StatusBadRequest, "cannot delete yourself", nil)
+		utils.ErrorResponse(ctx, http.StatusBadRequest, "不能删除自己", nil)
 		return
 	}
 	if err := c.service.Delete(requestContext(ctx), id); err != nil {
-		utils.ErrorResponse(ctx, http.StatusBadRequest, "Failed to delete user", nil)
+		utils.ErrorResponse(ctx, http.StatusBadRequest, "删除用户失败", nil)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"message": "User deleted successfully"})
@@ -88,7 +88,7 @@ func (c *UserController) Enable(ctx *gin.Context) {
 func (c *UserController) Disable(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if ctx.GetString("user_id") == id {
-		utils.ErrorResponse(ctx, http.StatusBadRequest, "cannot disable yourself", nil)
+		utils.ErrorResponse(ctx, http.StatusBadRequest, "不能停用自己", nil)
 		return
 	}
 	if err := c.service.Disable(requestContext(ctx), id); err != nil {
@@ -101,7 +101,7 @@ func (c *UserController) Disable(ctx *gin.Context) {
 func (c *UserController) ResetPassword(ctx *gin.Context) {
 	var req services.ResetUserPasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	if err := c.service.ResetPassword(requestContext(ctx), ctx.Param("id"), req); err != nil {
@@ -114,7 +114,7 @@ func (c *UserController) ResetPassword(ctx *gin.Context) {
 func (c *UserController) UpdateRoles(ctx *gin.Context) {
 	var req services.UpdateUserRolesRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	user, err := c.service.UpdateRoles(requestContext(ctx), ctx.Param("id"), req)

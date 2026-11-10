@@ -19,7 +19,7 @@ func (c *TopologyController) GetInstanceTopology(ctx *gin.Context) {
 
 	topology, err := c.service.GetInstanceTopology(ctx.Request.Context(), instanceID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Instance topology not found")
+		utils.NotFoundResponse(ctx, "实例拓扑不存在")
 		return
 	}
 
@@ -31,7 +31,7 @@ func (c *TopologyController) GetClusterTopology(ctx *gin.Context) {
 
 	topology, err := c.service.GetClusterTopology(ctx.Request.Context(), clusterID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Cluster topology not found")
+		utils.NotFoundResponse(ctx, "集群拓扑不存在")
 		return
 	}
 
@@ -43,7 +43,7 @@ func (c *TopologyController) GetTopologyGraph(ctx *gin.Context) {
 
 	graph, err := c.service.BuildTopologyGraph(ctx.Request.Context(), clusterID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to build topology graph", err)
+		utils.InternalServerErrorResponse(ctx, "构建拓扑图失败", err)
 		return
 	}
 

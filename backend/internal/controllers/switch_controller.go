@@ -25,12 +25,12 @@ func NewSwitchController(service *services.SwitchService) *SwitchController {
 func (c *SwitchController) SingleToMHA(ctx *gin.Context) {
 	var req services.SwitchClusterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	result, err := c.service.SingleToMHA(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Switch failed", err)
+		utils.InternalServerErrorResponse(ctx, "切换失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -39,12 +39,12 @@ func (c *SwitchController) SingleToMHA(ctx *gin.Context) {
 func (c *SwitchController) SingleToMGR(ctx *gin.Context) {
 	var req services.SwitchClusterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	result, err := c.service.SingleToMGR(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Switch failed", err)
+		utils.InternalServerErrorResponse(ctx, "切换失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -53,12 +53,12 @@ func (c *SwitchController) SingleToMGR(ctx *gin.Context) {
 func (c *SwitchController) SingleToPXC(ctx *gin.Context) {
 	var req services.SwitchClusterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	result, err := c.service.SingleToPXC(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Switch failed", err)
+		utils.InternalServerErrorResponse(ctx, "切换失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -67,12 +67,12 @@ func (c *SwitchController) SingleToPXC(ctx *gin.Context) {
 func (c *SwitchController) SwitchRoleWithinCluster(ctx *gin.Context) {
 	var req services.RoleSwitchRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 	result, err := c.service.SwitchRoleWithinCluster(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Role switch failed", err)
+		utils.InternalServerErrorResponse(ctx, "角色切换失败", err)
 		return
 	}
 	if result != nil && strings.EqualFold(result.Status, "failed") {
@@ -85,7 +85,7 @@ func (c *SwitchController) SwitchRoleWithinCluster(ctx *gin.Context) {
 func (c *SwitchController) ListRoleSwitchHistory(ctx *gin.Context) {
 	clusterID := ctx.Param("cluster_id")
 	if clusterID == "" {
-		utils.BadRequestResponse(ctx, "cluster_id is required")
+		utils.BadRequestResponse(ctx, "缺少 cluster_id")
 		return
 	}
 	limit := defaultRoleSwitchHistoryLimit
@@ -97,7 +97,7 @@ func (c *SwitchController) ListRoleSwitchHistory(ctx *gin.Context) {
 
 	history, err := c.service.ListRoleSwitchHistory(ctx.Request.Context(), clusterID, limit)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list role switch history", err)
+		utils.InternalServerErrorResponse(ctx, "获取角色切换历史失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, history)

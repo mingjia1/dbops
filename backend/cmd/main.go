@@ -42,18 +42,18 @@ import (
 func requireAgentToken(agentToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if agentToken == "" {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "agent_token not configured"})
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "agent_token 未配置"})
 			return
 		}
 		const prefix = "Bearer "
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, prefix) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing bearer token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "缺少认证令牌"})
 			return
 		}
 		token := strings.TrimPrefix(header, prefix)
 		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "invalid bearer token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "认证令牌无效"})
 			return
 		}
 		c.Next()
@@ -409,8 +409,13 @@ func main() {
 	// P1-A: 商业版功能门禁接线. 此前 pkg/middleware/license.go 的 RequireFeature
 	// 全仓零调用 —— EE/UE 功能差异只有 flavor 闸门, license 层形同虚设.
 	// 这里统一用请求 context 查 license (可取消/带超时).
+	// admin 角色不受许可证版本限制: 认证中间件已在 ctx 写入 role,
+	// 平台内置管理员始终具备全部商业特性 (AI/故障注入/脱敏/密钥轮换等)。
 	requireFeature := func(feature license.Feature) gin.HandlerFunc {
 		return middleware.RequireFeature(func(ctx *gin.Context, f license.Feature) bool {
+			if ctx.GetString("role") == "admin" {
+				return true
+			}
 			return licenseService.HasFeature(ctx.Request.Context(), f)
 		}, feature)
 	}
@@ -851,7 +856,7 @@ func main() {
 						URL string `json:"url"`
 					}
 					if err := c.ShouldBindJSON(&body); err != nil || body.URL == "" {
-						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
+						c.JSON(400, gin.H{"code": 400, "message": "缺少 url 参数"})
 						return
 					}
 					// P0-3: SSRF 防护 - 仅 http/https, 拒绝私网/环回地址.
@@ -888,7 +893,7 @@ func main() {
 				relay.POST("/upload", func(c *gin.Context) {
 					file, header, err := c.Request.FormFile("file")
 					if err != nil {
-						c.JSON(400, gin.H{"code": 400, "message": "file is required"})
+						c.JSON(400, gin.H{"code": 400, "message": "缺少 file 参数"})
 						return
 					}
 					defer file.Close()
@@ -899,7 +904,7 @@ func main() {
 						return
 					}
 					if err := os.MkdirAll(destDir, 0o755); err != nil {
-						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
+						c.JSON(500, gin.H{"code": 500, "message": "创建目录失败: " + err.Error()})
 						return
 					}
 					destPath, fileErr := utils.SafeJoinUnder(destDir, filepath.Base(header.Filename))
@@ -909,7 +914,7 @@ func main() {
 					}
 					out, err := os.Create(destPath)
 					if err != nil {
-						c.JSON(500, gin.H{"code": 500, "message": "create file failed: " + err.Error()})
+						c.JSON(500, gin.H{"code": 500, "message": "创建文件失败: " + err.Error()})
 						return
 					}
 					defer out.Close()
@@ -944,7 +949,7 @@ func main() {
 						return
 					}
 					if err := os.MkdirAll(destDir, 0o755); err != nil {
-						c.JSON(500, gin.H{"code": 500, "message": "create dir failed: " + err.Error()})
+						c.JSON(500, gin.H{"code": 500, "message": "创建目录失败: " + err.Error()})
 						return
 					}
 					destPath, fileErr := utils.SafeJoinUnder(destDir, filepath.Base(body.Filename))
@@ -977,7 +982,7 @@ func main() {
 					}
 					out, err := os.Create(destPath)
 					if err != nil {
-						c.JSON(500, gin.H{"code": 500, "message": "create file failed: " + err.Error()})
+						c.JSON(500, gin.H{"code": 500, "message": "创建文件失败: " + err.Error()})
 						return
 					}
 					written, err := io.Copy(out, resp.Body)
@@ -1033,7 +1038,7 @@ func main() {
 						Extensions []string `json:"extensions"`
 					}
 					if err := c.ShouldBindJSON(&body); err != nil || body.URL == "" {
-						c.JSON(400, gin.H{"code": 400, "message": "url is required"})
+						c.JSON(400, gin.H{"code": 400, "message": "缺少 url 参数"})
 						return
 					}
 					// P0-3: SSRF 防护.

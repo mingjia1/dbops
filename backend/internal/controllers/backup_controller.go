@@ -17,13 +17,13 @@ func NewBackupController(service *services.BackupService) *BackupController {
 func (c *BackupController) CreatePolicy(ctx *gin.Context) {
 	var req services.CreateBackupPolicyRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	policyID, err := c.service.CreatePolicy(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create backup policy", err)
+		utils.InternalServerErrorResponse(ctx, "创建备份策略失败", err)
 		return
 	}
 
@@ -35,7 +35,7 @@ func (c *BackupController) ListPolicies(ctx *gin.Context) {
 
 	policies, err := c.service.ListPolicies(ctx.Request.Context(), instanceID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list backup policies", err)
+		utils.InternalServerErrorResponse(ctx, "获取备份策略列表失败", err)
 		return
 	}
 
@@ -46,13 +46,13 @@ func (c *BackupController) UpdatePolicy(ctx *gin.Context) {
 	id := ctx.Param("id")
 	var req services.UpdateBackupPolicyRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	policy, err := c.service.UpdatePolicy(ctx.Request.Context(), id, req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to update backup policy", err)
+		utils.InternalServerErrorResponse(ctx, "更新备份策略失败", err)
 		return
 	}
 
@@ -62,7 +62,7 @@ func (c *BackupController) UpdatePolicy(ctx *gin.Context) {
 func (c *BackupController) DeletePolicy(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if err := c.service.DeletePolicy(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete backup policy", err)
+		utils.InternalServerErrorResponse(ctx, "删除备份策略失败", err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (c *BackupController) DeletePolicy(ctx *gin.Context) {
 func (c *BackupController) ExecuteBackup(ctx *gin.Context) {
 	var req services.ExecuteBackupRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -90,7 +90,7 @@ func (c *BackupController) ListBackups(ctx *gin.Context) {
 
 	backups, err := c.service.ListBackups(ctx.Request.Context(), instanceID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list backups", err)
+		utils.InternalServerErrorResponse(ctx, "获取备份列表失败", err)
 		return
 	}
 
@@ -102,13 +102,13 @@ func (c *BackupController) ScanBackups(ctx *gin.Context) {
 		InstanceID string `json:"instance_id" binding:"required"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.ScanBackups(ctx.Request.Context(), req.InstanceID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to scan backups", err)
+		utils.InternalServerErrorResponse(ctx, "扫描备份失败", err)
 		return
 	}
 
@@ -118,13 +118,13 @@ func (c *BackupController) ScanBackups(ctx *gin.Context) {
 func (c *BackupController) RestoreBackup(ctx *gin.Context) {
 	var req services.RestoreBackupRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
 	result, err := c.service.RestoreBackup(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to restore backup", err)
+		utils.InternalServerErrorResponse(ctx, "恢复备份失败", err)
 		return
 	}
 
@@ -134,7 +134,7 @@ func (c *BackupController) RestoreBackup(ctx *gin.Context) {
 func (c *BackupController) DeleteBackupRecord(ctx *gin.Context) {
 	id := ctx.Param("id")
 	if err := c.service.DeleteBackupRecord(ctx.Request.Context(), id); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete backup record", err)
+		utils.InternalServerErrorResponse(ctx, "删除备份记录失败", err)
 		return
 	}
 

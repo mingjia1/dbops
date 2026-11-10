@@ -29,7 +29,7 @@ func (c *KeyRotationController) RotateKey(ctx *gin.Context) {
 		Note   string `json:"note"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "new_key is required")
+		utils.BadRequestResponse(ctx, "缺少 new_key")
 		return
 	}
 
@@ -38,7 +38,7 @@ func (c *KeyRotationController) RotateKey(ctx *gin.Context) {
 
 	count, err := c.service.RotateKey(ctx.Request.Context(), c.currentKey, req.NewKey, req.Note, opStr)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Key rotation failed", err)
+		utils.InternalServerErrorResponse(ctx, "密钥轮换失败", err)
 		return
 	}
 
@@ -52,7 +52,7 @@ func (c *KeyRotationController) RotateKey(ctx *gin.Context) {
 func (c *KeyRotationController) ListKeyVersions(ctx *gin.Context) {
 	versions, err := c.service.ListKeyVersions(ctx.Request.Context())
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list key versions", err)
+		utils.InternalServerErrorResponse(ctx, "获取密钥版本列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, versions)

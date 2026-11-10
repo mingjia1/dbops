@@ -17,7 +17,7 @@ func NewSettingsController(repo *repositories.PlatformSettingsRepository) *Setti
 func (c *SettingsController) GetAll(ctx *gin.Context) {
 	settings, err := c.repo.List(ctx.Request.Context())
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get settings", err)
+		utils.InternalServerErrorResponse(ctx, "获取设置失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, settings)
@@ -27,7 +27,7 @@ func (c *SettingsController) Get(ctx *gin.Context) {
 	key := ctx.Param("key")
 	value, err := c.repo.Get(ctx.Request.Context(), key)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Setting not found")
+		utils.NotFoundResponse(ctx, "设置项不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"key": key, "value": value})
@@ -39,11 +39,11 @@ func (c *SettingsController) Set(ctx *gin.Context) {
 		Value string `json:"value"`
 	}
 	if err := ctx.ShouldBindJSON(&body); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request")
+		utils.BadRequestResponse(ctx, "请求无效")
 		return
 	}
 	if err := c.repo.Set(ctx.Request.Context(), key, body.Value); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to save setting", err)
+		utils.InternalServerErrorResponse(ctx, "保存设置失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"key": key, "value": body.Value})
@@ -52,7 +52,7 @@ func (c *SettingsController) Set(ctx *gin.Context) {
 func (c *SettingsController) Delete(ctx *gin.Context) {
 	key := ctx.Param("key")
 	if err := c.repo.Delete(ctx.Request.Context(), key); err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to delete setting", err)
+		utils.InternalServerErrorResponse(ctx, "删除设置项失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"key": key, "deleted": true})

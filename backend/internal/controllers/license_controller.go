@@ -20,7 +20,7 @@ func NewLicenseController(service *services.LicenseService) *LicenseController {
 func (c *LicenseController) GetLicenseInfo(ctx *gin.Context) {
 	info, err := c.service.LicenseInfo(ctx.Request.Context())
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to get license info", err)
+		utils.InternalServerErrorResponse(ctx, "获取许可证信息失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, info)
@@ -33,7 +33,7 @@ func (c *LicenseController) UploadLicense(ctx *gin.Context) {
 		return
 	}
 	if len(body) == 0 {
-		utils.BadRequestResponse(ctx, "License data is required")
+		utils.BadRequestResponse(ctx, "缺少许可证数据")
 		return
 	}
 

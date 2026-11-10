@@ -34,7 +34,7 @@ type ChatRequest struct {
 func (c *AIController) Chat(ctx *gin.Context) {
 	var req ChatRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	messages := make([]aiprovider.Message, 0, len(req.Messages))
@@ -43,7 +43,7 @@ func (c *AIController) Chat(ctx *gin.Context) {
 	}
 	resp, err := c.service.Chat(ctx.Request.Context(), messages)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "AI chat failed", err)
+		utils.InternalServerErrorResponse(ctx, "AI 对话失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, gin.H{"reply": resp.Content, "model": resp.Model})
@@ -52,12 +52,12 @@ func (c *AIController) Chat(ctx *gin.Context) {
 func (c *AIController) Diagnosis(ctx *gin.Context) {
 	var req DiagnosisRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	result, err := c.service.Diagnosis(ctx.Request.Context(), req.InstanceID)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "AI diagnosis failed", err)
+		utils.InternalServerErrorResponse(ctx, "AI 诊断失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -79,7 +79,7 @@ func (c *AIController) ListDiagnoses(ctx *gin.Context) {
 	}
 	list, err := c.service.ListDiagnoses(ctx.Request.Context(), instanceID, limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list diagnoses", err)
+		utils.InternalServerErrorResponse(ctx, "获取诊断记录列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, list)
@@ -89,7 +89,7 @@ func (c *AIController) GetDiagnosis(ctx *gin.Context) {
 	id := ctx.Param("id")
 	d, err := c.service.GetDiagnosis(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Diagnosis not found")
+		utils.NotFoundResponse(ctx, "诊断记录不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, d)
@@ -106,12 +106,12 @@ type SQLAdviceRequest struct {
 func (c *AIController) SQLAdvice(ctx *gin.Context) {
 	var req SQLAdviceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request body: "+err.Error())
+		utils.BadRequestResponse(ctx, "请求体解析失败: "+err.Error())
 		return
 	}
 	result, err := c.service.SQLAdvice(ctx.Request.Context(), req.SQLText, req.ExplainPlan, req.TableSchema)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "AI SQL advisor failed", err)
+		utils.InternalServerErrorResponse(ctx, "AI SQL 优化失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, result)
@@ -132,7 +132,7 @@ func (c *AIController) ListSQLAdvice(ctx *gin.Context) {
 	}
 	list, err := c.service.ListSQLAdvice(ctx.Request.Context(), limit, offset)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list SQL advice", err)
+		utils.InternalServerErrorResponse(ctx, "获取 SQL 优化建议列表失败", err)
 		return
 	}
 	utils.SuccessResponse(ctx, list)
@@ -142,7 +142,7 @@ func (c *AIController) GetSQLAdvice(ctx *gin.Context) {
 	id := ctx.Param("id")
 	a, err := c.service.GetSQLAdvice(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "SQL advice not found")
+		utils.NotFoundResponse(ctx, "SQL 优化建议不存在")
 		return
 	}
 	utils.SuccessResponse(ctx, a)

@@ -42,7 +42,7 @@ func (c *ApprovalController) ListApprovalRequests(ctx *gin.Context) {
 	}
 
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to list approval requests", err)
+		utils.InternalServerErrorResponse(ctx, "获取审批申请列表失败", err)
 		return
 	}
 
@@ -54,7 +54,7 @@ func (c *ApprovalController) GetApprovalRequestByID(ctx *gin.Context) {
 
 	approvalRequest, err := c.service.GetApprovalRequestByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Approval request not found")
+		utils.NotFoundResponse(ctx, "审批申请不存在")
 		return
 	}
 
@@ -64,7 +64,7 @@ func (c *ApprovalController) GetApprovalRequestByID(ctx *gin.Context) {
 func (c *ApprovalController) CreateApprovalRequest(ctx *gin.Context) {
 	var req services.CreateApprovalRequestRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -81,7 +81,7 @@ func (c *ApprovalController) CreateApprovalRequest(ctx *gin.Context) {
 
 	approvalRequest, err := c.service.CreateApprovalRequest(ctx.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerErrorResponse(ctx, "Failed to create approval request", err)
+		utils.InternalServerErrorResponse(ctx, "创建审批申请失败", err)
 		return
 	}
 
@@ -94,7 +94,7 @@ func (c *ApprovalController) ApproveRequest(ctx *gin.Context) {
 
 	var req ApproveRejectRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -113,7 +113,7 @@ func (c *ApprovalController) RejectRequest(ctx *gin.Context) {
 
 	var req ApproveRejectRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -133,9 +133,9 @@ type ApproveRejectRequest struct {
 func respondApprovalError(ctx *gin.Context, err error, fallback string) {
 	switch {
 	case errors.Is(err, services.ErrApprovalNotPending):
-		utils.ErrorResponse(ctx, 400, "Approval request is not pending", err)
+		utils.ErrorResponse(ctx, 400, "审批申请不处于待审批状态", err)
 	case strings.Contains(strings.ToLower(err.Error()), "not found"):
-		utils.NotFoundResponse(ctx, "Approval request not found")
+		utils.NotFoundResponse(ctx, "审批申请不存在")
 	default:
 		utils.InternalServerErrorResponse(ctx, fallback, err)
 	}

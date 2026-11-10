@@ -18,7 +18,7 @@ func NewEnvironmentCheckController(service *services.EnvironmentCheckService) *E
 func (c *EnvironmentCheckController) Execute(ctx *gin.Context) {
 	var req services.EnvironmentCheckRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(ctx, "Invalid request parameters")
+		utils.BadRequestResponse(ctx, "请求参数有误")
 		return
 	}
 
@@ -36,7 +36,7 @@ func (c *EnvironmentCheckController) GetByID(ctx *gin.Context) {
 	
 	result, err := c.service.GetByID(ctx.Request.Context(), checkID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Check result not found")
+		utils.NotFoundResponse(ctx, "检查结果不存在")
 		return
 	}
 
@@ -49,7 +49,7 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 
 	result, err := c.service.GetByID(ctx.Request.Context(), checkID)
 	if err != nil {
-		utils.NotFoundResponse(ctx, "Check result not found")
+		utils.NotFoundResponse(ctx, "检查结果不存在")
 		return
 	}
 
@@ -60,7 +60,7 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 	case "text":
 		report, err := c.service.Export(ctx.Request.Context(), checkID)
 		if err != nil {
-			utils.NotFoundResponse(ctx, "Check result not found")
+			utils.NotFoundResponse(ctx, "检查结果不存在")
 			return
 		}
 		ctx.Header("Content-Disposition", "attachment; filename="+checkID+".md")
@@ -72,6 +72,6 @@ func (c *EnvironmentCheckController) Export(ctx *gin.Context) {
 			"data":    result,
 		})
 	default:
-		utils.BadRequestResponse(ctx, "unsupported export format: "+format)
+		utils.BadRequestResponse(ctx, "不支持的导出格式: "+format)
 	}
 }
