@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/jackcode/mysql-ops-platform/internal/models"
@@ -17,7 +19,46 @@ const (
 	agentAdminLongTimeout    = 5 * time.Minute
 	agentDeploymentTimeout   = 60 * time.Minute
 	agentInstallToolsTimeout = 30 * time.Minute
+	// agentMetricsFastTimeout 用于监控面板实时拉取指标: agent 不在线时 10s 内
+	// 快速失败, 避免面板因长超时+重试卡住数分钟。若慢实例采集被误判, 调大此值。
+	agentMetricsFastTimeout = 10 * time.Second
 )
+
+// AgentUnreachableError 表示 agent 网络不可达 (连接拒绝/超时/DNS 失败)。
+// 与 agent 在线但任务失败的业务错误区分开, 供控制器降级而不是返回 500。
+type AgentUnreachableError struct {
+	Cause error
+}
+
+func (e *AgentUnreachableError) Error() string {
+	return "agent unreachable: " + e.Cause.Error()
+}
+
+func (e *AgentUnreachableError) Unwrap() error {
+	return e.Cause
+}
+
+// wrapAgentUnreachable 将传输层错误 (http.Client.Do 产生的 *url.Error 链)
+// 包装为 AgentUnreachableError; 其它错误 (HTTP 状态码、解析、业务) 原样返回。
+func wrapAgentUnreachable(err error) error {
+	if err == nil {
+		return nil
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return &AgentUnreachableError{Cause: err}
+	}
+	return err
+}
+
+// IsAgentTransportError 判断错误是否为 agent 传输层失败 (连接拒绝/超时/DNS 解析),
+// 即 agent 不可达。AgentUnreachableError 会透传 Unwrap 链被识别;
+// agent 在线但返回 HTTP 错误/业务错误不属于此类。
+// 供控制器将 agent 依赖端点降级为 503 而非 500。
+func IsAgentTransportError(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
 
 type AgentClient struct {
 	httpClient *http.Client
@@ -175,6 +216,26 @@ func (c *AgentClient) ExecuteMetricsCollect(ctx context.Context, hostAddr string
 	if err != nil {
 		return nil, err
 	}
+	return parseAgentMetrics(result)
+}
+
+// ExecuteMetricsCollectFast: 面板实时拉取专用——短超时、不重试。
+// agent 不在线时 10s 内快速失败并返回 AgentUnreachableError, 避免监控面板
+// 因默认 2min 超时 × 3 次重试最长卡 6 分钟。
+func (c *AgentClient) ExecuteMetricsCollectFast(ctx context.Context, hostAddr string, agentPort int, instanceID string, config map[string]interface{}) ([]MetricData, error) {
+	payload := DeployTaskPayload{
+		TaskID:     fmt.Sprintf("metrics-collect-%d", time.Now().UnixNano()),
+		InstanceID: instanceID,
+		Config:     config,
+	}
+	result, err := c.callAgentWithRetries(ctx, hostAddr, agentPort, "/agent/tasks/metrics-collect", payload, agentMetricsFastTimeout, 0)
+	if err != nil {
+		return nil, wrapAgentUnreachable(err)
+	}
+	return parseAgentMetrics(result)
+}
+
+func parseAgentMetrics(result *AgentTaskResult) ([]MetricData, error) {
 	raw, ok := result.Data["metrics"]
 	if !ok {
 		return nil, fmt.Errorf("agent metrics response missing metrics")
@@ -329,6 +390,15 @@ func agentTaskPathNonIdempotent(path string) bool {
 }
 
 func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration) (*AgentTaskResult, error) {
+	// 幂等探活可重试；任务类路径不重试，避免双备份/双 wipe。
+	maxRetries := 2
+	if agentTaskPathNonIdempotent(path) {
+		maxRetries = 0
+	}
+	return c.callAgentWithRetries(ctx, hostAddr, agentPort, path, payload, timeout, maxRetries)
+}
+
+func (c *AgentClient) callAgentWithRetries(ctx context.Context, hostAddr string, agentPort int, path string, payload interface{}, timeout time.Duration, maxRetries int) (*AgentTaskResult, error) {
 	url := c.buildURL(hostAddr, agentPort, path)
 
 	body, err := json.Marshal(payload)
@@ -336,11 +406,6 @@ func (c *AgentClient) callAgentWithTimeout(ctx context.Context, hostAddr string,
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// 幂等探活可重试；任务类路径不重试，避免双备份/双 wipe。
-	maxRetries := 2
-	if agentTaskPathNonIdempotent(path) {
-		maxRetries = 0
-	}
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {

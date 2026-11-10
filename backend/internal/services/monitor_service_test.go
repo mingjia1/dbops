@@ -74,16 +74,17 @@ func TestIngestMetricsValidatesRequiredFields(t *testing.T) {
 	assert.ErrorContains(t, service.IngestMetrics(context.Background(), MetricIngestRequest{InstanceID: "i", Metrics: []MetricData{{Name: ""}}}), "metric name is required")
 }
 
-func TestIngestMetricsRequiresClickHouse(t *testing.T) {
+func TestIngestMetricsStandaloneDropsSilently(t *testing.T) {
 	service := NewMonitorService(nil)
 
+	// standalone 模式 (无 ClickHouse): agent 周期推送的指标无处落库, 静默丢弃
+	// 而非报错, 避免内部 ingest 接口持续返回 503。
 	err := service.IngestMetrics(context.Background(), MetricIngestRequest{
 		InstanceID: "instance-001",
 		Metrics:    []MetricData{{Name: "qps", Value: 1}},
 	})
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "clickhouse not configured")
+	assert.NoError(t, err)
 }
 
 func TestQueryMetricsUsesDefaultWindowAndMetricNames(t *testing.T) {

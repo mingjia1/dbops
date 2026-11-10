@@ -16,6 +16,20 @@ type metricStore interface {
 	QueryMetrics(ctx context.Context, instanceID string, metricNames []string, startTime, endTime time.Time) ([]map[string]interface{}, error)
 }
 
+// InstanceCredentialError 表示实例凭据无法解密 (常见原因: 平台加密密钥已更换,
+// 旧密文无法用新密钥解密)。与 agent 不可达区分, 供控制器给出针对性的降级提示。
+type InstanceCredentialError struct {
+	Cause error
+}
+
+func (e *InstanceCredentialError) Error() string {
+	return "instance credential error: " + e.Cause.Error()
+}
+
+func (e *InstanceCredentialError) Unwrap() error {
+	return e.Cause
+}
+
 type metricHostRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Host, error)
 }
@@ -63,7 +77,12 @@ type MetricIngestRequest struct {
 
 func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryRequest) ([]MetricData, error) {
 	if s.clickhouse == nil {
-		return []MetricData{}, nil
+		// standalone 模式: 未配置 ClickHouse 时不再直接返回空结果, 改为经 agent
+		// 实时拉取实例指标, 避免监控面板永久停留在 "not configured"。
+		if strings.TrimSpace(req.InstanceID) == "" || !s.canCollectInstanceMetrics() {
+			return []MetricData{}, nil
+		}
+		return s.collectInstanceMetricsLive(ctx, req.InstanceID)
 	}
 	if req.EndTime.IsZero() {
 		req.EndTime = time.Now()
@@ -101,7 +120,9 @@ func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryReques
 
 func (s *MonitorService) IngestMetrics(ctx context.Context, req MetricIngestRequest) error {
 	if s.clickhouse == nil {
-		return fmt.Errorf("clickhouse not configured, metric ingest skipped for %s", req.InstanceID)
+		// standalone 模式: 无 ClickHouse 历史库, agent 周期推送的指标无处落库,
+		// 静默丢弃而非报错, 避免内部 ingest 接口持续返回 503。
+		return nil
 	}
 	req.InstanceID = strings.TrimSpace(req.InstanceID)
 	if req.InstanceID == "" {
@@ -140,6 +161,20 @@ func (s *MonitorService) CollectInstanceMetrics(ctx context.Context, instanceID 
 	if s.clickhouse == nil {
 		return nil, fmt.Errorf("clickhouse not configured, metric collection skipped for %s", instanceID)
 	}
+	metrics, err := s.collectInstanceMetricsLive(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.IngestMetrics(ctx, MetricIngestRequest{InstanceID: instanceID, Metrics: metrics}); err != nil {
+		return nil, err
+	}
+	return metrics, nil
+}
+
+// collectInstanceMetricsLive 经 agent 实时采集实例指标, 不依赖 ClickHouse 落库。
+// 既服务于 ClickHouse 写入链路 (CollectInstanceMetrics), 也作为 standalone 模式下
+// 监控面板的直接数据源。
+func (s *MonitorService) collectInstanceMetricsLive(ctx context.Context, instanceID string) ([]MetricData, error) {
 	if !s.canCollectInstanceMetrics() {
 		return nil, fmt.Errorf("metric collection dependencies not configured")
 	}
@@ -178,18 +213,18 @@ func (s *MonitorService) CollectInstanceMetrics(ctx context.Context, instanceID 
 	password := ""
 	if conn.PasswordEncrypted != "" {
 		if strings.TrimSpace(s.encKey) == "" {
-			return nil, fmt.Errorf("encryption key not configured for metric collection")
+			return nil, &InstanceCredentialError{Cause: fmt.Errorf("encryption key not configured for metric collection")}
 		}
 		password, err = utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt instance password: %w", err)
+			return nil, &InstanceCredentialError{Cause: fmt.Errorf("decrypt instance password: %w", err)}
 		}
 	}
 	user := conn.Username
 	if user == "" {
 		user = "root"
 	}
-	metrics, err := s.agent.ExecuteMetricsCollect(ctx, agentHost, agentPort, instanceID, map[string]interface{}{
+	metrics, err := s.agent.ExecuteMetricsCollectFast(ctx, agentHost, agentPort, instanceID, map[string]interface{}{
 		"target_host":        conn.Host,
 		"target_port":        conn.Port,
 		"target_user":        user,
@@ -197,9 +232,6 @@ func (s *MonitorService) CollectInstanceMetrics(ctx context.Context, instanceID 
 		"target_ssl_enabled": conn.SSLEnabled,
 	})
 	if err != nil {
-		return nil, err
-	}
-	if err := s.IngestMetrics(ctx, MetricIngestRequest{InstanceID: instanceID, Metrics: metrics}); err != nil {
 		return nil, err
 	}
 	return metrics, nil
@@ -210,10 +242,14 @@ func (s *MonitorService) canCollectInstanceMetrics() bool {
 }
 
 func (s *MonitorService) CollectionStatus() string {
-	if s.clickhouse == nil {
-		return "not_configured"
+	if s.clickhouse != nil {
+		return "configured"
 	}
-	return "configured"
+	if s.canCollectInstanceMetrics() {
+		// standalone: 无 ClickHouse 历史库, 但可经 agent 实时采集
+		return "standalone"
+	}
+	return "not_configured"
 }
 
 func defaultMonitorMetrics() []string {
