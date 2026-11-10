@@ -30,7 +30,7 @@ const MySQLPasswordModal: React.FC<MySQLPasswordModalProps> = ({
       onOk={onSave}
       okText="保存"
       cancelText="取消"
-      destroyOnClose
+      destroyOnHidden
     >
       <Alert
         type="info"

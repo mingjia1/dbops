@@ -38,7 +38,7 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({ open, onClose, data
       onCancel={onClose}
       width={720}
       footer={<Button onClick={onClose}>关闭</Button>}
-      destroyOnClose
+      destroyOnHidden
       styles={{ body: { padding: '16px 20px' } }}
     >
       {data ? (
@@ -67,11 +67,11 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({ open, onClose, data
               pagination={false}
               showHeader={false}
               columns={[
-                { title: 'Host', dataIndex: 'host', key: 'host', width: 130 },
+                { title: '主机', dataIndex: 'host', key: 'host', width: 130 },
                 { title: '角色', dataIndex: 'role', key: 'role', width: 80, render: (role: string) => <Tag style={{ margin: 0 }}>{formatClusterRole(arch, role)}</Tag> },
                 { title: '端口', key: 'ports', width: 110, render: (_: any, record: any) => `${record.mysql_port || '-'}${record.agent_port ? ` / ${record.agent_port}` : ''}` },
                 { title: '数据目录', dataIndex: 'data_dir', key: 'data_dir', render: (v: string) => v || '-', ellipsis: true },
-                { title: 'Server ID', dataIndex: 'server_id', key: 'server_id', width: 72, render: (v: number) => v || '-' },
+                { title: '服务端 ID', dataIndex: 'server_id', key: 'server_id', width: 72, render: (v: number) => v || '-' },
               ]}
               dataSource={data.nodes || []}
               rowKey={(row: any, index?: number) => row.id || row.host || `node-${index}`}

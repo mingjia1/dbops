@@ -610,7 +610,7 @@ const InstanceList: React.FC = () => {
           </Form.List>
         </Form>
       </Modal>
-      <Modal title="安全验证" open={secondaryAuthOpen} onCancel={() => { setSecondaryAuthOpen(false); setPendingCredentialId(null) }} onOk={handleSecondaryAuth} okText="验证" cancelText="取消" destroyOnClose>
+      <Modal title="安全验证" open={secondaryAuthOpen} onCancel={() => { setSecondaryAuthOpen(false); setPendingCredentialId(null) }} onOk={handleSecondaryAuth} okText="验证" cancelText="取消" destroyOnHidden>
         <p>查看密码需要输入二级密码验证。</p>
         <Form form={secondaryAuthForm} layout="vertical">
           <Form.Item name="secondary_password" label="二级密码" rules={[{ required: true, message: '请输入二级密码' }]}>

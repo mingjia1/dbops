@@ -7,6 +7,7 @@ import { useTheme } from '../hooks/useTheme'
 import { getDashboardMenuItems, findSelectedKey, findOpenKeys, mapMenuItemsWithNavigate } from '../services/dashboardMenu'
 import OnboardingChecklist from '../components/OnboardingChecklist'
 import DashboardTour from '../components/DashboardTour'
+import FirstDeployWizard from './FirstDeployWizard'
 import './Dashboard.css'
 
 const { Header, Content, Sider } = Layout
@@ -84,6 +85,18 @@ const Dashboard: React.FC = () => {
     setManualOpenKeys(routeOpenKeys)
   }, [location.pathname])
 
+  // 引导打开前展开其目标所在的子菜单 (DashboardTour 通过事件请求)
+  useEffect(() => {
+    const onTourOpenKeys = (e: Event) => {
+      const keys = (e as CustomEvent).detail as string[]
+      if (Array.isArray(keys) && keys.length > 0) {
+        setManualOpenKeys((prev) => Array.from(new Set([...prev, ...keys])))
+      }
+    }
+    window.addEventListener('dbops-tour-openkeys', onTourOpenKeys)
+    return () => window.removeEventListener('dbops-tour-openkeys', onTourOpenKeys)
+  }, [])
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: `${user?.username || '用户'}` },
@@ -147,10 +160,13 @@ const Dashboard: React.FC = () => {
         <Content className="dashboard-content">
           <OnboardingChecklist />
           <DashboardTour />
+          {/* 全局挂载快速部署向导: 注册 window.openFirstDeployWizard,
+              使右上角火箭图标在任意页面可用; first-deploy 路由页自带一份, 避免双弹窗 */}
+          {location.pathname !== '/dashboard/first-deploy' && <FirstDeployWizard />}
           <Outlet />
         </Content>
       </Layout>
-      <Modal title="修改密码" open={passwordOpen} onCancel={() => setPasswordOpen(false)} onOk={submitChangePassword} okText="确认修改" cancelText="取消" destroyOnClose>
+      <Modal title="修改密码" open={passwordOpen} onCancel={() => setPasswordOpen(false)} onOk={submitChangePassword} okText="确认修改" cancelText="取消" destroyOnHidden>
         <Form form={passwordForm} layout="vertical" preserve={false}>
           <Form.Item label="当前密码" name="current_password" rules={[{ required: true, message: '请输入当前密码' }]}>
             <Input.Password autoComplete="current-password" />
@@ -163,7 +179,7 @@ const Dashboard: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
-      <Modal title="重置所有用户密码" open={resetOpen} onCancel={() => setResetOpen(false)} onOk={submitResetAllPasswords} okText="确认重置" cancelText="取消" destroyOnClose>
+      <Modal title="重置所有用户密码" open={resetOpen} onCancel={() => setResetOpen(false)} onOk={submitResetAllPasswords} okText="确认重置" cancelText="取消" destroyOnHidden>
         <Form form={resetForm} layout="vertical" preserve={false} initialValues={{ new_password: '123456', confirm_password: '123456' }}>
           <Form.Item label="新密码" name="new_password" rules={[{ required: true, min: 6, message: '新密码至少 6 位' }]}>
             <Input.Password autoComplete="new-password" />

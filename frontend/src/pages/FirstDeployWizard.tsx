@@ -211,8 +211,8 @@ const FirstDeployWizard: React.FC = () => {
     setVisible(false)
   }
 
-  const renderStepContent = () => {
-    switch (currentStep) {
+  const renderStepContent = (step: number) => {
+    switch (step) {
       case 0:
         return (
           <Form form={hostForm} layout="vertical" initialValues={{ ssh_port: 22, agent_port: 9090, ssh_user: 'root' }}>
@@ -317,11 +317,10 @@ const FirstDeployWizard: React.FC = () => {
     }
   }
 
-  if (!visible) return null
-
   return (
     <Modal
       title="快速部署向导"
+      forceRender
       open={visible}
       onCancel={handleDismiss}
       footer={
@@ -347,7 +346,13 @@ const FirstDeployWizard: React.FC = () => {
           { title: '创建实例' },
         ]}
       />
-      <div style={{ minHeight: 240 }}>{renderStepContent()}</div>
+      <div style={{ minHeight: 240 }}>
+        {[0, 1, 2, 3].map((s) => (
+          <div key={s} style={{ display: currentStep === s ? 'block' : 'none' }}>
+            {renderStepContent(s)}
+          </div>
+        ))}
+      </div>
     </Modal>
   )
 }
