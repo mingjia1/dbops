@@ -15,3 +15,8 @@ body {
 .nowrap-header-table .ant-table-thead > tr > th {
   white-space: nowrap;
 }
+
+/* 集群部署表单紧凑化: 水平布局三列网格, 减小字段间距保证一屏展示 */
+.compact-deploy-form .ant-form-item {
+  margin-bottom: 14px;
+}

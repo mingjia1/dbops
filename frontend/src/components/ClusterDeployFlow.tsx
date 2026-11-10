@@ -225,7 +225,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
 
   const buildPayload = () => {
     if (!credential.password) {
-      message.error('Set the MySQL root password first')
+      message.error('请先在系统设置 → 监控指标中配置 MySQL 会话凭据')
       return null
     }
     try {
@@ -281,14 +281,14 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
             onChange={(value) => resetArch(value as ArchType)}
           />
 
-          <Form layout="vertical" style={{ maxWidth: '100%' }}>
+          <Form layout="vertical" style={{ maxWidth: '100%' }} className="compact-deploy-form">
             <Row gutter={12}>
-              <Col span={24}>
+              <Col span={12}>
                 <Form.Item label="集群 ID" required>
                   <Input value={spec.cluster_id} onChange={(event) => updateSpec({ cluster_id: event.target.value })} />
                 </Form.Item>
               </Col>
-              <Col span={24}>
+              <Col span={12}>
                 <Form.Item label="MySQL 版本" required>
                   <Select
                     showSearch
@@ -309,13 +309,13 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                   <Input value={spec.repl_user} onChange={(event) => updateSpec({ repl_user: event.target.value })} />
                 </Form.Item>
               </Col>
-              <Col span={24}>
+              <Col span={12}>
                 <Form.Item label="复制密码">
                   <Input.Password value={spec.repl_password} onChange={(event) => updateSpec({ repl_password: event.target.value })} />
                 </Form.Item>
               </Col>
               {spec.arch === 'mgr' && (
-                <Col span={24}>
+                <Col span={12}>
                   <Form.Item label="MGR 组名">
                     <Input value={String(spec.custom?.group_name || '')} onChange={(event) => updateCustom({ group_name: event.target.value })} />
                   </Form.Item>
@@ -445,7 +445,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
         </Space>
       </div>
 
-      <div style={{ minWidth: 0, height: 560, border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ minWidth: 0, height: 'calc(100vh - 210px)', minHeight: 460, border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
         <ReactFlow
           nodes={reactFlowNodes}
           edges={reactFlowEdges}

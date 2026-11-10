@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Button, Card, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tabs, Typography } from 'antd'
 import { message } from '../components/antdMessage'
-import { ClusterOutlined, EyeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ClusterOutlined, EyeOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { clusterDeployApi, hostApi, instanceApi, versionApi, type Host, type Instance, type VersionEntry } from '../services/api'
-import { getDefaultMySQLCredential, setDefaultMySQLCredential } from '../services/sessionSecrets'
+import { getDefaultMySQLCredential } from '../services/sessionSecrets'
 import { formatClusterRole } from '../services/roleDisplay'
 import { useTaskSSE, type TaskEvent } from '../services/useTaskSSE'
 import { processStepEvent } from '../services/deployStepHelper'
@@ -19,15 +19,13 @@ createMgrGroupName, normalizeDeployment, buildDeployPayload, deploymentPayloadFi
 import PlanPreviewModal from '../components/PlanPreviewModal'
 import DeployCredentialsModal from '../components/DeployCredentialsModal'
 import DeployErrorModal from '../components/DeployErrorModal'
-import MySQLPasswordModal from '../components/MySQLPasswordModal'
 import ClusterDeployProgress from '../components/ClusterDeployProgress'
 import DeploymentHistoryPanel from '../components/DeploymentHistoryPanel'
 import PrecheckResultTable from '../components/PrecheckResultTable'
 import ClusterDeployFlow from '../components/ClusterDeployFlow'
 
 const { Text } = Typography
-const halfColProps = { xs: 24, md: 12 }
-const thirdColProps = { xs: 24, md: 12, xl: 8 }
+const halfColProps = { xs: 24, md: 12, xl: 8 }
 
 const ClusterDeploy: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([])
@@ -53,22 +51,6 @@ const ClusterDeploy: React.FC = () => {
     nodes?: Array<{ host: string; port?: number; role?: string; username?: string; password?: string }>
   }>({ visible: false, mysql_user: '', mysql_password: '' })
   const [deployErrorDetail, setDeployErrorDetail] = useState<DeployResult | null>(null)
-  const [credential, setCredential] = useState<{ username: string; password: string }>(() => getDefaultMySQLCredential())
-  const [mysqlPasswordModalOpen, setMysqlPasswordModalOpen] = useState(false)
-  const [mysqlPasswordForm] = Form.useForm()
-
-  const handleSaveMysqlPassword = async () => {
-    try {
-      const values = await mysqlPasswordForm.validateFields()
-      const newCredential = { username: values.username || 'root', password: values.password }
-      setCredential(newCredential)
-      setDefaultMySQLCredential(newCredential)
-      setMysqlPasswordModalOpen(false)
-      message.success('MySQL root 密码已保存')
-    } catch {
-      // validation failed
-    }
-  }
   const pollRef = useRef<number | null>(null)
   const historyPollRef = useRef<number | null>(null)
 
@@ -258,11 +240,13 @@ const ClusterDeploy: React.FC = () => {
     }, 2000)
   }
 
-  const cred = { username: credential.username, password: credential.password }
+  // MySQL 凭据遵循系统设置(安全设置-监控指标 Tab 的"MySQL 会话凭据"卡片),
+  // 每次渲染实时读取会话状态, 不在部署页单独维护入口
+  const cred = getDefaultMySQLCredential()
 
   const doPreview = (arch: ArchType, values: any) => {
-    if (!credential.password) {
-      message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
+    if (!cred.password) {
+      message.error('请先在系统设置 → 监控指标中配置 MySQL 会话凭据')
       return
     }
     if (!versionSupportsArch(arch, values.mysql_version)) {
@@ -343,8 +327,8 @@ const ClusterDeploy: React.FC = () => {
   }
 
   const previewDeployPayload = async (arch: ArchType, payload: Record<string, any>) => {
-    if (!credential.password) {
-      message.error('请先设置MySQL root密码（点击"MySQL密码"按钮）')
+    if (!cred.password) {
+      message.error('请先在系统设置 → 监控指标中配置 MySQL 会话凭据')
       return
     }
     if (!versionSupportsArch(arch, payload?.mysql?.version)) {
@@ -569,7 +553,7 @@ const ClusterDeploy: React.FC = () => {
     onFinish: (values: any) => void,
     options?: { simpleReplica?: boolean },
   ) => (
-    <Form form={form} layout="vertical" onFinish={onFinish} style={{ maxWidth: '100%', overflowX: 'hidden' }}>
+    <Form form={form} layout="horizontal" onFinish={onFinish} style={{ maxWidth: '100%', overflowX: 'hidden' }} className="compact-deploy-form">
       <Row gutter={16}>
         <Col {...halfColProps}>
           <Form.Item name="mysql_version" label="MySQL版本" initialValue="8.0" rules={[{ required: true }]} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
@@ -695,9 +679,9 @@ const ClusterDeploy: React.FC = () => {
   })
 
   return (
-    <div style={{ padding: '24px', maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
+    <div style={{ padding: '16px 24px', maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
       <Card
-        styles={{ body: { overflowX: 'hidden' } }}
+        styles={{ body: { overflowX: 'hidden', paddingTop: 12 } }}
         title={
           <Space>
             <ClusterOutlined />
@@ -706,15 +690,14 @@ const ClusterDeploy: React.FC = () => {
         }
         extra={
           <Space>
-            <Button
-              icon={<KeyOutlined />}
-              onClick={() => {
-                mysqlPasswordForm.setFieldsValue({ username: credential.username || 'root', password: credential.password || 'Root#1234' })
-                setMysqlPasswordModalOpen(true)
-              }}
-            >
-              MySQL密码 {credential.password ? '(已设置)' : '(未设置)'}
-            </Button>
+            <Segmented
+              value={deployView}
+              options={[
+                { label: '流程编排', value: 'flow' },
+                { label: '表单部署', value: 'form' },
+              ]}
+              onChange={(value) => setDeployView(value as 'flow' | 'form')}
+            />
             <Button type="primary" icon={<ClusterOutlined />} onClick={() => setShowHistory(!showHistory)}>
               {showHistory ? '返回部署' : '部署历史'}
             </Button>
@@ -735,20 +718,11 @@ const ClusterDeploy: React.FC = () => {
             onDestroy={destroyDeployment}
           />
         ) : (
-          <Space direction="vertical" size={16} style={{ width: '100%', minWidth: 0 }}>
-            <Segmented
-              value={deployView}
-              options={[
-                { label: '流程编排', value: 'flow' },
-                { label: '表单部署', value: 'form' },
-              ]}
-              onChange={(value) => setDeployView(value as 'flow' | 'form')}
-            />
-            {deployView === 'flow' ? (
-              <ClusterDeployFlow
-                hosts={hosts}
-                versions={versions}
-                credential={credential}
+          deployView === 'flow' ? (
+            <ClusterDeployFlow
+              hosts={hosts}
+              versions={versions}
+              credential={cred}
                 activeDeployment={activeDeployment}
                 plan={planPreviewData}
                 planFingerprint={planPreviewFingerprint}
@@ -756,8 +730,8 @@ const ClusterDeploy: React.FC = () => {
                 submitting={submitting}
                 onPreview={previewDeployPayload}
                 onDeploy={(arch, payload) => doDeploy(arch, { cluster_id: payload.cluster_id }, payload)}
-              />
-            ) : (
+            />
+          ) : (
               <Tabs
                 activeKey={tab}
                 onChange={(key) => setTab(key as ArchType)}
@@ -842,28 +816,28 @@ const ClusterDeploy: React.FC = () => {
                 forceRender: true,
                 children: renderForm('pxc', pxcForm,
                   <>
-                    <Col {...thirdColProps}>
-                      <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                    <Col {...halfColProps}>
+                      <Form.Item name="wsrep_port" label="wsrep端口" initialValue={4567} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col {...thirdColProps}>
-                      <Form.Item name="cluster_name" label="集群名称" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                    <Col {...halfColProps}>
+                      <Form.Item name="cluster_name" label="集群名称" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Input placeholder="默认使用集群ID" />
                       </Form.Item>
                     </Col>
-                    <Col {...thirdColProps}>
-                      <Form.Item name="sst_method" label="SST方式" initialValue="xtrabackup-v2" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                    <Col {...halfColProps}>
+                      <Form.Item name="sst_method" label="SST方式" initialValue="xtrabackup-v2" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Select options={[{ value: 'xtrabackup-v2', label: 'xtrabackup-v2' }, { value: 'mariabackup', label: 'mariabackup' }]} />
                       </Form.Item>
                     </Col>
-                    <Col {...thirdColProps}>
-                      <Form.Item name="wsrep_sst_port" label="SST端口" labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                    <Col {...halfColProps}>
+                      <Form.Item name="wsrep_sst_port" label="SST端口" labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <InputNumber min={1} max={65535} placeholder="默认4444" style={{ width: '100%' }} />
                       </Form.Item>
                     </Col>
-                    <Col {...thirdColProps}>
-                      <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false} labelCol={{ span: 10 }} wrapperCol={{ span: 14 }}>
+                    <Col {...halfColProps}>
+                      <Form.Item name="wsrep_ssl_enabled" label="wsrep SSL" valuePropName="checked" initialValue={false} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }}>
                         <Checkbox>启用</Checkbox>
                       </Form.Item>
                     </Col>
@@ -873,8 +847,7 @@ const ClusterDeploy: React.FC = () => {
               },
                 ]}
               />
-            )}
-          </Space>
+          )
         )}
       </Card>
 
@@ -901,13 +874,6 @@ const ClusterDeploy: React.FC = () => {
         open={!!deployErrorDetail}
         detail={deployErrorDetail}
         onClose={() => setDeployErrorDetail(null)}
-      />
-
-      <MySQLPasswordModal
-        open={mysqlPasswordModalOpen}
-        form={mysqlPasswordForm}
-        onClose={() => setMysqlPasswordModalOpen(false)}
-        onSave={handleSaveMysqlPassword}
       />
 
       {activeDeployment && (
