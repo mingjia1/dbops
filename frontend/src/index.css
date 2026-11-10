@@ -11,3 +11,7 @@ body {
 #root {
   min-height: 100vh;
 }
+/* 表头与单元格不换行: 主机管理/实例管理等宽表格防折行 */
+.nowrap-header-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}

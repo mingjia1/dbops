@@ -417,15 +417,15 @@ const HostList: React.FC = () => {
     {
       title: '最近 Agent 操作',
       key: 'agent_last_action',
-      width: 220,
+      width: 260,
       render: (_, r) => {
         if (!r.agent_last_action && !r.agent_last_result) return '-'
         const time = r.agent_last_at ? new Date(r.agent_last_at).toLocaleString() : '-'
         return (
           <Tooltip title={`${r.agent_last_message || '-'}\n${time}`}>
-            <Space size={4} direction="vertical">
+            <Space size={6} style={{ whiteSpace: 'nowrap' }}>
               <span>{r.agent_last_action || '-'}</span>
-              <Tag color={agentResultColor(r.agent_last_result)}>{r.agent_last_result || 'unknown'}</Tag>
+              <Tag color={agentResultColor(r.agent_last_result)} style={{ marginRight: 0 }}>{r.agent_last_result || 'unknown'}</Tag>
             </Space>
           </Tooltip>
         )
@@ -472,6 +472,7 @@ const HostList: React.FC = () => {
         }
       >
         <Table
+          className="nowrap-header-table"
           rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
           columns={columns}
           dataSource={hosts}
