@@ -25,8 +25,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { instanceApi, monitorApi } from '../services/api'
-import api from '../services/api'
+import { instanceApi, monitorApi, healthBaseUrl } from '../services/api'
 import { palette } from '../appTheme'
 
 interface MetricPoint {
@@ -54,7 +53,7 @@ interface MetricBundle {
   bytes_sent?: number
 }
 
-type MonitorStatus = 'configured' | 'not_configured' | 'no_data' | 'failed'
+type MonitorStatus = 'configured' | 'standalone' | 'not_configured' | 'no_data' | 'agent_unreachable' | 'credential_error' | 'failed'
 
 function formatNumber(n: number | undefined) {
   if (n === undefined || n === null || Number.isNaN(n)) return '-'
@@ -178,12 +177,12 @@ const MonitorDashboard: React.FC = () => {
   const fetchPlatformHealth = async () => {
     setPlatformHealthLoading(true)
     try {
-      const base = api.defaults.baseURL || window.location.origin
+      const base = healthBaseUrl()
       const endpoints = [
-        { name: 'Backend', url: `${base}/health/ready` },
+        { name: '后端服务', url: `${base}/health/ready` },
         { name: 'Redis', url: `${base}/health/redis` },
         { name: 'ClickHouse', url: `${base}/health/clickhouse` },
-        { name: 'Agents', url: `${base}/health/agents` },
+        { name: 'Agent', url: `${base}/health/agents` },
       ]
       const results = await Promise.allSettled(
         endpoints.map(async (endpoint) => {
@@ -242,7 +241,7 @@ const MonitorDashboard: React.FC = () => {
       setMetrics(normalized)
     } catch (err: any) {
       setMonitorStatus('failed')
-      setMonitorMessage(err?.response?.data?.message || err?.message || 'Monitoring query failed')
+      setMonitorMessage(err?.response?.data?.message || err?.message || '监控查询失败')
       setMetrics(null)
     } finally {
       setLoading(false)
@@ -259,8 +258,8 @@ const MonitorDashboard: React.FC = () => {
 
   const selectedInstanceObj = instances.find((item) => item.id === selectedInstance)
   const trafficData = useMemo(() => [
-    { name: 'Received', value: metrics?.bytes_received || 0, color: palette.series.primary },
-    { name: 'Sent', value: metrics?.bytes_sent || 0, color: palette.series.success },
+    { name: '接收', value: metrics?.bytes_received || 0, color: palette.series.primary },
+    { name: '发送', value: metrics?.bytes_sent || 0, color: palette.series.success },
   ], [metrics])
   const dmlData = useMemo(() => [
     { name: 'INSERT', value: metrics?.innodb_rows_inserted || 0, color: palette.series.primary },
@@ -269,18 +268,22 @@ const MonitorDashboard: React.FC = () => {
     { name: 'SELECT', value: metrics?.innodb_rows_read || 0, color: palette.series.success },
   ], [metrics])
   const emptyDescription = monitorStatus === 'not_configured'
-    ? 'Monitoring storage is not configured. Configure ClickHouse and agent metrics ingest.'
-    : monitorStatus === 'failed'
-      ? (monitorMessage || 'Monitoring query failed.')
-      : 'No monitoring data has been ingested for this instance.'
+    ? '监控存储未配置，请配置 ClickHouse 与 Agent 指标上报。'
+    : monitorStatus === 'agent_unreachable'
+      ? (monitorMessage || 'Agent 不在线或网络不可达，无法实时采集指标。')
+      : monitorStatus === 'credential_error'
+        ? (monitorMessage || '实例凭据解密失败，请在实例管理中重新保存该实例的密码。')
+        : monitorStatus === 'failed'
+          ? (monitorMessage || '监控查询失败。')
+          : '该实例暂无监控数据。'
 
   return (
     <div style={{ padding: 24 }}>
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={6}><Card><Statistic title="Instances" value={stats.total} prefix={<DatabaseOutlined />} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="Healthy" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: palette.text.healthy }} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="Unhealthy" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="Stopped" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="实例数" value={stats.total} prefix={<DatabaseOutlined />} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="健康" value={stats.healthy} prefix={<CheckCircleOutlined />} valueStyle={{ color: palette.text.healthy }} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="异常" value={stats.unhealthy} prefix={<AlertOutlined />} valueStyle={{ color: palette.text.unhealthy }} /></Card></Col>
+        <Col xs={24} md={6}><Card><Statistic title="已停止" value={stats.stopped} prefix={<CloseCircleOutlined />} valueStyle={{ color: palette.text.stopped }} /></Card></Col>
       </Row>
 
       <Card
@@ -306,18 +309,18 @@ const MonitorDashboard: React.FC = () => {
       </Card>
 
       <Card
-        title={<Space><span>Instance Metrics</span>{selectedInstanceObj && <Tag color="blue">{selectedInstanceObj.name}</Tag>}</Space>}
+        title={<Space><span>实例指标</span>{selectedInstanceObj && <Tag color="blue">{selectedInstanceObj.name}</Tag>}</Space>}
         style={{ marginTop: 16 }}
         extra={(
           <Space>
             <Select
-              placeholder="Select instance"
+              placeholder="选择实例"
               style={{ width: 240 }}
               value={selectedInstance}
               onChange={setSelectedInstance}
               options={instances.map((item: any) => ({ label: item.name, value: item.id }))}
             />
-            <Tooltip title="Refresh">
+            <Tooltip title="刷新">
               <Button type="text" icon={<ReloadOutlined spin={loading} />} onClick={fetchMetrics} />
             </Tooltip>
           </Space>
@@ -325,14 +328,22 @@ const MonitorDashboard: React.FC = () => {
       >
         {loading ? (
           <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Spin tip="Loading..." />
+            <Spin />
           </div>
         ) : !metrics ? (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Alert
-              type={monitorStatus === 'failed' ? 'error' : monitorStatus === 'not_configured' ? 'warning' : 'info'}
+              type={monitorStatus === 'failed' ? 'error' : monitorStatus === 'not_configured' || monitorStatus === 'agent_unreachable' || monitorStatus === 'credential_error' ? 'warning' : 'info'}
               showIcon
-              message={monitorStatus === 'not_configured' ? 'Monitoring not configured' : monitorStatus === 'failed' ? 'Monitoring query failed' : 'No monitoring data'}
+              message={monitorStatus === 'not_configured'
+                ? '监控未配置'
+                : monitorStatus === 'agent_unreachable'
+                  ? 'Agent 不在线'
+                  : monitorStatus === 'credential_error'
+                    ? '实例凭据错误'
+                    : monitorStatus === 'failed'
+                      ? '监控查询失败'
+                      : '暂无监控数据'}
               description={emptyDescription}
             />
             <Empty description={emptyDescription} />
@@ -342,13 +353,13 @@ const MonitorDashboard: React.FC = () => {
             <Row gutter={[16, 16]}>
               <Col xs={24} md={6}><Card size="small"><Statistic title="QPS" value={metrics.qps?.[metrics.qps.length - 1]?.value || 0} precision={1} prefix={<ThunderboltOutlined />} valueStyle={{ color: palette.series.primary }} /></Card></Col>
               <Col xs={24} md={6}><Card size="small"><Statistic title="TPS" value={metrics.tps?.[metrics.tps.length - 1]?.value || 0} precision={1} prefix={<ArrowUpOutlined />} valueStyle={{ color: palette.series.success }} /></Card></Col>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="Running Threads" value={metrics.threads_running || metrics.connections?.[metrics.connections.length - 1]?.value || 0} prefix={<DatabaseOutlined />} /></Card></Col>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="Slow Queries" value={metrics.slow_queries || 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries || 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="活跃线程数" value={metrics.threads_running || metrics.connections?.[metrics.connections.length - 1]?.value || 0} prefix={<DatabaseOutlined />} /></Card></Col>
+              <Col xs={24} md={6}><Card size="small"><Statistic title="慢查询" value={metrics.slow_queries || 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries || 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
             </Row>
 
             <Row gutter={[16, 16]}>
               <Col xs={24} xl={12}>
-                <Card title="QPS Trend" size="small">
+                <Card title="QPS 趋势" size="small">
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={seriesData(metrics.qps)}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -361,7 +372,7 @@ const MonitorDashboard: React.FC = () => {
                 </Card>
               </Col>
               <Col xs={24} xl={12}>
-                <Card title="TPS Trend" size="small">
+                <Card title="TPS 趋势" size="small">
                   <ResponsiveContainer width="100%" height={260}>
                     <AreaChart data={seriesData(metrics.tps)}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -374,7 +385,7 @@ const MonitorDashboard: React.FC = () => {
                 </Card>
               </Col>
               <Col xs={24} xl={12}>
-                <Card title="Connections" size="small">
+                <Card title="连接数" size="small">
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={seriesData(metrics.connections)}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -387,7 +398,7 @@ const MonitorDashboard: React.FC = () => {
                 </Card>
               </Col>
               <Col xs={24} xl={12}>
-                <Card title="Resource Usage" size="small">
+                <Card title="资源使用" size="small">
                   <ResponsiveContainer width="100%" height={260}>
                     <AreaChart data={seriesData(metrics.cpu || metrics.memory || metrics.disk)}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -401,7 +412,7 @@ const MonitorDashboard: React.FC = () => {
                 </Card>
               </Col>
               <Col xs={24} xl={12}>
-                <Card title="Traffic" size="small">
+                <Card title="流量" size="small">
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={trafficData}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -414,7 +425,7 @@ const MonitorDashboard: React.FC = () => {
                 </Card>
               </Col>
               <Col xs={24} xl={12}>
-                <Card title="DML Rows" size="small">
+                <Card title="DML 行数" size="small">
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={dmlData}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -429,9 +440,9 @@ const MonitorDashboard: React.FC = () => {
             </Row>
 
             <Row gutter={[16, 16]}>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="Uptime" value={formatDuration(metrics.uptime)} prefix={<ClockCircleOutlined />} /></Card></Col>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="Buffer Pool Hit" value={metrics.innodb_buffer_pool_hit_ratio ?? 0} suffix="%" precision={2} prefix={<HddOutlined />} /></Card></Col>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="Threads Connected" value={metrics.threads_connected || 0} /></Card></Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="运行时长" value={formatDuration(metrics.uptime)} prefix={<ClockCircleOutlined />} /></Card></Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="缓冲池命中率" value={metrics.innodb_buffer_pool_hit_ratio ?? 0} suffix="%" precision={2} prefix={<HddOutlined />} /></Card></Col>
+              <Col xs={24} md={8}><Card size="small"><Statistic title="当前连接数" value={metrics.threads_connected || 0} /></Card></Col>
             </Row>
           </Space>
         )}

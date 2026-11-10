@@ -59,6 +59,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
+      // 健康检查端点在根路径 (/health/*), 不在 /api 前缀下, 需单独代理
+      '/health': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
     },
   },
   test: {

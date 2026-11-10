@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Card, Col, Row, Space, Statistic, Tag, Typography } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, DatabaseOutlined, ThunderboltOutlined } from '@ant-design/icons'
-import api from '../services/api'
+import { healthBaseUrl } from '../services/api'
 
 const { Text } = Typography
 
@@ -20,7 +20,7 @@ const PlatformHealth: React.FC = () => {
   const runChecks = async () => {
     setLoading(true)
     const results: HealthStatus[] = []
-    const base = api.defaults.baseURL || window.location.origin
+    const base = healthBaseUrl()
 
     const check = async (name: string, url: string): Promise<HealthStatus> => {
       const start = performance.now()
@@ -43,7 +43,7 @@ const PlatformHealth: React.FC = () => {
       }
     }
 
-    const backend = await check('Backend', `${base}/health/ready`)
+    const backend = await check('后端服务', `${base}/health/ready`)
     results.push(backend)
 
     const redis = await check('Redis', `${base}/health/redis`)
@@ -52,7 +52,7 @@ const PlatformHealth: React.FC = () => {
     const clickhouse = await check('ClickHouse', `${base}/health/clickhouse`)
     results.push(clickhouse)
 
-    const agents = await check('Agents', `${base}/health/agents`)
+    const agents = await check('Agent', `${base}/health/agents`)
     results.push(agents)
 
     setChecks(results)
@@ -93,16 +93,16 @@ const PlatformHealth: React.FC = () => {
       >
         <Row gutter={16}>
           <Col span={6}>
-            <Statistic title="Healthy" value={healthyCount} valueStyle={{ color: '#52c41a' }} suffix={`/ ${checks.length}`} />
+            <Statistic title="健康" value={healthyCount} valueStyle={{ color: '#52c41a' }} suffix={`/ ${checks.length}`} />
           </Col>
           <Col span={6}>
-            <Statistic title="Degraded" value={degradedCount} valueStyle={{ color: '#faad14' }} />
+            <Statistic title="降级" value={degradedCount} valueStyle={{ color: '#faad14' }} />
           </Col>
           <Col span={6}>
-            <Statistic title="Down" value={downCount} valueStyle={{ color: '#ff4d4f' }} />
+            <Statistic title="宕机" value={downCount} valueStyle={{ color: '#ff4d4f' }} />
           </Col>
           <Col span={6}>
-            <Statistic title="Last Checked" value={lastChecked ? new Date(lastChecked).toLocaleTimeString() : '-'} />
+            <Statistic title="上次检测时间" value={lastChecked ? new Date(lastChecked).toLocaleTimeString() : '-'} />
           </Col>
         </Row>
 
@@ -113,7 +113,7 @@ const PlatformHealth: React.FC = () => {
                 <Space>
                   {check.status === 'healthy' ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />}
                   <Text strong>{check.name}</Text>
-                  <Tag color={statusColor(check.status)}>{check.status.toUpperCase()}</Tag>
+                  <Tag color={statusColor(check.status)}>{check.status === 'healthy' ? '健康' : check.status === 'degraded' ? '降级' : check.status === 'down' ? '宕机' : '未知'}</Tag>
                 </Space>
                 <Space>
                   {check.latencyMs !== undefined && <Text type="secondary">{check.latencyMs} ms</Text>}

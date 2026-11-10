@@ -16,6 +16,20 @@ const api = axios.create({
   withCredentials: true,
 })
 
+// 健康检查端点在服务根路径 (/health/*), 不在 /api/v1 之下.
+// 直接用 api.defaults.baseURL 拼接会得到 /api/v1/health/* → 404, 因此统一由此推导根地址.
+export const healthBaseUrl = (): string => {
+  const base = api.defaults.baseURL || ''
+  if (/^https?:\/\//i.test(base)) {
+    try {
+      return new URL(base).origin
+    } catch {
+      // 非法 URL 时回退到当前 origin
+    }
+  }
+  return window.location.origin
+}
+
 const failedTaskStatuses = ['failed', 'error', 'unhealthy', 'timeout', 'cancelled', 'canceled']
 const agentSubmitFastTimeoutMs = 8000
 const longRunningAgentActions = ['install', 'add', 'update', 'modify', 'restart', 'delete', 'remove']
@@ -109,6 +123,14 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
     if (error.response?.status === 404) {
+      return Promise.reject(error)
+    }
+    // 商业特性未授权 (未上传许可证): 后端返回结构化 403, 页面自行渲染空态,
+    // 不弹误导性错误 toast ("无权限"提示与许可证门控无关)。
+    if (
+      error.response?.status === 403 &&
+      error.response?.data?.error === 'feature_not_licensed'
+    ) {
       return Promise.reject(error)
     }
     if (!error.config?.suppressGlobalError) {
