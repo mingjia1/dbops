@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Descriptions, Form, Result, Select, Space, Table, Tag } from 'antd'
+import { Button, Card, Descriptions, Empty, Form, Select, Space, Table, Tag } from 'antd'
 import { message } from '../components/antdMessage'
 import { HistoryOutlined, RetweetOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -205,82 +205,94 @@ const RoleSwitch: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
-      <Card title={<Space><RetweetOutlined /><span>集群内角色切换</span></Space>}>
-        <Form form={form} layout="vertical" style={{ maxWidth: 760 }}>
-          <Form.Item label="集群ID" required>
-            <Select
-              placeholder="选择集群"
-              value={clusterId}
-              onChange={onClusterChange}
-              options={clusters.map((c) => ({ value: c.id, label: `${c.id} (${c.arch.toUpperCase()})` }))}
-            />
-          </Form.Item>
-          <Form.Item label="架构类型">
-            {selectedArch ? <Tag color="blue">{selectedArch.toUpperCase()}</Tag> : <span>-</span>}
-          </Form.Item>
-          <Form.Item label="目标实例" required>
-            <Select
-              placeholder="选择当前集群内实例"
-              disabled={!clusterId}
-              value={selectedInstance}
-              onChange={(value) => {
-                const next = clusterInstances.find((item) => item.id === value)
-                setSelectedInstance(value)
-                if (!next || next.status?.role === targetRole) {
-                  setTargetRole(undefined)
-                  form.setFieldsValue({ target_role: undefined })
-                }
-              }}
-              options={clusterInstances.map((i) => ({
-                value: i.id,
-                label: `${i.name} (${i.connection?.host || i.host || '-'}:${i.connection?.port || i.port || '-'})`,
-              }))}
-            />
-          </Form.Item>
-          {selected && (
-            <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="当前角色">{selected.status?.role || '-'}</Descriptions.Item>
-              <Descriptions.Item label="高可用架构">{selectedArch.toUpperCase()}</Descriptions.Item>
-              <Descriptions.Item label="复制状态">{selected.status?.replication_status || selected.topology?.replication_mode || '-'}</Descriptions.Item>
-            </Descriptions>
-          )}
-          <Form.Item label="目标角色" required>
-            <Select
-              placeholder="选择目标角色"
-              disabled={!selectedArch}
-              value={targetRole}
-              onChange={setTargetRole}
-              options={targetRoleOptions}
-            />
-          </Form.Item>
-          <Form.Item>
-            <Button
-              type="primary"
-              icon={<RetweetOutlined />}
-              loading={submitting}
-              onClick={onSubmit}
-              disabled={!clusterId || !selectedInstance || !targetRole}
-            >
-              执行切换
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
+    <div style={{ padding: '16px 24px', maxWidth: '100%', overflowX: 'hidden', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Card
+          title={<Space><RetweetOutlined /><span>集群内角色切换</span></Space>}
+          style={{ width: 480, flexShrink: 0 }}
+          styles={{ body: { paddingTop: 16 } }}
+        >
+          <Form form={form} layout="vertical" className="compact-deploy-form">
+            <Form.Item label="集群ID" required>
+              <Select
+                placeholder="选择集群"
+                value={clusterId}
+                onChange={onClusterChange}
+                options={clusters.map((c) => ({ value: c.id, label: `${c.id} (${c.arch.toUpperCase()})` }))}
+              />
+            </Form.Item>
+            <Form.Item label="架构类型">
+              {selectedArch ? <Tag color="blue">{selectedArch.toUpperCase()}</Tag> : <span>-</span>}
+            </Form.Item>
+            <Form.Item label="目标实例" required>
+              <Select
+                placeholder="选择当前集群内实例"
+                disabled={!clusterId}
+                value={selectedInstance}
+                dropdownMatchSelectWidth={false}
+                onChange={(value) => {
+                  const next = clusterInstances.find((item) => item.id === value)
+                  setSelectedInstance(value)
+                  if (!next || next.status?.role === targetRole) {
+                    setTargetRole(undefined)
+                    form.setFieldsValue({ target_role: undefined })
+                  }
+                }}
+                options={clusterInstances.map((i) => ({
+                  value: i.id,
+                  label: `${i.name} (${i.connection?.host || i.host || '-'}:${i.connection?.port || i.port || '-'})`,
+                }))}
+              />
+            </Form.Item>
+            {selected && (
+              <Descriptions size="small" bordered column={2} style={{ marginBottom: 14 }}>
+                <Descriptions.Item label="当前角色">{selected.status?.role || '-'}</Descriptions.Item>
+                <Descriptions.Item label="架构">{selectedArch.toUpperCase()}</Descriptions.Item>
+                <Descriptions.Item label="复制状态" span={2}>{selected.status?.replication_status || selected.topology?.replication_mode || '-'}</Descriptions.Item>
+              </Descriptions>
+            )}
+            <Form.Item label="目标角色" required>
+              <Select
+                placeholder="选择目标角色"
+                disabled={!selectedArch}
+                value={targetRole}
+                onChange={setTargetRole}
+                options={targetRoleOptions}
+              />
+            </Form.Item>
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Button
+                type="primary"
+                icon={<RetweetOutlined />}
+                loading={submitting}
+                onClick={onSubmit}
+                disabled={!clusterId || !selectedInstance || !targetRole}
+              >
+                执行切换
+              </Button>
+            </Form.Item>
+          </Form>
+        </Card>
 
-      <Card style={{ marginTop: 16 }} title={<Space><HistoryOutlined /><span>切换历史</span></Space>}>
-        {!clusterId ? (
-          <Result title="请先选择集群" subTitle="选择集群后查看角色切换历史" />
-        ) : (
-          <Table
-            columns={historyColumns}
-            dataSource={history}
-            rowKey={(row) => row.id || `${row.instance_id}-${row.completed_at || row.started_at || row.message}`}
-            loading={historyLoading}
-            locale={{ emptyText: '暂无切换记录' }}
-          />
-        )}
-      </Card>
+        <Card
+          title={<Space><HistoryOutlined /><span>切换历史</span></Space>}
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          {!clusterId ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择集群，查看角色切换历史" />
+          ) : (
+            <Table
+              size="small"
+              columns={historyColumns}
+              dataSource={history}
+              rowKey={(row) => row.id || `${row.instance_id}-${row.completed_at || row.started_at || row.message}`}
+              loading={historyLoading}
+              locale={{ emptyText: '暂无切换记录' }}
+              pagination={{ pageSize: 8, size: 'small', showTotal: (t) => `共 ${t} 条` }}
+            />
+          )}
+        </Card>
+      </div>
     </div>
   )
 }

@@ -361,6 +361,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                       value={node.host_id}
                       options={hostOptions}
                       placeholder="选择主机"
+                      dropdownMatchSelectWidth={false}
                       onChange={(value) => updateDbNode(node.id, { host_id: value })}
                     />
                   </Space>
@@ -401,6 +402,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
                     value={middlewareByID(spec, 'proxysql')?.proxy_host_id}
                     options={hostOptions}
                     placeholder="ProxySQL 主机"
+                    dropdownMatchSelectWidth={false}
                     onChange={(value) => {
                       const host = hosts.find((item) => item.id === value)
                       updateMiddleware('proxysql', { proxy_host_id: value, proxy_agent_port: host?.agent_port || 9090 })
@@ -470,7 +472,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
         {selectedDbNode && (
           <Form layout="vertical">
             <Form.Item label="主机" required>
-              <Select value={selectedDbNode.host_id} options={hostOptions} onChange={(value) => updateDbNode(selectedDbNode.id, { host_id: value })} />
+              <Select value={selectedDbNode.host_id} options={hostOptions} dropdownMatchSelectWidth={false} onChange={(value) => updateDbNode(selectedDbNode.id, { host_id: value })} />
             </Form.Item>
             <Form.Item label="MySQL 端口">
               <InputNumber min={1} max={65535} style={{ width: '100%' }} value={selectedDbNode.mysql_port || spec.mysql_port} onChange={(value) => updateDbNode(selectedDbNode.id, { mysql_port: value || spec.mysql_port })} />
