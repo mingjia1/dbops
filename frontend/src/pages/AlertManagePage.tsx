@@ -8,7 +8,9 @@ interface AlertTemplate { id: string; name: string; category: string; metric: st
 interface EscalationRule { id: string; rule_id: string; level: number; severity: string; interval_sec: number; notify_channels: string }
 interface Silence { id: string; name: string; rule_ids: string; start_at: string; end_at: string; enabled: boolean }
 
-export default function AlertManagePage() {
+// 告警高级策略面板: 作为 告警管理页(AlertRuleList) 的一个 Tab 使用,
+// 不再是独立路由页面 (菜单已整合, 保留文件仅为复用其模板/升级/静默逻辑).
+export function AlertAdvancedPanel() {
   const [templates, setTemplates] = useState<AlertTemplate[]>([])
   const [escalations, setEscalations] = useState<EscalationRule[]>([])
   const [silences, setSilences] = useState<Silence[]>([])
@@ -71,7 +73,7 @@ export default function AlertManagePage() {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
+    <>
       <Card title={<><NotificationOutlined /> 告警高级管理</>} extra={<Button onClick={handleEvaluate}>手动评估告警</Button>}>
         <Tabs items={[
           { key: 'templates', label: '告警模板', children: <>
@@ -114,6 +116,6 @@ export default function AlertManagePage() {
           <Form.Item name="end_at" label="结束时间"><Input type="datetime-local" /></Form.Item>
         </Form>
       </Modal>
-    </div>
+    </>
   )
 }

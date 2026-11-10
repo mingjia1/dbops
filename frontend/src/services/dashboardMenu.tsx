@@ -23,17 +23,6 @@ export type MenuItem = Required<MenuProps>['items'][number]
 export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
   { key: '/dashboard/home', icon: <DashboardOutlined />, label: '总览' },
   {
-    key: '/dashboard/monitoring',
-    icon: <AlertOutlined />,
-    label: '监控告警',
-    children: [
-      { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
-      { key: '/dashboard/platform-health', icon: <HeartOutlined />, label: '平台健康' },
-      { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警规则' },
-      { key: '/dashboard/alert-manage', icon: <AlertOutlined />, label: '告警管理' },
-    ],
-  },
-  {
     key: '/dashboard/resources',
     icon: <DesktopOutlined />,
     label: '资源管理',
@@ -98,6 +87,16 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
       { key: '/dashboard/masking', icon: <LockOutlined />, label: '数据脱敏' },
       { key: '/dashboard/key-rotation', icon: <KeyOutlined />, label: '密钥轮换' },
       { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '安全设置' },
+    ],
+  },
+  {
+    key: '/dashboard/monitoring',
+    icon: <AlertOutlined />,
+    label: '监控告警',
+    children: [
+      { key: '/dashboard/monitor', icon: <BarChartOutlined />, label: '监控仪表盘' },
+      { key: '/dashboard/platform-health', icon: <HeartOutlined />, label: '平台健康' },
+      { key: '/dashboard/alert-rules', icon: <AlertOutlined />, label: '告警管理' },
     ],
   },
   {

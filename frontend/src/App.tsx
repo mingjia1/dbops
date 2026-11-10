@@ -45,7 +45,6 @@ const LicensePage = lazy(() => import('./pages/LicensePage'))
 const ArchUpgradePage = lazy(() => import('./pages/ArchUpgradePage'))
 const AuditVerifyPage = lazy(() => import('./pages/AuditVerifyPage'))
 const DrillPage = lazy(() => import('./pages/DrillPage'))
-const AlertManagePage = lazy(() => import('./pages/AlertManagePage'))
 const CapabilityMatrix = lazy(() => import('./pages/CapabilityMatrix'))
 const FirstDeployWizard = lazy(() => import('./pages/FirstDeployWizard'))
 const PlatformHealth = lazy(() => import('./pages/PlatformHealth'))
@@ -115,7 +114,6 @@ function App() {
             <Route path="arch-upgrade" element={<ArchUpgradePage />} />
             <Route path="audit-verify" element={<AuditVerifyPage />} />
             <Route path="drills" element={<DrillPage />} />
-            <Route path="alert-manage" element={<AlertManagePage />} />
             <Route path="first-deploy" element={<FirstDeployWizard forceOpen />} />
             <Route path="platform-health" element={<PlatformHealth />} />
           </Route>

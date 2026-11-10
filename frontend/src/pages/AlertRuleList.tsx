@@ -3,6 +3,7 @@ import { Table, Button, Space, Modal, Form, Input, Select, Tag, Tabs, Card, Swit
 import { message } from '../components/antdMessage'
 import { PlusOutlined, EditOutlined, DeleteOutlined, BellOutlined, HistoryOutlined, SettingOutlined } from '@ant-design/icons'
 import { alertApi } from '../services/api'
+import { AlertAdvancedPanel } from './AlertManagePage'
 
 interface AlertRule {
   id: string
@@ -521,6 +522,16 @@ const AlertRuleList: React.FC = () => {
               </span>
             ),
             children: renderAlertHistoryTab(),
+          },
+          {
+            key: 'advanced',
+            label: (
+              <span>
+                <SettingOutlined />
+                高级策略
+              </span>
+            ),
+            children: activeTab === 'advanced' ? <AlertAdvancedPanel /> : null,
           },
         ]}
       />
