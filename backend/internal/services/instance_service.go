@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -275,8 +276,33 @@ func (s *InstanceService) Delete(ctx context.Context, id string) error {
 	}
 
 	// 尝试备份和退役
+	// 不可达实例跳过备份/退役: TCP 连不上的实例既无法备份也无法退役, 强制
+	// "先备份再删除"会把 unhealthy 实例永久锁死在清单里 (端口拒绝连接 →
+	// 备份必然失败 → 删除中止)。降级为仅注销 (deregister-only), audit 记录原因。
+	if !s.isInstancePortReachable(ctx, id) {
+		if err := s.repo.Delete(ctx, id); err != nil {
+			return err
+		}
+		s.auditInstanceDelete(ctx, id, "success", "",
+			fmt.Sprintf("deregistered_only=true flavor=%s reason=instance_unreachable_skip_backup",
+				normalizeFlavor(instance.Version.Flavor)))
+		return nil
+	}
+
 	backup, err := s.backupAndDecommission(ctx, id)
 	if err != nil {
+		// 凭据无法解密 (平台加密密钥已更换): 备份/退役都无法执行, 强制先备份
+		// 会把实例永久锁死。降级为仅注销, audit 记录原因; 其它失败仍中止删除。
+		var credErr *InstanceCredentialError
+		if errors.As(err, &credErr) {
+			if err := s.repo.Delete(ctx, id); err != nil {
+				return err
+			}
+			s.auditInstanceDelete(ctx, id, "success", "",
+				fmt.Sprintf("deregistered_only=true flavor=%s reason=credential_decrypt_failed_skip_backup",
+					normalizeFlavor(instance.Version.Flavor)))
+			return nil
+		}
 		return fmt.Errorf("backup/decommission failed for instance %s, delete aborted: %w", id, err)
 	}
 
@@ -301,6 +327,22 @@ func (s *InstanceService) backupAndDecommission(ctx context.Context, id string) 
 		return backup, err
 	}
 	return backup, nil
+}
+
+// isInstancePortReachable 轻量探测实例端口可达性 (3s 超时)。
+// 用于删除前判断: 不可达的实例无法备份/退役, 应降级为仅注销。
+func (s *InstanceService) isInstancePortReachable(ctx context.Context, id string) bool {
+	conn, err := s.repo.GetConnection(ctx, id)
+	if err != nil || conn == nil || strings.TrimSpace(conn.Host) == "" {
+		return false
+	}
+	address := net.JoinHostPort(conn.Host, strconv.Itoa(conn.Port))
+	tcp, err := net.DialTimeout("tcp", address, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = tcp.Close()
+	return true
 }
 
 func (s *InstanceService) executeRemovalBackup(ctx context.Context, id string) (*BackupTaskResult, error) {

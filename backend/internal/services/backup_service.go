@@ -246,7 +246,8 @@ func (s *BackupService) ExecuteBackup(ctx context.Context, req ExecuteBackupRequ
 	}
 	password, err := utils.Decrypt(conn.PasswordEncrypted, s.encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt instance password: %w", err)
+		// 类型化包装: 删除流程据此识别"凭据无法解密 → 无法备份"并降级为仅注销
+		return nil, &InstanceCredentialError{Cause: fmt.Errorf("failed to decrypt instance password: %w", err)}
 	}
 
 	taskID := fmt.Sprintf("backup-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8])
