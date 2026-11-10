@@ -446,9 +446,11 @@ const InstanceList: React.FC = () => {
         const displayRole = formatClusterRole(instanceArch(r), role)
         const health = r.status?.health_status
         const run = r.status?.run_status
-        if (run === 'stopped') return <Tag color="error">已停止</Tag>
+        // 从未检测过的实例 (health 为 offline/unknown/空) 不显示红色"已停止"误导用户
+        const neverChecked = !health || ['offline', 'unknown'].includes(health)
         if (health === 'healthy' || health === 'ok') return <Tag color="success">运行中{role ? ` (${displayRole})` : ''}</Tag>
         if (health === 'unhealthy' || health === 'failed') return <Tag color="error">异常</Tag>
+        if (run === 'stopped' && !neverChecked) return <Tag color="error">已停止</Tag>
         if (run === 'running') return <Tag color="success">运行中{role ? ` (${displayRole})` : ''}</Tag>
         return <Tag color="default">未检测</Tag>
       },

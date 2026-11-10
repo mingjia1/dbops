@@ -79,6 +79,13 @@ const InstanceDetail: React.FC = () => {
   useEffect(() => {
     fetchInstance()
     fetchClusters()
+    // 挂载时静默触发一次健康检测: 注册后从未检测的实例状态停留在
+    // stopped/offline, 列表会误显示"已停止"; 详情页打开即校正并持久化.
+    if (id) {
+      instanceApi.healthCheck(id)
+        .then(() => fetchInstance())
+        .catch(() => { /* 检测失败不打扰详情浏览, 状态保持原样 */ })
+    }
   }, [id])
 
   const fetchInstance = async () => {
