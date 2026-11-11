@@ -624,7 +624,7 @@ const HostDetail: React.FC = () => {
                         <Statistic
                           title="已纳管实例"
                           value={instances.length}
-                          valueStyle={{ color: instances.length > 0 ? '#3f8600' : '#999' }}
+                          valueStyle={{ color: instances.length > 0 ? 'var(--apple-status-healthy)' : 'var(--apple-text-tertiary)' }}
                           prefix={<DatabaseOutlined />}
                         />
                       </Card>
@@ -643,7 +643,7 @@ const HostDetail: React.FC = () => {
                         <Statistic
                           title="待纳管"
                           value={newInstances.length}
-                          valueStyle={{ color: newInstances.length > 0 ? '#fa8c16' : '#999' }}
+                          valueStyle={{ color: newInstances.length > 0 ? 'var(--apple-orange)' : 'var(--apple-text-tertiary)' }}
                         />
                       </Card>
                     </Col>
@@ -652,7 +652,7 @@ const HostDetail: React.FC = () => {
                         <Statistic
                           title="已纳管(扫描中)"
                           value={managedInScan.length}
-                          valueStyle={{ color: '#1890ff' }}
+                          valueStyle={{ color: 'var(--apple-blue)' }}
                         />
                       </Card>
                     </Col>

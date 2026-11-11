@@ -391,9 +391,9 @@ const parseMySQLConfig = (text?: string): Record<string, string> => {
 
 const statusStyle = (status?: string) => {
   const normalized = String(status || '').toLowerCase()
-  if (['completed', 'success', 'succeeded', 'ok'].includes(normalized)) return { borderColor: '#52c41a', background: '#f6ffed' }
-  if (['failed', 'error'].includes(normalized)) return { borderColor: '#ff4d4f', background: '#fff2f0' }
-  if (['running', 'process'].includes(normalized)) return { borderColor: '#1677ff', background: '#e6f4ff' }
-  if (['partial', 'partial_success'].includes(normalized)) return { borderColor: '#faad14', background: '#fffbe6' }
-  return { borderColor: '#d9d9d9', background: '#fff' }
+  if (['completed', 'success', 'succeeded', 'ok'].includes(normalized)) return { borderColor: 'var(--apple-status-healthy)', background: 'var(--apple-green-tint)' }
+  if (['failed', 'error'].includes(normalized)) return { borderColor: 'var(--apple-red)', background: 'var(--apple-red-tint)' }
+  if (['running', 'process'].includes(normalized)) return { borderColor: 'var(--apple-blue)', background: 'var(--apple-blue-tint)' }
+  if (['partial', 'partial_success'].includes(normalized)) return { borderColor: 'var(--apple-orange)', background: 'var(--apple-orange-tint)' }
+  return { borderColor: 'var(--apple-separator)', background: 'var(--apple-bg-grouped)' }
 }

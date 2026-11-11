@@ -334,10 +334,10 @@ const MonitorDashboard: React.FC = () => {
                 <Statistic
                   title={item.name}
                   value={item.status}
-                  valueStyle={{ color: item.status === 'healthy' ? '#52c41a' : item.status === 'disabled' ? '#faad14' : '#ff4d4f' }}
+                  valueStyle={{ color: item.status === 'healthy' ? 'var(--apple-status-healthy)' : item.status === 'disabled' ? 'var(--apple-orange)' : 'var(--apple-red)' }}
                   prefix={item.status === 'healthy' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
                 />
-                {item.detail && <div style={{ marginTop: 8, fontSize: 12, color: '#8c8c8c' }}>{item.detail}</div>}
+                {item.detail && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--apple-text-secondary)' }}>{item.detail}</div>}
               </Card>
             </Col>
           ))}
@@ -394,7 +394,7 @@ const MonitorDashboard: React.FC = () => {
               <Col flex="1 1 140px"><Card size="small"><Statistic title="缓冲池命中率" value={metrics.innodb_buffer_pool_hit_ratio ?? '-'} suffix={metrics.innodb_buffer_pool_hit_ratio != null ? '%' : undefined} precision={2} prefix={<HddOutlined />} /></Card></Col>
               <Col flex="1 1 140px"><Card size="small"><Statistic title="当前连接数" value={metrics.threads_connected || 0} prefix={<DatabaseOutlined />} /></Card></Col>
               <Col flex="1 1 140px"><Card size="small"><Statistic title="活跃线程数" value={metrics.threads_running ?? 0} prefix={<DatabaseOutlined />} /></Card></Col>
-              <Col flex="1 1 140px"><Card size="small"><Statistic title="慢查询" value={metrics.slow_queries ?? 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries ?? 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="慢查询" value={metrics.slow_queries ?? 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries ?? 0) > 100 ? 'var(--apple-status-unhealthy)' : 'var(--apple-orange)' }} /></Card></Col>
             </Row>
 
             <Row gutter={[16, 16]}>

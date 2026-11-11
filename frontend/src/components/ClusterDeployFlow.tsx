@@ -134,11 +134,11 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
       style: {
         width: 190,
         minHeight: 64,
-        border: '1px solid #d9d9d9',
+        border: '1px solid var(--apple-separator)',
         borderRadius: 8,
         padding: 10,
-        background: '#fff',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+        background: 'var(--apple-bg-elevated)',
+        boxShadow: 'var(--apple-shadow-1)',
         ...node.style,
       },
     }
@@ -447,7 +447,7 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
         </Space>
       </div>
 
-      <div style={{ minWidth: 0, height: 'calc(100vh - 210px)', minHeight: 460, border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ minWidth: 0, height: 'calc(100vh - 210px)', minHeight: 460, border: '1px solid var(--apple-separator)', borderRadius: 8, overflow: 'hidden' }}>
         <ReactFlow
           nodes={reactFlowNodes}
           edges={reactFlowEdges}
@@ -563,10 +563,10 @@ const ClusterDeployFlow: React.FC<ClusterDeployFlowProps> = ({
 }
 
 const rowBoxStyle: React.CSSProperties = {
-  border: '1px solid #f0f0f0',
+  border: '1px solid var(--apple-separator)',
   borderRadius: 8,
   padding: 10,
-  background: '#fff',
+  background: 'var(--apple-bg-elevated)',
 }
 
 const FlowNodeLabel: React.FC<{ label: string; status?: string; subtitle?: string }> = ({ label, status, subtitle }) => (
@@ -660,12 +660,12 @@ const nodeStatusByTarget = (deployment: Partial<DeployResult> | undefined, nodeI
 
 const nodeStyle = (status?: string): Record<string, unknown> => {
   const normalized = String(status || '').toLowerCase()
-  if (['completed', 'success', 'enabled'].includes(normalized)) return { borderColor: '#52c41a', background: '#f6ffed' }
-  if (['failed', 'error'].includes(normalized)) return { borderColor: '#ff4d4f', background: '#fff2f0' }
-  if (['running', 'process'].includes(normalized)) return { borderColor: '#1677ff', background: '#e6f4ff' }
-  if (['disabled'].includes(normalized)) return { borderColor: '#d9d9d9', background: '#fafafa', opacity: 0.72 }
-  if (['partial', 'partial_success'].includes(normalized)) return { borderColor: '#faad14', background: '#fffbe6' }
-  return { borderColor: '#d9d9d9', background: '#fff' }
+  if (['completed', 'success', 'enabled'].includes(normalized)) return { borderColor: 'var(--apple-green)', background: 'var(--apple-green-tint)' }
+  if (['failed', 'error'].includes(normalized)) return { borderColor: 'var(--apple-red)', background: 'var(--apple-red-tint)' }
+  if (['running', 'process'].includes(normalized)) return { borderColor: 'var(--apple-blue)', background: 'var(--apple-blue-tint)' }
+  if (['disabled'].includes(normalized)) return { borderColor: 'var(--apple-separator)', background: 'var(--apple-bg-grouped)', opacity: 0.72 }
+  if (['partial', 'partial_success'].includes(normalized)) return { borderColor: 'var(--apple-orange)', background: 'var(--apple-orange-tint)' }
+  return { borderColor: 'var(--apple-separator)', background: 'var(--apple-bg-elevated)' }
 }
 
 const statusColor = (status?: string) => {

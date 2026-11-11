@@ -3,10 +3,10 @@ import { Alert, Card, Col, Descriptions, Row, Statistic, Table, Tag } from 'antd
 import type { ColumnsType } from 'antd/es/table'
 
 const lagColor = (seconds: number) => {
-  if (seconds < 0) return '#999'
-  if (seconds < 10) return '#52c41a'
-  if (seconds < 60) return '#faad14'
-  return '#ff4d4f'
+  if (seconds < 0) return 'var(--apple-text-tertiary)'
+  if (seconds < 10) return 'var(--apple-status-healthy)'
+  if (seconds < 60) return 'var(--apple-orange)'
+  return 'var(--apple-red)'
 }
 
 const isRunningValue = (value: boolean | string | number | undefined | null) => {
@@ -44,12 +44,12 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="集群架构" value={clusterType.toUpperCase()} valueStyle={{ color: '#1677ff' }} />
+              <Statistic title="集群架构" value={clusterType.toUpperCase()} valueStyle={{ color: 'var(--apple-blue)' }} />
             </Card>
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="连接状态" value="失败" valueStyle={{ color: '#ff4d4f' }} />
+              <Statistic title="连接状态" value="失败" valueStyle={{ color: 'var(--apple-red)' }} />
             </Card>
           </Col>
         </Row>
@@ -73,12 +73,12 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="IO Thread" value={ioOK ? 'Running' : 'Stopped'} valueStyle={{ color: ioOK ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="IO Thread" value={ioOK ? 'Running' : 'Stopped'} valueStyle={{ color: ioOK ? 'var(--apple-status-healthy)' : 'var(--apple-red)' }} />
             </Card>
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="SQL Thread" value={sqlOK ? 'Running' : 'Stopped'} valueStyle={{ color: sqlOK ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="SQL Thread" value={sqlOK ? 'Running' : 'Stopped'} valueStyle={{ color: sqlOK ? 'var(--apple-status-healthy)' : 'var(--apple-red)' }} />
             </Card>
           </Col>
           <Col span={6}>
@@ -88,7 +88,7 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="架构" value={(clusterType || 'HA').toUpperCase()} valueStyle={{ color: '#1677ff' }} />
+              <Statistic title="架构" value={(clusterType || 'HA').toUpperCase()} valueStyle={{ color: 'var(--apple-blue)' }} />
             </Card>
           </Col>
         </Row>
@@ -140,12 +140,12 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="组状态" value={isHealthy ? 'Healthy' : 'Degraded'} valueStyle={{ color: isHealthy ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="组状态" value={isHealthy ? 'Healthy' : 'Degraded'} valueStyle={{ color: isHealthy ? 'var(--apple-status-healthy)' : 'var(--apple-red)' }} />
             </Card>
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="在线/总数" value={`${onlineMembers}/${groupSize}`} valueStyle={{ color: isHealthy ? '#52c41a' : '#faad14' }} />
+              <Statistic title="在线/总数" value={`${onlineMembers}/${groupSize}`} valueStyle={{ color: isHealthy ? 'var(--apple-status-healthy)' : 'var(--apple-orange)' }} />
             </Card>
           </Col>
           <Col span={6}>
@@ -155,7 +155,7 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="架构" value="MGR" valueStyle={{ color: '#1677ff' }} />
+              <Statistic title="架构" value="MGR" valueStyle={{ color: 'var(--apple-blue)' }} />
             </Card>
           </Col>
         </Row>
@@ -171,7 +171,7 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
           ]}
         />
         {status.transactions_applied && (
-          <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>已应用事务: {status.transactions_applied}</div>
+          <div style={{ marginTop: 12, color: 'var(--apple-text-secondary)', fontSize: 12 }}>已应用事务: {status.transactions_applied}</div>
         )}
       </div>
     )
@@ -190,7 +190,7 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="集群状态" value={clusterStatus} valueStyle={{ color: clusterStatus === 'Primary' ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="集群状态" value={clusterStatus} valueStyle={{ color: clusterStatus === 'Primary' ? 'var(--apple-status-healthy)' : 'var(--apple-red)' }} />
             </Card>
           </Col>
           <Col span={6}>
@@ -200,12 +200,12 @@ export const ReplicationMonitor: React.FC<{ status: Record<string, any> }> = ({ 
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="wsrep_ready" value={wsrepReady ? 'Ready' : 'Not Ready'} valueStyle={{ color: wsrepReady ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="wsrep_ready" value={wsrepReady ? 'Ready' : 'Not Ready'} valueStyle={{ color: wsrepReady ? 'var(--apple-status-healthy)' : 'var(--apple-red)' }} />
             </Card>
           </Col>
           <Col span={6}>
             <Card size="small">
-              <Statistic title="架构" value="PXC" valueStyle={{ color: '#1677ff' }} />
+              <Statistic title="架构" value="PXC" valueStyle={{ color: 'var(--apple-blue)' }} />
             </Card>
           </Col>
         </Row>

@@ -123,7 +123,7 @@ const Dashboard: React.FC = () => {
       <Header className="dashboard-header">
         <div className="header-left">
           <div className="header-logo"><DatabaseOutlined /></div>
-          <Typography.Title level={4} style={{ color: themeMode === 'dark' ? '#fff' : '#1D1D1F', margin: 0, fontWeight: 600 }}>
+          <Typography.Title level={4} style={{ color: 'var(--apple-text)', margin: 0, fontWeight: 500 }}>
             MySQL 运维平台
           </Typography.Title>
         </div>
@@ -139,13 +139,13 @@ const Dashboard: React.FC = () => {
           </Tooltip>
           <Tooltip title="接入向导">
             <RocketOutlined
-              style={{ color: themeMode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(60,60,67,0.85)', marginRight: 16, cursor: 'pointer', fontSize: 18 }}
+              style={{ color: 'var(--apple-text-secondary)', marginRight: 16, cursor: 'pointer', fontSize: 18 }}
               onClick={() => window.openFirstDeployWizard?.()}
             />
           </Tooltip>
           <Dropdown menu={userMenu} placement="bottomRight">
-            <Space style={{ cursor: 'pointer', color: themeMode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(60,60,67,0.85)' }}>
-              <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />
+            <Space style={{ cursor: 'pointer', color: 'var(--apple-text-secondary)' }}>
+              <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: 'var(--apple-blue)' }} />
               <span>{user?.username || '用户'}</span>
             </Space>
           </Dropdown>

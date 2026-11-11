@@ -302,7 +302,7 @@ const HAManage: React.FC = () => {
                 <Statistic
                   title={clusterIsPXC || clusterIsMGR ? '主节点' : '主节点'}
                   value={masterInstance ? instanceEndpoint(masterInstance) : '无主'}
-                  valueStyle={{ fontSize: 14, color: masterInstance ? '#3f8600' : '#cf1322' }}
+                  valueStyle={{ fontSize: 14, color: masterInstance ? 'var(--apple-status-healthy)' : 'var(--apple-status-unhealthy)' }}
                 />
               </Card>
             </Col>
@@ -314,7 +314,7 @@ const HAManage: React.FC = () => {
                 <Statistic
                   title="最大复制延迟(s)"
                   value={Math.max(0, ...slaveInstances.map((s) => s.status?.seconds_behind_master ?? 0))}
-                  valueStyle={{ color: '#fa8c16' }}
+                  valueStyle={{ color: 'var(--apple-orange)' }}
                 />
               </Card>
             </Col>

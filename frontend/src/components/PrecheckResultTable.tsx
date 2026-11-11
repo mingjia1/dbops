@@ -58,8 +58,8 @@ const PrecheckResultTable: React.FC<PrecheckResultTableProps> = ({ results, load
                 {(details || []).map((d, i) => (
                   <span key={i} style={{ fontSize: 12 }}>
                     <Tag color={d.passed ? 'success' : 'error'} style={{ fontSize: 10 }}>{d.name}</Tag>
-                    {d.value && <span style={{ color: '#888' }}>{d.value} </span>}
-                    {d.message && <span style={{ color: '#ff4d4f' }}>{d.message}</span>}
+                    {d.value && <span style={{ color: 'var(--apple-text-secondary)' }}>{d.value} </span>}
+                    {d.message && <span style={{ color: 'var(--apple-red)' }}>{d.message}</span>}
                     {!d.passed && d.fixable && (
                       <Button
                         size="small"

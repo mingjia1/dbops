@@ -518,8 +518,8 @@ const ClusterDeploy: React.FC = () => {
             <li>清理远程主机上的数据库目录和服务</li>
             <li>删除平台纳管关系和拓扑</li>
           </ol>
-          <p style={{ color: '#ff4d4f', marginTop: 8 }}>⚠️ 此操作会删除数据库服务和数据目录，无法撤销</p>
-          <p style={{ color: '#ff4d4f' }}>⚠️ 如果备份失败，销毁操作将被拒绝</p>
+          <p style={{ color: 'var(--apple-red)', marginTop: 8 }}>⚠️ 此操作会删除数据库服务和数据目录，无法撤销</p>
+          <p style={{ color: 'var(--apple-red)' }}>⚠️ 如果备份失败，销毁操作将被拒绝</p>
         </div>
       ),
       okText: '确认销毁',

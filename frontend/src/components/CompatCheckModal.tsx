@@ -44,9 +44,9 @@ const CompatCheckModal: React.FC<CompatCheckModalProps> = ({
           </Tag>
           <Paragraph style={{ marginTop: 12 }}>错误: {compatResult.error_count || 0}，警告: {compatResult.warning_count || 0}</Paragraph>
           {(compatResult.incompatibilities || []).map((item: any, index: number) => (
-            <div key={index} style={{ marginTop: 8, padding: 8, background: item.level === 'error' ? '#fff2f0' : '#fffbe6', border: `1px solid ${item.level === 'error' ? '#ffccc7' : '#ffe58f'}`, borderRadius: 4 }}>
+            <div key={index} style={{ marginTop: 8, padding: 8, background: item.level === 'error' ? 'var(--apple-red-tint)' : 'var(--apple-orange-tint)', border: `1px solid ${item.level === 'error' ? 'var(--apple-red)' : 'var(--apple-orange)'}`, borderRadius: 4 }}>
               <div style={{ fontWeight: 500 }}>{item.description}</div>
-              {item.solution && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>解决方案: {item.solution}</div>}
+              {item.solution && <div style={{ fontSize: 12, color: 'var(--apple-text-secondary)', marginTop: 4 }}>解决方案: {item.solution}</div>}
             </div>
           ))}
         </Card>

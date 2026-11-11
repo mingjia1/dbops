@@ -131,9 +131,9 @@ const OnboardingChecklist: React.FC = () => {
               <List.Item>
                 <Space>
                   {results[step.key] ? (
-                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                    <CheckCircleOutlined style={{ color: 'var(--apple-status-healthy)' }} />
                   ) : (
-                    <CloseCircleOutlined style={{ color: '#d9d9d9' }} />
+                    <CloseCircleOutlined style={{ color: 'var(--apple-text-tertiary)' }} />
                   )}
                   <div>
                     <Text strong>{step.title}</Text>

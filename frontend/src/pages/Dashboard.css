@@ -1,15 +1,14 @@
-/* Apple-style dashboard shell: solid translucent header, light bg */
-/* 注意: 不使用 backdrop-filter —— 它会创建 stacking context, 干扰引导遮罩
-   与弹层的层叠表现; 背景改为高不透明度纯色, 视觉差异可忽略。 */
+/* 深空控制台 shell: 所有色值取自 apple.css token, 亮/暗自动切换.
+   不使用 backdrop-filter —— 它会创建 stacking context, 干扰引导遮罩与弹层层叠. */
 .dashboard-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.96) !important;
+  background: var(--apple-bg-elevated) !important;
   padding: 0 24px;
   height: 52px;
   line-height: 52px;
-  border-bottom: 0.5px solid var(--apple-separator);
+  border-bottom: 1px solid var(--apple-separator);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -24,14 +23,15 @@
 .header-logo {
   width: 30px;
   height: 30px;
-  background: linear-gradient(135deg, #0071E3, #5AC8FA);
-  border-radius: 8px;
+  background: linear-gradient(135deg, var(--apple-blue), var(--apple-teal));
+  border-radius: var(--apple-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
+  /* ponytail: 彩色渐变底上的图标字恒为白 (on-color), 不随主题翻转 */
   color: #fff;
-  box-shadow: 0 2px 6px rgba(0, 113, 227, 0.25);
+  box-shadow: var(--apple-shadow-2);
 }
 
 .header-right {
@@ -41,8 +41,8 @@
 }
 
 .dashboard-sider {
-  background: rgba(245, 245, 247, 0.96) !important;
-  border-right: 0.5px solid var(--apple-separator) !important;
+  background: var(--apple-bg-elevated) !important;
+  border-right: 1px solid var(--apple-separator) !important;
 }
 
 .dashboard-sider .ant-menu {
@@ -55,26 +55,27 @@
 .dashboard-sider .ant-menu-submenu-title {
   margin: 2px 8px !important;
   width: calc(100% - 16px) !important;
-  border-radius: 8px !important;
-  color: rgba(60, 60, 67, 0.78) !important;
+  border-radius: var(--apple-radius-sm) !important;
+  color: var(--apple-text-secondary) !important;
   font-weight: 500;
   font-size: 13.5px;
   height: 36px;
   line-height: 36px;
-  transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: all var(--apple-normal) var(--apple-ease);
 }
 
 .dashboard-sider .ant-menu-item:hover,
 .dashboard-sider .ant-menu-submenu-title:hover {
-  color: #1D1D1F !important;
-  background: rgba(0, 0, 0, 0.04) !important;
+  color: var(--apple-text) !important;
+  background: var(--apple-bg-tint) !important;
 }
 
 .dashboard-sider .ant-menu-item-selected {
-  color: #FFFFFF !important;
-  background: linear-gradient(135deg, #0071E3 0%, #0077ED 100%) !important;
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.30);
+  color: var(--apple-blue) !important;
+  background: var(--apple-blue-tint) !important;
+  font-weight: 500;
+  /* 运维控制台语言: 2px 数据青竖条取代蓝底白字胶囊 */
+  box-shadow: inset 2px 0 0 var(--apple-teal);
 }
 
 .dashboard-sider .ant-menu-item-selected::before,
@@ -83,13 +84,13 @@
 }
 
 .dashboard-sider .ant-menu-submenu-selected > .ant-menu-submenu-title {
-  color: #1D1D1F !important;
-  background: rgba(0, 0, 0, 0.04) !important;
+  color: var(--apple-text) !important;
+  background: var(--apple-bg-tint) !important;
 }
 
 .dashboard-sider .ant-menu-sub {
   background: transparent !important;
-  border-radius: 8px;
+  border-radius: var(--apple-radius-sm);
   margin: 0 8px !important;
   padding: 2px 0 !important;
 }
@@ -97,14 +98,14 @@
   margin: 1px 12px !important;
   width: calc(100% - 24px) !important;
   font-size: 13px;
-  color: rgba(60, 60, 67, 0.62) !important;
+  color: var(--apple-text-tertiary) !important;
   padding-left: 36px !important;
 }
 .dashboard-sider .ant-menu-sub .ant-menu-item-selected {
-  background: rgba(0, 113, 227, 0.10) !important;
-  color: #0071E3 !important;
-  font-weight: 600;
-  box-shadow: none;
+  background: var(--apple-blue-tint) !important;
+  color: var(--apple-blue) !important;
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--apple-teal);
 }
 
 .dashboard-sider .ant-menu-item .anticon,
@@ -115,7 +116,11 @@
 
 .dashboard-content {
   padding: 0;
-  background: var(--apple-bg);
+  background-color: var(--apple-bg);
+  background-image:
+    linear-gradient(to right, var(--apple-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--apple-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
   min-height: calc(100vh - 52px);
   overflow-y: auto;
 }
@@ -127,40 +132,11 @@
   gap: 8px;
   padding: 4px 10px 4px 4px;
   border-radius: 980px;
-  background: rgba(120, 120, 128, 0.08);
-  color: #1D1D1F;
+  background: var(--apple-blue-tint);
+  color: var(--apple-text);
   cursor: pointer;
-  transition: all 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: all var(--apple-fast) var(--apple-ease);
   line-height: 1.4;
 }
-.user-pill:hover { background: rgba(120, 120, 128, 0.16); }
-.user-pill .ant-avatar { background: linear-gradient(135deg, #0071E3, #5856D6) !important; }
-
-:root[data-theme="dark"] .dashboard-header {
-  background: rgba(28, 28, 30, 0.86) !important;
-}
-
-:root[data-theme="dark"] .dashboard-sider {
-  background: rgba(28, 28, 30, 0.92) !important;
-}
-
-:root[data-theme="dark"] .dashboard-sider .ant-menu-item,
-:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-title {
-  color: rgba(245, 245, 247, 0.76) !important;
-}
-
-:root[data-theme="dark"] .dashboard-sider .ant-menu-item:hover,
-:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-title:hover,
-:root[data-theme="dark"] .dashboard-sider .ant-menu-submenu-selected > .ant-menu-submenu-title {
-  color: #F5F5F7 !important;
-  background: rgba(255, 255, 255, 0.08) !important;
-}
-
-:root[data-theme="dark"] .dashboard-sider .ant-menu-sub .ant-menu-item {
-  color: rgba(245, 245, 247, 0.62) !important;
-}
-
-:root[data-theme="dark"] .dashboard-sider .ant-menu-sub .ant-menu-item-selected {
-  background: rgba(10, 132, 255, 0.18) !important;
-  color: #64D2FF !important;
-}
+.user-pill:hover { background: var(--apple-separator-strong); }
+.user-pill .ant-avatar { background: linear-gradient(135deg, var(--apple-blue), var(--apple-indigo)) !important; }

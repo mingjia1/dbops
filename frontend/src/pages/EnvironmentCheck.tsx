@@ -227,7 +227,7 @@ const EnvironmentCheck: React.FC = () => {
             ) : (
               <>
                 <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ color: '#8c8c8c' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
+                  <span style={{ color: 'var(--apple-text-secondary)' }}>已选 {selectedHosts.length} / {hosts.length} 台</span>
                 </div>
                 <Table
                   rowKey="id"
@@ -277,7 +277,7 @@ const EnvironmentCheck: React.FC = () => {
                       <Form.Item {...restField} name={[name, 'password']} rules={[{ required: true, message: '请输入 SSH 密码' }]} style={{ width: 220, marginBottom: 0 }}>
                         <Input.Password placeholder="SSH 密码" autoComplete="new-password" />
                       </Form.Item>
-                      <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f' }} />
+                      <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--apple-red)' }} />
                     </Space>
                   ))}
                   <Form.Item>
@@ -300,8 +300,8 @@ const EnvironmentCheck: React.FC = () => {
           <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
             <Col span={6}><Card><Statistic title="检查 ID" value={result.check_id} valueStyle={{ fontSize: 14 }} /></Card></Col>
             <Col span={6}><Card><Statistic title="总检查项" value={total} /></Card></Col>
-            <Col span={6}><Card><Statistic title="通过" value={passed} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-            <Col span={6}><Card><Statistic title="失败" value={failed} valueStyle={{ color: '#cf1322' }} /></Card></Col>
+            <Col span={6}><Card><Statistic title="通过" value={passed} valueStyle={{ color: 'var(--apple-status-healthy)' }} /></Card></Col>
+            <Col span={6}><Card><Statistic title="失败" value={failed} valueStyle={{ color: 'var(--apple-status-unhealthy)' }} /></Card></Col>
           </Row>
 
           <Card style={{ marginTop: 16 }} title={`环境评分：${score} / 100`} extra={<Button icon={<DownloadOutlined />} onClick={handleExport}>导出报告</Button>}>

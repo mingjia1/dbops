@@ -186,7 +186,7 @@ const Stat: React.FC<{ label: string; value: number; icon: React.ReactNode; colo
     <span style={{ color, fontSize: 20, display: 'flex' }}>{icon}</span>
     <div>
       <div style={{ fontSize: 13, color: 'var(--apple-text-secondary)' }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, color, lineHeight: 1.1 }}>{value}</div>
+      <div className="dbops-number" style={{ fontSize: 22, fontWeight: 500, color, lineHeight: 1.1 }}>{value}</div>
     </div>
   </div>
 )

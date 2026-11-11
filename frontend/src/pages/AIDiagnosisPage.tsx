@@ -129,13 +129,13 @@ export default function AIDiagnosisPage() {
           )},
           { key: 'chat', label: 'AI 运维助手', children: (
             <div style={{ display: 'flex', flexDirection: 'column', height: 480 }}>
-              <div ref={chatBoxRef} style={{ flex: 1, overflowY: 'auto', background: '#fafafa', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+              <div ref={chatBoxRef} style={{ flex: 1, overflowY: 'auto', background: 'var(--apple-bg-grouped)', borderRadius: 8, padding: 16, marginBottom: 12 }}>
                 {chatMessages.map((m, i) => (
                   <div key={i} style={{ textAlign: m.role === 'user' ? 'right' : 'left', marginBottom: 10 }}>
-                    <div style={{ display: 'inline-block', maxWidth: '80%', padding: '8px 12px', borderRadius: 8, background: m.role === 'user' ? '#e6f4ff' : '#fff', border: '1px solid #f0f0f0', whiteSpace: 'pre-wrap', textAlign: 'left' }}>{m.content}</div>
+                    <div style={{ display: 'inline-block', maxWidth: '80%', padding: '8px 12px', borderRadius: 8, background: m.role === 'user' ? 'var(--apple-blue-tint)' : 'var(--apple-bg-elevated)', border: '1px solid var(--apple-separator)', whiteSpace: 'pre-wrap', textAlign: 'left' }}>{m.content}</div>
                   </div>
                 ))}
-                {chatLoading && <div style={{ color: '#999' }}>AI 正在思考…</div>}
+                {chatLoading && <div style={{ color: 'var(--apple-text-tertiary)' }}>AI 正在思考…</div>}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <TextArea

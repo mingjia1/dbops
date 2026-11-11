@@ -27,18 +27,18 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({ open, loading, r
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={6}>
               <Statistic title="主节点健康" value={result.current_master_healthy ? '是' : '否'}
-                valueStyle={{ color: result.current_master_healthy ? '#3f8600' : '#cf1322' }} />
+                valueStyle={{ color: result.current_master_healthy ? 'var(--apple-status-healthy)' : 'var(--apple-status-unhealthy)' }} />
             </Col>
             <Col span={6}>
               <Statistic title="健康从节点" value={`${result.healthy_slave_count} / ${result.slave_count}`} />
             </Col>
             <Col span={6}>
               <Statistic title="最大复制延迟" value={result.max_replication_lag} suffix="s"
-                valueStyle={{ color: result.max_replication_lag > 30 ? '#cf1322' : '#3f8600' }} />
+                valueStyle={{ color: result.max_replication_lag > 30 ? 'var(--apple-status-unhealthy)' : 'var(--apple-status-healthy)' }} />
             </Col>
             <Col span={6}>
               <Statistic title="GTID 一致" value={result.gtid_consistent ? '是' : '否'}
-                valueStyle={{ color: result.gtid_consistent ? '#3f8600' : '#cf1322' }} />
+                valueStyle={{ color: result.gtid_consistent ? 'var(--apple-status-healthy)' : 'var(--apple-status-unhealthy)' }} />
             </Col>
           </Row>
           <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>

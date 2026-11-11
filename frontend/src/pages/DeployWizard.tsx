@@ -189,7 +189,7 @@ const DeployWizard: React.FC = () => {
                 hoverable
                 onClick={() => setScenario(t.id)}
                 style={{
-                  borderColor: scenario === t.id ? '#1677ff' : undefined,
+                  borderColor: scenario === t.id ? 'var(--apple-blue)' : undefined,
                   boxShadow: scenario === t.id ? '0 0 0 2px rgba(22,119,255,.2)' : undefined,
                   height: '100%',
                 }}

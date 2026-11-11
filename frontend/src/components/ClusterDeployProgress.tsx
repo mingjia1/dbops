@@ -31,7 +31,7 @@ const renderVerticalStepProgress = (steps: DeployStepView[], overallProgress?: n
           <Space size={4} wrap>
             <span>{step.name || step.id || `步骤 ${idx + 1}`}</span>
             {step.type && <Tag color="default" style={{ fontSize: 10 }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
-            {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
+            {step.target_node && <span style={{ color: 'var(--apple-text-secondary)', fontSize: 12 }}>({step.target_node})</span>}
           </Space>
         ),
         description: (
@@ -42,12 +42,12 @@ const renderVerticalStepProgress = (steps: DeployStepView[], overallProgress?: n
               status={status === 'error' ? 'exception' : status === 'finish' ? 'success' : 'active'}
             />
             <Space size={8} wrap>
-              {step.message && <span style={{ fontSize: 12, color: '#666' }}>{step.message}</span>}
+              {step.message && <span style={{ fontSize: 12, color: 'var(--apple-text-secondary)' }}>{step.message}</span>}
               {step.depends_on && step.depends_on.length > 0 && (
-                <span style={{ fontSize: 12, color: '#888' }}>依赖: {step.depends_on.join(', ')}</span>
+                <span style={{ fontSize: 12, color: 'var(--apple-text-secondary)' }}>依赖: {step.depends_on.join(', ')}</span>
               )}
-              {step.started_at && <span style={{ fontSize: 11, color: '#aaa' }}>开始 {new Date(step.started_at).toLocaleTimeString()}</span>}
-              {step.completed_at && <span style={{ fontSize: 11, color: '#aaa' }}>完成 {new Date(step.completed_at).toLocaleTimeString()}</span>}
+              {step.started_at && <span style={{ fontSize: 11, color: 'var(--apple-text-tertiary)' }}>开始 {new Date(step.started_at).toLocaleTimeString()}</span>}
+              {step.completed_at && <span style={{ fontSize: 11, color: 'var(--apple-text-tertiary)' }}>完成 {new Date(step.completed_at).toLocaleTimeString()}</span>}
             </Space>
           </Space>
         ),
@@ -69,7 +69,7 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
           <ClusterOutlined />
           <span>部署进度 - {dep.cluster_type?.toUpperCase()}</span>
           {!isTerminalDeployStatus(dep.status) && (
-            <span style={{ fontSize: 12, color: '#1677ff' }}>
+            <span style={{ fontSize: 12, color: 'var(--apple-blue)' }}>
               <ReloadOutlined spin style={{ marginRight: 4 }} />
               实时更新中 (2s)
             </span>
@@ -129,9 +129,9 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
         items={STAGE_ORDER.map((title, idx) => ({
           title,
           description: idx === displayStep && !isTerminalDeployStatus(dep.status)
-            ? <span style={{ fontSize: 11, color: '#1677ff' }}>进行中...</span>
+            ? <span style={{ fontSize: 11, color: 'var(--apple-blue)' }}>进行中...</span>
             : idx < displayStep
-              ? <span style={{ fontSize: 11, color: '#52c41a' }}>已完成</span>
+              ? <span style={{ fontSize: 11, color: 'var(--apple-status-healthy)' }}>已完成</span>
               : undefined,
         }))}
         status={deploymentStepStatus(dep.status)}
@@ -149,7 +149,7 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
             }}
           />
         </div>
-        <span style={{ fontSize: 24, fontWeight: 600, color: '#333', minWidth: 48, textAlign: 'right' }}>
+        <span style={{ fontSize: 24, fontWeight: 600, color: 'var(--apple-text)', minWidth: 48, textAlign: 'right' }}>
           {deploymentProgress(dep.status, dep.progress)}%
         </span>
       </div>
@@ -166,7 +166,7 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
           <Space>
             <span>{dep.message || '等待后端返回状态...'}</span>
             {!isTerminalDeployStatus(dep.status) && (
-              <span style={{ fontSize: 11, color: '#888' }}>
+              <span style={{ fontSize: 11, color: 'var(--apple-text-secondary)' }}>
                 ({STAGE_ORDER[displayStep] || dep.stage || '初始化中'})
               </span>
             )}
@@ -195,13 +195,13 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
               return (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, opacity: isLast && !isCompletedDeployStatus(dep.status) ? 1 : idx < substeps.length - 1 ? 0.6 : 0.4 }}>
                   {idx < substeps.length - 1 ? (
-                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
+                    <CheckCircleOutlined style={{ color: 'var(--apple-status-healthy)', fontSize: 14 }} />
                   ) : !isTerminalDeployStatus(dep.status) ? (
-                    <ReloadOutlined spin style={{ color: '#1677ff', fontSize: 14 }} />
+                    <ReloadOutlined spin style={{ color: 'var(--apple-blue)', fontSize: 14 }} />
                   ) : (
-                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
+                    <CheckCircleOutlined style={{ color: 'var(--apple-status-healthy)', fontSize: 14 }} />
                   )}
-                  <span style={{ color: isLast && !isCompletedDeployStatus(dep.status) ? '#333' : '#999' }}>{substep}</span>
+                  <span style={{ color: isLast && !isCompletedDeployStatus(dep.status) ? 'var(--apple-text)' : 'var(--apple-text-tertiary)' }}>{substep}</span>
                 </div>
               )
             })}
@@ -220,15 +220,15 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
                   size="small"
                   style={{
                     borderLeft: `3px solid ${
-                      node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? '#1677ff'
-                      : node.role === 'manager' ? '#722ed1'
-                      : '#52c41a'
+                      node.role === 'master' || node.role === 'primary' || node.role === 'bootstrap' ? 'var(--apple-blue)'
+                      : node.role === 'manager' ? 'var(--apple-purple)'
+                      : 'var(--apple-status-healthy)'
                     }`,
                   }}
                   title={
                     <Space size={4}>
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{node.name || node.instance_id || `节点 ${idx + 1}`}</span>
-                      <span style={{ fontSize: 11, color: '#888' }}>{node.host || '-'}:{node.port || '-'}</span>
+                      <span style={{ fontSize: 11, color: 'var(--apple-text-secondary)' }}>{node.host || '-'}:{node.port || '-'}</span>
                     </Space>
                   }
                   extra={
@@ -239,7 +239,7 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
                 >
                   <Space direction="vertical" size={4} style={{ width: '100%' }}>
                     <Space>
-                      <span style={{ fontSize: 12, color: '#666' }}>状态: </span>
+                      <span style={{ fontSize: 12, color: 'var(--apple-text-secondary)' }}>状态: </span>
                       <Tag
                         color={
                           node.status === 'completed' || node.status === 'healthy' ? 'success'
@@ -252,14 +252,14 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
                         {node.status || 'pending'}
                       </Tag>
                       {node.current_step && (
-                        <span style={{ fontSize: 11, color: '#888' }}>{node.current_step}</span>
+                        <span style={{ fontSize: 11, color: 'var(--apple-text-secondary)' }}>{node.current_step}</span>
                       )}
                     </Space>
                     {typeof node.progress === 'number' && (
                       <Progress percent={node.progress} size="small" />
                     )}
                     {node.message && (
-                      <div style={{ color: '#888', fontSize: 11, lineHeight: 1.4 }}>{node.message}</div>
+                      <div style={{ color: 'var(--apple-text-secondary)', fontSize: 11, lineHeight: 1.4 }}>{node.message}</div>
                     )}
                   </Space>
                 </Card>
@@ -275,7 +275,7 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <strong>部署日志 ({dep.logs.length})</strong>
             {!isTerminalDeployStatus(dep.status) && (
-              <span style={{ fontSize: 11, color: '#1677ff' }}>
+              <span style={{ fontSize: 11, color: 'var(--apple-blue)' }}>
                 <ReloadOutlined spin style={{ marginRight: 4 }} />
                 实时
               </span>
@@ -296,11 +296,11 @@ const ClusterDeployProgress: React.FC<ClusterDeployProgressProps> = ({ activeDep
           >
             {dep.logs.map((log, idx) => (
               <div key={idx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                <span style={{ color: '#888', marginRight: 8 }}>[{idx + 1}]</span>
+                <span style={{ color: 'var(--apple-text-secondary)', marginRight: 8 }}>[{idx + 1}]</span>
                 {log.includes('ERROR') || log.includes('failed') || log.includes('错误') ? (
-                  <span style={{ color: '#f56c6c' }}>{log}</span>
+                  <span style={{ color: 'var(--apple-red)' }}>{log}</span>
                 ) : log.includes('completed') || log.includes('成功') ? (
-                  <span style={{ color: '#67c23a' }}>{log}</span>
+                  <span style={{ color: 'var(--apple-status-healthy)' }}>{log}</span>
                 ) : (
                   <span>{log}</span>
                 )}

@@ -518,7 +518,7 @@ const HostList: React.FC = () => {
           <Form.List name="hosts" initialValue={[{ name: '', address: '', ssh_port: 22, ssh_user: 'root', ssh_password: '', agent_port: 9090 }]}>
             {(fields, { add, remove }) => (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 60px 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: '#666' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr 60px 40px', gap: 8, marginBottom: 4, fontSize: 12, fontWeight: 600, color: 'var(--apple-text-secondary)' }}>
                   <span>主机名</span><span>地址</span><span>端口</span><span>用户</span><span>密码</span><span>Agent</span><span></span>
                 </div>
                 {fields.map(({ key, name }) => (

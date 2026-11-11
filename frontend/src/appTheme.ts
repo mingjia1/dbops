@@ -1,15 +1,15 @@
 import { theme, type ThemeConfig } from 'antd'
 
-// 主题模式: 'light' (默认) / 'dark'.
+// 主题模式: 'dark' (默认, 深空控制台) / 'light' (可切换).
 export type ThemeMode = 'light' | 'dark'
 const THEME_KEY = 'app.theme.mode'
 
 export function getStoredThemeMode(): ThemeMode {
   try {
     const v = localStorage.getItem(THEME_KEY)
-    return v === 'dark' ? 'dark' : 'light'
+    return v === 'light' ? 'light' : 'dark'
   } catch {
-    return 'light'
+    return 'dark'
   }
 }
 
@@ -89,40 +89,43 @@ export const appleTheme: ThemeConfig = {
   },
 }
 
-// Dark variant: algorithm=dark + 暗色 token 覆写.
-// 同一组 palette (本文件下方定义) 在两套主题下都能用.
+// Dark variant: 深空控制台色板 (默认主题), 与 apple.css 的
+// :root[data-theme="dark"] token 保持同色, 否则 Modal/Table/Select 会脱节.
 export const darkTheme: ThemeConfig = {
   algorithm: theme.darkAlgorithm,
   token: {
-    colorPrimary: '#0A84FF',
-    colorSuccess: '#30D158',
-    colorWarning: '#FF9F0A',
-    colorError: '#FF453A',
-    colorInfo: '#64D2FF',
-    colorTextBase: '#F5F5F7',
-    colorBgBase: '#000000',
-    colorBgLayout: '#1C1C1E',
-    colorBgContainer: '#2C2C2E',
+    colorPrimary: '#3B9DFF',
+    colorSuccess: '#34D399',
+    colorWarning: '#FBBF24',
+    colorError: '#FB7185',
+    colorInfo: '#22D3EE',
+    colorTextBase: '#E6EDF7',
+    colorBgBase: '#070B14',
+    colorBgLayout: '#070B14',
+    colorBgContainer: '#0E1626',
+    colorBgElevated: '#131E30',
+    colorBorder: 'rgba(120, 160, 220, 0.14)',
+    colorBorderSecondary: 'rgba(120, 160, 220, 0.10)',
     borderRadius: 10,
-    borderRadiusLG: 14,
+    borderRadiusLG: 12,
     borderRadiusSM: 6,
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", Arial, "Segoe UI", sans-serif',
     fontSize: 14,
     lineHeight: 1.55,
-    motionDurationMid: '0.28s',
-    motionEaseInOut: 'cubic-bezier(0.32, 0.72, 0, 1)',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.4)',
-    boxShadowSecondary: '0 2px 8px rgba(0,0,0,0.5)',
+    motionDurationMid: '0.16s',
+    motionEaseInOut: 'cubic-bezier(0.2, 0, 0, 1)',
+    boxShadow: '0 0 0 0.5px rgba(120,160,220,0.10), 0 1px 2px rgba(0,0,0,0.30)',
+    boxShadowSecondary: '0 0 0 0.5px rgba(120,160,220,0.14), 0 4px 12px rgba(0,0,0,0.36)',
   },
   components: {
-    Card: { borderRadiusLG: 14, paddingLG: 20 },
+    Card: { borderRadiusLG: 12, paddingLG: 20 },
     Button: { borderRadius: 8, controlHeight: 36, fontWeight: 500 },
     Input: { borderRadius: 8, controlHeight: 36 },
     Select: { borderRadius: 8, controlHeight: 36 },
     Table: { borderRadius: 10, headerBorderRadius: 10 },
     Tabs: { titleFontSize: 15, horizontalItemGutter: 24 },
     Tag: { borderRadiusSM: 6 },
-    Modal: { borderRadiusLG: 14 },
+    Modal: { borderRadiusLG: 12 },
     Message: { borderRadiusLG: 10 },
   },
 }

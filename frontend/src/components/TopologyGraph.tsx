@@ -45,13 +45,13 @@ const FlowNodeCard: React.FC<NodeProps> = ({ data }) => {
   return (
     <div style={{
       width: NODE_W,
-      border: '1px solid #d9d9d9',
+      border: '1px solid var(--apple-separator)',
       borderRadius: 8,
       padding: 10,
-      background: '#fff',
-      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+      background: 'var(--apple-bg-elevated)',
+      boxShadow: 'var(--apple-shadow-1)',
     }}>
-      <Handle type="target" position={Position.Left} style={{ background: '#bfbfbf' }} />
+      <Handle type="target" position={Position.Left} style={{ background: 'var(--apple-text-tertiary)' }} />
       <Space direction="vertical" size={4} style={{ width: '100%' }}>
         <Text strong ellipsis title={d.label}>{d.label}</Text>
         <Text type="secondary" style={{ fontSize: 12 }}>{d.endpoint}</Text>
@@ -60,7 +60,7 @@ const FlowNodeCard: React.FC<NodeProps> = ({ data }) => {
           <Tag color={statusColor(d.status)} style={{ marginRight: 0 }}>{d.status || 'unknown'}</Tag>
         </Space>
       </Space>
-      <Handle type="source" position={Position.Right} style={{ background: '#bfbfbf' }} />
+      <Handle type="source" position={Position.Right} style={{ background: 'var(--apple-text-tertiary)' }} />
     </div>
   )
 }
@@ -130,9 +130,9 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes, edges, inst
         target: edge.target_id,
         label: relationLabel(edge.label || edge.type),
         animated: true,
-        style: { stroke: '#8c8c8c' },
-        labelStyle: { fontSize: 12, fill: '#595959' },
-        labelBgStyle: { fill: '#fff', fillOpacity: 0.85 },
+        style: { stroke: 'var(--apple-text-secondary)' },
+        labelStyle: { fontSize: 12, fill: 'var(--apple-text-secondary)' },
+        labelBgStyle: { fill: 'var(--apple-bg-elevated)', fillOpacity: 0.85 },
       }))
 
     return { flowNodes, flowEdges }
@@ -152,7 +152,7 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes, edges, inst
   const height = Math.max(180, Math.min(560, (largestColumn(nodes, edges) || 1) * (NODE_H + GAP_Y) + 40))
 
   return (
-    <div style={{ width: '100%', height, border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 16 }}>
+    <div style={{ width: '100%', height, border: '1px solid var(--apple-separator)', borderRadius: 8, marginBottom: 16 }}>
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}

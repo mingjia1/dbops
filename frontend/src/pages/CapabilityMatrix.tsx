@@ -63,8 +63,8 @@ export default function CapabilityMatrix() {
       render: (_: unknown, record: FlavorRow) => {
         const supported = record.capabilities[cap]
         return supported
-          ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 18 }} />
-          : <CloseCircleOutlined style={{ color: '#d9d9d9', fontSize: 18 }} />
+          ? <CheckCircleOutlined style={{ color: 'var(--apple-status-healthy)', fontSize: 18 }} />
+          : <CloseCircleOutlined style={{ color: 'var(--apple-text-tertiary)', fontSize: 18 }} />
       },
     })),
   ]

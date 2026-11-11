@@ -19,7 +19,7 @@ const BackupStatCards: React.FC<BackupStatCardsProps> = ({ records }) => (
         <Statistic
           title="已完成"
           value={records.filter((r) => isCompletedBackupStatus(r.status)).length}
-          valueStyle={{ color: '#3f8600' }}
+          valueStyle={{ color: 'var(--apple-status-healthy)' }}
         />
       </Card>
     </Col>
@@ -28,7 +28,7 @@ const BackupStatCards: React.FC<BackupStatCardsProps> = ({ records }) => (
         <Statistic
           title="运行中"
           value={records.filter((r) => isActiveBackupStatus(r.status)).length}
-          valueStyle={{ color: '#1677ff' }}
+          valueStyle={{ color: 'var(--apple-blue)' }}
         />
       </Card>
     </Col>

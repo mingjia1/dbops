@@ -62,7 +62,7 @@ const MigrationProgressMonitor: React.FC<MigrationProgressMonitorProps> = ({ tas
                 title={step.name}
                 description={
                   <div>
-                    <div style={{ color: '#888', fontSize: 12 }}>
+                    <div style={{ color: 'var(--apple-text-secondary)', fontSize: 12 }}>
                       {step.message || ''}
                       {step.started_at && ` (${new Date(step.started_at).toLocaleTimeString()})`}
                       {step.completed_at && ` -> ${new Date(step.completed_at).toLocaleTimeString()}`}
@@ -100,9 +100,9 @@ const MigrationProgressMonitor: React.FC<MigrationProgressMonitorProps> = ({ tas
         {currentSubstages.map((substep, idx) => (
           <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             {idx < currentSubstages.length - 1 ? (
-              <span style={{ color: '#52c41a' }}>&#10003;</span>
+              <span style={{ color: 'var(--apple-status-healthy)' }}>&#10003;</span>
             ) : (
-              <span style={{ color: '#1677ff' }}>&#9679;</span>
+              <span style={{ color: 'var(--apple-blue)' }}>&#9679;</span>
             )}
             <span>{substep}</span>
           </div>

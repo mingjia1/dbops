@@ -1,6 +1,6 @@
 /* Apple Design System — global tokens
-   Inspired by macOS Sonoma / iOS 17 / visionOS
-   Colors tuned to neutral pastel + SF system palette
+   Light = 原有亮色主题 (可切换); dark = 深空控制台 (默认).
+   颜色由 :root / :root[data-theme="dark"] 单点驱动, 组件不写死色值.
 */
 
 :root {
@@ -63,6 +63,9 @@
 
   /* Typography */
   --apple-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+  --apple-font-mono: "JetBrains Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  /* 网格纹理色: 亮色默认不显示, 暗色在下方覆写 */
+  --apple-grid: transparent;
 }
 
 * {
@@ -157,7 +160,7 @@ body {
   transition: all var(--apple-fast) var(--apple-ease);
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
-.apple-btn:hover { background: var(--apple-blue-hover); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 113, 227, 0.25); }
+.apple-btn:hover { background: var(--apple-blue-hover); transform: translateY(-1px); box-shadow: var(--apple-shadow-2); }
 .apple-btn:active { transform: translateY(0); }
 .apple-btn.is-ghost { background: transparent; color: var(--apple-blue); }
 .apple-btn.is-ghost:hover { background: var(--apple-blue-tint); }
@@ -240,7 +243,7 @@ body {
 .ant-table-tbody > tr { transition: background var(--apple-fast) var(--apple-ease); }
 .ant-table-tbody > tr:hover { background: var(--apple-bg-tint) !important; }
 .ant-btn { border-radius: 8px !important; transition: all var(--apple-fast) var(--apple-ease); }
-.ant-btn-primary { box-shadow: 0 1px 2px rgba(0, 113, 227, 0.15) !important; }
+.ant-btn-primary { box-shadow: var(--apple-shadow-1) !important; }
 .ant-tag { border-radius: 6px !important; padding: 1px 8px !important; font-size: 12px !important; }
 .ant-input, .ant-select-selector, .ant-picker { border-radius: 8px !important; }
 .ant-modal-content { border-radius: var(--apple-radius-lg) !important; }
@@ -252,38 +255,67 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(60, 60, 67, 0.18); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(60, 60, 67, 0.32); }
 
-/* Dark theme: html data-theme="dark" 触发. main.tsx 启动时按 localStorage 设置.
-   仅覆写 token, antd darkAlgorithm 处理组件内色, CSS 这一层处理品牌背景/文字. */
+/* Dark theme: 深空控制台色板 (默认主题). index.html 的 1 行脚本在 CSS 前
+   写好 html[data-theme], 避免首屏闪白; antd darkAlgorithm 处理组件内色. */
 :root[data-theme="dark"] {
-  --apple-bg: #000000;
-  --apple-bg-elevated: #1C1C1E;
-  --apple-bg-grouped: #2C2C2E;
-  --apple-bg-sidebar: rgba(28, 28, 30, 0.72);
-  --apple-bg-header: rgba(28, 28, 30, 0.72);
-  --apple-bg-tint: rgba(10, 132, 255, 0.10);
-  --apple-separator: rgba(255, 255, 255, 0.10);
-  --apple-separator-strong: rgba(255, 255, 255, 0.20);
-  --apple-border: rgba(255, 255, 255, 0.10);
-  --apple-text: #F5F5F7;
-  --apple-text-secondary: #A1A1A6;
-  --apple-text-tertiary: #6E6E73;
-  --apple-blue: #0A84FF;
-  --apple-blue-hover: #409CFF;
-  --apple-blue-tint: rgba(10, 132, 255, 0.15);
-  --apple-green: #30D158;
-  --apple-green-tint: rgba(48, 209, 88, 0.15);
-  --apple-orange: #FF9F0A;
-  --apple-orange-tint: rgba(255, 159, 10, 0.15);
-  --apple-red: #FF453A;
-  --apple-red-tint: rgba(255, 69, 58, 0.15);
-  --apple-purple: #BF5AF2;
-  --apple-pink: #FF375F;
-  --apple-indigo: #5E5CE6;
-  --apple-teal: #64D2FF;
-  --apple-yellow: #FFD60A;
-  --apple-status-healthy: #30D158;
-  --apple-status-unhealthy: #FF453A;
+  --apple-bg: #070B14;
+  --apple-bg-elevated: #0E1626;
+  --apple-bg-grouped: #131E30;
+  --apple-bg-sidebar: rgba(9, 15, 26, 0.88);
+  --apple-bg-header: rgba(9, 15, 26, 0.88);
+  --apple-bg-tint: rgba(34, 211, 238, 0.06);
+  --apple-grid: rgba(120, 160, 220, 0.045);
+
+  --apple-separator: rgba(120, 160, 220, 0.14);
+  --apple-separator-strong: rgba(120, 160, 220, 0.28);
+  --apple-border: rgba(120, 160, 220, 0.10);
+
+  --apple-text: #E6EDF7;
+  --apple-text-secondary: #94A6BF;
+  --apple-text-tertiary: #5E7189;
+
+  --apple-blue: #3B9DFF;
+  --apple-blue-hover: #63B3FF;
+  --apple-blue-tint: rgba(59, 157, 255, 0.14);
+  --apple-green: #34D399;
+  --apple-green-tint: rgba(52, 211, 153, 0.14);
+  --apple-orange: #FBBF24;
+  --apple-orange-tint: rgba(251, 191, 36, 0.14);
+  --apple-red: #FB7185;
+  --apple-red-tint: rgba(251, 113, 133, 0.14);
+  --apple-purple: #A78BFA;
+  --apple-pink: #F472B6;
+  --apple-indigo: #6366F1;
+  --apple-teal: #22D3EE;
+  --apple-yellow: #FBBF24;
+  --apple-status-healthy: #4ADE80;
+  --apple-status-unhealthy: #FF7A85;
+
+  /* 精密感: 1px 冷调描边取代多层柔光 */
+  --apple-shadow-1: 0 0 0 0.5px rgba(120, 160, 220, 0.10), 0 1px 2px rgba(0, 0, 0, 0.30);
+  --apple-shadow-2: 0 0 0 0.5px rgba(120, 160, 220, 0.14), 0 4px 12px rgba(0, 0, 0, 0.36);
+  --apple-shadow-3: 0 0 0 0.5px rgba(120, 160, 220, 0.18), 0 8px 24px rgba(0, 0, 0, 0.44);
+  --apple-shadow-4: 0 0 0 0.5px rgba(120, 160, 220, 0.22), 0 16px 48px rgba(0, 0, 0, 0.56);
+
+  --apple-radius-sm: 6px;
+  --apple-radius: 10px;
+  --apple-radius-lg: 12px;
+  --apple-radius-xl: 16px;
+
+  --apple-ease: cubic-bezier(0.2, 0, 0, 1);
+  --apple-fast: 120ms;
+  --apple-normal: 160ms;
+  --apple-slow: 280ms;
 }
 
-:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.20); }
-:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(120, 160, 220, 0.22); }
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(120, 160, 220, 0.36); }
+
+/* 数据感: 指标数字等宽对齐, 不引 webfont */
+.apple-stat-value,
+.ant-statistic-content,
+.dbops-number {
+  font-family: var(--apple-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}

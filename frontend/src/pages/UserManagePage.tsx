@@ -124,7 +124,7 @@ export default function UserManagePage() {
     { title: '用户名', dataIndex: 'username', key: 'username', render: (_: string, r: User) => (
       <Space direction="vertical" size={0}>
         <span>{r.display_name || r.username}</span>
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>{r.username}</span>
+        <span style={{ color: 'var(--apple-text-secondary)', fontSize: 12 }}>{r.username}</span>
       </Space>
     ) },
     { title: '邮箱', dataIndex: 'email', key: 'email', ellipsis: true },

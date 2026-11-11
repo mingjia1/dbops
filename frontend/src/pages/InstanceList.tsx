@@ -566,7 +566,7 @@ const InstanceList: React.FC = () => {
             {(fields, { add, remove }) => (
               <>
                 {fields.map(({ key, name }) => (
-                  <div key={key} style={{ marginBottom: 12, padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, maxWidth: '100%', overflowX: 'hidden' }}>
+                  <div key={key} style={{ marginBottom: 12, padding: 12, border: '1px solid var(--apple-separator)', borderRadius: 8, maxWidth: '100%', overflowX: 'hidden' }}>
                     <div style={batchRowGridStyle}>
                       <Form.Item name={[name, 'name']} label="实例名" style={{ marginBottom: 0 }}><Input size="small" placeholder="mysql-3306" /></Form.Item>
                       <Form.Item name={[name, 'host']} label="地址" style={{ marginBottom: 0 }} rules={[{ required: true }]}><Input size="small" placeholder="192.0.2.41" /></Form.Item>

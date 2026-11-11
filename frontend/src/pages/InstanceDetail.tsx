@@ -695,7 +695,7 @@ const InstanceDetail: React.FC = () => {
         okButtonProps={{ danger: true }}
         width={500}
       >
-        <div style={{ marginBottom: 16, color: '#faad14' }}>
+        <div style={{ marginBottom: 16, color: 'var(--apple-orange)' }}>
           注意：此操作会在实例服务运行状态下通过当前可用连接修改 MySQL 密码，不会停止实例服务。修改成功后平台连接密码将同步更新。
         </div>
         <Form form={forceResetForm} layout="vertical" autoComplete="off" initialValues={{ username: 'root', user_host: '%' }}>
@@ -763,7 +763,7 @@ const InstanceDetail: React.FC = () => {
                     </span>
                   </div>
                   {errors.length > 0 && (
-                    <div style={{ fontSize: 12, color: '#ff4d4f' }}>
+                    <div style={{ fontSize: 12, color: 'var(--apple-red)' }}>
                       缺少：{errors.join(', ')}
                     </div>
                   )}

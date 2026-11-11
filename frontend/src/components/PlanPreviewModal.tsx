@@ -16,11 +16,11 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({ open, onClose, data
   const renderPreviewSteps = (steps: DeployStepView[]) => (
     <div>
       {steps.map((step, idx) => (
-        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
+        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid var(--apple-separator)' }}>
           <span style={{ fontSize: 13, fontWeight: 500 }}>{step.name || step.id || `步骤 ${idx + 1}`}</span>
           {step.type && <Tag color="default" style={{ fontSize: 10, lineHeight: '16px' }}>{STEP_TYPE_CN[step.type] || step.type}</Tag>}
-          {step.target_node && <span style={{ color: '#888', fontSize: 12 }}>({step.target_node})</span>}
-          {step.message && <span style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>{step.message}</span>}
+          {step.target_node && <span style={{ color: 'var(--apple-text-secondary)', fontSize: 12 }}>({step.target_node})</span>}
+          {step.message && <span style={{ fontSize: 12, color: 'var(--apple-text-secondary)', marginLeft: 8 }}>{step.message}</span>}
         </div>
       ))}
     </div>
@@ -82,7 +82,7 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({ open, onClose, data
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>执行步骤</div>
             {(data.steps && data.steps.length > 0)
               ? renderPreviewSteps(data.steps.map((step: any) => ({ ...step, status: step.status || 'planned' })))
-              : <span style={{ color: '#999', fontSize: 12 }}>暂无步骤信息</span>
+              : <span style={{ color: 'var(--apple-text-tertiary)', fontSize: 12 }}>暂无步骤信息</span>
             }
           </div>
 

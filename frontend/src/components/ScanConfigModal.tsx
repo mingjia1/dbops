@@ -56,7 +56,7 @@ const ScanConfigModal: React.FC<ScanConfigModalProps> = ({
         </Form.Item>
 
         {scanMode === 'default' && (
-          <div style={{ marginBottom: 12, padding: 8, background: '#f0f0f0', borderRadius: 4, fontSize: 13 }}>
+          <div style={{ marginBottom: 12, padding: 8, background: 'var(--apple-bg-grouped)', borderRadius: 4, fontSize: 13 }}>
             将扫描 3300-3400, 33060, 33061 等常见 MySQL 端口
           </div>
         )}
