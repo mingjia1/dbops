@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -173,7 +175,12 @@ func main() {
 	roleRepo := repositories.NewRoleRepository(db)
 	auditRepo := repositories.NewAuditLogRepository(db)
 	auditService := services.NewAuditService(auditRepo, repositories.NewApprovalRequestRepository(db))
-	auditService.SetHMACSecret(cfg.EncryptionKey)
+	// 审计链 HMAC 密钥必须与数据加密密钥(DBOPS_ENCRYPTION_KEY)解耦:
+	// 加密密钥会随密钥轮转变化, 若审计链复用它, 轮转后重启会导致历史链全部 mismatch。
+	// 优先级: env DBOPS_AUDIT_HMAC_KEY > platform_settings.audit_chain_hmac_key > 首次随机生成并持久化。
+	auditSettingsRepo := repositories.NewPlatformSettingsRepository(db)
+	auditHMACKey := ensureAuditHMACSecret(auditSettingsRepo)
+	auditService.SetHMACSecret(auditHMACKey)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, auditService)
 	authService.SetRoleRepository(roleRepo)
 	authController := controllers.NewAuthController(authService)
@@ -290,7 +297,7 @@ func main() {
 	scaleSvc := services.NewScaleService(deployOrchestrator, instanceRepo, pluginExec, auditService)
 	clusterDeployService.SetScaleService(scaleSvc)
 
-	settingsRepo := repositories.NewPlatformSettingsRepository(db)
+	settingsRepo := auditSettingsRepo
 	authService.SetSettingsRepository(settingsRepo)
 	settingsController := controllers.NewSettingsController(settingsRepo)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
@@ -1612,8 +1619,38 @@ func writeBootstrapAdminCredential(dataDir, username, password string) (string, 
 	return path, nil
 }
 
-func seedAuthSettings(ctx context.Context, db *repositories.Database, logInstance *zap.Logger) {
-	if db == nil || db.Pool == nil {
+// ensureAuditHMACSecret: 解析审计链 HMAC 密钥。
+// 优先 DBOPS_AUDIT_HMAC_KEY 环境变量; 其次 platform_settings 中已持久化的
+// audit_chain_hmac_key; 两者皆无时生成 32 字节随机密钥并写入 settings 固化。
+// 返回值在重启间保持稳定, 保证审计 hash 可跨重启验证。
+func ensureAuditHMACSecret(repo *repositories.PlatformSettingsRepository) string {
+	const settingsKey = "audit_chain_hmac_key"
+	ctx := context.Background()
+	envKey := strings.TrimSpace(os.Getenv("DBOPS_AUDIT_HMAC_KEY"))
+	if envKey != "" {
+		if stored, err := repo.Get(ctx, settingsKey); err == nil && stored != envKey {
+			_ = repo.Set(ctx, settingsKey, envKey)
+			log.Printf("audit chain HMAC key updated from DBOPS_AUDIT_HMAC_KEY")
+		}
+		return envKey
+	}
+	if stored, err := repo.Get(ctx, settingsKey); err == nil && strings.TrimSpace(stored) != "" {
+		return strings.TrimSpace(stored)
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		log.Printf("failed to generate audit chain HMAC key: %v", err)
+		return ""
+	}
+	key := hex.EncodeToString(buf)
+	if err := repo.Set(ctx, settingsKey, key); err != nil {
+		log.Printf("failed to persist audit chain HMAC key: %v", err)
+	}
+	log.Printf("generated and persisted new audit chain HMAC key (platform_settings.audit_chain_hmac_key)")
+	return key
+}
+
+func seedAuthSettings(ctx context.Context, db *repositories.Database, logInstance *zap.Logger) {	if db == nil || db.Pool == nil {
 		return
 	}
 	defaults := map[string]string{
