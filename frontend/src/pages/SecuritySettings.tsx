@@ -4,7 +4,7 @@ import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, CloudOutlined, DatabaseOutlined, DownloadOutlined, KeyOutlined, LockOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons'
 import { authApi, hostApi } from '../services/api'
 import api from '../services/api'
-import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordEnabled, setDefaultMySQLCredential, setSecondaryPassword } from '../services/sessionSecrets'
+import { clearSecondaryPassword, getDefaultMySQLCredential, isSecondaryPasswordEnabled, setDefaultMySQLCredential, setSecondaryPassword, verifySecondaryPassword } from '../services/sessionSecrets'
 import { usePlatformSettings } from '../services/useSettings'
 
 const { Text } = Typography
@@ -31,6 +31,7 @@ const parseFetchJson = async (res: Response) => {
 // ─── 安全设置 ─────────────────────────────────────────────────────────────
 
 const SecurityTab: React.FC = () => {
+  const user = readStoredUser()
   const [enabled, setEnabled] = useState(isSecondaryPasswordEnabled())
   const [mustChangePlatformPassword, setMustChangePlatformPassword] = useState(currentUserMustChangePassword())
   const [form] = Form.useForm()
@@ -61,8 +62,8 @@ const SecurityTab: React.FC = () => {
         <Alert
           type="warning"
           showIcon
-          message="Password change required"
-          description="This bootstrap admin account can only change its password until a new password is saved."
+          message="需要修改初始密码"
+          description="当前为初始化管理员账号，在保存新密码之前仅可执行修改密码操作。"
           style={{ marginBottom: 12 }}
         />
       )}
@@ -77,7 +78,7 @@ const SecurityTab: React.FC = () => {
           <Input.Password size="small" autoComplete="new-password" />
         </Form.Item>
         <Button size="small" type="primary" icon={<LockOutlined />} onClick={handleChangePlatformPassword}>
-          Change Password
+          修改密码
         </Button>
       </Form>
     </Card>
@@ -130,7 +131,7 @@ const SecurityTab: React.FC = () => {
             <Tag color={enabled ? 'success' : 'default'}>{enabled ? '已启用' : '未启用'}</Tag>
           </Space>
           <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-            二级密码仅以加盐哈希形式保存在会话状态中，不会写入平台设置或本地存储。
+            启用后，查看实例密码明文等敏感凭据操作需要先输入二级密码验证。二级密码仅以加盐哈希形式保存在当前浏览器会话中（刷新后需重新启用），不会写入平台设置或本地存储。
           </Text>
           <Form form={form} layout="vertical" size="small">
             <Form.Item name="password" label="二级密码" rules={[{ required: true }]}>
@@ -152,7 +153,13 @@ const SecurityTab: React.FC = () => {
         <Card type="inner" title="密码策略" size="small"><PasswordPolicyForm /></Card>
       </Col>
       <Col span={12}>
-        <KeyManagementCard />
+        {user?.role === 'admin' ? (
+          <KeyManagementCard />
+        ) : (
+          <Card type="inner" title="数据加密密钥" size="small">
+            <Text type="secondary" style={{ fontSize: 12 }}>仅管理员可查看与轮转数据加密密钥。</Text>
+          </Card>
+        )}
       </Col>
     </Row>
   )
@@ -189,6 +196,10 @@ const KeyManagementCard: React.FC = () => {
 
   const handleRotate = async () => {
     const values = await form.validateFields()
+    if (isSecondaryPasswordEnabled()) {
+      const ok = await verifySecondaryPassword(values.secondary_password)
+      if (!ok) { message.error('二级密码错误'); return }
+    }
     setRotating(true)
     try {
       const res = await api.post('/keys/rotate', { new_key: values.new_key, note: values.note })
@@ -243,6 +254,15 @@ const KeyManagementCard: React.FC = () => {
           style={{ marginBottom: 16 }}
         />
         <Form form={form} layout="vertical">
+          {isSecondaryPasswordEnabled() && (
+            <Form.Item
+              name="secondary_password"
+              label="二级密码"
+              rules={[{ required: true, message: '请输入二级密码' }]}
+            >
+              <Input.Password placeholder="已启用凭据保护, 需验证二级密码" autoComplete="off" />
+            </Form.Item>
+          )}
           <Form.Item
             name="new_key"
             label="新密钥"
@@ -273,14 +293,14 @@ const readStoredUser = (): any | null => {
 
 const currentUserMustChangePassword = () => readStoredUser()?.must_change_password === true
 
-const POLICY_KEY = 'dbops_password_policy'
 const defaultPolicy = { min_length: 8, require_uppercase: true, require_lowercase: true, require_digit: true, require_special: true, max_age_days: 90, history_count: 5 }
 
 const PasswordPolicyForm: React.FC = () => {
   const [form] = Form.useForm()
   const { settings, save } = usePlatformSettings()
   useEffect(() => {
-    const raw = settings.password_policy || localStorage.getItem(POLICY_KEY)
+    // 仅以平台设置为准, 不再回退 localStorage (避免跨浏览器/清理后读到过期策略).
+    const raw = settings.password_policy
     if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultPolicy) }
   }, [settings.password_policy])
   const handleSave = async () => {
@@ -288,8 +308,7 @@ const PasswordPolicyForm: React.FC = () => {
     const j = JSON.stringify(v)
     try {
       await save('password_policy', j)
-      localStorage.setItem(POLICY_KEY, j)
-      message.success('密码策略已保存')
+      message.success('密码策略已保存（新密码即刻生效；有效期到期用户将在下次登录时被要求修改密码）')
     } catch (err: any) {
       message.error('保存密码策略失败: ' + getErrorMessage(err))
     }
@@ -297,10 +316,13 @@ const PasswordPolicyForm: React.FC = () => {
   return (
     <Form form={form} layout="vertical" size="small">
       <Row gutter={8}>
-        <Col span={8}><Form.Item name="min_length" label="最小长度"><InputNumber min={4} max={32} size="small" style={{ width: '100%' }} /></Form.Item></Col>
-        <Col span={8}><Form.Item name="max_age_days" label="有效期(天)"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
-        <Col span={8}><Form.Item name="history_count" label="历史密码数"><InputNumber min={0} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={8}><Form.Item name="min_length" label="最小长度"><InputNumber min={4} max={64} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={8}><Form.Item name="max_age_days" label="有效期(天)"><InputNumber min={0} max={3650} size="small" style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={8}><Form.Item name="history_count" label="历史密码数"><InputNumber min={0} max={24} size="small" style={{ width: '100%' }} /></Form.Item></Col>
       </Row>
+      <Text type="secondary" style={{ display: 'block', fontSize: 11, marginBottom: 8 }}>
+        有效期 0 表示不过期；到期用户登录时会被要求修改密码。历史密码数 N 表示新密码不得与最近 N 条重复。
+      </Text>
       <Space wrap style={{ marginBottom: 8 }}>
         <Form.Item name="require_uppercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>大写
         <Form.Item name="require_lowercase" valuePropName="checked" style={{ margin: 0 }}><Switch size="small" /></Form.Item>小写
@@ -314,7 +336,6 @@ const PasswordPolicyForm: React.FC = () => {
 
 // ─── 监控指标 ─────────────────────────────────────────────────────────────
 
-const METRICS_KEY = 'dbops_metrics_thresholds'
 const defaultMetrics = {
   connection_warn: 80, connection_critical: 95, qps_warn: 5000, qps_critical: 10000,
   slow_query_warn: 5, slow_query_critical: 20, repl_lag_warn: 10, repl_lag_critical: 60,
@@ -328,7 +349,7 @@ const MetricsTab: React.FC = () => {
   const { settings, save } = usePlatformSettings()
 
   useEffect(() => {
-    const raw = settings.metrics_thresholds || localStorage.getItem(METRICS_KEY)
+    const raw = settings.metrics_thresholds
     if (raw) {
       try {
         form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw)
@@ -347,7 +368,6 @@ const MetricsTab: React.FC = () => {
     const j = JSON.stringify(v)
     try {
       await save('metrics_thresholds', j)
-      localStorage.setItem(METRICS_KEY, j)
       message.success('监控阈值已保存')
     } catch (err: any) {
       message.error('保存监控阈值失败: ' + getErrorMessage(err))
@@ -394,7 +414,7 @@ const MetricsTab: React.FC = () => {
             <Row gutter={8} style={{ marginBottom: 12 }}>
               <F name="disk_warn" label="磁盘警告 %" /><F name="disk_critical" label="磁盘严重 %" /><F name="mem_warn" label="内存警告 %" /><F name="cpu_warn" label="CPU 警告 %" />
             </Row>
-            <Button size="small" type="primary" onClick={saveMetrics}>Save thresholds</Button>
+            <Button size="small" type="primary" onClick={saveMetrics}>保存阈值</Button>
           </Form>
         </Card>
       </Col>
@@ -402,7 +422,6 @@ const MetricsTab: React.FC = () => {
   )
 }
 
-const PARAMS_KEY = 'dbops_platform_params'
 const defaultParams = {
   agent_port: 9090, default_mysql_port: 3306, default_os_user: 'mysql',
   datadir_prefix: '/data/mysql', basedir_prefix: '/opt/mysql',
@@ -416,7 +435,7 @@ const PlatformTab: React.FC = () => {
   const [form] = Form.useForm()
   const { settings, save } = usePlatformSettings()
   useEffect(() => {
-    const raw = settings.platform_params || localStorage.getItem(PARAMS_KEY)
+    const raw = settings.platform_params
     if (raw) { try { form.setFieldsValue(typeof raw === 'string' ? JSON.parse(raw) : raw) } catch {} } else { form.setFieldsValue(defaultParams) }
   }, [settings.platform_params])
   const handleSave = async () => {
@@ -424,7 +443,6 @@ const PlatformTab: React.FC = () => {
     const j = JSON.stringify(v)
     try {
       await save('platform_params', j)
-      localStorage.setItem(PARAMS_KEY, j)
       message.success('平台参数已保存')
     } catch (err: any) {
       message.error('保存平台参数失败: ' + getErrorMessage(err))
@@ -672,10 +690,10 @@ const PackageTab: React.FC = () => {
 
 const SecuritySettings: React.FC = () => {
   const user = readStoredUser()
-  const defaultTab = new URLSearchParams(window.location.search).get('tab') || (user?.must_change_password ? 'security' : 'packages')
+  const defaultTab = new URLSearchParams(window.location.search).get('tab') || 'security'
   return (
     <div style={{ padding: 24 }}>
-      <Card title={<Space><SettingOutlined /><span>系统设置</span></Space>}>
+      <Card title={<Space><SettingOutlined /><span>安全设置</span></Space>}>
         <Tabs defaultActiveKey={defaultTab} items={[
           { key: 'packages', label: <Space><CloudOutlined />安装包管理</Space>, children: <PackageTab /> },
           { key: 'security', label: <Space><LockOutlined />安全设置</Space>, children: <SecurityTab /> },

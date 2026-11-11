@@ -300,6 +300,7 @@ func main() {
 	settingsRepo := auditSettingsRepo
 	authService.SetSettingsRepository(settingsRepo)
 	settingsController := controllers.NewSettingsController(settingsRepo)
+	settingsController.SetAuditService(auditService)
 	clusterDeployController := controllers.NewClusterDeployController(clusterDeployService)
 	topologyService := services.NewTopologyService(instanceRepo)
 	topologyController := controllers.NewTopologyController(topologyService)

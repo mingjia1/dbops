@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"unicode"
 )
 
@@ -106,6 +107,8 @@ func ParsePasswordPolicy(value string) PasswordPolicy {
 	}
 	var p PasswordPolicy
 	if err := json.Unmarshal([]byte(value), &p); err != nil {
+		// 显式告警: 策略 JSON 非法时静默回退默认策略会让管理员设置形同虚设.
+		log.Printf("WARN: password_policy settings is not valid JSON, falling back to default policy: %v", err)
 		return PasswordPolicy{}
 	}
 	return p

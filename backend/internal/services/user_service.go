@@ -126,6 +126,8 @@ func (s *UserService) Create(ctx context.Context, req CreateUserRequest) (*model
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+	// 初始密码同样写入历史, 保证 history_count 能拦截"改回初始密码".
+	_ = s.userRepo.InsertPasswordHistory(ctx, user.ID, user.Password)
 	roles := normalizedRoles(req.Role, req.Roles)
 	if s.roleRepo != nil {
 		if err := s.roleRepo.SetUserRolesByName(ctx, user.ID, roles); err != nil {
@@ -186,6 +188,9 @@ func (s *UserService) Update(ctx context.Context, id string, req UpdateUserReque
 	}
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return nil, err
+	}
+	if req.Password != "" {
+		_ = s.userRepo.InsertPasswordHistory(ctx, user.ID, user.Password)
 	}
 	if s.roleRepo != nil {
 		if err := s.roleRepo.SetUserRolesByName(ctx, user.ID, nextRoles); err != nil {
@@ -252,6 +257,7 @@ func (s *UserService) ResetPassword(ctx context.Context, id string, req ResetUse
 	if err := s.userRepo.UpdatePassword(ctx, id, string(hash)); err != nil {
 		return err
 	}
+	_ = s.userRepo.InsertPasswordHistory(ctx, id, string(hash))
 	s.auditUser(ctx, "reset_user_password", "reset_password", id, "success", "username="+user.Username)
 	return nil
 }

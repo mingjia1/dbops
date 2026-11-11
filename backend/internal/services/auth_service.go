@@ -182,7 +182,7 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 	}
 
 	permissions, roles := s.permissionsForUser(ctx, user)
-	mustChangePassword := userMustChangePassword(user)
+	mustChangePassword := userMustChangePassword(user) || s.passwordExpired(ctx, user)
 	tokenRole := user.Role
 	if mustChangePassword {
 		tokenRole = "password_change_required"
@@ -271,7 +271,7 @@ func (s *AuthService) refreshClaimsFromDB(claims *Claims) error {
 		return errors.New("token revoked: password has been changed since this token was issued")
 	}
 	permissions, _ := s.permissionsForUser(context.Background(), user)
-	mustChangePassword := userMustChangePassword(user)
+	mustChangePassword := userMustChangePassword(user) || s.passwordExpired(context.Background(), user)
 	if mustChangePassword {
 		permissions = []string{"auth:change_password"}
 		claims.Role = "password_change_required"
@@ -411,16 +411,26 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 		return errors.New("password change is not available in standalone mode")
 	}
 	// P1-4: 消费 settings.password_policy (若已配置), 否则使用默认策略兜底.
-	if s.settingsRepo != nil {
-		if raw, err := s.settingsRepo.Get(ctx, "password_policy"); err == nil && raw != "" {
-			policy := utils.ParsePasswordPolicy(raw)
-			if err := utils.ValidatePasswordPolicy(req.NewPassword, policy); err != nil {
-				return err
+	policy := s.passwordPolicyFromSettings(ctx)
+	if err := utils.ValidatePasswordPolicy(req.NewPassword, policy); err != nil {
+		return err
+	}
+	// history_count: 新密码不得与最近 N 条历史密码重复.
+	if policy.HistoryCount > 0 && s.userRepo != nil {
+		hashes, herr := s.userRepo.GetRecentPasswordHashes(ctx, userID, policy.HistoryCount)
+		if herr == nil {
+			currentHash := ""
+			if u, gerr := s.userRepo.GetByID(ctx, userID); gerr == nil && u != nil {
+				currentHash = u.Password
 			}
-		} else {
-			// 策略未配置 / 读失败 → 使用默认策略兜底 (等同于当前 ValidatePasswordComplexity).
-			if err := utils.ValidatePasswordPolicy(req.NewPassword, utils.PasswordPolicy{}); err != nil {
-				return err
+			all := append([]string{currentHash}, hashes...)
+			for _, h := range all {
+				if h == "" {
+					continue
+				}
+				if bcrypt.CompareHashAndPassword([]byte(h), []byte(req.NewPassword)) == nil {
+					return fmt.Errorf("new password must not repeat any of the last %d passwords", policy.HistoryCount)
+				}
 			}
 		}
 	}
@@ -445,6 +455,8 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req Cha
 	if err := s.userRepo.UpdatePassword(ctx, userID, string(hash)); err != nil {
 		return err
 	}
+	// 记录密码历史 (供 history_count 防重复比对).
+	_ = s.userRepo.InsertPasswordHistory(ctx, userID, string(hash))
 	s.auditAuth(ctx, "change_password", "change_password", "user", userID, "success", "", "user changed own password", "", "")
 	return nil
 }
@@ -454,17 +466,8 @@ func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswor
 		return 0, errors.New("password reset is not available in standalone mode")
 	}
 	// P1-4: 消费 settings.password_policy (若已配置), 否则使用默认策略兜底.
-	if s.settingsRepo != nil {
-		if raw, err := s.settingsRepo.Get(ctx, "password_policy"); err == nil && raw != "" {
-			policy := utils.ParsePasswordPolicy(raw)
-			if err := utils.ValidatePasswordPolicy(req.NewPassword, policy); err != nil {
-				return 0, err
-			}
-		} else {
-			if err := utils.ValidatePasswordPolicy(req.NewPassword, utils.PasswordPolicy{}); err != nil {
-				return 0, err
-			}
-		}
+	if err := utils.ValidatePasswordPolicy(req.NewPassword, s.passwordPolicyFromSettings(ctx)); err != nil {
+		return 0, err
 	}
 	// P1-4: 复杂度校验 (重置全员口令同样不豁免).
 	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
@@ -477,6 +480,12 @@ func (s *AuthService) ResetAllPasswords(ctx context.Context, req ResetAllPasswor
 	updated, err := s.userRepo.UpdateAllPasswords(ctx, string(hash))
 	if err != nil {
 		return 0, err
+	}
+	// 为全部受影响用户记录密码历史.
+	if users, lerr := s.userRepo.List(ctx, 100000, 0); lerr == nil {
+		for _, u := range users {
+			_ = s.userRepo.InsertPasswordHistory(ctx, u.ID, string(hash))
+		}
 	}
 	s.auditAuth(ctx, "reset_all_passwords", "reset_password", "user", "all", "success", "", fmt.Sprintf("updated_count=%d", updated), "", "")
 	return updated, nil
@@ -578,6 +587,31 @@ func (s *AuthService) SeedAdminIfEmpty(ctx context.Context) (created bool, usern
 	return true, username, plainPassword, nil
 }
 
+// passwordPolicyFromSettings: 读取并解析 settings 中的 password_policy.
+func (s *AuthService) passwordPolicyFromSettings(ctx context.Context) utils.PasswordPolicy {
+	if s.settingsRepo == nil {
+		return utils.PasswordPolicy{}
+	}
+	raw, err := s.settingsRepo.Get(ctx, "password_policy")
+	if err != nil || raw == "" {
+		return utils.PasswordPolicy{}
+	}
+	return utils.ParsePasswordPolicy(raw)
+}
+
+// passwordExpired: 按 max_age_days 判定密码是否过期.
+// password_changed_at 为空的存量用户视为未过期(避免上线即全员强制改密).
+func (s *AuthService) passwordExpired(ctx context.Context, user *models.User) bool {
+	if user == nil || user.PasswordChangedAt == nil {
+		return false
+	}
+	policy := s.passwordPolicyFromSettings(ctx)
+	if policy.MaxAgeDays <= 0 {
+		return false
+	}
+	return time.Since(*user.PasswordChangedAt) > time.Duration(policy.MaxAgeDays)*24*time.Hour
+}
+
 func userMustChangePassword(user *models.User) bool {
 	return user != nil && user.Source == "bootstrap" && user.PasswordChangedAt == nil
 }
@@ -594,7 +628,7 @@ func (s *AuthService) CurrentUser(ctx context.Context, userID string) (*UserInfo
 		return nil, errors.New("user account is not active")
 	}
 	permissions, roles := s.permissionsForUser(ctx, user)
-	mustChangePassword := userMustChangePassword(user)
+	mustChangePassword := userMustChangePassword(user) || s.passwordExpired(ctx, user)
 	if mustChangePassword {
 		permissions = []string{"auth:change_password"}
 		roles = []string{"password_change_required"}

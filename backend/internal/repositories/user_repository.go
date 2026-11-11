@@ -191,8 +191,41 @@ func (r *UserRepository) UpdateLoginMetadata(ctx context.Context, userID, ip str
 	return err
 }
 
-func (r *UserRepository) UpdateStatus(ctx context.Context, userID, status string) error {
+// InsertPasswordHistory 记录一次密码变更(存新 hash), 供 history_count 防重复使用.
+func (r *UserRepository) InsertPasswordHistory(ctx context.Context, userID, passwordHash string) error {
 	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := r.db.Pool.ExecContext(ctx,
+		`INSERT INTO password_history (id, user_id, password_hash, created_at) VALUES (?, ?, ?, ?)`,
+		uuid.New().String(), userID, passwordHash, time.Now())
+	return err
+}
+
+// GetRecentPasswordHashes 返回用户最近 n 条历史密码 hash(不含当前密码, 时间倒序).
+func (r *UserRepository) GetRecentPasswordHashes(ctx context.Context, userID string, n int) ([]string, error) {
+	if r.db == nil || r.db.Pool == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	rows, err := r.db.Pool.QueryContext(ctx,
+		`SELECT password_hash FROM password_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+		userID, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
+}
+
+func (r *UserRepository) UpdateStatus(ctx context.Context, userID, status string) error {	if r.db == nil || r.db.Pool == nil {
 		return fmt.Errorf("database not available")
 	}
 	res, err := r.db.Pool.ExecContext(ctx, `UPDATE users SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now(), userID)
