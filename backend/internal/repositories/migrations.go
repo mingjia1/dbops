@@ -1497,6 +1497,14 @@ var schemaSQLite = []string{
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS metric_samples (
+		id TEXT PRIMARY KEY,
+		instance_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		value REAL NOT NULL,
+		ts TIMESTAMP NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_metric_samples_lookup ON metric_samples(instance_id, name, ts)`,
 }
 
 // SchemaFor 按方言返回对应 schema. 这是给 main.go 调用的统一入口.

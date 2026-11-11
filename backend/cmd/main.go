@@ -272,6 +272,9 @@ func main() {
 
 	monitorService := services.NewMonitorService(clickhouse)
 	monitorService.SetCollectionDependencies(instanceRepo, hostRepo, agentClient, cfg.EncryptionKey)
+	// standalone 模式: 指标历史落 SQLite + 周期采集, 监控面板才能展示周期内折线.
+	monitorService.SetSampleDB(db.Pool)
+	monitorService.StartStandaloneCollector(context.Background(), 30*time.Second)
 	monitorController := controllers.NewMonitorController(monitorService)
 
 	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)
