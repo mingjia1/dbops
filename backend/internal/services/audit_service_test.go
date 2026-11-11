@@ -78,11 +78,11 @@ func TestAuditServiceVerifyChain(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	valid, msg, err := svc.VerifyChain(ctx)
+	valid, msg, _, err := svc.VerifyChain(ctx)
 	require.NoError(t, err)
 	assert.True(t, valid)
-	assert.Contains(t, msg, "intact")
-	assert.Contains(t, msg, "3 entries")
+	assert.Contains(t, msg, "3 条审计日志")
+	assert.Contains(t, msg, "全链校验通过")
 }
 
 func TestAuditServiceVerifyChainSingleLog(t *testing.T) {
@@ -94,19 +94,19 @@ func TestAuditServiceVerifyChainSingleLog(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	valid, msg, err := svc.VerifyChain(ctx)
+	valid, msg, _, err := svc.VerifyChain(ctx)
 	require.NoError(t, err)
 	assert.True(t, valid)
-	assert.Contains(t, msg, "1 entries")
+	assert.Contains(t, msg, "1 条审计日志")
 }
 
 func TestAuditServiceVerifyChainEmpty(t *testing.T) {
 	svc, _ := newTestAuditService(t)
 
-	valid, msg, err := svc.VerifyChain(context.Background())
+	valid, msg, _, err := svc.VerifyChain(context.Background())
 	require.NoError(t, err)
 	assert.True(t, valid)
-	assert.Contains(t, msg, "0 entries")
+	assert.Contains(t, msg, "无可校验条目")
 }
 
 func TestAuditServiceVerifyChainDetectsTampering(t *testing.T) {
@@ -126,7 +126,7 @@ func TestAuditServiceVerifyChainDetectsTampering(t *testing.T) {
 	log2.Details = "tampered"
 	assert.NoError(t, repo.UpdateRaw(ctx, log2))
 
-	valid, msg, err := svc.VerifyChain(ctx)
+	valid, msg, _, err := svc.VerifyChain(ctx)
 	require.NoError(t, err)
 	assert.False(t, valid, "篡改后的日志应导致链验证失败")
 	assert.Contains(t, msg, "mismatch")

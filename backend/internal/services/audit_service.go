@@ -108,31 +108,68 @@ func (s *AuditService) ListAuditLogsFiltered(ctx context.Context, filter reposit
 // VerifyChain: 全链完整性验证 —— 从链头逐条重算 HMAC 并校验 prev_hash 链接。
 // 审计链为 hash 链(每条 prev_hash = 前一条 hash), 与条目 id 无关,
 // 因此按时间正序遍历全表逐条校验, 而不是按 id 回溯。
-func (s *AuditService) VerifyChain(ctx context.Context) (bool, string, error) {
+// 返回 message(人类可读摘要) 与 details(结构化校验详情, 供前端展示具体表现)。
+func (s *AuditService) VerifyChain(ctx context.Context) (bool, string, map[string]interface{}, error) {
 	// 大 limit 一次取全链 (List 按时间倒序返回, 末位是最旧条目)
 	logs, err := s.auditRepo.List(ctx, 1000000, 0)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to list audit logs: %w", err)
+		return false, "", nil, fmt.Errorf("failed to list audit logs: %w", err)
 	}
 	if len(logs) == 0 {
-		return true, "chain intact (0 entries)", nil
+		return true, "链为空, 无可校验条目", map[string]interface{}{
+			"total_entries": 0,
+			"algorithm":     "HMAC-SHA256",
+			"verified_at":   time.Now().Format(time.RFC3339),
+		}, nil
 	}
 
+	oldest := logs[len(logs)-1]
+	newest := logs[0]
 	prevHash := ""
 	for i := len(logs) - 1; i >= 0; i-- {
 		log := logs[i]
 		if log.PrevHash != prevHash {
+			details := s.chainDetails(len(logs), &oldest, &newest)
+			details["broken_entry_id"] = log.ID
+			details["broken_entry_time"] = log.CreatedAt.Format(time.RFC3339)
+			details["broken_reason"] = "prev_hash 不匹配"
+			details["expected_prev_hash"] = prevHash
+			details["claimed_prev_hash"] = log.PrevHash
 			return false, fmt.Sprintf("prev_hash mismatch at entry %s (%s): claims %s, expected %s",
-				log.ID, log.CreatedAt.Format(time.RFC3339), log.PrevHash, prevHash), nil
+				log.ID, log.CreatedAt.Format(time.RFC3339), log.PrevHash, prevHash), details, nil
 		}
 		expected := s.computeAuditHash(log.PrevHash, &log)
 		if log.Hash != expected {
+			details := s.chainDetails(len(logs), &oldest, &newest)
+			details["broken_entry_id"] = log.ID
+			details["broken_entry_time"] = log.CreatedAt.Format(time.RFC3339)
+			details["broken_reason"] = "hash 重算不匹配(条目内容与签名不符)"
+			details["stored_hash"] = log.Hash
+			details["recomputed_hash"] = expected
 			return false, fmt.Sprintf("hash mismatch at entry %s: stored %s, recomputed %s",
-				log.ID, log.Hash, expected), nil
+				log.ID, log.Hash, expected), details, nil
 		}
 		prevHash = log.Hash
 	}
-	return true, fmt.Sprintf("chain intact (%d entries)", len(logs)), nil
+	details := s.chainDetails(len(logs), &oldest, &newest)
+	details["head_hash"] = newest.Hash
+	details["tail_hash"] = oldest.Hash
+	return true, fmt.Sprintf("全链校验通过: 共 %d 条审计日志逐条重算 HMAC 并校验链式链接, 均未被篡改", len(logs)), details, nil
+}
+
+// chainDetails: 汇总链的范围信息(条目数/时间跨度/首末条目摘要/算法/验证时刻)。
+func (s *AuditService) chainDetails(total int, oldest, newest *models.AuditLog) map[string]interface{} {
+	return map[string]interface{}{
+		"total_entries":     total,
+		"algorithm":         "HMAC-SHA256",
+		"verified_at":       time.Now().Format(time.RFC3339),
+		"oldest_entry_id":   oldest.ID,
+		"oldest_entry_time": oldest.CreatedAt.Format(time.RFC3339),
+		"oldest_action":     oldest.Action,
+		"newest_entry_id":   newest.ID,
+		"newest_entry_time": newest.CreatedAt.Format(time.RFC3339),
+		"newest_action":     newest.Action,
+	}
 }
 
 type CreateAuditLogRequest struct {

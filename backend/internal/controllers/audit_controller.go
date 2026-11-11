@@ -105,7 +105,7 @@ func (c *AuditController) CreateAuditLog(ctx *gin.Context) {
 }
 
 func (c *AuditController) VerifyChain(ctx *gin.Context) {
-	ok, msg, err := c.service.VerifyChain(ctx.Request.Context())
+	ok, msg, details, err := c.service.VerifyChain(ctx.Request.Context())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			utils.NotFoundResponse(ctx, err.Error())
@@ -114,7 +114,7 @@ func (c *AuditController) VerifyChain(ctx *gin.Context) {
 		utils.InternalServerErrorResponse(ctx, "审计链校验失败", err)
 		return
 	}
-	utils.SuccessResponse(ctx, gin.H{"valid": ok, "message": msg})
+	utils.SuccessResponse(ctx, gin.H{"valid": ok, "message": msg, "details": details})
 }
 
 func parseAuditTime(value string, endOfDay bool) (time.Time, error) {
