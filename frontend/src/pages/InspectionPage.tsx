@@ -20,6 +20,7 @@ interface InspectionReport {
   summary: string
   score: number
   generated_at: string
+  sent_at?: string | null
 }
 
 export default function InspectionPage() {
@@ -73,6 +74,7 @@ export default function InspectionPage() {
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={v === 'completed' ? 'green' : 'blue'}>{v}</Tag> },
     { title: '摘要', dataIndex: 'summary', key: 'summary', ellipsis: true },
     { title: '评分', dataIndex: 'score', key: 'score', render: (v: number) => <Tag color={v >= 80 ? 'green' : v >= 60 ? 'orange' : 'red'}>{v}</Tag> },
+    { title: '通知', dataIndex: 'sent_at', key: 'sent_at', width: 90, render: (v: string) => v ? <Tag color="blue">已发送</Tag> : <Tag>未发送</Tag> },
     { title: '生成时间', dataIndex: 'generated_at', key: 'generated_at', width: 160, render: (v: string) => new Date(v).toLocaleString() },
   ]
 
@@ -101,6 +103,9 @@ export default function InspectionPage() {
             <Select options={['性能', '安全', '可用性', '配置'].map(v => ({ label: v, value: v }))} />
           </Form.Item>
           <Form.Item name="schedule" label="调度 (cron)"><Input placeholder="留空表示手动触发" /></Form.Item>
+          <Form.Item name="recipients" label="通知收件人" tooltip="巡检报告生成后经已启用的邮件通知渠道发送给这些收件人；留空则不发送">
+            <Input.TextArea rows={1} placeholder="多个邮箱用逗号分隔，如 a@x.com,b@x.com" />
+          </Form.Item>
           <Form.Item name="config" label="配置 JSON"><Input.TextArea rows={3} placeholder='{"checks":["cpu","memory","disk"]}' /></Form.Item>
         </Form>
       </Modal>

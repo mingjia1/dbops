@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/smtp"
 	"strings"
@@ -560,11 +561,68 @@ func (s *AlertService) GenerateInspectionReport(ctx context.Context, templateID,
 	report.Details = details
 	report.Score = score
 
+	// P0-5: 模板 recipients 非空时, 复用启用中的 email 通知渠道 SMTP 配置发送报告摘要;
+	// 发送成功写回 sent_at (report.Update 落库), 失败仅记日志不阻断报告生成。
+	if strings.TrimSpace(tpl.Recipients) != "" {
+		if sentErr := s.sendInspectionReportEmail(ctx, tpl, report); sentErr != nil {
+			log.Printf("WARN: inspection report notification to %q failed: %v", tpl.Recipients, sentErr)
+		} else {
+			now := time.Now()
+			report.SentAt = &now
+		}
+	}
+
 	if err := s.inspectionRptRepo.Update(ctx, report); err != nil {
 		return nil, fmt.Errorf("failed to update report results: %w", err)
 	}
 
 	return report, nil
+}
+
+// sendInspectionReportEmail: 收件人取模板 recipients (逗号/分号/空白分隔的邮箱列表),
+// SMTP 配置取第一个启用的 email 类型通知渠道的 channel_config。
+func (s *AlertService) sendInspectionReportEmail(ctx context.Context, tpl *models.InspectionTemplate, report *models.InspectionReport) error {
+	recipients := strings.FieldsFunc(tpl.Recipients, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == ' ' || r == '\t'
+	})
+	if len(recipients) == 0 {
+		return fmt.Errorf("no valid recipient addresses")
+	}
+
+	if s.notificationRepo == nil {
+		return fmt.Errorf("notification channel repo not available")
+	}
+	channels, err := s.notificationRepo.GetActiveNotifications(ctx)
+	if err != nil {
+		return fmt.Errorf("list notification channels: %w", err)
+	}
+	var mailCfg map[string]interface{}
+	for _, ch := range channels {
+		if ch.ChannelType == "email" {
+			mailCfg = parseChannelConfig(ch.ChannelConfig)
+			break
+		}
+	}
+	if mailCfg == nil {
+		return fmt.Errorf("no active email notification channel configured")
+	}
+	smtpHost, _ := mailCfg["smtp_host"].(string)
+	smtpUser, _ := mailCfg["smtp_user"].(string)
+	smtpPass, _ := mailCfg["smtp_pass"].(string)
+	if smtpHost == "" || smtpUser == "" {
+		return fmt.Errorf("email channel smtp config incomplete")
+	}
+
+	subject := fmt.Sprintf("[DBOps 巡检] %s — %s", tpl.Name, report.Summary)
+	body := fmt.Sprintf("巡检模板: %s\n实例: %s\n状态: %s\n得分: %d\n\n摘要: %s\n\n明细:\n%s\n",
+		tpl.Name, report.InstanceID, report.Status, report.Score, report.Summary, report.Details)
+
+	msg := []byte("From: " + smtpUser + "\r\n" +
+		"To: " + recipients[0] + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
+	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+	return smtp.SendMail(smtpHost+":25", auth, smtpUser, recipients, msg)
 }
 
 func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.InspectionTemplate, instanceID string) (summary, details string, score int) {

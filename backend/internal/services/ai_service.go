@@ -58,14 +58,32 @@ func (s *AIService) Diagnosis(ctx context.Context, instanceID string) (*models.D
 	}
 
 	// Gather instance data
-	metrics, _ := s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
-		InstanceID: instanceID,
-		Metrics:    []string{"cpu", "mem", "disk", "connections", "qps", "threads_running", "innodb_deadlocks"},
-	})
+	// 与巡检同类修复: agent 实际采集集为 MySQL STATUS 指标, 不含 cpu/mem/disk
+	// (实例级系统资源指标全平台无采集源), 请求它们只会得到空行; 改为请求真实
+	// 可得指标, 查询失败时在诊断上下文中显式声明, 不静默吞错。
+	diagnosisMetrics := []string{
+		"qps", "tps", "connections", "threads_connected", "threads_running",
+		"slow_queries", "uptime", "innodb_buffer_pool_hit_ratio",
+	}
+	var metrics []MetricData
+	var metricsErr error
+	if s.monitorService == nil {
+		metricsErr = fmt.Errorf("monitor service not available")
+	} else {
+		metrics, metricsErr = s.monitorService.QueryMetrics(ctx, MetricQueryRequest{
+			InstanceID: instanceID,
+			Metrics:    diagnosisMetrics,
+		})
+	}
 
 	metricLines := make([]string, 0, len(metrics))
 	for _, m := range metrics {
 		metricLines = append(metricLines, fmt.Sprintf("  %s: %.2f", m.Name, m.Value))
+	}
+	if metricsErr != nil {
+		metricLines = append(metricLines, "  (监控指标查询失败: "+metricsErr.Error()+")")
+	} else if len(metricLines) == 0 {
+		metricLines = append(metricLines, "  (暂无可用监控指标)")
 	}
 
 	prompt := strings.ReplaceAll(aiprovider.PromptTemplates.Diagnosis, "{{INSTANCE_INFO}}", fmt.Sprintf("Instance ID: %s", instanceID))
