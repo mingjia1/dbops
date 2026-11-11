@@ -4,7 +4,7 @@ import {
   CloudOutlined, ClusterOutlined, DashboardOutlined, DatabaseOutlined, DesktopOutlined,
   FileTextOutlined, HddOutlined, HeartOutlined,
   AppstoreOutlined, RetweetOutlined, RocketOutlined, SettingOutlined, SwapOutlined, PartitionOutlined,
-  SafetyOutlined, UserOutlined, ExperimentOutlined, ThunderboltOutlined, RobotOutlined, KeyOutlined,
+  SafetyOutlined, UserOutlined, ExperimentOutlined, ThunderboltOutlined, RobotOutlined,
   FileSearchOutlined, LockOutlined, CopyrightOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
@@ -81,9 +81,7 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
     children: [
       { key: '/dashboard/approvals', icon: <SafetyOutlined />, label: '审批管理' },
       { key: '/dashboard/audit-logs', icon: <AuditOutlined />, label: '审计日志' },
-      { key: '/dashboard/audit-verify', icon: <AuditOutlined />, label: '审计链验证' },
       { key: '/dashboard/masking', icon: <LockOutlined />, label: '数据脱敏' },
-      { key: '/dashboard/key-rotation', icon: <KeyOutlined />, label: '密钥轮换' },
       { key: '/dashboard/security-settings', icon: <SettingOutlined />, label: '安全设置' },
     ],
   },

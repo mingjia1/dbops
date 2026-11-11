@@ -37,13 +37,11 @@ const UserManagePage = lazy(() => import('./pages/UserManagePage'))
 const InspectionPage = lazy(() => import('./pages/InspectionPage'))
 const FaultInjectionPage = lazy(() => import('./pages/FaultInjectionPage'))
 const AIDiagnosisPage = lazy(() => import('./pages/AIDiagnosisPage'))
-const KeyRotationPage = lazy(() => import('./pages/KeyRotation'))
 const MigrationOrchestratePage = lazy(() => import('./pages/MigrationOrchestratePage'))
 const MaskingPage = lazy(() => import('./pages/MaskingPage'))
 const ParameterEnhancedPage = lazy(() => import('./pages/ParameterEnhancedPage'))
 const LicensePage = lazy(() => import('./pages/LicensePage'))
 const ArchUpgradePage = lazy(() => import('./pages/ArchUpgradePage'))
-const AuditVerifyPage = lazy(() => import('./pages/AuditVerifyPage'))
 const DrillPage = lazy(() => import('./pages/DrillPage'))
 const CapabilityMatrix = lazy(() => import('./pages/CapabilityMatrix'))
 const FirstDeployWizard = lazy(() => import('./pages/FirstDeployWizard'))
@@ -106,13 +104,11 @@ function App() {
             <Route path="inspection" element={<InspectionPage />} />
             <Route path="fault-injection" element={<FaultInjectionPage />} />
             <Route path="ai-diagnosis" element={<AIDiagnosisPage />} />
-            <Route path="key-rotation" element={<KeyRotationPage />} />
             <Route path="migration-orchestrate" element={<MigrationOrchestratePage />} />
             <Route path="masking" element={<MaskingPage />} />
             <Route path="parameter-enhanced" element={<ParameterEnhancedPage />} />
             <Route path="license" element={<LicensePage />} />
             <Route path="arch-upgrade" element={<ArchUpgradePage />} />
-            <Route path="audit-verify" element={<AuditVerifyPage />} />
             <Route path="drills" element={<DrillPage />} />
             <Route path="first-deploy" element={<FirstDeployWizard forceOpen />} />
             <Route path="platform-health" element={<PlatformHealth />} />
