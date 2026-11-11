@@ -471,6 +471,12 @@ func main() {
 	}, logInstance)
 	dbBackupScheduler.Start()
 	defer dbBackupScheduler.Stop()
+
+	// 智能巡检轻量化后台调度器: 扫描 enabled+schedule(cron) 模板, 到期自动执行巡检
+	// (config.instance_ids 指定目标实例, 含 recipients 通知发送); 失败仅记日志不阻断服务.
+	inspectionScheduler := services.NewInspectionScheduler(alertService)
+	inspectionScheduler.Start()
+	defer inspectionScheduler.Stop()
 	r.GET("/metrics", middleware.MetricsHandler(middleware.MetricsStats{
 		StartTime:      startTime,
 		Version:        "1.0.0",

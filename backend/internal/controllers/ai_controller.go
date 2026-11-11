@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
@@ -57,6 +58,11 @@ func (c *AIController) Diagnosis(ctx *gin.Context) {
 	}
 	result, err := c.service.Diagnosis(ctx.Request.Context(), req.InstanceID)
 	if err != nil {
+		// provider 未配置属环境/配置问题, 返回 400 并给出配置指引而非笼统 500
+		if strings.Contains(err.Error(), "not configured") {
+			utils.BadRequestResponse(ctx, "AI 功能未启用: 请设置 DBOPS_AI_BASE_URL 与 DBOPS_AI_API_KEY")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "AI 诊断失败", err)
 		return
 	}
