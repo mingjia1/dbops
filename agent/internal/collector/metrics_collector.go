@@ -150,7 +150,10 @@ func (c *MetricsCollector) CollectMySQLStatusMetrics(ctx context.Context, target
 	if len(status) == 0 {
 		return nil, fmt.Errorf("mysql status output is empty")
 	}
-	return c.MetricsFromMySQLStatus(target.InstanceID, status, time.Now()), nil
+	metrics := c.MetricsFromMySQLStatus(target.InstanceID, status, time.Now())
+	// 主机资源 (cpu/memory/disk) 与实例指标同批返回: 监控面板"资源使用"图依赖.
+	metrics = append(metrics, collectHostResourceMetrics(target.InstanceID)...)
+	return metrics, nil
 }
 
 func parseMySQLStatusOutput(output string) map[string]string {

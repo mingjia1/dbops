@@ -286,6 +286,23 @@ const MonitorDashboard: React.FC = () => {
     { name: 'DELETE', value: metrics?.innodb_rows_deleted || 0, color: palette.series.danger },
     { name: 'SELECT', value: metrics?.innodb_rows_read || 0, color: palette.series.success },
   ], [metrics])
+  // 资源使用: CPU/内存/磁盘三条序列按采样时间对齐成多 key 行.
+  const resourceData = useMemo(() => {
+    const rows = new Map<string, { ts: string; cpu?: number; memory?: number; disk?: number }>()
+    const put = (series: MetricPoint[] | undefined, key: 'cpu' | 'memory' | 'disk') => {
+      ;(series || []).forEach((p) => {
+        const row = rows.get(p.ts) || { ts: p.ts }
+        row[key] = p.value
+        rows.set(p.ts, row)
+      })
+    }
+    put(metrics?.cpu, 'cpu')
+    put(metrics?.memory, 'memory')
+    put(metrics?.disk, 'disk')
+    return Array.from(rows.values())
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+      .map((row) => ({ ...row, time: formatPointTime(row.ts, range) }))
+  }, [metrics, range])
   const emptyDescription = monitorStatus === 'not_configured'
     ? '监控存储未配置，请配置 ClickHouse 与 Agent 指标上报。'
     : monitorStatus === 'agent_unreachable'
@@ -423,13 +440,15 @@ const MonitorDashboard: React.FC = () => {
               <Col xs={24} xl={12}>
                 <Card title="资源使用" size="small">
                   <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart data={seriesData(metrics.cpu || metrics.memory || metrics.disk, range)}>
+                    <AreaChart data={resourceData}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="time" />
-                      <YAxis />
-                      <RTooltip />
+                      <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+                      <RTooltip formatter={(value: any) => `${Number(value).toFixed(1)}%`} />
                       <Legend />
-                      <Area type="monotone" dataKey="value" stroke={palette.series.danger} fill={palette.series.danger} fillOpacity={0.14} />
+                      <Area type="monotone" dataKey="cpu" name="CPU" stroke={palette.series.danger} fill={palette.series.danger} fillOpacity={0.14} />
+                      <Area type="monotone" dataKey="memory" name="内存" stroke={palette.series.warning} fill={palette.series.warning} fillOpacity={0.14} />
+                      <Area type="monotone" dataKey="disk" name="磁盘" stroke={palette.series.success} fill={palette.series.success} fillOpacity={0.14} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </Card>
