@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -285,7 +286,7 @@ func (s *AlertService) SendNotification(ctx context.Context, req SendNotificatio
 				"To: " + addrs[0] + "\r\n" +
 				"Subject: [DBOps Alert] " + req.AlertID + "\r\n\r\n" + req.Message)
 			auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
-			if smtpErr := smtp.SendMail(smtpHost+":25", auth, from, addrs, msg); smtpErr != nil {
+			if smtpErr := smtp.SendMail(smtpAddrFromConfig(cfg, smtpHost), auth, from, addrs, msg); smtpErr != nil {
 				failedChannels = append(failedChannels, channelID+" (smtp send failed)")
 				continue
 			}
@@ -622,7 +623,23 @@ func (s *AlertService) sendInspectionReportEmail(ctx context.Context, tpl *model
 		"Subject: " + subject + "\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
 	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
-	return smtp.SendMail(smtpHost+":25", auth, smtpUser, recipients, msg)
+	return smtp.SendMail(smtpAddrFromConfig(mailCfg, smtpHost), auth, smtpUser, recipients, msg)
+}
+
+// smtpAddrFromConfig: 从渠道配置的 smtp_port 字段解析 SMTP 地址, 无效或缺省回退 25。
+func smtpAddrFromConfig(cfg map[string]interface{}, smtpHost string) string {
+	port := 25
+	switch p := cfg["smtp_port"].(type) {
+	case float64:
+		if p > 0 && p < 65536 {
+			port = int(p)
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && n > 0 && n < 65536 {
+			port = n
+		}
+	}
+	return fmt.Sprintf("%s:%d", smtpHost, port)
 }
 
 func (s *AlertService) runInspectionChecks(ctx context.Context, tpl *models.InspectionTemplate, instanceID string) (summary, details string, score int) {

@@ -951,14 +951,21 @@ func (s *InstanceService) HealthCheck(ctx context.Context, id string) (*Instance
 				},
 			})
 			if clusterResult != nil && strings.Contains(clusterResult.Message, "wsrep_ready") && !strings.Contains(clusterResult.Message, "wsrep_ready=ON") && !strings.Contains(clusterResult.Message, "wsrep_ready\tON") {
-				_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
-				return &InstanceAdminResult{
-					TaskID:   result.TaskID,
-					Status:   "unhealthy",
-					Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
-					Data:     connectionData,
-					Progress: 100,
-				}, nil
+				// Server without the Galera plugin (e.g. pxc-mini / standalone build)
+				// rejects wsrep variables with ERROR 1193 Unknown system variable —
+				// treat it as a standalone node instead of marking the instance unhealthy.
+				if strings.Contains(clusterResult.Message, "Unknown system variable") || strings.Contains(clusterResult.Message, "ERROR 1193") {
+					log.Printf("HealthCheck [%s]: cluster_type=pxc but server has no wsrep variables, treating as standalone: %s", id, clusterResult.Message)
+				} else {
+					_ = s.updateInstanceHealthStatus(ctx, id, "unhealthy")
+					return &InstanceAdminResult{
+						TaskID:   result.TaskID,
+						Status:   "unhealthy",
+						Message:  "MySQL is running but cluster not ready: " + clusterResult.Message,
+						Data:     connectionData,
+						Progress: 100,
+					}, nil
+				}
 			}
 		}
 		_ = s.updateInstanceHealthStatus(ctx, id, "healthy")

@@ -405,3 +405,26 @@ func TestRunInspectionChecksMarksMissingMetricsUnavailable(t *testing.T) {
 	assert.Equal(t, 0, score)
 	assert.Contains(t, details, `"data_status":"unavailable"`)
 }
+
+func TestSmtpAddrFromConfig(t *testing.T) {
+	host := "127.0.0.1"
+	// 缺省回退 25
+	if got := smtpAddrFromConfig(map[string]interface{}{}, host); got != host+":25" {
+		t.Errorf("default port: got %q, want %q", got, host+":25")
+	}
+	// 数字类型 (JSON 解码产物)
+	if got := smtpAddrFromConfig(map[string]interface{}{"smtp_port": float64(587)}, host); got != host+":587" {
+		t.Errorf("float port: got %q, want %q", got, host+":587")
+	}
+	// 字符串类型
+	if got := smtpAddrFromConfig(map[string]interface{}{"smtp_port": "465"}, host); got != host+":465" {
+		t.Errorf("string port: got %q, want %q", got, host+":465")
+	}
+	// 非法值回退 25
+	if got := smtpAddrFromConfig(map[string]interface{}{"smtp_port": "abc"}, host); got != host+":25" {
+		t.Errorf("invalid string port: got %q, want %q", got, host+":25")
+	}
+	if got := smtpAddrFromConfig(map[string]interface{}{"smtp_port": float64(-1)}, host); got != host+":25" {
+		t.Errorf("negative port: got %q, want %q", got, host+":25")
+	}
+}
