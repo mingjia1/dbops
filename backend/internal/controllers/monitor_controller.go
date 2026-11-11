@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,10 @@ func (c *MonitorController) QueryMetrics(ctx *gin.Context) {
 				"message": "Agent 不在线或网络不可达，无法实时采集指标；请检查主机 Agent 状态。",
 				"metrics": []services.MetricData{},
 			})
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(err.Error(), "不存在") {
+			utils.NotFoundResponse(ctx, "实例不存在: "+instanceID)
 			return
 		}
 		utils.InternalServerErrorResponse(ctx, "查询监控指标失败", err)

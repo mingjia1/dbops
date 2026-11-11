@@ -79,8 +79,9 @@ func (s *AlertService) DeleteAlertTemplate(ctx context.Context, id string) error
 }
 
 type EvaluateAlertRuleRequest struct {
-	RuleID     string `json:"rule_id" binding:"required"`
-	InstanceID string `json:"instance_id" binding:"required"`
+	RuleID     string  `json:"rule_id" binding:"required"`
+	InstanceID string  `json:"instance_id" binding:"required"`
+	Value      float64 `json:"value"` // 可选: 手动评估时直接给定指标值, 覆盖实时采集
 }
 
 type AlertEvaluationResult struct {
@@ -108,18 +109,40 @@ func (s *AlertService) EvaluateAlertRule(ctx context.Context, req EvaluateAlertR
 	}
 
 	var currentValue float64
+	metricFound := false
 	for _, metric := range metrics {
 		if metric.Name == rule.Metric {
 			currentValue = metric.Value
+			metricFound = true
 			break
 		}
 	}
+	// 手动评估: 调用方显式传入 value 时优先使用, 支持测试规则而无需真实采集.
+	if req.Value > 0 {
+		currentValue = req.Value
+		metricFound = true
+	}
 
 	var triggered bool
+	if rule.Expression != "" && !metricFound {
+		// 表达式依赖的指标完全无采集数据时, 直接给出明确结论而非静默返回 false.
+		return &AlertEvaluationResult{
+			RuleID:     req.RuleID,
+			InstanceID: req.InstanceID,
+			Triggered:  false,
+			Value:      0,
+			Threshold:  rule.Threshold,
+			Message:    fmt.Sprintf("指标 %s 当前无采集数据(agent 采集集不含该指标或实例不可达), 无法评估", rule.Metric),
+			Timestamp:  time.Now(),
+		}, nil
+	}
 	if rule.Expression != "" {
 		metricMap := make(map[string]float64)
 		for _, m := range metrics {
 			metricMap[m.Name] = m.Value
+		}
+		if req.Value > 0 {
+			metricMap[rule.Metric] = req.Value
 		}
 		e := alertexpr.NewEvaluator(metricMap)
 		triggered, err = e.Eval(rule.Expression)
@@ -131,7 +154,9 @@ func (s *AlertService) EvaluateAlertRule(ctx context.Context, req EvaluateAlertR
 	}
 
 	message := ""
-	if triggered {
+	if !metricFound {
+		message = fmt.Sprintf("指标 %s 当前无采集数据, 无法评估; 可在请求中传入 value 手动测试", rule.Metric)
+	} else if triggered {
 		if rule.Expression != "" {
 			message = fmt.Sprintf("Alert %s triggered: expression(%s)", rule.Name, rule.Expression)
 		} else {

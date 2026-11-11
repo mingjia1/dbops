@@ -23,6 +23,7 @@ const COMPONENT_DOCS: Record<string, { role: string; impact: string; optional: b
 // 把原始错误翻译成可操作的提示.
 const humanizeDetail = (name: string, status: HealthStatus['status'], detail?: string): string => {
   if (status === 'disabled') return '未部署或未在配置中启用, 不影响平台核心功能'
+  if (status === 'degraded') return detail || '部分实例异常, 请检查对应主机 Agent 状态'
   if (status === 'healthy') return `响应正常, ${detail || ''}`.trim()
   const raw = (detail || '').toLowerCase()
   if (raw.includes('unreachable') || raw.includes('fetch')) return '无法连接, 请确认该服务已启动且端口可达'
@@ -45,15 +46,24 @@ const PlatformHealth: React.FC = () => {
         const res = await fetch(url, { method: 'GET', mode: 'cors' })
         const latency = Math.round(performance.now() - start)
         const payload = await res.json().catch(() => ({}))
-        const detail = payload?.data?.error || payload?.message || `HTTP ${res.status}`
-        const statusRaw = String(payload?.data?.status || '').toLowerCase()
-        const status = res.ok
-          ? statusRaw === 'disabled'
+        const d = payload?.data || {}
+        // Agent 检查展示在线比例, 其余组件展示错误信息或 HTTP 状态.
+        const detail = d.error
+          || (name === 'Agent' && d.online_agents !== undefined
+            ? `${d.online_agents}/${d.total_hosts} 个主机 Agent 在线`
+            : `HTTP ${res.status}`)
+        const statusRaw = String(d.status || '').toLowerCase()
+        const status: HealthStatus['status'] = !res.ok
+          ? 'down'
+          : statusRaw === 'disabled'
             ? 'disabled'
             : statusRaw === 'down'
               ? 'down'
-              : 'healthy'
-          : 'down'
+              : statusRaw === 'degraded'
+                ? 'degraded'
+                : statusRaw === 'no_hosts'
+                  ? 'degraded'
+                  : 'healthy'
         return { name, status, detail, latencyMs: latency }
       } catch (err: any) {
         return { name, status: 'down', detail: err?.message || 'unreachable', latencyMs: Math.round(performance.now() - start) }
@@ -77,6 +87,7 @@ const PlatformHealth: React.FC = () => {
   }, [])
 
   const coreDown = checks.some((c) => (c.name === '后端服务' || c.name === 'Agent') && c.status === 'down')
+  const degradedItems = checks.filter((c) => c.status === 'degraded')
   const optionalDown = checks.filter((c) => c.name !== '后端服务' && c.name !== 'Agent' && c.status === 'down')
   const okCount = checks.filter((c) => c.status === 'healthy' || c.status === 'disabled').length
 
@@ -131,6 +142,14 @@ const PlatformHealth: React.FC = () => {
             showIcon
             message="平台核心服务异常"
             description="后端服务或 Agent 探测失败, 请检查对应进程是否存活、端口是否可达。"
+            style={{ marginBottom: 16 }}
+          />
+        ) : degradedItems.length > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message={`部分组件降级: ${degradedItems.map((c) => c.name).join('、')}`}
+            description={degradedItems.map((c) => `${c.name}: ${humanizeDetail(c.name, c.status, c.detail)}`).join('；')}
             style={{ marginBottom: 16 }}
           />
         ) : optionalDown.length > 0 ? (

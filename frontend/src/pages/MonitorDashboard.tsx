@@ -210,7 +210,8 @@ const MonitorDashboard: React.FC = () => {
             const payload = await res.json().catch(() => ({}))
             const detail = payload?.data?.error || payload?.message || `HTTP ${res.status}`
             const status = String(payload?.data?.status || payload?.data?.status || '').toLowerCase()
-            return { name: endpoint.name, status: res.ok ? (status === 'disabled' ? 'disabled' : status === 'down' ? 'down' : 'healthy') : 'down', detail, latencyMs: Math.round(performance.now() - start) }
+            const mapped = res.ok ? (status === 'disabled' ? 'disabled' : status === 'down' ? 'down' : status === 'degraded' || status === 'no_hosts' ? 'degraded' : 'healthy') : 'down'
+            return { name: endpoint.name, status: mapped, detail, latencyMs: Math.round(performance.now() - start) }
           } catch (err: any) {
             return { name: endpoint.name, status: 'down' as const, detail: err?.message || 'unreachable', latencyMs: Math.round(performance.now() - start) }
           }

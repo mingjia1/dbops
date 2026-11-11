@@ -629,7 +629,15 @@ func main() {
 				online++
 			}
 		}
-		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": "ok", "total_hosts": len(hosts), "online_agents": online}})
+		// status 语义: ok=全部在线 / degraded=部分或全部离线 / no_hosts=未注册主机.
+		// 全离线仍报 ok 会让平台健康页在 agent 全挂时显示"正常", 掩盖故障.
+		agentStatus := "ok"
+		if len(hosts) == 0 {
+			agentStatus = "no_hosts"
+		} else if online < len(hosts) {
+			agentStatus = "degraded"
+		}
+		c.JSON(200, gin.H{"code": 200, "data": gin.H{"status": agentStatus, "total_hosts": len(hosts), "online_agents": online}})
 	})
 
 	api := r.Group("/api/v1")
