@@ -12,7 +12,7 @@ interface PresetTemplate {
 }
 
 interface ValidationResult {
-  valid: boolean
+  is_valid: boolean
   errors: string[]
   warnings: string[]
 }
@@ -111,11 +111,11 @@ export default function ParameterEnhancedPage() {
               </Space>
               {validationResult && (
                 <Card type="inner" title="验证结果">
-                  {validationResult.valid ? (
+                  {validationResult.is_valid ? (
                     <Alert type="success" showIcon message="参数验证通过" />
                   ) : (
                     <Alert type="error" showIcon message="参数验证失败"
-                      description={validationResult.errors.join('; ')} />
+                      description={validationResult.errors.map(e => typeof e === 'string' ? e : `${(e as any).parameter_name}: ${(e as any).message}`).join('; ')} />
                   )}
                   {validationResult.warnings.length > 0 && (
                     <Alert type="warning" showIcon message="警告"

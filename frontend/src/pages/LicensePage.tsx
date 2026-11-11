@@ -26,16 +26,21 @@ export default function LicensePage() {
   const fetchData = async () => {
     setLoading(true)
     try {
+      // axios 拦截器已返回 body ({code, message, data}):
+      // GET /license          -> data 即 license 对象
+      // GET /license/features -> data 即功能名数组 (原 res.data?.data 多套一层, 恒 undefined)
       const [licRes, featRes] = await Promise.all([api.get('/license'), api.get('/license/features')])
-      setLicense(licRes.data?.data || null)
-      setFeatures(featRes.data?.data?.features || [])
+      const lic: any = licRes?.data
+      setLicense(lic && typeof lic === 'object' ? lic : null)
+      const feats: any = featRes?.data
+      setFeatures(Array.isArray(feats) ? feats : Array.isArray(feats?.features) ? feats.features : [])
     } catch {}
     finally { setLoading(false) }
   }
 
   useEffect(() => { fetchData() }, [])
 
-  const tierColors: Record<string, string> = { community: 'green', enterprise: 'gold', trial: 'blue' }
+  const tierColors: Record<string, string> = { ce: 'green', community: 'green', enterprise: 'gold', trial: 'blue' }
 
   return (
     <div style={{ padding: 24 }}>

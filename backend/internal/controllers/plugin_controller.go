@@ -25,20 +25,13 @@ type pluginInfo struct {
 func (c *PluginController) List(ctx *gin.Context) {
 	typeFilter := ctx.Query("type")
 
-	var list []plugins.Plugin
-	if typeFilter != "" {
-		list = c.registry.ListByType(plugins.PluginType(typeFilter))
-	} else {
-		list = c.registry.List()
-	}
-
-	result := make([]pluginInfo, 0, len(list))
-	for _, p := range list {
-		result = append(result, pluginInfo{
-			Name:    p.Name(),
-			Type:    string(p.Type()),
-			Version: p.Version(),
-		})
+	all := c.registry.ListAllInfo()
+	result := make([]plugins.PluginInfo, 0, len(all))
+	for _, info := range all {
+		if typeFilter != "" && info.Type != typeFilter {
+			continue
+		}
+		result = append(result, info)
 	}
 
 	utils.SuccessResponse(ctx, result)
@@ -51,15 +44,11 @@ func (c *PluginController) Get(ctx *gin.Context) {
 		return
 	}
 
-	p, err := c.registry.Get(name)
-	if err != nil {
+	info, ok := c.registry.GetInfo(name)
+	if !ok {
 		ctx.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "plugin not found"})
 		return
 	}
 
-	utils.SuccessResponse(ctx, pluginInfo{
-		Name:    p.Name(),
-		Type:    string(p.Type()),
-		Version: p.Version(),
-	})
+	utils.SuccessResponse(ctx, info)
 }

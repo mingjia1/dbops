@@ -86,7 +86,7 @@ func (m *Migrator) Migrate(src, dst *Database) (*MigrateResult, error) {
 		return result, err
 	}
 
-	for _, table := range migrateTables {
+	for _, table := range m.tablesToMigrate(context.Background(), src) {
 		report := m.migrateTable(context.Background(), src, dst, table)
 		result.Tables = append(result.Tables, report)
 		if report.Status == "ok" {
@@ -96,6 +96,50 @@ func (m *Migrator) Migrate(src, dst *Database) (*MigrateResult, error) {
 
 	result.DurationMs = time.Since(started).Milliseconds()
 	return result, nil
+}
+
+// tablesToMigrate: 静态清单 (先主后从的已知顺序) 在前, 再动态追加源库中存在
+// 但静态清单未覆盖的业务表. 原静态清单漏掉 roles/user_roles/audit_logs/
+// platform_settings/metric_samples 等, 迁移后 MySQL 会缺权限/审计数据.
+func (m *Migrator) tablesToMigrate(ctx context.Context, src *Database) []string {
+	seen := make(map[string]bool, len(migrateTables)+8)
+	ordered := make([]string, 0, len(migrateTables)+8)
+	for _, t := range migrateTables {
+		seen[t] = true
+		if m.tableExists(ctx, src.Pool, t) {
+			ordered = append(ordered, t)
+		}
+	}
+	for _, t := range listSourceTables(ctx, src) {
+		if !seen[t] && !strings.HasPrefix(t, "sqlite_") {
+			seen[t] = true
+			ordered = append(ordered, t)
+		}
+	}
+	return ordered
+}
+
+// listSourceTables 枚举源库全部业务表 (SQLite: sqlite_master; MySQL: information_schema).
+func listSourceTables(ctx context.Context, src *Database) []string {
+	var q string
+	if src.Dialect == DialectSQLite {
+		q = `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	} else {
+		q = `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name`
+	}
+	rows, err := src.Pool.QueryContext(ctx, q)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	tables := make([]string, 0, 64)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			tables = append(tables, name)
+		}
+	}
+	return tables
 }
 
 func (m *Migrator) migrateTable(ctx context.Context, src, dst *Database, table string) MigrateReport {

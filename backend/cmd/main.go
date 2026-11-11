@@ -231,6 +231,11 @@ func main() {
 		}
 		return result, nil
 	}
+	// 内核插件: 独立 KernelPlugin 接口 (单节点语义), 尚无执行链路消费方,
+	// 以元数据登记进插件目录供展示 (原"内核插件"tab 恒空 / 详情 404).
+	_ = pluginRegistry.RegisterMetadata(plugins.PluginInfo{Name: "mysql-core", Type: "kernel", Version: "1.0.0"})
+	_ = pluginRegistry.RegisterMetadata(plugins.PluginInfo{Name: "percona-core", Type: "kernel", Version: "1.0.0"})
+	_ = pluginRegistry.RegisterMetadata(plugins.PluginInfo{Name: "mariadb-core", Type: "kernel", Version: "1.0.0"})
 	_ = pluginRegistry.Register(pluginArch.NewReplicaAddonPlugin(agentCaller))
 	_ = pluginRegistry.Register(pluginArch.NewMHAAddonPlugin(agentCaller))
 	_ = pluginRegistry.Register(pluginArch.NewMGRAddonPlugin(agentCaller))
@@ -279,6 +284,9 @@ func main() {
 
 	paramTemplateRepo := repositories.NewParameterTemplateRepository(db)
 	paramTemplateService := services.NewParameterTemplateService(paramTemplateRepo, instanceService)
+	if err := paramTemplateService.SeedPresets(context.Background()); err != nil {
+		logInstance.Warn("seed preset parameter templates failed: " + err.Error())
+	}
 	paramTemplateController := controllers.NewParameterTemplateController(paramTemplateService)
 
 	clusterDeployRepo := repositories.NewClusterDeployRepository(db)

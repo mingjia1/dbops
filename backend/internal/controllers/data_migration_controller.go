@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,49 @@ func (c *DataMigrationController) resolveSQLitePath() string {
 	return c.cfg.DataDir + "/dbops.db"
 }
 
+// isConfiguredMySQLDSN: DatabaseURL 非空且形如可用的 go-sql-driver DSN 才算
+// "已配置 MySQL". 占位/哨兵值 (如 "sqlite-local") 会让按钮可点但迁移必然失败.
+func isConfiguredMySQLDSN(dsn string) bool {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return false
+	}
+	return strings.Contains(dsn, "@tcp(") || strings.Contains(dsn, "tcp(")
+}
+
+// listBusinessTables 动态枚举当前库的全部业务表.
+// 固定清单会随 schema 演进遗漏新表 (本库 54 张, 原固定清单只覆盖 13 张),
+// 统计与展示必须以实际 schema 为准.
+func (c *DataMigrationController) listBusinessTables(ctx context.Context, db *repositories.Database) []string {
+	var q string
+	if db.Dialect == repositories.DialectSQLite {
+		q = `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	} else {
+		q = `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name`
+	}
+	rows, err := db.Pool.QueryContext(ctx, q)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	tables := make([]string, 0, 32)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			tables = append(tables, name)
+		}
+	}
+	return tables
+}
+
+// quoteTableIdent 按方言给表名加引号 (表名来自 schema 枚举, 仍按规范转义).
+func quoteTableIdent(name string, dialect repositories.Dialect) string {
+	if dialect == repositories.DialectMySQL {
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	}
+	return "\"" + strings.ReplaceAll(name, "\"", "\"\"") + "\""
+}
+
 // GetStatus 报告当前数据库类型 / 数据量 / 残留 JSON 文件
 func (c *DataMigrationController) GetStatus(ctx *gin.Context) {
 	// P0: 之前开第二个 db 连接 (repositories.NewDatabase), mode 不一致时
@@ -42,26 +86,16 @@ func (c *DataMigrationController) GetStatus(ctx *gin.Context) {
 	}
 	db := c.db
 	sqlitePath := c.resolveSQLitePath()
+	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	counts := map[string]int{
-		"hosts":                 0,
-		"instances":             0,
-		"instance_connections":  0,
-		"instance_versions":     0,
-		"tasks":                 0,
-		"backup_policies":       0,
-		"backup_records":        0,
-		"alert_rules":           0,
-		"alert_records":         0,
-		"parameter_templates":   0,
-		"migration_tasks":       0,
-		"cluster_deployments":   0,
-		"users":                 0,
-	}
-	for table := range counts {
+	// 动态枚举全部业务表统计行数, 展示"各表数据量"与"总记录数".
+	tables := c.listBusinessTables(dbCtx, db)
+	counts := make(map[string]int, len(tables))
+	for _, table := range tables {
 		var n int
-		// table 来自本地字面量 map, 不构成注入, 仍 ? 占位反 SQL 注入规范.
-		if err := db.Pool.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM "+table).Scan(&n); err == nil {
+		if err := db.Pool.QueryRowContext(dbCtx,
+			"SELECT COUNT(*) FROM "+quoteTableIdent(table, db.Dialect)).Scan(&n); err == nil {
 			counts[table] = n
 		}
 	}
@@ -71,7 +105,7 @@ func (c *DataMigrationController) GetStatus(ctx *gin.Context) {
 		"data": gin.H{
 			"dialect":          string(db.Dialect),
 			"sqlite_path":      sqlitePath,
-			"mysql_configured": c.cfg.DatabaseURL != "",
+			"mysql_configured": isConfiguredMySQLDSN(c.cfg.DatabaseURL),
 			"row_counts":       counts,
 		},
 	})

@@ -95,6 +95,94 @@ func (s *ParameterTemplateService) ListPresets(ctx context.Context) ([]models.Pa
 	return templates, nil
 }
 
+// SeedPresets: 启动时幂等写入内置预设模板 (is_preset=1). 原从未 seed,
+// 预设列表/参数增强页/验证功能全部为空, 用户第一次打开就是空表.
+func (s *ParameterTemplateService) SeedPresets(ctx context.Context) error {
+	existing, err := s.repo.ListPresetTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	now := time.Now()
+	for _, pt := range builtinPresetTemplates {
+		t := pt.template
+		t.IsPreset = true
+		t.CreatedAt, t.UpdatedAt = now, now
+		if err := s.repo.Create(ctx, &t); err != nil {
+			return fmt.Errorf("seed preset %q: %w", t.Name, err)
+		}
+		for _, param := range pt.params {
+			p := param
+			p.TemplateID = t.ID
+			if err := s.repo.CreateParameter(ctx, &p); err != nil {
+				return fmt.Errorf("seed preset %q param %q: %w", t.Name, p.ParameterName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// builtinPresetTemplates: 三个典型场景的参数模板, 值与 validateSingleParameter
+// 的格式/范围/依赖规则兼容 (size 1G/512M, bool on/off, time 1s/3s).
+var builtinPresetTemplates = []struct {
+	template models.ParameterTemplate
+	params   []models.ParameterTemplateParameter
+}{
+	{
+		template: models.ParameterTemplate{
+			Name:        "OLTP 高并发生产",
+			Category:    "oltp",
+			Description: "面向高并发事务场景: 双 1 持久化、大连接数与缓冲池, O_DIRECT 避免双写缓冲.",
+		},
+		params: []models.ParameterTemplateParameter{
+			{ParameterName: "max_connections", Value: "1000", DataType: "int", MinValue: "10", MaxValue: "5000", IsDynamic: true, IsMandatory: true, Category: "connection", Description: "最大并发连接数"},
+			{ParameterName: "innodb_buffer_pool_size", Value: "4G", DataType: "size", IsDynamic: false, IsMandatory: true, Category: "memory", Description: "InnoDB 缓冲池大小"},
+			{ParameterName: "innodb_buffer_pool_instances", Value: "4", DataType: "int", IsDynamic: false, IsMandatory: true, Category: "memory", Description: "缓冲池实例数 (大于 1G 必须设置)"},
+			{ParameterName: "innodb_log_file_size", Value: "1G", DataType: "size", IsDynamic: false, IsMandatory: false, Category: "memory", Description: "重做日志文件大小"},
+			{ParameterName: "innodb_flush_log_at_trx_commit", Value: "1", DataType: "int", IsDynamic: true, IsMandatory: true, Category: "durability", Description: "事务提交刷盘策略 (1=每次提交刷盘)"},
+			{ParameterName: "sync_binlog", Value: "1", DataType: "int", IsDynamic: true, IsMandatory: true, Category: "durability", Description: "binlog 刷盘策略 (1=每次提交刷盘)"},
+			{ParameterName: "slow_query_log", Value: "on", DataType: "bool", IsDynamic: true, IsMandatory: false, Category: "diagnosis", Description: "慢查询日志开关"},
+			{ParameterName: "long_query_time", Value: "1s", DataType: "time", IsDynamic: true, IsMandatory: false, Category: "diagnosis", Description: "慢查询阈值"},
+			{ParameterName: "character_set_server", Value: "utf8mb4", DataType: "string", IsDynamic: true, IsMandatory: false, Category: "charset", Description: "服务端默认字符集"},
+			{ParameterName: "innodb_flush_method", Value: "O_DIRECT", DataType: "string", IsDynamic: false, IsMandatory: false, Category: "io", Description: "InnoDB 刷盘方式"},
+		},
+	},
+	{
+		template: models.ParameterTemplate{
+			Name:        "报表分析型",
+			Category:    "olap",
+			Description: "面向复杂查询/报表场景: 更大缓冲池与读线程, 适当放宽持久化与慢查询阈值.",
+		},
+		params: []models.ParameterTemplateParameter{
+			{ParameterName: "max_connections", Value: "300", DataType: "int", MinValue: "10", MaxValue: "2000", IsDynamic: true, IsMandatory: true, Category: "connection", Description: "最大并发连接数"},
+			{ParameterName: "innodb_buffer_pool_size", Value: "8G", DataType: "size", IsDynamic: false, IsMandatory: true, Category: "memory", Description: "InnoDB 缓冲池大小"},
+			{ParameterName: "innodb_buffer_pool_instances", Value: "8", DataType: "int", IsDynamic: false, IsMandatory: true, Category: "memory", Description: "缓冲池实例数"},
+			{ParameterName: "innodb_read_io_threads", Value: "8", DataType: "int", IsDynamic: false, IsMandatory: false, Category: "io", Description: "读 IO 线程数"},
+			{ParameterName: "innodb_io_capacity", Value: "1000", DataType: "int", IsDynamic: true, IsMandatory: false, Category: "io", Description: "InnoDB 后台 IO 能力"},
+			{ParameterName: "innodb_flush_log_at_trx_commit", Value: "2", DataType: "int", IsDynamic: true, IsMandatory: false, Category: "durability", Description: "事务提交刷盘策略 (2=每秒刷盘, 报表可接受)"},
+			{ParameterName: "long_query_time", Value: "3s", DataType: "time", IsDynamic: true, IsMandatory: false, Category: "diagnosis", Description: "慢查询阈值 (报表场景放宽)"},
+			{ParameterName: "tmp_table_size", Value: "64M", DataType: "size", IsDynamic: true, IsMandatory: false, Category: "memory", Description: "内存临时表上限"},
+		},
+	},
+	{
+		template: models.ParameterTemplate{
+			Name:        "开发测试小规格",
+			Category:    "dev",
+			Description: "面向开发/测试环境: 小内存占用、放宽持久化, 优先节省资源.",
+		},
+		params: []models.ParameterTemplateParameter{
+			{ParameterName: "max_connections", Value: "200", DataType: "int", MinValue: "10", MaxValue: "1000", IsDynamic: true, IsMandatory: true, Category: "connection", Description: "最大并发连接数"},
+			{ParameterName: "innodb_buffer_pool_size", Value: "512M", DataType: "size", IsDynamic: false, IsMandatory: true, Category: "memory", Description: "InnoDB 缓冲池大小"},
+			{ParameterName: "innodb_flush_log_at_trx_commit", Value: "2", DataType: "int", IsDynamic: true, IsMandatory: false, Category: "durability", Description: "事务提交刷盘策略 (开发环境放宽)"},
+			{ParameterName: "sync_binlog", Value: "0", DataType: "int", IsDynamic: true, IsMandatory: false, Category: "durability", Description: "binlog 刷盘策略 (0=依赖操作系统)"},
+			{ParameterName: "slow_query_log", Value: "off", DataType: "bool", IsDynamic: true, IsMandatory: false, Category: "diagnosis", Description: "慢查询日志开关"},
+			{ParameterName: "long_query_time", Value: "1s", DataType: "time", IsDynamic: true, IsMandatory: false, Category: "diagnosis", Description: "慢查询阈值"},
+		},
+	},
+}
+
 func (s *ParameterTemplateService) Update(ctx context.Context, id string, req UpdateParameterTemplateRequest) (*models.ParameterTemplate, error) {
 	template, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -250,6 +338,24 @@ func parameterInputToModel(templateID string, param ParameterInput) *models.Para
 }
 
 func (s *ParameterTemplateService) ValidateParameters(ctx context.Context, req ValidateParametersRequest) (*ValidationResult, error) {
+	// parameters 未显式提供时回退到模板自身参数 (参数增强页只传 template_id/instance_id).
+	if len(req.Parameters) == 0 && strings.TrimSpace(req.TemplateID) != "" {
+		template, err := s.GetByID(ctx, req.TemplateID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range template.Parameters {
+			req.Parameters = append(req.Parameters, ParameterValidationInput{
+				ParameterName: p.ParameterName,
+				Value:         p.Value,
+				DataType:      models.ParameterDataType(p.DataType),
+				MinValue:      p.MinValue,
+				MaxValue:      p.MaxValue,
+				IsMandatory:   p.IsMandatory,
+			})
+		}
+	}
+
 	result := &ValidationResult{
 		IsValid:  true,
 		Errors:   []ValidationError{},
@@ -680,7 +786,9 @@ type UpdateParameterTemplateRequest struct {
 
 type ValidateParametersRequest struct {
 	TemplateID string                     `json:"template_id"`
-	Parameters []ParameterValidationInput `json:"parameters" binding:"required"`
+	InstanceID string                     `json:"instance_id"`
+	// parameters 可空: 空时按 template_id 回退到模板自身参数做校验.
+	Parameters []ParameterValidationInput `json:"parameters"`
 }
 
 type ParameterValidationInput struct {

@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackcode/mysql-ops-platform/internal/services"
 	"github.com/jackcode/mysql-ops-platform/pkg/utils"
@@ -75,6 +77,14 @@ func (c *ParameterTemplateController) Update(ctx *gin.Context) {
 
 	template, err := c.service.Update(ctx.Request.Context(), id, req)
 	if err != nil {
+		if strings.Contains(err.Error(), "cannot modify preset") {
+			utils.BadRequestResponse(ctx, "预设模板不可修改")
+			return
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "不存在") {
+			utils.NotFoundResponse(ctx, "参数模板不存在")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "更新参数模板失败", err)
 		return
 	}
@@ -86,6 +96,14 @@ func (c *ParameterTemplateController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
 
 	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "cannot delete preset") {
+			utils.BadRequestResponse(ctx, "预设模板不可删除")
+			return
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "不存在") {
+			utils.NotFoundResponse(ctx, "参数模板不存在")
+			return
+		}
 		utils.InternalServerErrorResponse(ctx, "删除参数模板失败", err)
 		return
 	}
