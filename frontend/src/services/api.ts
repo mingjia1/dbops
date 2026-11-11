@@ -702,16 +702,12 @@ export interface ParameterTemplateUpdateRequest {
 
 export interface ApprovalRequest {
   id: string
-  requester: string
-  requester_id?: string
+  requester_id: string
   approver_id?: string
   operation_type: string
-  target_resource: string
   resource_type?: string
   resource_id?: string
-  status: string
-  approval_status?: string
-  description: string
+  approval_status: string
   request_reason?: string
   approval_comment?: string
   priority?: number

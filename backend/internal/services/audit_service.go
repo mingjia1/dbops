@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackcode/mysql-ops-platform/internal/models"
 	"github.com/jackcode/mysql-ops-platform/internal/repositories"
 )
@@ -61,6 +62,11 @@ func (s *AuditService) CreateAuditLog(ctx context.Context, req CreateAuditLogReq
 		PrevHash:     prevHash,
 		CreatedAt:    time.Now(),
 	}
+	// ID 必须在计算 hash 之前确定: payload 包含 log.ID, 若先算 hash 再由 repo
+	// 生成 ID, 存储的 hash 将永远与重算结果不一致, 全链验证必然失败。
+	if auditLog.ID == "" {
+		auditLog.ID = uuid.New().String()
+	}
 	auditLog.Hash = s.computeAuditHash(prevHash, auditLog)
 
 	if err := s.auditRepo.Create(ctx, auditLog); err != nil {
@@ -99,34 +105,34 @@ func (s *AuditService) ListAuditLogsFiltered(ctx context.Context, filter reposit
 	return &FilteredResult{Logs: logs, Total: total}, nil
 }
 
-func (s *AuditService) VerifyChain(ctx context.Context, fromID string) (bool, string, error) {
-	log, err := s.auditRepo.GetByID(ctx, fromID)
+// VerifyChain: 全链完整性验证 —— 从链头逐条重算 HMAC 并校验 prev_hash 链接。
+// 审计链为 hash 链(每条 prev_hash = 前一条 hash), 与条目 id 无关,
+// 因此按时间正序遍历全表逐条校验, 而不是按 id 回溯。
+func (s *AuditService) VerifyChain(ctx context.Context) (bool, string, error) {
+	// 大 limit 一次取全链 (List 按时间倒序返回, 末位是最旧条目)
+	logs, err := s.auditRepo.List(ctx, 1000000, 0)
 	if err != nil {
-		return false, "", fmt.Errorf("audit log not found: %s", fromID)
+		return false, "", fmt.Errorf("failed to list audit logs: %w", err)
+	}
+	if len(logs) == 0 {
+		return true, "chain intact (0 entries)", nil
 	}
 
-	currentHash := log.Hash
-	for {
-		if log.PrevHash == "" {
-			return true, "chain intact", nil
+	prevHash := ""
+	for i := len(logs) - 1; i >= 0; i-- {
+		log := logs[i]
+		if log.PrevHash != prevHash {
+			return false, fmt.Sprintf("prev_hash mismatch at entry %s (%s): claims %s, expected %s",
+				log.ID, log.CreatedAt.Format(time.RFC3339), log.PrevHash, prevHash), nil
 		}
-		prev, err := s.auditRepo.GetByID(ctx, log.PrevHash)
-		if err != nil {
-			return false, "", fmt.Errorf("broken chain at %s: previous entry %s not found", log.ID, log.PrevHash)
+		expected := s.computeAuditHash(log.PrevHash, &log)
+		if log.Hash != expected {
+			return false, fmt.Sprintf("hash mismatch at entry %s: stored %s, recomputed %s",
+				log.ID, log.Hash, expected), nil
 		}
-		expectedHash := s.computeAuditHash(prev.PrevHash, prev)
-		if prev.Hash != expectedHash {
-			return false, fmt.Sprintf("hash mismatch at %s", prev.ID), nil
-		}
-		if prev.Hash != currentHash {
-			return false, fmt.Sprintf("prev_hash mismatch: %s claims %s but actual is %s", log.ID, log.PrevHash, prev.Hash), nil
-		}
-		if prev.PrevHash == "" {
-			return true, "chain intact", nil
-		}
-		log = prev
-		currentHash = prev.Hash
+		prevHash = log.Hash
 	}
+	return true, fmt.Sprintf("chain intact (%d entries)", len(logs)), nil
 }
 
 type CreateAuditLogRequest struct {

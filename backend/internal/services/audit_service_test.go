@@ -65,7 +65,7 @@ func TestAuditServiceVerifyChain(t *testing.T) {
 	svc, _ := newTestAuditService(t)
 	ctx := context.Background()
 
-	log1, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
+	_, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
 		UserID: "user-001", Operation: "op1", Result: "success",
 	})
 	require.NoError(t, err)
@@ -73,34 +73,63 @@ func TestAuditServiceVerifyChain(t *testing.T) {
 		UserID: "user-001", Operation: "op2", Result: "success",
 	})
 	require.NoError(t, err)
+	_, err = svc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID: "user-001", Operation: "op3", Result: "success",
+	})
+	require.NoError(t, err)
 
-	valid, msg, err := svc.VerifyChain(ctx, log1.ID)
+	valid, msg, err := svc.VerifyChain(ctx)
 	require.NoError(t, err)
 	assert.True(t, valid)
 	assert.Contains(t, msg, "intact")
+	assert.Contains(t, msg, "3 entries")
 }
 
 func TestAuditServiceVerifyChainSingleLog(t *testing.T) {
 	svc, _ := newTestAuditService(t)
 	ctx := context.Background()
 
-	log1, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
+	_, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
 		UserID: "user-001", Operation: "op1", Result: "success",
 	})
 	require.NoError(t, err)
 
-	valid, msg, err := svc.VerifyChain(ctx, log1.ID)
+	valid, msg, err := svc.VerifyChain(ctx)
 	require.NoError(t, err)
 	assert.True(t, valid)
-	assert.Contains(t, msg, "intact")
+	assert.Contains(t, msg, "1 entries")
 }
 
-func TestAuditServiceVerifyChainInvalidID(t *testing.T) {
+func TestAuditServiceVerifyChainEmpty(t *testing.T) {
 	svc, _ := newTestAuditService(t)
+
+	valid, msg, err := svc.VerifyChain(context.Background())
+	require.NoError(t, err)
+	assert.True(t, valid)
+	assert.Contains(t, msg, "0 entries")
+}
+
+func TestAuditServiceVerifyChainDetectsTampering(t *testing.T) {
+	svc, repo := newTestAuditService(t)
 	ctx := context.Background()
 
-	_, _, err := svc.VerifyChain(ctx, "missing")
-	require.Error(t, err)
+	_, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID: "user-001", Operation: "op1", Result: "success",
+	})
+	require.NoError(t, err)
+	log2, err := svc.CreateAuditLog(ctx, CreateAuditLogRequest{
+		UserID: "user-001", Operation: "op2", Result: "success",
+	})
+	require.NoError(t, err)
+
+	// 模拟篡改: 直接改库中 details (hash 不再匹配)
+	log2.Details = "tampered"
+	assert.NoError(t, repo.UpdateRaw(ctx, log2))
+
+	valid, msg, err := svc.VerifyChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, valid, "篡改后的日志应导致链验证失败")
+	assert.Contains(t, msg, "mismatch")
 }
 
 func TestAuditServiceListAuditLogs(t *testing.T) {

@@ -137,11 +137,11 @@ const ApprovalManage: React.FC = () => {
 
   const columns: ColumnsType<ApprovalRequest> = [
     { title: '操作类型', dataIndex: 'operation_type', key: 'operation_type', render: (v) => <Tag color="blue">{operationLabel(v)}</Tag> },
-    { title: '申请人', dataIndex: 'requester', key: 'requester' },
-    { title: '资源', dataIndex: 'target_resource', key: 'target_resource' },
-    { title: '原因', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: '申请人', dataIndex: 'requester_id', key: 'requester_id' },
+    { title: '资源', key: 'resource', render: (_, item) => `${item.resource_type || '-'}:${item.resource_id || '-'}` },
+    { title: '原因', dataIndex: 'request_reason', key: 'request_reason', ellipsis: true },
     { title: '优先级', dataIndex: 'priority', key: 'priority', width: 90 },
-    { title: '状态', dataIndex: 'status', key: 'status', render: (v) => <Tag color={statusColor(v)}>{v}</Tag> },
+    { title: '状态', dataIndex: 'approval_status', key: 'approval_status', render: (v) => <Tag color={statusColor(v)}>{v}</Tag> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v) => (v ? new Date(v).toLocaleString() : '-') },
     {
       title: '操作',
@@ -150,8 +150,8 @@ const ApprovalManage: React.FC = () => {
       render: (_, item) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => setViewing(item)}>详情</Button>
-          <Button size="small" icon={<CheckOutlined />} disabled={item.status !== 'pending'} onClick={() => approve(item)}>通过</Button>
-          <Button size="small" danger icon={<CloseOutlined />} disabled={item.status !== 'pending'} onClick={() => reject(item)}>拒绝</Button>
+          <Button size="small" icon={<CheckOutlined />} disabled={item.approval_status !== 'pending'} onClick={() => approve(item)}>通过</Button>
+          <Button size="small" danger icon={<CloseOutlined />} disabled={item.approval_status !== 'pending'} onClick={() => reject(item)}>拒绝</Button>
         </Space>
       ),
     },
@@ -212,9 +212,9 @@ const ApprovalManage: React.FC = () => {
           <Descriptions bordered column={1}>
             <Descriptions.Item label="ID">{viewing.id}</Descriptions.Item>
             <Descriptions.Item label="操作类型">{operationLabel(viewing.operation_type)}</Descriptions.Item>
-            <Descriptions.Item label="资源">{viewing.target_resource}</Descriptions.Item>
-            <Descriptions.Item label="状态"><Tag color={statusColor(viewing.status)}>{viewing.status}</Tag></Descriptions.Item>
-            <Descriptions.Item label="申请原因">{viewing.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label="资源">{viewing.resource_type}:{viewing.resource_id}</Descriptions.Item>
+            <Descriptions.Item label="状态"><Tag color={statusColor(viewing.approval_status)}>{viewing.approval_status}</Tag></Descriptions.Item>
+            <Descriptions.Item label="申请原因">{viewing.request_reason || '-'}</Descriptions.Item>
             <Descriptions.Item label="审批意见">{viewing.approval_comment || '-'}</Descriptions.Item>
             <Descriptions.Item label="过期时间">{viewing.expires_at ? new Date(viewing.expires_at).toLocaleString() : '-'}</Descriptions.Item>
           </Descriptions>

@@ -46,6 +46,20 @@ func (r *AuditLogRepository) Create(ctx context.Context, auditLog *models.AuditL
 	return nil
 }
 
+// UpdateRaw: 绕过哈希链直接改写条目 (仅供篡改检测测试模拟外部改动, 生产代码勿用)
+func (r *AuditLogRepository) UpdateRaw(ctx context.Context, auditLog *models.AuditLog) error {
+	if r.db == nil || r.db.Pool == nil {
+		return fmt.Errorf("database not available in standalone mode")
+	}
+	_, err := r.db.Pool.ExecContext(ctx, `
+		UPDATE audit_logs SET details = ?, result = ?, error_msg = ? WHERE id = ?
+	`, auditLog.Details, auditLog.Result, auditLog.ErrorMsg, auditLog.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update audit log raw: %w", err)
+	}
+	return nil
+}
+
 func (r *AuditLogRepository) GetByID(ctx context.Context, id string) (*models.AuditLog, error) {
 	if r.db == nil || r.db.Pool == nil {
 		return nil, fmt.Errorf("database not available in standalone mode")

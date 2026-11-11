@@ -12,7 +12,7 @@ interface MaskingRule {
   pattern?: string
   algorithm: string
   replacement?: string
-  roles: string
+  roles: string[]
   enabled: boolean
 }
 
@@ -48,7 +48,10 @@ export default function MaskingPage() {
     { title: '名称', dataIndex: 'name', key: 'name' },
     { title: '字段路径', dataIndex: 'field_path', key: 'field_path', ellipsis: true },
     { title: '算法', dataIndex: 'algorithm', key: 'algorithm', render: (v: string) => <Tag>{v}</Tag> },
-    { title: '适用角色', dataIndex: 'roles', key: 'roles', render: (v: string) => <Tag color="blue">{v}</Tag> },
+    { title: '适用角色', dataIndex: 'roles', key: 'roles', render: (v: string[] | string) => {
+      const list = Array.isArray(v) ? v : (v ? String(v).split(',') : [])
+      return list.length ? list.map((r: string) => <Tag key={r} color="blue">{r}</Tag>) : '-'
+    } },
     { title: '状态', dataIndex: 'enabled', key: 'enabled', render: (v: boolean) => v ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag> },
     { title: '操作', key: 'action', render: (_: any, r: MaskingRule) => (
       <Space>
@@ -80,7 +83,9 @@ export default function MaskingPage() {
             ]} />
           </Form.Item>
           <Form.Item name="replacement" label="替换值"><Input placeholder="仅 replace 算法需要" /></Form.Item>
-          <Form.Item name="roles" label="适用角色" initialValue="*"><Input placeholder="* 表示所有角色" /></Form.Item>
+          <Form.Item name="roles" label="适用角色" initialValue={['*']} tooltip="留空或输入 * 表示所有角色">
+            <Select mode="tags" placeholder="输入角色后回车, 如 admin / operator" open={false} tokenSeparators={[',']} />
+          </Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
         </Form>
       </Modal>

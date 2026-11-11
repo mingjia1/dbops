@@ -14,7 +14,8 @@ const AuditLog: React.FC = () => {
     setLoading(true)
     try {
       const res: any = await auditApi.list(nextFilters)
-      setData(res?.data || [])
+      // 后端返回 { limit, logs: [...], total }, 提取 logs 数组
+      setData(res?.data?.logs || (Array.isArray(res?.data) ? res.data : []))
     } finally {
       setLoading(false)
     }
@@ -25,7 +26,7 @@ const AuditLog: React.FC = () => {
   }, [])
 
   const columns: ColumnsType<AuditLogType> = [
-    { title: '用户', dataIndex: 'user', key: 'user', render: (v) => v || '-' },
+    { title: '用户', dataIndex: 'user_id', key: 'user_id', ellipsis: true, render: (v) => v || '-' },
     { title: '操作', dataIndex: 'action', key: 'action', render: (v, item) => item.operation || v || '-' },
     { title: '资源类型', dataIndex: 'resource_type', key: 'resource_type', render: (v) => v || '-' },
     { title: '资源 ID', dataIndex: 'resource_id', key: 'resource_id', ellipsis: true },
@@ -78,7 +79,7 @@ const AuditLog: React.FC = () => {
         {viewing && (
           <Descriptions bordered column={1}>
             <Descriptions.Item label="ID">{viewing.id}</Descriptions.Item>
-            <Descriptions.Item label="用户">{viewing.user}</Descriptions.Item>
+            <Descriptions.Item label="用户">{viewing.user_id}</Descriptions.Item>
             <Descriptions.Item label="操作">{viewing.operation || viewing.action}</Descriptions.Item>
             <Descriptions.Item label="资源">{viewing.resource_type}:{viewing.resource_id}</Descriptions.Item>
             <Descriptions.Item label="结果">{viewing.result || 'success'}</Descriptions.Item>

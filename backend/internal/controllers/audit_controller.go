@@ -105,16 +105,7 @@ func (c *AuditController) CreateAuditLog(ctx *gin.Context) {
 }
 
 func (c *AuditController) VerifyChain(ctx *gin.Context) {
-	id := ctx.Param("id")
-	if id == "" {
-		id = ctx.Query("id")
-	}
-	if id == "" {
-		utils.BadRequestResponse(ctx, "缺少 id")
-		return
-	}
-
-	ok, msg, err := c.service.VerifyChain(ctx.Request.Context(), id)
+	ok, msg, err := c.service.VerifyChain(ctx.Request.Context())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			utils.NotFoundResponse(ctx, err.Error())
