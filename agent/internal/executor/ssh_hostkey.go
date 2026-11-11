@@ -25,11 +25,7 @@ func agentKnownHostsPath() string {
 // 首次连接记录密钥, 之后密钥不匹配则拒绝 (抗 MITM).
 // 与 backend/internal/services/ssh_helpers.go 的 tofuHostKeyCallback 逻辑一致
 // (两个模块互相独立, 无法共享代码).
-// DBOPS_SSH_INSECURE=1 可显式跳过校验 (临时环境逃生口, 生产禁用).
 func agentHostKeyCallback(hostAddr string) ssh.HostKeyCallback {
-	if os.Getenv("DBOPS_SSH_INSECURE") == "1" {
-		return ssh.InsecureIgnoreHostKey()
-	}
 	knownHostsFile := agentKnownHostsPath()
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if _, statErr := os.Stat(knownHostsFile); statErr == nil {

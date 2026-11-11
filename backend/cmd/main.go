@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -117,7 +118,7 @@ func main() {
 	logInstance.Info("SQLite database (absolute): " + sqlitePath)
 	logInstance.Info("Backup directory (absolute): " + cfg.BackupDir)
 	if cfg.UsedLegacyDataDir {
-		logInstance.Warn("Using legacy data dir (../db) for backward compatibility; set DBOPS_DATA_DIR explicitly to migrate (see .env.example)")
+		logInstance.Warn("Auto-detected existing data dir " + cfg.DataDir + "; set DBOPS_DATA_DIR explicitly to pin it (see .env.example)")
 	}
 	services.SetKnownHostsDir(cfg.DataDir)
 
@@ -242,6 +243,26 @@ func main() {
 	_ = pluginRegistry.Register(pluginArch.NewPXCGaleraAddonPlugin(agentCaller))
 	_ = pluginRegistry.Register(pluginMiddleware.NewKeepalivedAddonPlugin(agentCaller))
 	_ = pluginRegistry.Register(pluginMiddleware.NewProxySQLAddonPlugin(agentCaller))
+	// 运行期动态插件: 复用 M1 已建的 plugin_registry 表恢复 (此前该表零调用方).
+	pluginRepo := repositories.NewPluginRepository(db)
+	if records, err := pluginRepo.List(context.Background()); err != nil {
+		logInstance.Warn("Failed to load dynamic plugins: " + err.Error())
+	} else {
+		for _, rec := range records {
+			var pcfg plugins.HTTPPluginConfig
+			if err := json.Unmarshal([]byte(rec.Config), &pcfg); err != nil || pcfg.Name != rec.Name {
+				logInstance.Warn("Skip invalid dynamic plugin " + rec.Name)
+				continue
+			}
+			if err := pcfg.Validate(); err != nil {
+				logInstance.Warn("Skip invalid dynamic plugin " + rec.Name + ": " + err.Error())
+				continue
+			}
+			if err := pluginRegistry.RegisterDynamic(plugins.NewHTTPPlugin(pcfg)); err != nil {
+				logInstance.Warn("Skip dynamic plugin " + rec.Name + ": " + err.Error())
+			}
+		}
+	}
 	// P0: 提前建 auditService, 让 instanceService/hostService 等可注入.
 	instanceService := services.NewInstanceService(instanceRepo, hostRepo, taskRepo, agentClient, auditService, cfg.EncryptionKey)
 	instanceController := controllers.NewInstanceController(instanceService)
@@ -409,7 +430,7 @@ func main() {
 	instanceService.SetMessageBus(messageBus)
 
 	// Plugin management API.
-	pluginController := controllers.NewPluginController(pluginRegistry)
+	pluginController := controllers.NewPluginController(pluginRegistry, pluginRepo)
 
 	dataMigrationController := controllers.NewDataMigrationController(cfg, db)
 
@@ -1394,6 +1415,9 @@ func main() {
 			{
 				pluginRoutes.GET("", pluginController.List)
 				pluginRoutes.GET("/:name", pluginController.Get)
+				pluginRoutes.POST("", middleware.RequirePermission("admin"), pluginController.Register)
+				pluginRoutes.POST("/probe", middleware.RequirePermission("admin"), pluginController.Probe)
+				pluginRoutes.DELETE("/:name", middleware.RequirePermission("admin"), pluginController.Unregister)
 			}
 
 			auditLogs := protected.Group("/audit-logs")
@@ -1565,23 +1589,22 @@ func validateSecrets(cfg *config.Config) error {
 	if cfg.DatabaseURL == "" || strings.Contains(cfg.DatabaseURL, "${DBOPS_DB_URL}") {
 		return fmt.Errorf("DBOPS_DB_URL env var must be set (got %q). Set it to a valid DSN, e.g. export DBOPS_DB_URL='dbops_user:strong-random-password@tcp(host:3306)/dbops?parseTime=true&loc=Local'", cfg.DatabaseURL)
 	}
-	allowInsecureDevSecrets := os.Getenv("DBOPS_ALLOW_INSECURE_DEV_SECRETS") == "1"
-	if err := validateConfiguredSecret("database_url", "DBOPS_DB_URL", cfg.DatabaseURL, 1, allowInsecureDevSecrets); err != nil {
+	if err := validateConfiguredSecret("database_url", "DBOPS_DB_URL", cfg.DatabaseURL, 1); err != nil {
 		return err
 	}
-	if err := validateConfiguredSecret("jwt_secret", "DBOPS_JWT_SECRET", cfg.JWTSecret, 32, allowInsecureDevSecrets); err != nil {
+	if err := validateConfiguredSecret("jwt_secret", "DBOPS_JWT_SECRET", cfg.JWTSecret, 32); err != nil {
 		return err
 	}
-	if err := validateConfiguredSecret("encryption_key", "DBOPS_ENCRYPTION_KEY", cfg.EncryptionKey, 32, allowInsecureDevSecrets); err != nil {
+	if err := validateConfiguredSecret("encryption_key", "DBOPS_ENCRYPTION_KEY", cfg.EncryptionKey, 32); err != nil {
 		return err
 	}
-	if err := validateConfiguredSecret("agent_token", "DBOPS_AGENT_TOKEN", cfg.AgentToken, 16, allowInsecureDevSecrets); err != nil {
+	if err := validateConfiguredSecret("agent_token", "DBOPS_AGENT_TOKEN", cfg.AgentToken, 16); err != nil {
 		return err
 	}
 	return nil
 }
 
-func validateConfiguredSecret(name, envName, value string, minLen int, allowInsecureDevSecrets bool) error {
+func validateConfiguredSecret(name, envName, value string, minLen int) error {
 	if len(value) < minLen {
 		return fmt.Errorf("%s must be set and >= %d chars (current len=%d). Set %s to a strong random value", name, minLen, len(value), envName)
 	}
@@ -1589,8 +1612,8 @@ func validateConfiguredSecret(name, envName, value string, minLen int, allowInse
 	if strings.Contains(upper, "PLEASE-CHANGE") || strings.Contains(upper, "INJECT_VIA_") {
 		return fmt.Errorf("%s is a placeholder (%q); set %s to a strong random value", name, value, envName)
 	}
-	if isWeakConfiguredSecret(value) && !allowInsecureDevSecrets {
-		return fmt.Errorf("%s looks like an insecure test/default value; set %s to a strong random value or set DBOPS_ALLOW_INSECURE_DEV_SECRETS=1 for local development only", name, envName)
+	if isWeakConfiguredSecret(value) {
+		return fmt.Errorf("%s looks like an insecure test/default value; set %s to a strong random value", name, envName)
 	}
 	return nil
 }

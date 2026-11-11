@@ -39,7 +39,6 @@ const FaultInjectionPage = lazy(() => import('./pages/FaultInjectionPage'))
 const AIDiagnosisPage = lazy(() => import('./pages/AIDiagnosisPage'))
 const MigrationOrchestratePage = lazy(() => import('./pages/MigrationOrchestratePage'))
 const MaskingPage = lazy(() => import('./pages/MaskingPage'))
-const ParameterEnhancedPage = lazy(() => import('./pages/ParameterEnhancedPage'))
 const LicensePage = lazy(() => import('./pages/LicensePage'))
 const ArchUpgradePage = lazy(() => import('./pages/ArchUpgradePage'))
 const DrillPage = lazy(() => import('./pages/DrillPage'))
@@ -106,7 +105,7 @@ function App() {
             <Route path="ai-diagnosis" element={<AIDiagnosisPage />} />
             <Route path="migration-orchestrate" element={<MigrationOrchestratePage />} />
             <Route path="masking" element={<MaskingPage />} />
-            <Route path="parameter-enhanced" element={<ParameterEnhancedPage />} />
+            <Route path="parameter-enhanced" element={<Navigate to="/dashboard/parameter-templates" replace />} />
             <Route path="license" element={<LicensePage />} />
             <Route path="arch-upgrade" element={<ArchUpgradePage />} />
             <Route path="drills" element={<DrillPage />} />

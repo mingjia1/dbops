@@ -85,7 +85,7 @@ const Home: React.FC = () => {
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>待处理数</div>,
     },
     {
-      label: '审计日志', value: auditCount, accent: '#5856D6', icon: <AuditOutlined />,
+      label: '审计日志', value: auditCount, accent: palette.accent.indigo, icon: <AuditOutlined />,
       extra: <div style={{ marginTop: 6, fontSize: 12, color: 'var(--apple-text-secondary)' }}>近 7 天累计</div>,
     },
     {
@@ -147,7 +147,7 @@ const Home: React.FC = () => {
               <Col key={action.path} xs={12} sm={12} md={8} lg={8} xl={4}>
                 <div className="apple-card is-interactive quick-action-card" onClick={() => navigate(action.path)}>
                   <div className="quick-action-step">{action.step}</div>
-                  <div className="quick-action-icon" style={{ background: action.color, boxShadow: `0 4px 12px ${action.color}33` }}>
+                  <div className="quick-action-icon" style={{ background: action.color, boxShadow: 'var(--apple-shadow-2)' }}>
                     {action.icon}
                   </div>
                   <div className="quick-action-body">

@@ -105,7 +105,6 @@ export const getDashboardMenuItems = (hasUserManage: boolean): MenuItem[] => [
       { key: '/dashboard/plugins', icon: <AppstoreOutlined />, label: '插件管理' },
       ...(hasUserManage ? [{ key: '/dashboard/users', icon: <UserOutlined />, label: '用户与认证' }] : []),
       { key: '/dashboard/parameter-templates', icon: <FileTextOutlined />, label: '参数模板' },
-      { key: '/dashboard/parameter-enhanced', icon: <FileTextOutlined />, label: '参数增强' },
       { key: '/dashboard/license', icon: <CopyrightOutlined />, label: '许可证' },
     ],
   },

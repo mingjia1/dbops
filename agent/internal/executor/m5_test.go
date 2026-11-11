@@ -43,12 +43,3 @@ func TestRelayDownloader_MissingVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "version")
 }
 
-func TestExtractMajorMinor_Agent(t *testing.T) {
-	assert.Equal(t, "8.0", extractMajorMinor("8.0.36"))
-	assert.Equal(t, "10.11", extractMajorMinor("10.11.4"))
-}
-
-func TestAPTSourceManager_Config(t *testing.T) {
-	m := NewAPTSourceManager()
-	assert.NotNil(t, m)
-}

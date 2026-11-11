@@ -2072,9 +2072,6 @@ type UpdateInstanceStatusRequest struct {
 // P0-4: 逻辑统一收敛到 ssh_helpers.go 的共享 TOFU 实现
 // (首次连接记录, 密钥变更拒绝, errors.As 区分未知主机 vs 密钥不匹配).
 func (s *InstanceService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
-	if insecureHostKeyAllowed() {
-		return ssh.InsecureIgnoreHostKey()
-	}
 	return tofuHostKeyCallback(knownHostsPath(), hostAddr)
 }
 
@@ -2321,12 +2318,7 @@ func sshClient(host *models.Host, credential string) (*ssh.Client, error) {
 		User: host.SSHUser,
 		Auth: auth,
 		// P0-4: 统一使用共享 TOFU 回调 (原内联实现逻辑相同, 收敛去重).
-		HostKeyCallback: func() ssh.HostKeyCallback {
-			if insecureHostKeyAllowed() {
-				return ssh.InsecureIgnoreHostKey()
-			}
-			return tofuHostKeyCallback(knownHostsPath(), host.Address)
-		}(),
+		HostKeyCallback: tofuHostKeyCallback(knownHostsPath(), host.Address),
 		Timeout: 10 * time.Second,
 	}
 	return ssh.Dial("tcp", net.JoinHostPort(host.Address, strconv.Itoa(host.SSHPort)), config)

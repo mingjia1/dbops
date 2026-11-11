@@ -16,25 +16,47 @@ import (
 // 解析规则 (优先级从高到低):
 //  1. 显式配置 (config.yaml / DBOPS_DATA_DIR / DBOPS_SQLITE_PATH / DBOPS_BACKUP_DIR),
 //     相对路径按启动时 cwd 解析为绝对路径;
-//  2. data_dir 未配置时向后兼容: 旧部署的 ../db/dbops.db 存在则继续沿用 (由调用方
-//     打弃用告警), 避免升级后静默切到空目录造成"数据丢失"的假象;
+//  2. data_dir 未配置时向后兼容: 从 cwd 起向上寻找已有的 db/dbops.db 并沿用
+//     (探测不依赖启动目录, 避免同一仓库从不同 cwd 启动时静默连到另一个空库),
+//     由调用方打弃用告警;
 //  3. 否则启用 ./data, 与 .env.example / config.yaml.example 对齐.
 //
 // sqlite_path 为空时固定为 <data_dir>/dbops.db; backup_dir 为空时固定为
 // <data_dir>/backups. 返回值一律为绝对路径.
 const (
-	legacyDataDir  = "../db"
-	defaultDataDir = "data"
+	legacyDBDirName = "db"
+	defaultDataDir  = "data"
 )
 
+// findLegacyDataDir 从当前目录起向上最多 3 级寻找已有的 db/dbops.db,
+// 返回其绝对目录. 无论从仓库根 / backend/ / backend/cmd/ 启动都命中同一个库.
+func findLegacyDataDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for i := 0; i < 3; i++ {
+		candidate := filepath.Join(dir, legacyDBDirName)
+		if fileExists(filepath.Join(candidate, "dbops.db")) {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
 // resolveDataPaths 解析 data_dir 与 sqlite_path.
-// usedLegacy=true 表示未显式配置 data_dir 且沿用了旧的 ../db 目录.
+// usedLegacy=true 表示未显式配置 data_dir 且自动探测到已有的 db 目录.
 func resolveDataPaths(dataDir, sqlitePath string) (string, string, bool) {
 	usedLegacy := false
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
-		if fileExists(filepath.Join(legacyDataDir, "dbops.db")) {
-			dataDir = legacyDataDir
+		if legacy := findLegacyDataDir(); legacy != "" {
+			dataDir = legacy
 			usedLegacy = true
 		} else {
 			dataDir = defaultDataDir

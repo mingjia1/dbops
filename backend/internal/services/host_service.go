@@ -713,9 +713,6 @@ func (s *HostService) sshClient(host *models.Host, credential string) (*ssh.Clie
 // P0-4: 旧实现无条件接受并追加 known_hosts (等同盲记, 无法防 MITM),
 // 现统一委托 ssh_helpers.go 的共享 TOFU 实现: 首次连接记录, 密钥变更拒绝.
 func (s *HostService) hostKeyCallback(hostAddr string) ssh.HostKeyCallback {
-	if insecureHostKeyAllowed() {
-		return ssh.InsecureIgnoreHostKey()
-	}
 	return tofuHostKeyCallback(knownHostsPath(), hostAddr)
 }
 

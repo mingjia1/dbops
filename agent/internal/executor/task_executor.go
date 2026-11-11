@@ -5057,9 +5057,6 @@ func validateDecommissionDatadir(datadir string) error {
 		filepath.Join(os.TempDir(), "dbops-mha"),
 		filepath.Join(os.TempDir(), "dbops-pxc"),
 	}
-	if os.Getenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST") == "1" {
-		allowedPrefixes = append(allowedPrefixes, filepath.Clean(os.TempDir())+string(filepath.Separator))
-	}
 	for _, prefix := range allowedPrefixes {
 		if strings.HasPrefix(clean, prefix) && strings.TrimPrefix(clean, prefix) != "" {
 			return nil

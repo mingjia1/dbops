@@ -108,8 +108,9 @@ func TestParseGTIDFromDumpReturnsMissingGTIDError(t *testing.T) {
 }
 
 func TestExecuteColdDatadirBackupCreatesArchive(t *testing.T) {
-	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "dbops-mysql-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	datadir := filepath.Join(root, "mysql-3307")
 	targetDir := filepath.Join(root, "backup")
 	require.NoError(t, os.MkdirAll(datadir, 0o755))

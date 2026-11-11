@@ -82,12 +82,6 @@ func tofuHostKeyCallback(knownHostsFile, hostAddr string) ssh.HostKeyCallback {
 	}
 }
 
-// insecureHostKeyAllowed 允许在明确设置 DBOPS_SSH_INSECURE=1 时跳过主机密钥校验.
-// 仅用于无法预知密钥的临时环境, 生产环境严禁开启 (对应巡检报告 P0-4).
-func insecureHostKeyAllowed() bool {
-	return os.Getenv("DBOPS_SSH_INSECURE") == "1"
-}
-
 // NewSSHClient creates an SSH client connection to a host.
 // P0-4: 主机密钥验证由 InsecureIgnoreHostKey 改为 TOFU 回调.
 func NewSSHClient(address string, port int, user, password string) (*ssh.Client, error) {
@@ -96,9 +90,6 @@ func NewSSHClient(address string, port int, user, password string) (*ssh.Client,
 		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
 	}
 	hostKeyCallback := tofuHostKeyCallback(knownHostsPath(), address)
-	if insecureHostKeyAllowed() {
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	}
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            auth,

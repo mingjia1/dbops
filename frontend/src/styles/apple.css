@@ -38,6 +38,10 @@
   --apple-teal: #5AC8FA;
   --apple-yellow: #FFCC00;
 
+  /* Status text: 亮色用深一档保证在白底上的文字对比度, 暗色在下方覆写 */
+  --apple-status-healthy: #3F8600;
+  --apple-status-unhealthy: #CF1322;
+
   /* Shadows — soft, layered */
   --apple-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
   --apple-shadow-2: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
@@ -276,6 +280,9 @@ body {
   --apple-pink: #FF375F;
   --apple-indigo: #5E5CE6;
   --apple-teal: #64D2FF;
+  --apple-yellow: #FFD60A;
+  --apple-status-healthy: #30D158;
+  --apple-status-unhealthy: #FF453A;
 }
 
 :root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.20); }

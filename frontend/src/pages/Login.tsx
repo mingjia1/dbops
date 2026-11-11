@@ -77,10 +77,10 @@ const Login: React.FC = () => {
       children: (
         <Form name="login" onFinish={onLogin} layout="vertical" size="large" autoComplete="off" requiredMark={false}>
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="用户名" autoFocus />
+            <Input prefix={<UserOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="用户名" autoFocus />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="密码" />
+            <Input.Password prefix={<LockOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="密码" />
           </Form.Item>
           <Form.Item style={{ marginBottom: 0 }}>
             <Button type="primary" htmlType="submit" block loading={loading} className="login-btn">
@@ -96,16 +96,16 @@ const Login: React.FC = () => {
       children: (
         <Form name="register" onFinish={onRegister} layout="vertical" size="large" autoComplete="off" requiredMark={false}>
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }, { min: 3, message: '至少 3 个字符' }]}>
-            <Input prefix={<UserOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="用户名" />
+            <Input prefix={<UserOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="用户名" />
           </Form.Item>
           <Form.Item name="email" rules={[{ required: true, type: 'email', message: '请输入有效邮箱' }]}>
-            <Input prefix={<MailOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="邮箱" />
+            <Input prefix={<MailOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="邮箱" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}>
-            <Input.Password prefix={<LockOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="密码" />
+            <Input.Password prefix={<LockOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="密码" />
           </Form.Item>
           <Form.Item name="confirm" dependencies={['password']} rules={[{ required: true, message: '请确认密码' }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('password') === value) return Promise.resolve(); return Promise.reject(new Error('两次密码不一致')); } })]}>
-            <Input.Password prefix={<LockOutlined style={{ color: 'rgba(60,60,67,0.4)' }} />} placeholder="确认密码" />
+            <Input.Password prefix={<LockOutlined style={{ color: 'var(--apple-text-tertiary)' }} />} placeholder="确认密码" />
           </Form.Item>
           <Form.Item style={{ marginBottom: 0 }}>
             <Button type="primary" htmlType="submit" block loading={loading} className="login-btn">

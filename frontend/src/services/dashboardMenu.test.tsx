@@ -46,9 +46,7 @@ describe('getDashboardMenuItems', () => {
       '/dashboard/alert-rules',
       '/dashboard/approvals',
       '/dashboard/audit-logs',
-      '/dashboard/audit-verify',
       '/dashboard/masking',
-      '/dashboard/key-rotation',
       '/dashboard/license',
       '/dashboard/security-settings',
       '/dashboard/data-storage',
@@ -56,7 +54,6 @@ describe('getDashboardMenuItems', () => {
       '/dashboard/plugins',
       '/dashboard/users',
       '/dashboard/parameter-templates',
-      '/dashboard/parameter-enhanced',
     ]
     for (const route of pageRoutes) {
       expect(keys, `missing menu entry for ${route}`).toContain(route)

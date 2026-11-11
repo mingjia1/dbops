@@ -83,8 +83,8 @@ func Load() (*Config, error) {
 	viper.SetDefault("log_level", "warning")
 	viper.SetDefault("database_url", "")
 	viper.SetDefault("sqlite_path", "") // 空表示使用 <DataDir>/dbops.db
-	// P0-A: data_dir 不再设死 "../db". 空值时 resolveDataPaths 先兼容旧部署的
-	// ../db/dbops.db (存在则沿用), 否则回落到 ./data, 与 .env.example 一致.
+	// P0-A: data_dir 不再设死 "../db". 空值时 resolveDataPaths 从 cwd 向上
+	// 寻找已有的 db/dbops.db (命中则沿用), 否则回落到 ./data, 与 .env.example 一致.
 	viper.SetDefault("data_dir", "")
 	// P0-A: 备份目录空值时取 <data_dir>/backups.
 	viper.SetDefault("backup_dir", "")

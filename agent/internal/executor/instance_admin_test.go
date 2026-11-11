@@ -277,8 +277,9 @@ func TestFindProcessByDatadirUsesProcCmdlineOrCWD(t *testing.T) {
 
 func TestExecuteInstanceAdminDecommissionRemovesSafeDatadir(t *testing.T) {
 	executor := NewTaskExecutor()
-	t.Setenv("DBOPS_ALLOW_TMP_DECOMMISSION_TEST", "1")
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "dbops-mysql-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	datadir := filepath.Join(root, "mysql-3307")
 	require.NoError(t, os.MkdirAll(datadir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(datadir, "mysql.pid"), []byte("999999"), 0o644))

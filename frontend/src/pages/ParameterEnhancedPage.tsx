@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Table, Button, Select, Space, Tag, Alert, Descriptions, Tabs, Input, Form } from 'antd'
+import { Card, Table, Button, Select, Space, Tag, Alert, Descriptions, Tabs, Input } from 'antd'
 import { message } from '../components/antdMessage'
-import { SettingOutlined, CheckCircleOutlined, StarOutlined, ExperimentOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, ExperimentOutlined } from '@ant-design/icons'
 import api from '../services/api'
 
 interface PresetTemplate {
@@ -17,6 +17,7 @@ interface ValidationResult {
   warnings: string[]
 }
 
+/** 预设模板 / 模板参数 / 参数验证: 作为「参数模板」页面的增强 Tab 复用. */
 export default function ParameterEnhancedPage() {
   const [presets, setPresets] = useState<PresetTemplate[]>([])
   const [loading, setLoading] = useState(false)
@@ -75,58 +76,50 @@ export default function ParameterEnhancedPage() {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
-      <Card title={<><SettingOutlined /> 参数模板增强</>}>
-        <Tabs items={[
-          { key: 'presets', label: '预设模板', children: (
-            <>
-              <Table columns={presetCols} dataSource={presets} rowKey="id" loading={loading} size="small" />
-            </>
-          )},
-          { key: 'parameters', label: '模板参数', children: (
-            <>
-              {selectedPreset ? (
-                <>
-                  <Descriptions size="small" bordered style={{ marginBottom: 16 }}>
-                    <Descriptions.Item label="模板 ID">{selectedPreset}</Descriptions.Item>
-                    <Descriptions.Item label="参数数量">{parameters.length}</Descriptions.Item>
-                  </Descriptions>
-                  <Table columns={paramCols} dataSource={parameters} rowKey="parameter_name" size="small" />
-                </>
+    <Tabs items={[
+      { key: 'presets', label: '预设模板', children: (
+        <Table columns={presetCols} dataSource={presets} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+      )},
+      { key: 'parameters', label: '模板参数', children: (
+        selectedPreset ? (
+          <>
+            <Descriptions size="small" bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="模板 ID">{selectedPreset}</Descriptions.Item>
+              <Descriptions.Item label="参数数量">{parameters.length}</Descriptions.Item>
+            </Descriptions>
+            <Table columns={paramCols} dataSource={parameters} rowKey="parameter_name" size="small" pagination={{ pageSize: 10 }} />
+          </>
+        ) : (
+          <Alert type="info" message="请先在预设模板列表中选择一个模板查看参数" />
+        )
+      )},
+      { key: 'validate', label: '参数验证', children: (
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Space>
+            <Select style={{ width: 300 }} placeholder="选择模板" value={selectedPreset || undefined}
+              onChange={(v) => setSelectedPreset(v)}
+              options={presets.map(p => ({ label: p.name, value: p.id }))} />
+            <Input placeholder="实例 ID (可选)" value={instanceID} onChange={e => setInstanceID(e.target.value)} style={{ width: 200 }} />
+            <Button type="primary" icon={<CheckCircleOutlined />} loading={validating}
+              disabled={!selectedPreset}
+              onClick={() => handleValidate(selectedPreset)}>验证参数</Button>
+          </Space>
+          {validationResult && (
+            <Card type="inner" title="验证结果">
+              {validationResult.is_valid ? (
+                <Alert type="success" showIcon message="参数验证通过" />
               ) : (
-                <Alert type="info" message="请先在预设模板列表中选择一个模板查看参数" />
+                <Alert type="error" showIcon message="参数验证失败"
+                  description={validationResult.errors.map(e => typeof e === 'string' ? e : `${(e as any).parameter_name}: ${(e as any).message}`).join('; ')} />
               )}
-            </>
-          )},
-          { key: 'validate', label: '参数验证', children: (
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <Space>
-                <Select style={{ width: 300 }} placeholder="选择模板" value={selectedPreset || undefined}
-                  onChange={(v) => setSelectedPreset(v)}
-                  options={presets.map(p => ({ label: p.name, value: p.id }))} />
-                <Input placeholder="实例 ID (可选)" value={instanceID} onChange={e => setInstanceID(e.target.value)} style={{ width: 200 }} />
-                <Button type="primary" icon={<CheckCircleOutlined />} loading={validating}
-                  disabled={!selectedPreset}
-                  onClick={() => handleValidate(selectedPreset)}>验证参数</Button>
-              </Space>
-              {validationResult && (
-                <Card type="inner" title="验证结果">
-                  {validationResult.is_valid ? (
-                    <Alert type="success" showIcon message="参数验证通过" />
-                  ) : (
-                    <Alert type="error" showIcon message="参数验证失败"
-                      description={validationResult.errors.map(e => typeof e === 'string' ? e : `${(e as any).parameter_name}: ${(e as any).message}`).join('; ')} />
-                  )}
-                  {validationResult.warnings.length > 0 && (
-                    <Alert type="warning" showIcon message="警告"
-                      description={validationResult.warnings.join('; ')} style={{ marginTop: 8 }} />
-                  )}
-                </Card>
+              {validationResult.warnings.length > 0 && (
+                <Alert type="warning" showIcon message="警告"
+                  description={validationResult.warnings.join('; ')} style={{ marginTop: 8 }} />
               )}
-            </Space>
-          )},
-        ]} />
-      </Card>
-    </div>
+            </Card>
+          )}
+        </Space>
+      )},
+    ]} />
   )
 }

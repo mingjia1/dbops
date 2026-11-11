@@ -19,7 +19,7 @@ const DataStoragePage: React.FC = () => {
   const [migrating, setMigrating] = useState(false)
   const [importing, setImporting] = useState(false)
   const [migrateResult, setMigrateResult] = useState<MigrateResult | null>(null)
-  const [migrateModalOpen, setMigrateModalOpen] = useState(false)
+  const [migrationOpen, setMigrationOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -34,6 +34,11 @@ const DataStoragePage: React.FC = () => {
   }
 
   useEffect(() => { load() }, [])
+
+  const openMigration = () => {
+    setMigrateResult(null)
+    setMigrationOpen(true)
+  }
 
   const handleImport = async () => {
     Modal.confirm({
@@ -70,18 +75,15 @@ const DataStoragePage: React.FC = () => {
     }
     setMigrating(true)
     setMigrateResult(null)
-    setMigrateModalOpen(true)
     try {
       const r = await dataMigrationApi.migrateToMySQL()
       if (r.code === 200 && r.data) {
         setMigrateResult(r.data)
       } else {
         Modal.error({ title: '迁移失败', content: r.message })
-        setMigrateModalOpen(false)
       }
     } catch (e: any) {
       Modal.error({ title: '迁移失败', content: e?.message || String(e) })
-      setMigrateModalOpen(false)
     } finally {
       setMigrating(false)
     }
@@ -99,11 +101,16 @@ const DataStoragePage: React.FC = () => {
 
   return (
     <div className="apple-page apple-fade-in">
-      <h1 className="apple-page-title">
-        <DatabaseOutlined style={{ marginRight: 10, color: 'var(--apple-blue)' }} />
-        数据存储管理
-      </h1>
-      <p className="apple-page-subtitle">平台支持 SQLite / MySQL 双驱动 · SQLite 零配置即用, MySQL 适合生产多机部署</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <h1 className="apple-page-title">
+            <DatabaseOutlined style={{ marginRight: 10, color: 'var(--apple-blue)' }} />
+            数据存储管理
+          </h1>
+          <p className="apple-page-subtitle">平台支持 SQLite / MySQL 双驱动 · SQLite 零配置即用, MySQL 适合生产多机部署</p>
+        </div>
+        <Button type="primary" icon={<SwapOutlined />} onClick={openMigration}>数据迁移</Button>
+      </div>
 
       <Spin spinning={loading}>
         {status && dialectInfo && (
@@ -156,7 +163,7 @@ const DataStoragePage: React.FC = () => {
             >
               <Table
                 size="small"
-                pagination={false}
+                pagination={{ pageSize: 10 }}
                 rowKey="table"
                 dataSource={Object.entries(status.row_counts).map(([k, v]) => ({
                   table: k,
@@ -180,59 +187,23 @@ const DataStoragePage: React.FC = () => {
                 ]}
               />
             </Card>
-
-            <Card title={<><SwapOutlined /> 数据迁移</>} style={{ marginTop: 16 }}>
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Card type="inner" title="JSON → SQLite">
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <Text>从旧的 data/*.json 文件导入到 SQLite. 仅在对应表为空时执行, 已存在文件自动归档为 *.imported-时间戳.</Text>
-                      <Button
-                        type="primary"
-                        icon={<ImportOutlined />}
-                        loading={importing}
-                        onClick={handleImport}
-                        disabled={status.dialect === 'mysql'}
-                      >
-                        执行导入
-                      </Button>
-                    </Space>
-                  </Card>
-                </Col>
-                <Col span={12}>
-                  <Card type="inner" title="SQLite → MySQL">
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <Text>把当前 SQLite 数据全量搬到 MySQL. 走 INSERT ... ON DUPLICATE KEY UPDATE, 重复执行安全.</Text>
-                      <Tooltip title={!status.mysql_configured ? '请先在 config.yaml 配置 database_url' : ''}>
-                        <Button
-                          type="primary"
-                          danger={status.dialect === 'sqlite'}
-                          icon={<SwapOutlined />}
-                          loading={migrating}
-                          onClick={handleMigrate}
-                          disabled={!status.mysql_configured}
-                        >
-                          执行迁移
-                        </Button>
-                      </Tooltip>
-                    </Space>
-                  </Card>
-                </Col>
-              </Row>
-            </Card>
           </>
         )}
       </Spin>
 
       <Modal
-        title="迁移结果"
-        open={migrateModalOpen}
-        onCancel={() => setMigrateModalOpen(false)}
-        footer={[<Button key="close" onClick={() => setMigrateModalOpen(false)}>关闭</Button>]}
+        title="数据迁移"
+        open={migrationOpen}
+        onCancel={() => setMigrationOpen(false)}
+        footer={[<Button key="close" onClick={() => setMigrationOpen(false)}>关闭</Button>]}
         width={760}
       >
-        {migrating && <Spin tip="正在迁移..." />}
-        {migrateResult && (
+        {migrating ? (
+          <div style={{ textAlign: 'center', padding: 32 }}>
+            <Spin size="large" />
+            <div style={{ marginTop: 12 }}><Text type="secondary">正在迁移, 请稍候...</Text></div>
+          </div>
+        ) : migrateResult ? (
           <>
             <Alert
               style={{ marginBottom: 16 }}
@@ -243,7 +214,7 @@ const DataStoragePage: React.FC = () => {
             <Table
               size="small"
               rowKey="table"
-              pagination={false}
+              pagination={{ pageSize: 10 }}
               dataSource={migrateResult.tables}
               columns={[
                 { title: '表', dataIndex: 'table', key: 'table' },
@@ -259,7 +230,46 @@ const DataStoragePage: React.FC = () => {
                 { title: '备注', dataIndex: 'message', key: 'message' },
               ]}
             />
+            <Button style={{ marginTop: 16 }} onClick={() => setMigrateResult(null)}>返回</Button>
           </>
+        ) : (
+          <Row gutter={16}>
+            <Col span={12}>
+              <Card type="inner" title="JSON → SQLite">
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Text>从旧的 data/*.json 文件导入到 SQLite. 仅在对应表为空时执行, 已存在文件自动归档为 *.imported-时间戳.</Text>
+                  <Button
+                    type="primary"
+                    icon={<ImportOutlined />}
+                    loading={importing}
+                    onClick={handleImport}
+                    disabled={status?.dialect === 'mysql'}
+                  >
+                    执行导入
+                  </Button>
+                </Space>
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card type="inner" title="SQLite → MySQL">
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Text>把当前 SQLite 数据全量搬到 MySQL. 走 INSERT ... ON DUPLICATE KEY UPDATE, 重复执行安全.</Text>
+                  <Tooltip title={!status?.mysql_configured ? '请先在 config.yaml 配置 database_url' : ''}>
+                    <Button
+                      type="primary"
+                      danger={status?.dialect === 'sqlite'}
+                      icon={<SwapOutlined />}
+                      loading={migrating}
+                      onClick={handleMigrate}
+                      disabled={!status?.mysql_configured}
+                    >
+                      执行迁移
+                    </Button>
+                  </Tooltip>
+                </Space>
+              </Card>
+            </Col>
+          </Row>
         )}
       </Modal>
     </div>

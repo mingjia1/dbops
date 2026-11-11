@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Table, Tag } from 'antd'
+import { Button, Card, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Table, Tabs, Tag } from 'antd'
 import { message } from '../components/antdMessage'
 import { CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -11,6 +11,7 @@ import {
   type ParameterTemplate,
 } from '../services/api'
 import { instanceHasCapability } from '../services/flavorCapability'
+import ParameterEnhancedPage from './ParameterEnhancedPage'
 
 const restartRequired = new Set([
   'innodb_buffer_pool_size',
@@ -46,6 +47,7 @@ const ParameterTemplateList: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false)
   const [applyOpen, setApplyOpen] = useState(false)
   const [recommendOpen, setRecommendOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState('templates')
   const [form] = Form.useForm()
   const [applyForm] = Form.useForm()
   const paramsText = Form.useWatch('parameters', form)
@@ -231,7 +233,17 @@ const ParameterTemplateList: React.FC = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      <Card title="参数模板" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>创建模板</Button>}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          { key: 'templates', label: '模板管理' },
+          { key: 'enhanced', label: '预设模板与验证' },
+        ]}
+      />
+      {activeTab === 'enhanced' ? <ParameterEnhancedPage /> : (
+        <>
+          <Card title="参数模板" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>创建模板</Button>}>
         <Table columns={columns} dataSource={data} rowKey="id" loading={loading} />
       </Card>
 
@@ -293,6 +305,8 @@ const ParameterTemplateList: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+        </>
+      )}
     </div>
   )
 }

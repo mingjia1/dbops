@@ -1163,9 +1163,32 @@ export const topologyApi = {
   getInstance: (instanceId: string) => api.get(`/topology/instances/${encodeURIComponent(instanceId)}`),
 }
 
+export interface PluginInfo {
+  name: string
+  type: string
+  version: string
+  source?: 'builtin' | 'dynamic'
+  endpoint?: string
+  description?: string
+}
+
+export interface PluginRegisterRequest {
+  name: string
+  type: string
+  version: string
+  endpoint: string
+  description?: string
+  token?: string
+  timeout_ms?: number
+}
+
 export const pluginApi = {
   list: (type?: string) => api.get(`/plugins${type ? `?type=${type}` : ''}`),
   get: (name: string) => api.get(`/plugins/${encodeURIComponent(name)}`),
+  register: (data: PluginRegisterRequest) => api.post('/plugins', data),
+  unregister: (name: string) => api.delete(`/plugins/${encodeURIComponent(name)}`),
+  probe: (data: { endpoint: string; token?: string; timeout_ms?: number }) =>
+    api.post('/plugins/probe', data),
 }
 
 export const taskApi = {

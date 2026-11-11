@@ -36,10 +36,10 @@ func TestResolveDataPaths_ExplicitSQLitePath(t *testing.T) {
 	}
 }
 
-// 未配置 data_dir 且旧目录 ../db/dbops.db 存在 -> 兼容沿用 (usedLegacy=true).
-func TestResolveDataPaths_LegacyFallback(t *testing.T) {
+// 未配置 data_dir 时, 无论 cwd 多深都向上找到同一个已有库 (不再随 cwd 静默切库).
+func TestResolveDataPaths_LegacyFallbackFromAnyCWD(t *testing.T) {
 	root := t.TempDir()
-	cwd := filepath.Join(root, "app")
+	cwd := filepath.Join(root, "app", "nested")
 	if err := os.MkdirAll(filepath.Join(root, "db"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +55,8 @@ func TestResolveDataPaths_LegacyFallback(t *testing.T) {
 	if !usedLegacy {
 		t.Errorf("usedLegacy = false, want true when legacy ../db/dbops.db exists")
 	}
-	if filepath.Base(dataDir) != "db" || !usedLegacy {
-		t.Errorf("dataDir = %q (usedLegacy=%v), want legacy ../db", dataDir, usedLegacy)
+	if dataDir != filepath.Join(root, "db") {
+		t.Errorf("dataDir = %q, want the existing library at %q", dataDir, filepath.Join(root, "db"))
 	}
 	if !filepath.IsAbs(dataDir) || !filepath.IsAbs(sqlitePath) {
 		t.Errorf("dataDir=%q sqlitePath=%q, want absolute", dataDir, sqlitePath)

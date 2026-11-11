@@ -127,36 +127,38 @@ export const darkTheme: ThemeConfig = {
   },
 }
 
-// palette 集中存放硬编码颜色, 各页面引用而不是写死.
-// 命名按用途 (series / gradient / status) 而不是字面颜色,
-// 这样未来切暗主题时一处改全局生效.
+// palette 是 apple.css CSS 变量的语义别名, 不是第三套色板.
+// 颜色由 :root / :root[data-theme="dark"] 统一驱动, 切换主题时图表、状态色、
+// 渐变自动跟随, 组件无需各自读取 themeMode (也避开 useTheme 多实例状态不同步).
+// 新增颜色请先在 apple.css 定义变量并补暗色覆写, 不要在此写字面色值.
 export const palette = {
   series: {
-    primary: '#1890ff',     // 接收/INSERT
-    success: '#52c41a',     // 发送/UPDATE-success/SELECT
-    warning: '#fa8c16',     // 慢查询/UPDATE-warning
-    danger:  '#f5222d',     // DELETE/异常
-    info:    '#13c2c2',
+    primary: 'var(--apple-blue)',
+    success: 'var(--apple-green)',
+    warning: 'var(--apple-orange)',
+    danger:  'var(--apple-red)',
+    info:    'var(--apple-teal)',
   },
   text: {
-    healthy:   '#3f8600',
-    unhealthy: '#cf1322',
-    stopped:   '#8c8c8c',
-    warning:   '#fa8c16',
+    healthy:   'var(--apple-status-healthy)',
+    unhealthy: 'var(--apple-status-unhealthy)',
+    stopped:   'var(--apple-text-tertiary)',
+    warning:   'var(--apple-orange)',
   },
   gradient: {
-    blueCloud:    'linear-gradient(135deg,#0071E3,#5AC8FA)',
-    greenSafety:  'linear-gradient(135deg,#34C759,#30D158)',
-    orangeBolt:   'linear-gradient(135deg,#FF9500,#FFCC00)',
-    purpleCluster: 'linear-gradient(135deg,#AF52DE,#FF2D55)',
+    blueCloud:     'linear-gradient(135deg, var(--apple-blue), var(--apple-teal))',
+    greenSafety:   'linear-gradient(135deg, var(--apple-green), var(--apple-teal))',
+    orangeBolt:    'linear-gradient(135deg, var(--apple-orange), var(--apple-yellow))',
+    purpleCluster: 'linear-gradient(135deg, var(--apple-purple), var(--apple-pink))',
   },
   accent: {
-    blue:   '#0071E3',
-    green:  '#34C759',
-    orange: '#FF9500',
-    purple: '#AF52DE',
-    red:    '#FF3B30',
-    cyan:   '#5AC8FA',
+    blue:   'var(--apple-blue)',
+    green:  'var(--apple-green)',
+    orange: 'var(--apple-orange)',
+    purple: 'var(--apple-purple)',
+    red:    'var(--apple-red)',
+    cyan:   'var(--apple-teal)',
+    indigo: 'var(--apple-indigo)',
   },
 } as const
 

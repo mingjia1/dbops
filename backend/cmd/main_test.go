@@ -12,9 +12,7 @@ import (
 	"github.com/jackcode/mysql-ops-platform/pkg/config"
 )
 
-func TestValidateSecretsRejectsWeakValuesByDefault(t *testing.T) {
-	t.Setenv("DBOPS_ALLOW_INSECURE_DEV_SECRETS", "")
-
+func TestValidateSecretsRejectsWeakValues(t *testing.T) {
 	err := validateSecrets(&config.Config{
 		DatabaseURL:   "app:strong-random-value@tcp(db:3306)/dbops?parseTime=true",
 		JWTSecret:     "test_jwt_secret_key_for_ha_cluster_testing_2024",
@@ -30,24 +28,20 @@ func TestValidateSecretsRejectsWeakValuesByDefault(t *testing.T) {
 	}
 }
 
-func TestValidateSecretsAllowsWeakValuesWithExplicitDevOverride(t *testing.T) {
-	t.Setenv("DBOPS_ALLOW_INSECURE_DEV_SECRETS", "1")
-
+func TestValidateSecretsAllowsStrongValues(t *testing.T) {
 	err := validateSecrets(&config.Config{
-		DatabaseURL:   "root:123456@tcp(10.1.81.42:23306)/dbops_platform?parseTime=true",
-		JWTSecret:     "test_jwt_secret_key_for_ha_cluster_testing_2024",
-		EncryptionKey: "test_encryption_key_for_ha_cluster_testing_2024",
-		AgentToken:    "test_agent_token_for_ha_cluster_2024",
+		DatabaseURL:   "app:strong-random-value@tcp(db:3306)/dbops?parseTime=true",
+		JWTSecret:     strings.Repeat("j", 48),
+		EncryptionKey: strings.Repeat("k", 64),
+		AgentToken:    strings.Repeat("l", 32),
 	})
 
 	if err != nil {
-		t.Fatalf("expected explicit dev override to allow weak local values, got %v", err)
+		t.Fatalf("expected strong values to pass, got %v", err)
 	}
 }
 
-func TestValidateSecretsRejectsPlaceholdersEvenWithDevOverride(t *testing.T) {
-	t.Setenv("DBOPS_ALLOW_INSECURE_DEV_SECRETS", "1")
-
+func TestValidateSecretsRejectsPlaceholders(t *testing.T) {
 	err := validateSecrets(&config.Config{
 		DatabaseURL:   "app:strong-random-value@tcp(db:3306)/dbops?parseTime=true",
 		JWTSecret:     "PLEASE-CHANGE-JWT-SECRET-12345678901234567890",
