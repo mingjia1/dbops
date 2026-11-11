@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -135,6 +136,64 @@ func parseSampleTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized sample time format: %q", s)
 }
 
+// counterRateBaselinePad: counter 差分基准窗口, 向查询起点前扩这么大时间取
+// "窗口前最近一个样本" 作为差分起点 (采集周期 30s, 10min 绰绰有余).
+const counterRateBaselinePad = 10 * time.Minute
+
+// counterMetricNames: 采集自 SHOW GLOBAL STATUS 但语义应为速率的指标.
+// agent 落库的 qps=Queries、tps=Com_commit+Com_rollback 本质是"实例启动以来
+// 累计计数器", 直接展示/画趋势是错的 (恒增曲线), 返回前统一差分为 次/秒.
+// slow_queries/bytes_*/innodb_rows_* 保留累计语义 (展示"自启动以来总量").
+var counterMetricNames = map[string]struct{}{
+	"qps": {},
+	"tps": {},
+}
+
+// convertCountersToRates: 将 counter 型指标序列差分为速率序列.
+// rate[i] = (v[i]-v[i-1]) / dt; 计数器回退 (实例重启) 钳 0;
+// 无前驱基准的首点记 0, 避免误用累计值. since 之前的点仅作差分基准, 不进输出.
+func convertCountersToRates(points []MetricData, since time.Time) []MetricData {
+	if len(points) == 0 {
+		return points
+	}
+	grouped := make(map[string][]MetricData)
+	order := make([]string, 0, 4)
+	out := make([]MetricData, 0, len(points))
+	for _, p := range points {
+		if _, isCounter := counterMetricNames[p.Name]; !isCounter {
+			out = append(out, p)
+			continue
+		}
+		if _, seen := grouped[p.Name]; !seen {
+			order = append(order, p.Name)
+		}
+		grouped[p.Name] = append(grouped[p.Name], p)
+	}
+	for _, name := range order {
+		pts := grouped[name]
+		sort.Slice(pts, func(i, j int) bool { return pts[i].Timestamp.Before(pts[j].Timestamp) })
+		for i := range pts {
+			p := pts[i]
+			rate := 0.0
+			if i > 0 {
+				dt := p.Timestamp.Sub(pts[i-1].Timestamp).Seconds()
+				if dt < 0.5 {
+					dt = 0.5
+				}
+				rate = (p.Value - pts[i-1].Value) / dt
+				if rate < 0 {
+					rate = 0
+				}
+			}
+			if p.Timestamp.Before(since) {
+				continue
+			}
+			out = append(out, MetricData{Name: p.Name, Value: rate, Timestamp: p.Timestamp})
+		}
+	}
+	return out
+}
+
 func sampleTime(t time.Time) string {
 	return t.UTC().Format(sampleTimeLayout)
 }
@@ -218,7 +277,10 @@ func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryReques
 		if req.StartTime.IsZero() {
 			req.StartTime = req.EndTime.Add(-1 * time.Hour)
 		}
-		history, qerr := s.querySamples(ctx, req.InstanceID, req.Metrics, req.StartTime, req.EndTime)
+		// counter 型指标 (qps/tps) 差分转速率需要窗口前一个样本作基准,
+		// 查询窗口向前扩一段; 输出时再裁剪回请求窗口.
+		paddedStart := req.StartTime.Add(-counterRateBaselinePad)
+		history, qerr := s.querySamples(ctx, req.InstanceID, req.Metrics, paddedStart, req.EndTime)
 		if qerr != nil {
 			return nil, fmt.Errorf("failed to query metric samples: %w", qerr)
 		}
@@ -227,7 +289,7 @@ func (s *MonitorService) QueryMetrics(ctx context.Context, req MetricQueryReques
 			s.saveSamples(ctx, req.InstanceID, live)
 			history = append(history, live...)
 		}
-		return history, nil
+		return convertCountersToRates(history, req.StartTime), nil
 	}
 	if req.EndTime.IsZero() {
 		req.EndTime = time.Now()

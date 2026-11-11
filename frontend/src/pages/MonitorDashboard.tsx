@@ -371,15 +371,13 @@ const MonitorDashboard: React.FC = () => {
         ) : (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Row gutter={[16, 16]}>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="QPS" value={metrics.qps?.[metrics.qps.length - 1]?.value || 0} precision={1} prefix={<ThunderboltOutlined />} valueStyle={{ color: palette.series.primary }} /></Card></Col>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="运行时长" value={formatDuration(metrics.uptime)} prefix={<ClockCircleOutlined />} /></Card></Col>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="缓冲池命中率" value={metrics.innodb_buffer_pool_hit_ratio ?? 0} suffix="%" precision={2} prefix={<HddOutlined />} /></Card></Col>
-              <Col xs={24} md={6}><Card size="small"><Statistic title="当前连接数" value={metrics.threads_connected || 0} prefix={<DatabaseOutlined />} /></Card></Col>
-            </Row>
-            <Row gutter={[16, 16]}>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="TPS" value={metrics.tps?.[metrics.tps.length - 1]?.value || 0} precision={1} prefix={<ArrowUpOutlined />} valueStyle={{ color: palette.series.success }} /></Card></Col>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="活跃线程数" value={metrics.threads_running || metrics.connections?.[metrics.connections.length - 1]?.value || 0} prefix={<DatabaseOutlined />} /></Card></Col>
-              <Col xs={24} md={8}><Card size="small"><Statistic title="慢查询" value={metrics.slow_queries || 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries || 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="QPS" value={metrics.qps?.[metrics.qps.length - 1]?.value ?? 0} precision={1} prefix={<ThunderboltOutlined />} valueStyle={{ color: palette.series.primary }} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="TPS" value={metrics.tps?.[metrics.tps.length - 1]?.value ?? 0} precision={1} prefix={<ArrowUpOutlined />} valueStyle={{ color: palette.series.success }} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="运行时长" value={formatDuration(metrics.uptime)} prefix={<ClockCircleOutlined />} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="缓冲池命中率" value={metrics.innodb_buffer_pool_hit_ratio ?? '-'} suffix={metrics.innodb_buffer_pool_hit_ratio != null ? '%' : undefined} precision={2} prefix={<HddOutlined />} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="当前连接数" value={metrics.threads_connected || 0} prefix={<DatabaseOutlined />} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="活跃线程数" value={metrics.threads_running ?? 0} prefix={<DatabaseOutlined />} /></Card></Col>
+              <Col flex="1 1 140px"><Card size="small"><Statistic title="慢查询" value={metrics.slow_queries ?? 0} prefix={<AlertOutlined />} valueStyle={{ color: (metrics.slow_queries ?? 0) > 100 ? '#cf1322' : '#fa8c16' }} /></Card></Col>
             </Row>
 
             <Row gutter={[16, 16]}>
