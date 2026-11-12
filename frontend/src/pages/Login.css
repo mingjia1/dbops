@@ -1,118 +1,98 @@
+/* 登录页：完整 3D 航程作为全屏背景，登录表单浮于右侧。
+   3D 页面在 iframe 内运行（其全局 CSS / 内联 Three.js 与主应用隔离）。 */
 .login-page {
+  position: relative;
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
   min-height: 100vh;
-  background: var(--apple-bg);
+  overflow: hidden;
+  background: #14233c;
   font-family: var(--apple-font);
 }
 
-/* Brand panel — 所有色值取自 apple.css token, 随 data-theme 自动切换.
-   32px 冷调网格与控制台主区保持同一套视觉语言 (亮色下 --apple-grid 为透明). */
-.login-brand {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--apple-bg);
-  background-image:
-    linear-gradient(180deg, var(--apple-bg-grouped), transparent),
-    linear-gradient(to right, var(--apple-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--apple-grid) 1px, transparent 1px);
-  background-size: auto, 32px 32px, 32px 32px;
-  overflow: hidden;
-  padding: 40px;
-}
-
-.brand-orb {
+.login-scene {
   position: absolute;
-  border-radius: 50%;
-  filter: blur(64px);
-  opacity: 0.4;
-  pointer-events: none;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  z-index: 0;
 }
-.brand-orb-1 { width: 480px; height: 480px; background: var(--apple-blue); top: -120px; left: -120px; opacity: 0.18; }
-.brand-orb-2 { width: 420px; height: 420px; background: var(--apple-purple); bottom: -100px; right: -80px; opacity: 0.15; }
-.brand-orb-3 { width: 320px; height: 320px; background: var(--apple-teal); top: 40%; left: 55%; opacity: 0.18; }
 
-.brand-content {
-  position: relative;
+/* 两侧压暗：左侧保证品牌文字可读，右侧衬托表单卡片；中部保留 3D 画面通透 */
+.login-scene-shade {
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  text-align: center;
-  max-width: 520px;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(12, 20, 38, .46) 0%, rgba(12, 20, 38, 0) 34%),
+    linear-gradient(270deg, rgba(12, 20, 38, .52) 0%, rgba(12, 20, 38, 0) 46%);
 }
 
+.login-brandline {
+  position: absolute;
+  left: clamp(28px, 4vw, 56px);
+  top: clamp(28px, 5vh, 52px);
+  z-index: 2;
+  pointer-events: none;
+  color: #fff;
+  text-shadow: 0 2px 14px rgba(10, 18, 34, .6);
+}
+.brand-eyebrow {
+  font-size: 10px;
+  letter-spacing: .28em;
+  font-weight: 700;
+  opacity: .72;
+  margin-bottom: 14px;
+}
 .brand-title {
-  font-size: 40px;
+  font-size: 36px;
   font-weight: 500;
-  color: var(--apple-text);
+  color: #fff;
+  letter-spacing: -.02em;
   margin: 0 0 8px;
-  letter-spacing: -0.015em;
 }
 .brand-desc {
-  font-size: 17px;
-  color: var(--apple-text-secondary);
-  margin: 0 0 36px;
+  font-size: 15px;
+  color: #fff;
+  opacity: .86;
+  margin: 0;
   font-weight: 400;
 }
-
-.brand-feature-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
-  margin: 0 auto;
-  max-width: 460px;
-}
-.brand-feature {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-  background: var(--apple-bg-elevated);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: var(--apple-radius-lg);
-  border: 0.5px solid var(--apple-separator);
-  box-shadow: var(--apple-shadow-1);
-  text-align: left;
-  transition: all var(--apple-normal) var(--apple-ease);
-}
-.brand-feature:hover { transform: translateY(-2px); box-shadow: var(--apple-shadow-3); }
-.brand-feature-icon {
-  width: 38px; height: 38px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  /* ponytail: 彩色渐变底上的图标字恒为白, 属于 on-color, 不随主题翻转 */
-  font-size: 18px; color: #fff; flex-shrink: 0;
-}
-.brand-feature-title { font-size: 14px; font-weight: 500; color: var(--apple-text); line-height: 1.2; }
-.brand-feature-desc { font-size: 12px; color: var(--apple-text-secondary); margin-top: 2px; }
-
-.brand-footer {
-  margin-top: 40px;
-  color: var(--apple-text-tertiary);
-  font-size: 12px;
-  letter-spacing: 0.02em;
+.brand-tip {
+  margin-top: 24px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  opacity: .62;
 }
 
 /* Form panel */
 .login-form-wrap {
+  position: relative;
+  z-index: 3;
   width: 480px;
+  margin-right: clamp(24px, 6vw, 96px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
+  padding: 40px 0;
 }
 
 .login-card {
   width: 100%;
   background: var(--apple-bg-elevated);
-  border: 0.5px solid var(--apple-separator);
+  border: .5px solid var(--apple-separator);
   border-radius: var(--apple-radius-lg);
   padding: 36px 36px 28px;
-  box-shadow: var(--apple-shadow-4);
+  box-shadow: 0 24px 64px rgba(6, 12, 26, .38), var(--apple-shadow-4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .login-card-header { text-align: center; margin-bottom: 24px; }
-.login-card-title { font-size: 24px; font-weight: 500; color: var(--apple-text); letter-spacing: -0.015em; }
+.login-card-title { font-size: 24px; font-weight: 500; color: var(--apple-text); letter-spacing: -.015em; }
 .login-card-sub { font-size: 14px; color: var(--apple-text-secondary); margin-top: 4px; }
 
 .login-card .ant-tabs .ant-tabs-tab { font-size: 15px; padding: 10px 0; }
@@ -129,7 +109,7 @@
 .login-card-foot {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 0.5px solid var(--apple-separator);
+  border-top: .5px solid var(--apple-separator);
   text-align: center;
   color: var(--apple-text-tertiary);
   font-size: 12px;
@@ -142,23 +122,33 @@
   border-radius: var(--apple-radius-lg);
   background: linear-gradient(135deg, var(--apple-blue) 0%, var(--apple-blue-hover) 100%);
   border: none;
-  letter-spacing: 0.02em;
+  letter-spacing: .02em;
   box-shadow: var(--apple-shadow-2);
   transition: all var(--apple-fast) var(--apple-ease);
 }
 .login-btn:hover { transform: translateY(-1px); box-shadow: var(--apple-shadow-3); }
 .login-btn:active { transform: translateY(0); }
 
-/* Responsive */
+/* Responsive：窄屏改为上下布局，背景整体压暗保证表单可读 */
 @media (max-width: 960px) {
-  .login-page { flex-direction: column; }
-  .login-brand { min-height: 280px; padding: 32px 20px; }
-  .login-form-wrap { width: 100%; padding: 24px 20px 40px; }
-  .brand-title { font-size: 30px; }
-  .brand-desc { font-size: 15px; margin-bottom: 24px; }
-  .brand-feature-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .login-page { align-items: flex-end; justify-content: center; }
+  .login-scene-shade {
+    background: linear-gradient(0deg, rgba(12, 20, 38, .66) 0%, rgba(12, 20, 38, .1) 58%, rgba(12, 20, 38, .38) 100%);
+  }
+  .login-brandline { left: 24px; top: 24px; }
+  .brand-title { font-size: 26px; }
+  .brand-desc { font-size: 13px; }
+  .brand-tip { display: none; }
+  .login-form-wrap {
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 24px 20px 40px;
+  }
+  .login-card { padding: 28px 26px 22px; }
 }
 @media (max-width: 560px) {
-  .brand-feature-grid { grid-template-columns: 1fr; }
-  .login-card { padding: 28px 22px; }
+  .brand-eyebrow { font-size: 8px; letter-spacing: .2em; }
+  .brand-title { font-size: 22px; }
+  .login-card { padding: 24px 20px; }
 }

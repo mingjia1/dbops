@@ -1,9 +1,8 @@
 import React, { useState } from 'react'
 import { Form, Input, Button, Tabs, App as AntApp } from 'antd'
-import { UserOutlined, LockOutlined, MailOutlined, CloudOutlined, SafetyCertificateOutlined, ThunderboltOutlined, ClusterOutlined } from '@ant-design/icons'
+import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
-import { palette } from '../appTheme'
 import './Login.css'
 
 const Login: React.FC = () => {
@@ -119,49 +118,18 @@ const Login: React.FC = () => {
 
   return (
     <div className="login-page">
-      <div className="login-brand">
-        <div className="brand-orb brand-orb-1" />
-        <div className="brand-orb brand-orb-2" />
-        <div className="brand-orb brand-orb-3" />
-        <div className="brand-content apple-fade-in">
-          <h1 className="brand-title">MySQL 运维平台</h1>
-          <p className="brand-desc">企业级数据库全生命周期管理</p>
-
-          <div className="brand-feature-grid">
-            <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: palette.gradient.blueCloud }}><CloudOutlined /></div>
-              <div className="brand-feature-text">
-                <div className="brand-feature-title">主机与实例</div>
-                <div className="brand-feature-desc">资产盘点 · 自动发现</div>
-              </div>
-            </div>
-            <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: palette.gradient.greenSafety }}><SafetyCertificateOutlined /></div>
-              <div className="brand-feature-text">
-                <div className="brand-feature-title">备份与恢复</div>
-                <div className="brand-feature-desc">策略化 · 一键回滚</div>
-              </div>
-            </div>
-            <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: palette.gradient.orangeBolt }}><ThunderboltOutlined /></div>
-              <div className="brand-feature-text">
-                <div className="brand-feature-title">监控告警</div>
-                <div className="brand-feature-desc">指标聚合 · 阈值告警</div>
-              </div>
-            </div>
-            <div className="brand-feature">
-              <div className="brand-feature-icon" style={{ background: palette.gradient.purpleCluster }}><ClusterOutlined /></div>
-              <div className="brand-feature-text">
-                <div className="brand-feature-title">高可用集群</div>
-                <div className="brand-feature-desc">MHA · MGR · PXC</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="brand-footer">
-            <span>v1.0 · 统一管理 · 可观测 · 可控制</span>
-          </div>
-        </div>
+      {/* 3D 航程作为全屏背景：iframe 隔离其全局 CSS 与内联 Three.js，避免污染主应用 */}
+      <iframe
+        className="login-scene"
+        src="/dbops-story.html?embed=1"
+        title="数据库运维平台 3D 航程"
+      />
+      <div className="login-scene-shade" />
+      <div className="login-brandline apple-fade-in">
+        <div className="brand-eyebrow">DBOPS · DATABASE OPERATIONS PLATFORM</div>
+        <h1 className="brand-title">MySQL 运维平台</h1>
+        <p className="brand-desc">企业级数据库全生命周期管理</p>
+        <div className="brand-tip">拖拽画面调整视角 · 滚轮自由探索航程</div>
       </div>
       <div className="login-form-wrap">
         <div className="login-card apple-fade-in">
